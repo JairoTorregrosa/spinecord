@@ -15,12 +15,15 @@ import {
 import { checkRemotePath, sshArgs } from "../src/ssh";
 import { FAKE_HAS_LEDS, FakeBrick, findPython } from "./fake-brick";
 
-const python = findPython();
-if (!python)
+// The bridge only ever runs on the brick (Linux): on Windows a file that is open cannot be replaced, so the fake
+// sysfs tree cannot behave like sysfs there. The tests that run the bridge are skipped on win32.
+const BRIDGE_RUNS_HERE = process.platform !== "win32";
+const python = BRIDGE_RUNS_HERE ? findPython() : null;
+if (BRIDGE_RUNS_HERE && !python)
   console.warn(
     "SKIPPED: the fake-brick tests run bridge/ev3dev_bridge.py with a local Python 3, and neither `python3` nor `python` works on this machine.",
   );
-const brickTest = python ? test : test.skip;
+const brickTest = test.skipIf(!BRIDGE_RUNS_HERE || !python);
 
 const OP_MS = 250; // the tests run with a short time bound; the default is MAX_MOTION_MS (3000)
 /**
