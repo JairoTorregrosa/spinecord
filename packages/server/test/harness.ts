@@ -5,7 +5,7 @@
 import type { DeviceSpec, Envelope, RobotProfile } from "../../protocol/types.ts";
 import { TOOLS } from "../../protocol/tools.ts";
 import { profileHash } from "../../protocol/validate.ts";
-import { validate } from "../src/schema.ts";
+import { firstViolation as validate } from "../../protocol/schema.ts";
 
 const OUTPUT = new Map(TOOLS.map((t) => [t.name, t.output]));
 

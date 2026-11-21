@@ -2,7 +2,7 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { SERVER_INSTRUCTIONS, SERVER_NAME, SERVER_VERSION, TOOLS } from "../../protocol/tools.ts";
-import { assertSupported, validate } from "../src/schema.ts";
+import { assertSupported, firstViolation as validate } from "../../protocol/schema.ts";
 import { BASE, DEVICES, FakeRuntime, PROFILE, TOKENS, http, resetRelay, rid, tool } from "./harness.ts";
 
 beforeAll(resetRelay);
