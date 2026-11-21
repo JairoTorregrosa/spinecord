@@ -2,30 +2,40 @@
 // A package is affected when one of its files changed or when it depends, directly or not, on a package that
 // changed. The dependency graph is read from the code (relative imports that cross into another package, and
 // workspace names in package.json), so it follows ARCHITECTURE.md without a second copy of it.
+// Apps (apps/<name>) are units like packages: they have tests and import packages, and nothing imports them.
 // A change in packages/protocol, or in anything at the repo root that is not documentation, affects everything.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 export const root = join(import.meta.dir, "..");
-const pkgsDir = join(root, "packages");
+/** Folders whose children are units with their own tests. A unit's name is unique across both. */
+const UNIT_ROOTS = ["packages", "apps"] as const;
+const UNIT_PATH = /^(?:packages|apps)\/([^/]+)\//;
 const CODE = /\.(ts|tsx|js|mjs|cjs)$/;
-/** Root paths that no test can reach. Everything else at the root (config, scripts, lockfile, CI) reaches all. */
-const DOCS = [
-  /^[^/]+\.md$/,
-  /^docs\//,
-  /^LICENSE$/,
-  /^deployments\//,
-  /^\.gitleaksignore$/,
-  /^\.gitattributes$/,
-  /^\.gitignore$/,
-];
+/** Root paths that no test can reach (deployments/ is not one: the robot page's build test reads it). Everything else at the root (config, scripts, lockfile, CI) reaches all. */
+const DOCS = [/^[^/]+\.md$/, /^docs\//, /^LICENSE$/, /^\.gitleaksignore$/, /^\.gitattributes$/, /^\.gitignore$/];
 
 export type Affected = { all: boolean; packages: string[]; reason: string; changed: string[] };
 
-export const listPackages = (): string[] =>
-  readdirSync(pkgsDir)
-    .filter((name) => statSync(join(pkgsDir, name)).isDirectory())
-    .sort();
+/** unit name -> its folder relative to the repo root, posix: "packages/runtime", "apps/robot-page" */
+export function unitDirs(): Record<string, string> {
+  const dirs: Record<string, string> = {};
+  for (const base of UNIT_ROOTS) {
+    if (!existsSync(join(root, base))) continue;
+    for (const name of readdirSync(join(root, base))) {
+      if (!statSync(join(root, base, name)).isDirectory()) continue;
+      if (dirs[name]) throw new Error(`two units are named "${name}": ${dirs[name]} and ${base}/${name}`);
+      dirs[name] = `${base}/${name}`;
+    }
+  }
+  return dirs;
+}
+export const unitDir = (name: string): string => {
+  const dir = unitDirs()[name];
+  if (!dir) throw new Error(`no package or app is named "${name}"`);
+  return dir;
+};
+export const listPackages = (): string[] => Object.keys(unitDirs()).sort();
 
 function* walk(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
@@ -38,29 +48,33 @@ function* walk(dir: string): Generator<string> {
 
 /** package -> packages it imports */
 export function dependencyGraph(packages: string[] = listPackages()): Record<string, string[]> {
+  const dirs = unitDirs();
+  const abs = (pkg: string) => join(root, ...dirs[pkg]!.split("/"));
   const byName = new Map<string, string>();
   for (const pkg of packages) {
-    const manifest = join(pkgsDir, pkg, "package.json");
+    const manifest = join(abs(pkg), "package.json");
     if (existsSync(manifest)) byName.set((JSON.parse(readFileSync(manifest, "utf8")) as { name: string }).name, pkg);
   }
   const graph: Record<string, string[]> = {};
   for (const pkg of packages) {
     const deps = new Set<string>();
-    const manifest = join(pkgsDir, pkg, "package.json");
+    const manifest = join(abs(pkg), "package.json");
     if (existsSync(manifest)) {
       const m = JSON.parse(readFileSync(manifest, "utf8")) as Record<string, Record<string, string> | undefined>;
       for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"])
         for (const name of Object.keys(m[field] ?? {})) if (byName.has(name)) deps.add(byName.get(name)!);
     }
-    for (const file of walk(join(pkgsDir, pkg))) {
+    for (const file of walk(abs(pkg))) {
       const source = readFileSync(file, "utf8");
       for (const m of source.matchAll(/(?:from\s+|import\s*\(?\s*|require\(\s*)["'`]([^"'`]+)["'`]/g)) {
         const spec = m[1]!;
         const scoped = byName.get(spec.split("/").slice(0, 2).join("/"));
         if (scoped) deps.add(scoped);
         if (!spec.startsWith(".")) continue;
-        const target = relative(pkgsDir, resolve(dirname(file), spec)).split(sep);
-        if (target[0] !== ".." && packages.includes(target[0]!)) deps.add(target[0]!);
+        const target = `${relative(root, resolve(dirname(file), spec))
+          .split(sep)
+          .join("/")}/`.match(UNIT_PATH)?.[1];
+        if (target && packages.includes(target)) deps.add(target);
       }
     }
     deps.delete(pkg);
@@ -75,7 +89,7 @@ export function affectedBy(changed: string[], graph: Record<string, string[]>): 
   const everything = (reason: string): Affected => ({ all: true, packages, reason, changed });
   const direct = new Set<string>();
   for (const path of changed) {
-    const m = path.match(/^packages\/([^/]+)\//);
+    const m = path.match(UNIT_PATH);
     if (m) {
       // a package that no longer exists (deleted or renamed): its dependents are unknown, so run all
       if (!packages.includes(m[1]!)) return everything(`${path} is in a package that is not in the tree`);

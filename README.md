@@ -28,6 +28,10 @@ flowchart LR
 | [`runtime`](packages/runtime) | runs tools next to the hardware: chunking, conditions, programs |
 | [`server`](packages/server) | MCP server on Cloudflare Workers, Durable Objects and D1 |
 
+| App | Does |
+|---|---|
+| [`robot-page`](apps/robot-page) | the page a person opens in Chrome or Edge to lend an EV3 over USB: `bun apps/robot-page/serve.ts`, then `http://localhost:8766` |
+
 Tested on a real EV3: [`docs/hardware-log.md`](docs/hardware-log.md).
 
 Sense → act loops in one model turn (Claude Code Code Mode): [`docs/code-mode.md`](docs/code-mode.md).
@@ -53,7 +57,7 @@ bun run ci      # lint · format check · typecheck · boundaries · tests, in p
 bun lint        # oxlint
 bun fmt         # oxfmt (bun fmt:check only checks)
 bun check       # tsc on every package
-bun run test    # every package; SHARD=1/3 for one shard, --affected --base origin/main for what a diff reaches
+bun run test    # every package and app; SHARD=1/3 for one shard, --affected --base origin/main for what a diff reaches
 bun run e2e     # relay + twin runner + MCP client on this machine, end to end (scripts/e2e-local.ts)
 ```
 

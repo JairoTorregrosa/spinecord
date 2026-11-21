@@ -14,7 +14,7 @@ protocol ← server         (never imports runtime, drivers or sims)
 runtime, server ← e2e     (tests only; nothing imports it)
 ```
 
-`protocol` imports nothing. `scripts/check-boundaries.ts` enforces this graph.
+`protocol` imports nothing. Apps import packages; no package imports an app. `scripts/check-boundaries.ts` enforces this graph.
 
 ## Responsibilities
 
@@ -28,7 +28,7 @@ runtime, server ← e2e     (tests only; nothing imports it)
 | `runtime` | Executes robot-local tools next to the hardware: device registry, role resolution, reads, sampling, conditions, kinematics for any `motor_pair` drivetrain, arg validation and clamping, program interpreter, `RuntimeClient` (wire protocol, heartbeats, organ proxy). | Auth, persistence, multi-robot state, FSMs owned by the relay, anything EV3-specific. |
 | `server` | MCP server (serves the catalog verbatim), auth by principal, per-robot FSMs (link, activity, control, call), idempotency, rate limits, dispatch to runtimes, organ routing, episodes, program library and verification orchestration, admin HTTP API, D1 storage, structured logs. | Device semantics, kinematics, condition evaluation, robot-specific limits (they come from the profile). |
 | `e2e` | Tests of the seam no package can test alone: the real runtime client over a real WebSocket against the real relay (Miniflare), through MCP. | Production code; faking either side. |
-| `apps/*` | Thin shells: `twin-runner` (headless twins: `SimBrick` + `Ev3Provider` + `SimWorldProvider` + runtime + client, optional viewer); later the robot page (WebHID + runtime + client) and organ pages (phone camera/IMU). | Business logic; they only wire packages together with a deployment's config. |
+| `apps/*` | Thin shells: `twin-runner` (headless twins: `SimBrick` + `Ev3Provider` + `SimWorldProvider` + runtime + client, optional viewer) and `robot-page` (the page a person opens in Chrome or Edge to lend an EV3: WebHID + runtime + client). Later: organ pages (phone camera/IMU). | Business logic; they only wire packages together with a deployment's config. |
 | `deployments/<name>/` | Principals, robot profiles, worlds, organ manifests, copy for humans. | Code. |
 
 ## Rules

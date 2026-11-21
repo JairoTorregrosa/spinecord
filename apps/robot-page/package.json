@@ -1,0 +1,10 @@
+{
+  "name": "@spinecord/robot-page",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "build": "bun build.ts",
+    "serve": "bun serve.ts"
+  }
+}

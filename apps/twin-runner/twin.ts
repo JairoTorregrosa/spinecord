@@ -6,7 +6,7 @@ import type { ClientState, LocalRuntime, RuntimeClient, RuntimeClientOptions } f
 import { LARGE_DEG_S, SimBrick, drivetrainFromProfile } from "../../packages/sim-ev3/brick";
 import { World, parseWorld } from "../../packages/sim-world/world";
 import { SimWorldProvider } from "../../packages/sim-world/world-provider";
-import type { RobotFile } from "./config";
+import type { RobotFile } from "../../packages/driver-ev3/robot-file";
 
 export interface TwinOptions {
   robot_id: string;
