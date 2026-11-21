@@ -20,7 +20,8 @@
     "test": "bun scripts/test-shards.ts",
     "test:record": "bun scripts/test-shards.ts --record",
     "ci": "bun scripts/ci.ts",
-    "e2e": "bun scripts/e2e-local.ts"
+    "e2e": "bun scripts/e2e-local.ts",
+    "bench": "bun bench/run.ts"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.4.0",
