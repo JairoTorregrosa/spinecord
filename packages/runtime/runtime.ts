@@ -950,6 +950,10 @@ class RuntimeImpl implements LocalRuntime {
     // One operation. A driver that had to cut a target at its time bound says so (reason "timeout" with
     // measured.time_limited true); the rest is then sent as further operations, each argument reduced by the
     // measured value of the same name (an absolute target has none and is sent again as is).
+    // A command that does not move but declares a time bound (a speaker saying a text) may block for that
+    // long: max_command_ms is a motion limit and does not cut it short.
+    const waitMs =
+      !cmd.moves && cmd.bound.kind === "ms" ? Math.max(lim.max_command_ms, cmd.bound.max) : lim.max_command_ms;
     const single: Run = async (signal) => {
       const t0 = this.clock.now();
       const ev = until && makeEvaluator(until, this.readFn);
@@ -981,7 +985,7 @@ class RuntimeImpl implements LocalRuntime {
           while (!finished && !child.signal.aborted) {
             await this.clock.sleep(cmd.moves ? 50 : 250, wake.signal);
             if (finished || child.signal.aborted) return;
-            if (this.clock.now() - t0 >= lim.max_command_ms + MAX_CHUNK_MS) {
+            if (this.clock.now() - t0 >= waitMs + MAX_CHUNK_MS) {
               why = "timeout";
               child.abort();
               return;

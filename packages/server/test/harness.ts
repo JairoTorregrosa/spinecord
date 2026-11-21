@@ -176,6 +176,18 @@ export const DEVICES: DeviceSpec[] = [
         bound: { kind: "instant", max: 0 },
         params: { type: "object", properties: {}, additionalProperties: false },
       },
+      {
+        name: "speak",
+        description: "",
+        moves: false,
+        bound: { kind: "ms", max: 1500 }, // blocks until the speech ends, at most this long
+        params: {
+          type: "object",
+          properties: { text: { type: "string", maxLength: 200 } },
+          required: ["text"],
+          additionalProperties: false,
+        },
+      },
     ],
   },
 ];

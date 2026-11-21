@@ -1027,13 +1027,14 @@ export class RobotDO extends DurableObject<Env> {
     } else this.setActivity("idle");
   }
 
-  private budgetFor(tool: string, args: Record<string, unknown>, moving: boolean): number {
+  /** `holdMs`: how long a command that does not move may block by its own declared bound (a speaker saying a text). */
+  private budgetFor(tool: string, args: Record<string, unknown>, moving: boolean, holdMs = 0): number {
     const t = this.cfg.timing;
     if (tool === "run_program") return this.limits().max_program_ms;
     if (moving) return this.limits().max_command_ms;
     if (tool === "wait_until" && typeof args.timeout_ms === "number") return args.timeout_ms;
     if (tool === "sample_device" && typeof args.duration_ms === "number") return args.duration_ms;
-    return t.callTimeoutMs;
+    return t.callTimeoutMs + holdMs;
   }
 
   /** Every RobotTool: the relay checks state, then the runtime does the work. */
@@ -1052,6 +1053,7 @@ export class RobotDO extends DurableObject<Env> {
     this.requireControl(r);
     let sent: Record<string, unknown> = args;
     let program: store.StoredProgram | undefined;
+    let holdMs = 0;
     if (tool === "reset_fault") {
       if (this.s.activity !== "fault")
         throw new ToolFail("illegal_state", `reset_fault is only valid in fault; activity is ${this.s.activity}`);
@@ -1077,6 +1079,7 @@ export class RobotDO extends DurableObject<Env> {
           `${bad} (params of ${device.id} ${command.name}; describe_device shows the schema)`,
         );
       call.moving = command.moves;
+      if (!command.moves && command.bound.kind === "ms") holdMs = command.bound.max;
       if (call.moving) this.requireIdle();
       else if (this.s.activity === "fault") this.requireIdle();
     } else {
@@ -1109,7 +1112,7 @@ export class RobotDO extends DurableObject<Env> {
       this.requireIdle();
     }
 
-    const budget = this.budgetFor(tool, args, call.moving);
+    const budget = this.budgetFor(tool, args, call.moving, holdMs);
     if (call.moving) {
       this.setActivity(tool === "run_program" ? "running_program" : "acting");
       this.actingCall = call.id;

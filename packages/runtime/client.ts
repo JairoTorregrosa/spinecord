@@ -196,10 +196,13 @@ export function createRuntimeClient(o: RuntimeClientOptions): RuntimeClient {
     },
     async command(device, command, args, signal) {
       const t0 = clock.now();
+      // A command that does not move but declares a time bound (a speaker saying a text) may block that long.
+      const spec = devices.find((d) => d.id === device)?.commands.find((c) => c.name === command);
+      const holdMs = spec && !spec.moves && spec.bound.kind === "ms" ? spec.bound.max : 0;
       const res = await organRequest(
         organ_id,
         { op: "command", device, command, args },
-        o.organ_command_timeout_ms ?? rt.profile().limits.max_command_ms + 2000,
+        Math.max(o.organ_command_timeout_ms ?? rt.profile().limits.max_command_ms + 2000, holdMs + 2000),
         signal,
       );
       if (res === "aborted")

@@ -32,7 +32,9 @@ export interface CommandSpec {
   name: string;
   description: string;
   params: JsonSchema; // JSON Schema (object). Validated by the relay before dispatch.
-  bound: { kind: BoundKind; params?: string[]; max: number }; // every listed param is capped at max; relay rejects manifests without a bound
+  // every listed param is capped at max; relay rejects manifests without a bound. A command with moves false and
+  // kind "ms" may block up to max (a speaker's speak): runtime and relay wait that long for its answer.
+  bound: { kind: BoundKind; params?: string[]; max: number };
   moves: boolean; // true → subject to activity FSM, control, stop, rate limit
 }
 export interface DeviceSpec {

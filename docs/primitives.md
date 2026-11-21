@@ -23,7 +23,7 @@ Legend: ✅ shipped · 🟡 partial · ⬜ missing. **Where** = the package that
 |---|---|---|---|
 | Drive, turn, arc (any differential drivetrain) | `drive` `turn` `arc` | ✅ | runtime |
 | Any bounded device command | `command_device` | ✅ | runtime |
-| Speak text | `speak{text, voice?, rate?}` on `speaker` when the device can | ⬜ | driver-ev3dev · device page · sim-world |
+| Speak text | `speak{text, voice?, rate_wpm?}` on `speaker` when the device can (CONTRACT §2.3) | 🟡 ev3dev (`espeak`) and twin (`sim.speaker`, records `last_spoken`); device page missing | driver-ev3dev · sim-world · device page |
 | Play a sound file | `play{name}` on `speaker` | ⬜ | drivers |
 | Show text and simple images | `text{lines}` `image{png}` on `display` | 🟡 stock only | driver-ev3dev |
 | Lights | `led.set{pattern}` | ✅ | drivers |
