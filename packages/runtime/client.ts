@@ -67,6 +67,16 @@ export interface RuntimeClient {
   announceDevices(): Promise<void>; // re-scan local providers and send {t:"devices"}
 }
 
+/** Tools that change nothing: repeating one after a deadline abort is safe. Every other tool may have acted. */
+const READ_TOOLS: readonly string[] = [
+  "describe_robot",
+  "describe_device",
+  "read_device",
+  "read_all",
+  "sample_device",
+  "wait_until",
+];
+
 interface Pending {
   organ_id: string;
   resolve: (m: Extract<RelayToRuntime, { t: "organ_res" }>) => void;
@@ -87,6 +97,8 @@ export function createRuntimeClient(o: RuntimeClientOptions): RuntimeClient {
   let userClosed = false;
   let lastHb = 0;
   let hbLost = false;
+  /** the relay's last heartbeat: its own `ts` and when it arrived here; echoed so the relay can measure the round trip */
+  let relayHb: { ts: number; at: number } | undefined;
   const organStopMs = o.organ_stop_timeout_ms ?? 800;
   let loop = new AbortController();
   let reqSeq = 0;
@@ -240,7 +252,9 @@ export function createRuntimeClient(o: RuntimeClientOptions): RuntimeClient {
     calls.set(m.call_id, ctl);
     const timer = new AbortController();
     let timedOut = false;
-    // deadline_ms is a duration; an epoch timestamp is accepted too.
+    // deadline_ms is a duration; an epoch timestamp is accepted too. It is the relay's backstop (the tool's budget
+    // plus a margin): the runtime's own limits end a call first and answer with data. A call that still reaches it
+    // is aborted and answered as an error; if it may have acted, repeating it is not safe, so it is not retryable.
     const budget = m.deadline_ms > 1e11 ? m.deadline_ms - clock.now() : m.deadline_ms;
     if (budget > 0)
       void clock.sleep(budget, timer.signal).then(() => {
@@ -259,8 +273,8 @@ export function createRuntimeClient(o: RuntimeClientOptions): RuntimeClient {
             ok: false,
             error: {
               code: "timeout",
-              message: `${m.tool} exceeded its deadline of ${Math.round(budget)} ms and was aborted. Partial result: ${JSON.stringify(r.data).slice(0, 600)}`,
-              retryable: true,
+              message: `${m.tool} exceeded its deadline of ${Math.round(budget)} ms and was aborted.${READ_TOOLS.includes(m.tool) ? "" : " It may have acted: read the robot before acting again."} Partial result: ${JSON.stringify(r.data).slice(0, 600)}`,
+              retryable: READ_TOOLS.includes(m.tool),
             },
           }
         : { t: "result", call_id: m.call_id, ok: true, data: r.data, ...(r.image ? { image: r.image } : {}) };
@@ -305,6 +319,7 @@ export function createRuntimeClient(o: RuntimeClientOptions): RuntimeClient {
         if (state === "handshaking") to("online", `session ${m.session_id}`);
         return;
       case "hb":
+        if (typeof m.ts === "number") relayHb = { ts: m.ts, at: clock.now() };
         return;
       case "call":
         void runCall(m);
@@ -373,7 +388,12 @@ export function createRuntimeClient(o: RuntimeClientOptions): RuntimeClient {
     while (mine === gen && !signal.aborted) {
       await clock.sleep(hbMs, signal);
       if (mine !== gen || signal.aborted) return;
-      send({ t: "hb", ts: clock.now(), ...(batteryLow === undefined ? {} : { battery_low: batteryLow }) });
+      send({
+        t: "hb",
+        ts: clock.now(),
+        ...(batteryLow === undefined ? {} : { battery_low: batteryLow }),
+        ...(relayHb ? { echo: { ts: relayHb.ts, held_ms: Math.round(clock.now() - relayHb.at) } } : {}),
+      });
       refreshBattery();
       if (!hbLost && clock.now() - lastHb >= hbTimeout) {
         hbLost = true;
@@ -414,6 +434,7 @@ export function createRuntimeClient(o: RuntimeClientOptions): RuntimeClient {
     const mine = ++gen;
     loop = new AbortController();
     hbLost = false;
+    relayHb = undefined;
     // The relay routes by the robot_id query parameter (/ws/robot?robot_id=<id>).
     const robotId = o.robot_id ?? rt.profile().id;
     const url = /[?&]robot_id=/.test(o.url)

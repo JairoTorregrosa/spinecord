@@ -1,17 +1,22 @@
 // Principals and tunables. PRINCIPALS is a secret holding only SHA-256 hashes of tokens.
 // Missing or malformed config throws ConfigError: every request then answers 503 `misconfigured` (fail loud).
 
-export type Role = "user" | "admin";
+/** People (and their models) call tools and the HTTP API. */
+export type ToolRole = "user" | "admin";
+/** Machines open sockets: "runtime" is a robot's runtime (/ws/robot), "organ" an attached provider (/ws/organ). */
+export type SocketRole = "runtime" | "organ";
+export type Role = ToolRole | SocketRole;
 export interface Principal {
   principal_id: string;
   role: Role;
   token_sha256: string;
   robot_ids: string[];
 }
+export type ToolPrincipal = Principal & { role: ToolRole };
 /** Who is calling, without the secret. */
 export interface Caller {
   id: string;
-  role: Role;
+  role: ToolRole;
 }
 export interface Timing {
   hbIntervalMs: number;
@@ -34,8 +39,9 @@ export class ConfigError extends Error {}
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const SHA = /^[0-9a-f]{64}$/;
+const ROLES: readonly Role[] = ["user", "admin", "runtime", "organ"];
 const SHAPE =
-  'PRINCIPALS must be a JSON array: [{"principal_id","role":"user"|"admin","token_sha256":<64 hex>,"robot_ids":[...]}]';
+  'PRINCIPALS must be a JSON array: [{"principal_id","role":"user"|"admin"|"runtime"|"organ","token_sha256":<64 hex>,"robot_ids":[...]}]';
 
 export async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -97,13 +103,18 @@ function parse(env: Record<string, unknown>): Config {
       throw new ConfigError(`${where}: principal_id is missing or does not match ${ID}`);
     if (principals.some((q) => q.principal_id === p.principal_id))
       throw new ConfigError(`${where}: duplicate principal_id "${p.principal_id}"`);
-    if (p.role !== "user" && p.role !== "admin")
-      throw new ConfigError(`${where} (${p.principal_id}): role must be "user" or "admin"`);
+    if (!ROLES.includes(p.role as Role))
+      throw new ConfigError(`${where} (${p.principal_id}): role must be one of ${ROLES.join(", ")}`);
+    const machine = p.role === "runtime" || p.role === "organ";
     if (typeof p.token_sha256 !== "string" || !SHA.test(p.token_sha256))
       throw new ConfigError(`${where} (${p.principal_id}): token_sha256 must be 64 lowercase hex characters`);
     if (principals.some((q) => q.token_sha256 === p.token_sha256))
       throw new ConfigError(`${where} (${p.principal_id}): its token hash is already used by another principal`);
     if (!Array.isArray(p.robot_ids)) throw new ConfigError(`${where} (${p.principal_id}): robot_ids must be an array`);
+    if (machine && p.robot_ids.length === 0)
+      throw new ConfigError(
+        `${where} (${p.principal_id}): a ${p.role} credential must name the robots it is bound to in robot_ids`,
+      );
     for (const r of p.robot_ids) {
       if (r === "*") {
         if (p.role !== "admin" || p.robot_ids.length !== 1)
@@ -114,7 +125,7 @@ function parse(env: Record<string, unknown>): Config {
     }
     principals.push({
       principal_id: p.principal_id,
-      role: p.role,
+      role: p.role as Role,
       token_sha256: p.token_sha256,
       robot_ids: [...p.robot_ids],
     });
@@ -145,6 +156,19 @@ function parse(env: Record<string, unknown>): Config {
 
 export const findPrincipal = (cfg: Config, id: string): Principal | undefined =>
   cfg.principals.find((p) => p.principal_id === id);
+/** Tools and the HTTP API are for people; a runtime or organ credential only opens its socket. */
+export const isToolPrincipal = (p: Principal): p is ToolPrincipal => p.role === "user" || p.role === "admin";
+/**
+ * May this token open the socket of `role` for this robot? Null when it may, else why not (a close reason).
+ * Only a credential of that role, bound to the robot by name, may: a user or admin token never becomes a robot.
+ */
+export function socketRefusal(p: Principal | null, role: SocketRole, robot_id: string): string | null {
+  if (p === null) return "unauthorized: token is not valid for this robot";
+  if (p.role !== role)
+    return `unauthorized: a ${p.role} token cannot connect as ${role === "runtime" ? "a robot runtime" : "an organ"}; use a "${role}" credential`;
+  if (!p.robot_ids.includes(robot_id)) return "unauthorized: token is not valid for this robot";
+  return null;
+}
 /** May this principal see (read, stop) this robot? */
 export const canSee = (p: Principal, robot_id: string): boolean =>
   p.robot_ids.includes(robot_id) || p.robot_ids.includes("*");
@@ -152,4 +176,4 @@ export const canSee = (p: Principal, robot_id: string): boolean =>
 export const isOwner = (p: Principal, robot_id: string): boolean => p.robot_ids.includes(robot_id);
 export const visibleRobots = (cfg: Config, p: Principal): string[] => cfg.robots.filter((r) => canSee(p, r));
 export const ownersOf = (cfg: Config, robot_id: string): string[] =>
-  cfg.principals.filter((p) => isOwner(p, robot_id)).map((p) => p.principal_id);
+  cfg.principals.filter((p) => isToolPrincipal(p) && isOwner(p, robot_id)).map((p) => p.principal_id);

@@ -58,7 +58,7 @@ bun run e2e     # relay + twin runner + MCP client on this machine, end to end (
 Run a twin against a relay (local relay: [`packages/server/scripts/dev.md`](packages/server/scripts/dev.md)); `--view` serves a live picture of it:
 
 ```sh
-bun apps/twin-runner/main.ts --server ws://127.0.0.1:8787/ws/robot --token-file <file with the token> --profile deployments/example/robots/r1.json --world packages/sim-world/examples/line-oval.json --view
+bun apps/twin-runner/main.ts --server ws://127.0.0.1:8787/ws/robot --token-file <file with the runtime token> --profile deployments/example/robots/r1.json --world packages/sim-world/examples/line-oval.json --view
 ```
 
 `bun install` also installs the git hooks (lefthook: format, lint and gitleaks on staged files).

@@ -3,7 +3,7 @@ export type { LocalRuntime, RuntimeOptions, ProgramResult, ProgramStep } from ".
 export { createRuntimeClient, CLIENT_TRANSITIONS, HEARTBEAT_MS, HEARTBEAT_TIMEOUT_MS } from "./client";
 export type { RuntimeClient, RuntimeClientOptions, ClientState, WebSocketLike } from "./client";
 export { compileCondition, makeEvaluator } from "./conditions";
-export { validateSchema } from "./schema";
+export { validateSchema } from "../protocol/schema";
 export { realClock, FakeClock } from "./clock";
 export type { Clock } from "./clock";
 export { MockProvider } from "./mock";

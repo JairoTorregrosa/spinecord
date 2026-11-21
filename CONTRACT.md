@@ -7,7 +7,7 @@ Sources of truth, in this order: this file → `packages/protocol/types.ts` (typ
 ## 0. Principles
 
 1. **Generic primitives, no use cases.** A robot is a set of devices. A device self-describes its channels (what can be read) and commands (what it can do). The tool set is fixed; extending the robot means adding a device manifest, never a tool or a relay change.
-2. **Bounded by construction.** Every command declares a bound (`degrees`, `ms` or `instant`) with a max. The relay rejects device manifests without one and validates args against the manifest; the runtime clamps args to the robot's limits. Clamping is reported, never hidden.
+2. **Bounded by construction.** Every command declares a bound (`degrees`, `ms` or `instant`) with a max. The relay rejects device manifests without one and checks the **shape** of args against the manifest (required fields, types, enums, unknown fields); sizes are the runtime's: it clamps args to the robot's limits, chunks what exceeds one operation, then validates what it will really send against the full schema. `command_device` and `drive` therefore clamp alike, on a direct call and inside a program. Clamping is reported, never hidden.
 3. **Explicit state machines** (§1). Illegal transitions return `illegal_state` naming the current state.
 4. **Every result carries robot state and `next`.** Errors are typed (§7), never disguised as data.
 5. **Idempotent mutations.** `request_id` on every mutating tool; a retry returns the stored result.
@@ -15,13 +15,13 @@ Sources of truth, in this order: this file → `packages/protocol/types.ts` (typ
 7. **Fast loops live next to the hardware.** The runtime (§4) executes `until` conditions and programs locally; the relay only dispatches.
 8. **Safety, honestly stated.** `stop` preempts everything. If the relay dies, the runtime stops the motors after 3 s without heartbeat. If the runtime dies, the guarantee depends on the driver: stock EV3 firmware has no watchdog, so every motion operation is limited by **time on the brick** (≤ 250 ms, time-based opcodes, never degree-based), and the robot overruns at most one chunk even against a blocked wheel. A provider whose device runs its own watchdog (ev3dev bridge: brakes after 1 s of silence) may declare a longer per-operation time bound; the runtime chunks to each command's declared bound, using short chunks only while an `until` condition must be checked; then it also ends every operation itself at ≤ 250 ms of motion by aborting it, so a slow motor or a long declared bound never delays the check.
 9. **Reads have no side effects.** A read never changes a device. Channels needing a sensor mode switch are read only when named explicitly while idle (§2.2).
-10. **One owner per rule.** Motion limits: `profile.limits` only. Chunking: the runtime only. Program and condition validation: `packages/protocol/validate.ts` only. Profile identity: `profileHash()`.
+10. **One owner per rule.** Motion limits: `profile.limits` only. Chunking: the runtime only. Program and condition validation: `packages/protocol/validate.ts` only. JSON Schema validation: `packages/protocol/schema.ts` only (`mode: "shape" | "full"`). Time limits of a call: the runtime only; the relay's deadline is a backstop behind them (§8). Profile identity: `profileHash()`.
 
 ## 1. State machines
 
 Transition tables are exported from `types.ts` (`*_TRANSITIONS`). Implementations assert against them.
 
-- **RobotLink** `offline → handshaking → online`; `online → offline` on 3 s without heartbeat or socket close (in-flight call → `failed robot_offline`); a new hello for the same robot replaces the old socket.
+- **RobotLink** `offline → handshaking → online`; `online → offline` on 3 s without heartbeat or socket close (in-flight call → `failed robot_offline`); a new hello for the same robot replaces the old socket, and only a `runtime` credential bound to that robot is accepted as one (§10): a user or admin token is refused and replaces nothing.
 - **RobotActivity** `idle | acting | stopping | running_program | fault`. Moving tools need `idle`; `stop {stop_id}` → `stopping` → `idle` when the runtime answers `stopped {stop_id, motors_stopped:true}` (verified = every motor reads speed 0), else `fault`. Fault triggers: stop unverified within the runtime's announced `stop_worst_ms` + 500 ms, 3 consecutive `stalled`, a battery device reporting `low` (threshold belongs to the driver config), runtime-reported error. Only `stop` and `reset_fault` act in `fault`. Read tools work in every online state.
 - **Control** `owner ↔ admin`, both transitions stop the robot first.
 - **Call** `received → rejected | deduplicated | queued → dispatched → completed | failed | timed_out | preempted`. One terminal state, logged once.
@@ -97,7 +97,7 @@ Generic recording of an attempt. Counters come from the call log; marks are free
 | illegal_state | no | names current state and allowed tools |
 | invalid_argument | no | names field, schema rule, allowed range |
 | fault | no | use reset_fault after inspecting |
-| timeout | yes | call exceeded its deadline; robot state included |
+| timeout | yes · dispatched moving calls: no | the call outlived the relay's deadline (its own budget plus a margin, §8) and was aborted; robot state included. A tool's own time limit is never this error: it ends the call with data (`reason: "timeout"`, `met: false`, `outcome: "timeout"`). A move that timed out may have partly happened and was stopped: read the robot before moving again; the same `request_id` returns the same result |
 | stop_unverified | no | robot is now in fault |
 | provider_stale | yes | organ not heard from in 3 s |
 | stale_image | yes | frame older than 1500 ms |
@@ -108,9 +108,11 @@ Generic recording of an attempt. Counters come from the call log; marks are free
 
 ## 8. Wire protocol
 
-Types in `types.ts`: `RuntimeToRelay`/`RelayToRuntime` at `/ws/robot`, `OrganToRelay`/`RelayToOrgan` at `/ws/organ`. Heartbeat every 1 s both ways. Relay forwards `organ_req` from a runtime to the organ and the answer back as `organ_res`; it pushes `organs` to the runtime when the organ set changes. Organ frames are held in memory only and never stored.
+Types in `types.ts`: `RuntimeToRelay`/`RelayToRuntime` at `/ws/robot`, `OrganToRelay`/`RelayToOrgan` at `/ws/organ`. Heartbeat every 1 s both ways; the runtime's carries `echo {ts, held_ms}` of the relay's last one, from which the relay measures the round trip. `hello.token` is a credential of role `runtime` (`/ws/robot`) or `organ` (`/ws/organ`) bound to that robot; anything else is closed with code 4001 and a reason starting with `unauthorized:`. `call.deadline_ms` is a backstop, never the limit: the tool's own budget (`max_command_ms` for moves, `max_program_ms`, `timeout_ms`, `duration_ms`) plus `max(DEADLINE_MARGIN_MS, 2 × round trip) + stop_worst_ms`, so the runtime's limit ends the call first and answers with data; the relay itself gives up one more such margin later. Relay forwards `organ_req` from a runtime to the organ and the answer back as `organ_res`; it pushes `organs` to the runtime when the organ set changes. Organ frames are held in memory only and never stored.
 
 ## 9. HTTP API (admin, bearer)
+
+Only an `admin` token; `/mcp` takes `user` and `admin` tokens. A `runtime` or `organ` credential gets `403 unauthorized` on both: it opens its socket and nothing else.
 
 `GET /health` (no auth) · `GET /api/robots` · `POST /api/robots/:id/stop` · `POST /api/stop-all` · `POST /api/robots/:id/control {to}` · `GET /api/calls?robot_id&since&limit` · `GET /api/episodes?robot_id` · `GET /api/programs` · `POST /api/programs/:name/:version/approve`. All JSON, all queryable by an agent.
 
@@ -118,4 +120,4 @@ Types in `types.ts`: `RuntimeToRelay`/`RelayToRuntime` at `/ws/robot`, `OrganToR
 
 - **Durable Object per robot**: link, activity, control, episode, in-flight call, idempotency cache (10 min), organ registry.
 - **D1**: `robots(id, owner_principal, backend, profile_json, devices_json, updated_at)` · `calls(id, robot_id, tool, request_id, state, code, ms, episode_id, created_at)` · `episodes(id, robot_id, label, tags_json, state, started_at, ended_at, outcome, metrics_json)` · `episode_marks(id, episode_id, kind, note, at)` · `programs(name, version, author, description, body_json, success_json, requires_json, pass_rate, state, success_rate, created_at, PK(name,version))` · `program_runs(id, name, version, robot_id, backend, outcome, ms, created_at)`.
-- **Config secret** `PRINCIPALS=[{principal_id, role: "user"|"admin", token_sha256, robot_ids[]}]` (admins may use `robot_ids: ["*"]`). Missing or malformed → every request 503 `misconfigured`. Tokens never logged. No personal data, no images stored.
+- **Config secret** `PRINCIPALS=[{principal_id, role: "user"|"admin"|"runtime"|"organ", token_sha256, robot_ids[]}]` (admins may use `robot_ids: ["*"]`). People and machines hold different credentials: `user`/`admin` call tools and never open a robot socket; `runtime` is the robot itself (`/ws/robot`) and `organ` an attached provider (`/ws/organ`), each bound to the robots it names (at least one, never `"*"`) and refused everywhere else. Whoever may operate a robot cannot impersonate it. Missing or malformed → every request 503 `misconfigured`. Tokens never logged. No personal data, no images stored.

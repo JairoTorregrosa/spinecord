@@ -1,4 +1,6 @@
 # Copy to .dev.vars (gitignored) for `wrangler dev`. Local-only example principals.
-# Tokens for these hashes: user-1 -> "local-user-token-0000", admin -> "local-admin-token-0000".
+# Tokens for these hashes: user-1 -> "local-user-token-0000", admin -> "local-admin-token-0000",
+# r1-runtime -> "local-runtime-token-0000" (what the robot page or twin sends in hello), r1-organs -> "local-organ-token-0000".
+# A user or admin token cannot connect as a robot; a runtime or organ credential cannot call tools.
 # Make your own: printf %s "<token>" | shasum -a 256
-PRINCIPALS=[{"principal_id":"user-1","role":"user","token_sha256":"cb8d4803297270b4a06fe132db781a0b67bef574b4daefeb93e58033ea097eaf","robot_ids":["r1","r1-sim"]},{"principal_id":"admin","role":"admin","token_sha256":"db5ce8cd5311885cd9809c64b09d0118a42e60cb160dc5301377b60c717743ee","robot_ids":["*"]}]
+PRINCIPALS=[{"principal_id":"user-1","role":"user","token_sha256":"cb8d4803297270b4a06fe132db781a0b67bef574b4daefeb93e58033ea097eaf","robot_ids":["r1","r1-sim"]},{"principal_id":"admin","role":"admin","token_sha256":"db5ce8cd5311885cd9809c64b09d0118a42e60cb160dc5301377b60c717743ee","robot_ids":["*"]},{"principal_id":"r1-runtime","role":"runtime","token_sha256":"9776b06e013cb0ccd20c1d69bfeb504a34ceb51b7a057bc7797646e9f8bf09b5","robot_ids":["r1","r1-sim"]},{"principal_id":"r1-organs","role":"organ","token_sha256":"a88c6c5d5e976a343402595b59b35a103eb7e9ac07b6e013f6f904a06e147da8","robot_ids":["r1","r1-sim"]}]

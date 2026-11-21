@@ -11,7 +11,7 @@ export const USAGE = `usage: bun apps/twin-runner/main.ts --server <ws url> --to
          [--robot-id <id>-sim]... [--seed <n>] [--view [--view-port <port>]]
 
   --server      relay WebSocket endpoint, e.g. ws://127.0.0.1:8787/ws/robot
-  --token-file  file holding the bearer token of a principal that may see the robot ids
+  --token-file  file holding the token of a "runtime" credential bound to the robot ids
   --profile     robot file: {pair: {left, right}, hardware: {...}, profile: RobotProfile} (deployments/example/robots/r1.json)
   --world       world file, schema spinecord/world@1 (packages/sim-world/examples/)
   --robot-id    twin to run, must end in -sim; repeat it to run several twins of the same robot.

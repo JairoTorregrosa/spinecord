@@ -17,12 +17,16 @@ Copy the example to `.dev.vars` (gitignored):
 bun -e "require('node:fs').copyFileSync('.dev.vars.example', '.dev.vars')"
 ```
 
-It defines two principals and two robots (`r1`, `r1-sim`):
+It defines four principals and two robots (`r1`, `r1-sim`):
 
 | principal | role  | token                    |
 | --------- | ----- | ------------------------ |
 | `user-1`  | user  | `local-user-token-0000`  |
 | `admin`   | admin | `local-admin-token-0000` |
+| `r1-runtime` | runtime | `local-runtime-token-0000` |
+| `r1-organs`  | organ   | `local-organ-token-0000`   |
+
+`user` and `admin` call tools; only `runtime` connects as the robot (`/ws/robot`) and only `organ` attaches a provider (`/ws/organ`).
 
 `PRINCIPALS` holds only SHA-256 hashes. To add a principal, make a token and its hash, then add an entry:
 
@@ -58,8 +62,8 @@ curl -H "Authorization: Bearer local-admin-token-0000" http://localhost:8787/api
 ## 5. Connect things
 
 - **MCP client**: Streamable HTTP at `http://localhost:8787/mcp`, header `Authorization: Bearer local-user-token-0000`.
-- **Runtime** (robot page or headless twin): WebSocket `ws://localhost:8787/ws/robot?robot_id=r1`, first frame `hello` with the token, `profile_hash` (`profileHash(profile)` from `packages/protocol/validate.ts`) and `stop_worst_ms` (CONTRACT.md §8). Without `?robot_id=` the worker reads it from `hello` and bridges the socket; with it the socket goes straight to the robot's Durable Object, which is the path to prefer.
-- **Twin**: `apps/twin-runner` is that headless runtime. Put the user token in a file outside the repo, then from the repo root: `bun apps/twin-runner/main.ts --server ws://localhost:8787/ws/robot --token-file <file> --profile deployments/example/robots/r1.json --world packages/sim-world/examples/line-oval.json` runs `r1-sim` (add `--view` to watch it). `bun run e2e` does all of this by itself, with the relay in Miniflare.
+- **Runtime** (robot page or headless twin): WebSocket `ws://localhost:8787/ws/robot?robot_id=r1`, first frame `hello` with the runtime token (`local-runtime-token-0000`; a user or admin token is refused), `profile_hash` (`profileHash(profile)` from `packages/protocol/validate.ts`) and `stop_worst_ms` (CONTRACT.md §8). Without `?robot_id=` the worker reads it from `hello` and bridges the socket; with it the socket goes straight to the robot's Durable Object, which is the path to prefer.
+- **Twin**: `apps/twin-runner` is that headless runtime. Put the runtime token (`local-runtime-token-0000`) in a file outside the repo, then from the repo root: `bun apps/twin-runner/main.ts --server ws://localhost:8787/ws/robot --token-file <file> --profile deployments/example/robots/r1.json --world packages/sim-world/examples/line-oval.json` runs `r1-sim` (add `--view` to watch it). `bun run e2e` does all of this by itself, with the relay in Miniflare.
 - **Organ**: `ws://localhost:8787/ws/organ?robot_id=r1`, same rule.
 
 ## 6. See what happened

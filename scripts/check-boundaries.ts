@@ -23,8 +23,10 @@ const FORBIDDEN: Record<string, string[]> = {
   "driver-ev3dev": ["driver-ev3", "sim-world", "sim-ev3", "runtime", "server"],
   "sim-world": ["driver-ev3", "driver-ev3dev", "sim-ev3", "runtime", "server"],
   "sim-ev3": ["driver-ev3dev", "runtime", "server"],
-  runtime: ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "server"],
-  server: ["runtime", "driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3"],
+  runtime: ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "server", "e2e"],
+  server: ["runtime", "driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "e2e"],
+  // e2e joins the real runtime to the real relay; it holds tests only and nothing imports it
+  e2e: ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3"],
 };
 
 function* walk(dir: string): Generator<string> {

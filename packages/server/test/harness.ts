@@ -12,7 +12,15 @@ if (!relay)
   );
 export const BASE: string = relay.url;
 const LOGS: string[] = relay.logs;
-export const TOKENS = { a: "token-user-a", b: "token-user-b", admin: "token-admin" } as const;
+/** a, b, admin call tools; rt / rtB are the runtimes of user-a's robots / of b1; organ attaches organs (setup.ts). */
+export const TOKENS = {
+  a: "token-user-a",
+  b: "token-user-b",
+  admin: "token-admin",
+  rt: "token-runtime",
+  rtB: "token-runtime-b",
+  organ: "token-organ",
+} as const;
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function until(what: string, cond: () => boolean | Promise<boolean>, ms = 3000): Promise<void> {
   const t0 = Date.now();
@@ -179,7 +187,7 @@ export const SIM_WORLD: DeviceSpec = {
 type CallFrame = { t: "call"; call_id: string; tool: string; args: any; deadline_ms: number };
 type Answer =
   | { ok: true; data: unknown; image?: unknown }
-  | { ok: false; error: { code: string; message: string } }
+  | { ok: false; error: { code: string; message: string; retryable?: boolean } }
   | "hang";
 
 /** Opens a WebSocket to the worker; resolves once the upgrade is accepted. */
@@ -238,7 +246,7 @@ export class FakeRuntime {
       t: "hello",
       v: 2,
       robot_id,
-      token: o.token ?? TOKENS.a,
+      token: o.token ?? TOKENS.rt,
       backend: o.backend ?? "ev3",
       profile,
       profile_hash: profileHash(profile),
@@ -334,7 +342,7 @@ export class FakeOrgan {
     robot_id: string,
     organ_id: string,
     devices: unknown[],
-    token: string = TOKENS.a,
+    token: string = TOKENS.organ,
   ): Promise<FakeOrgan> {
     const o = new FakeOrgan(await open(`/ws/organ?robot_id=${robot_id}`));
     o.ws.send(JSON.stringify({ t: "hello", v: 2, robot_id, token, organ_id, devices }));

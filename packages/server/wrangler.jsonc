@@ -37,7 +37,9 @@
     "HELLO_TIMEOUT_MS": "5000",
     // budget of a call with no bound of its own (describe, read, instant commands)
     "CALL_TIMEOUT_MS": "8000",
-    // added to a call's own budget (profile limits, wait/sample duration) before the relay gives up
+    // floor of the round-trip margin. A call's deadline at the runtime is its own budget (profile limits, wait/sample
+    // duration) + max(this, 2 x measured round trip) + the runtime's stop_worst_ms; the relay gives up one more such
+    // margin later. The runtime's own limits end a call first; these only catch a runtime that stopped answering.
     "DEADLINE_MARGIN_MS": "2000",
     // replaced at deploy time (wrangler deploy --var GIT_SHA:<sha>)
     "GIT_SHA": "dev",

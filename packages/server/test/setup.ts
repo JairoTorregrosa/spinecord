@@ -12,16 +12,15 @@ const verbose = process.env.RELAY_TEST_LOGS === "1";
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const many = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
 
-// Test principals (tokens in harness.ts).
+// Test principals (tokens in harness.ts). People and runtimes hold different credentials.
+const A_ROBOTS = [...many("a", 30), ...many("s", 10).map((s) => `${s}-sim`)];
 const PRINCIPALS = [
-  {
-    principal_id: "user-a",
-    role: "user",
-    token_sha256: sha("token-user-a"),
-    robot_ids: [...many("a", 30), ...many("s", 10).map((s) => `${s}-sim`)],
-  },
+  { principal_id: "user-a", role: "user", token_sha256: sha("token-user-a"), robot_ids: A_ROBOTS },
   { principal_id: "user-b", role: "user", token_sha256: sha("token-user-b"), robot_ids: ["b1"] },
   { principal_id: "root", role: "admin", token_sha256: sha("token-admin"), robot_ids: ["*"] },
+  { principal_id: "rt-a", role: "runtime", token_sha256: sha("token-runtime"), robot_ids: A_ROBOTS },
+  { principal_id: "rt-b", role: "runtime", token_sha256: sha("token-runtime-b"), robot_ids: ["b1"] },
+  { principal_id: "organs", role: "organ", token_sha256: sha("token-organ"), robot_ids: [...A_ROBOTS, "b1"] },
 ];
 
 // wrangler.jsonc is the source of truth for dates, flags and default vars

@@ -165,7 +165,7 @@ describe("verify_program", () => {
     ]);
     expect(rt.calls[0]!.args).toEqual({ device: "sim.world", command: "reset", args: {} });
     expect(rt.calls[1]!.args).toMatchObject({ name: "line_follow", version: 1, body: BODY });
-    expect(rt.calls[1]!.deadline_ms).toBe(1000); // the profile's max_program_ms
+    expect(rt.calls[1]!.deadline_ms).toBe(1300); // the profile's max_program_ms + margin 200 + stop_worst_ms 100
     expect(await state("line_follow")).toBe("verified");
     const got = await tool(TOKENS.a, "get_program", { name: "line_follow" });
     expect(got.envelope).toMatchObject({
@@ -336,7 +336,7 @@ describe("run_program", () => {
     expect(hw.calls[0]).toMatchObject({
       tool: "run_program",
       args: { name: "park_it", version: 1, body: BODY },
-      deadline_ms: 1000,
+      deadline_ms: 1300,
     });
     const runs = await sql(
       "SELECT robot_id, backend, outcome FROM program_runs WHERE name='park_it' AND robot_id='a2'",

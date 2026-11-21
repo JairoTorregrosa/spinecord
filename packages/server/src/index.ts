@@ -8,7 +8,7 @@
 // One Durable Object per robot_id (src/robot-do.ts) owns sockets, state machines, queue and idempotency.
 
 import { httpError, json, serveApi } from "./api.ts";
-import { type Config, ConfigError, loadConfig } from "./config.ts";
+import { type Config, ConfigError, isToolPrincipal, loadConfig } from "./config.ts";
 import { log } from "./log.ts";
 import { serveMcp } from "./mcp.ts";
 import { CLOSE } from "./robot-do.ts";
@@ -134,6 +134,14 @@ export default {
       return httpError(401, "unauthorized", "missing or invalid token; send Authorization: Bearer <token>", {
         "WWW-Authenticate": 'Bearer realm="spinecord"',
       });
+    }
+    if (!isToolPrincipal(who)) {
+      log("http", { ok: false, code: "unauthorized", path: url.pathname, http_status: 403, trace_id });
+      return httpError(
+        403,
+        "unauthorized",
+        `this is a ${who.role} credential: it only opens ${who.role === "runtime" ? "/ws/robot" : "/ws/organ"} for its robots; tools and the HTTP API need a user or admin token`,
+      );
     }
     if (api) {
       if (who.role !== "admin") return httpError(403, "unauthorized", "the HTTP API is for admins");

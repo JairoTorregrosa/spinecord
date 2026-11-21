@@ -2,7 +2,7 @@
 
 import { TOOLS, type ToolDef } from "../../protocol/tools.ts";
 import type { Envelope, ErrorCode, ImagePayload, RobotStateView, ToolError } from "../../protocol/types.ts";
-import { assertSupported } from "./schema.ts";
+import { assertSupported } from "../../protocol/schema.ts";
 
 export const TOOL: ReadonlyMap<string, ToolDef> = new Map(TOOLS.map((t) => [t.name, t]));
 // fail at init if the catalog uses a schema keyword the validator would not enforce

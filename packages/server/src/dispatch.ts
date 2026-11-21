@@ -1,18 +1,18 @@
 // One entry for every tool call, shared by the MCP endpoint and the admin HTTP API.
 // Order: scope → input schema → robot visibility → the robot's Durable Object (or the library).
 
+import { firstViolation } from "../../protocol/schema.ts";
 import type { ErrorCode } from "../../protocol/types.ts";
-import { type Config, type Principal, canSee, isOwner, visibleRobots } from "./config.ts";
+import { type Config, type ToolPrincipal, canSee, isOwner, visibleRobots } from "./config.ts";
 import { type Out, TOOL, ToolFail, errOut, okOut, toolError } from "./envelope.ts";
 import { log } from "./log.ts";
 import { type InvokeReq, LIBRARY, type RobotDO } from "./robot-do.ts";
-import { validate } from "./schema.ts";
 import * as store from "./store.ts";
 
 export const robotStub = (env: Env, robot_id: string) =>
   env.ROBOT.get(env.ROBOT.idFromName(robot_id)) as unknown as RobotDO;
 
-export async function listRobots(env: Env, cfg: Config, who: Principal) {
+export async function listRobots(env: Env, cfg: Config, who: ToolPrincipal) {
   return Promise.all(
     visibleRobots(cfg, who).map(async (id) => {
       const s = await robotStub(env, id).status(id);
@@ -36,7 +36,7 @@ export async function listRobots(env: Env, cfg: Config, who: Principal) {
 export async function callTool(
   env: Env,
   cfg: Config,
-  who: Principal,
+  who: ToolPrincipal,
   name: string,
   rawArgs: unknown,
   trace_id: string,
@@ -87,7 +87,7 @@ export async function callTool(
   if (def.scope === "admin" && who.role !== "admin")
     return reject("unauthorized", `${name} is for admins; this token is a user token`);
 
-  const invalid = validate(def.input, args);
+  const invalid = firstViolation(def.input, args);
   const usesRobot = "robot_id" in def.input.properties;
   try {
     if (usesRobot) {
