@@ -54,6 +54,8 @@ for (const pkg of readdirSync(pkgs)) {
         );
         const spec = m?.[1] ?? m?.[2] ?? m?.[3];
         if (!spec) return;
+        if (spec.startsWith(".") && /(^|\/)apps\//.test(spec))
+          problems.push(`${rel}:${i + 1}: packages/${pkg} must not import an app (${spec})`);
         for (const bad of FORBIDDEN[pkg] ?? []) {
           if (
             new RegExp(`(^|/)(packages/)?${bad}(/|$)|^@[^/]+/${bad}$`).test(spec) &&

@@ -8,6 +8,7 @@ EV3 direct commands over any byte transport, and `Ev3Provider`, the contract `Pr
 | `transport.ts` | `Transport { send(bytes): Promise<Uint8Array> }` and `WebHIDTransport` (VID 0x0694, PID 0x0005).                         |
 | `link.ts`      | `Ev3Link`: one command at a time, always with reply, matched by counter, timeout rejects; urgent lane and hold for stop. |
 | `provider.ts`  | `Ev3Provider implements Provider`: ports to DeviceSpecs, reads, bounded commands, verified stop.                         |
+| `robot-file.ts` | `RobotFile {pair, hardware, profile}` and `parseRobotFile`: the robot file of a deployment, validated once for every app. |
 | `fake.ts`      | `FakeEV3`: a kinematic fake brick for unit tests (no physics).                                                           |
 
 Tests: `bun test` in this folder. Typecheck: `bunx tsc --noEmit -p .`
@@ -20,7 +21,7 @@ import { Ev3Provider, WebHIDTransport } from "@spinecord/ev3";
 const transport = await WebHIDTransport.request(); // needs a user gesture in Chrome
 const ev3 = new Ev3Provider(transport, {
   limits: profile.limits, // required: max_speed_pct, max_command_ms
-  hardware: deployment.ev3.hardware, // required: see below
+  hardware: robot.hardware, // required: see below (robot = parseRobotFile(json), robot-file.ts)
   pair: { left: "B", right: "C" }, // optional, this is the default
   roles: profile.roles, // optional, role -> device id
 });

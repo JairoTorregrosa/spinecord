@@ -4,8 +4,10 @@ A deployment is data only: principals, robot profiles, worlds, device manifests.
 
 | File | What |
 |---|---|
-| `robots/r1.json` | The robot `r1`: LEGO EV3 educator base (motor pair B+C, wheel 5.6 cm, axle 12 cm, `forward_sign` 1). `pair` and `hardware` configure the EV3 provider, `profile` is the contract's RobotProfile. Its twin `r1-sim` is built from the same file by `apps/twin-runner`. |
+| `robots/r1.json` | The robot `r1`: LEGO EV3 educator base (motor pair B+C, wheel 5.6 cm, axle 12 cm, `forward_sign` 1). `pair` and `hardware` configure the EV3 provider, `profile` is the contract's RobotProfile. Its twin `r1-sim` is built from the same file by `apps/twin-runner`, and `apps/robot-page` lists it in its profile picker. One shape and one validator for both: `parseRobotFile` in `packages/driver-ev3/robot-file.ts`. |
 | `principals.json` | The `PRINCIPALS` secret for local development: the same four principals (user, admin, runtime, organ) as `packages/server/.dev.vars.example` (token hashes only; the local tokens are in `packages/server/scripts/dev.md`). Never reuse them outside your machine. |
 | `world.pointer.json` | Which world the twin lives in: a path to a world file that ships with `sim-world`. |
 
 `bun run e2e` (repo root) runs this deployment end to end on your machine.
+
+The robot page lists `robots/*.json` as its profile picker (`bun apps/robot-page/build.ts --deployments <dir>`).

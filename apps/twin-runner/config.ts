@@ -2,9 +2,7 @@
 // and every failure names the flag or the field (fail loud: no defaults for a missing input).
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import type { Ev3Hardware } from "../../packages/driver-ev3/provider";
-import type { Limits, RobotProfile } from "../../packages/protocol/types";
-import type { MotorPort } from "../../packages/sim-ev3/ports";
+import { parseRobotFile, type RobotFile } from "../../packages/driver-ev3/robot-file";
 import { parseWorld } from "../../packages/sim-world/world";
 
 export const USAGE = `usage: bun apps/twin-runner/main.ts --server <ws url> --token-file <path> --profile <robot.json> --world <world.json>
@@ -19,12 +17,6 @@ export const USAGE = `usage: bun apps/twin-runner/main.ts --server <ws url> --to
   --seed        seed of the world's noise (integer, default 1)
   --view        serve the viewer for the running twins on http://127.0.0.1:<view-port> (default port 8765)`;
 
-/** The robot file: what a provider and a twin need beyond the contract's profile. */
-export interface RobotFile {
-  pair: { left: MotorPort; right: MotorPort };
-  hardware: Ev3Hardware;
-  profile: RobotProfile;
-}
 export interface RunnerConfig {
   server: string;
   token: string;
@@ -38,7 +30,6 @@ export interface RunnerConfig {
 }
 
 const ROBOT_ID = /^[a-z0-9][a-z0-9_-]{0,43}-sim$/;
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function readText(flag: string, path: string): string {
   try {
@@ -54,71 +45,6 @@ function readJson(flag: string, path: string): unknown {
   } catch (e) {
     throw new Error(`${flag}: ${path} is not valid JSON: ${(e as Error).message}`, { cause: e });
   }
-}
-
-/** Validates a robot file. `where` prefixes every message (the path it was read from). */
-export function parseRobotFile(json: unknown, where: string): RobotFile {
-  const fail = (field: string, why: string): never => {
-    throw new Error(`${where}: ${field} ${why}`);
-  };
-  const obj = (v: unknown, field: string): Record<string, unknown> => (isObj(v) ? v : fail(field, "must be an object"));
-  const positive = (v: unknown, field: string): number =>
-    typeof v === "number" && Number.isFinite(v) && v > 0
-      ? v
-      : fail(field, `must be a number > 0, got ${JSON.stringify(v)}`);
-  const text = (v: unknown, field: string): string =>
-    typeof v === "string" && v !== "" ? v : fail(field, `must be a non-empty string, got ${JSON.stringify(v)}`);
-  const port = (v: unknown, field: string): MotorPort =>
-    v === "A" || v === "B" || v === "C" || v === "D"
-      ? v
-      : fail(field, `must be a motor port A, B, C or D, got ${JSON.stringify(v)}`);
-
-  const root = obj(json, "the file");
-  const pairIn = obj(root.pair, "pair");
-  const pair = { left: port(pairIn.left, "pair.left"), right: port(pairIn.right, "pair.right") };
-  if (pair.left === pair.right) fail("pair", `needs two different ports, got ${pair.left} twice`);
-
-  const hw = obj(root.hardware, "hardware");
-  const hardware: Ev3Hardware = {
-    low_battery_v: positive(hw.low_battery_v, "hardware.low_battery_v"),
-    max_tone_ms: positive(hw.max_tone_ms, "hardware.max_tone_ms"),
-    tone_volume_pct: positive(hw.tone_volume_pct, "hardware.tone_volume_pct"),
-  };
-
-  const p = obj(root.profile, "profile");
-  const roles = obj(p.roles, "profile.roles");
-  for (const [role, device] of Object.entries(roles)) text(device, `profile.roles.${role}`);
-  const lim = obj(p.limits, "profile.limits");
-  const limits: Limits = {
-    max_speed_pct: positive(lim.max_speed_pct, "profile.limits.max_speed_pct"),
-    max_command_ms: positive(lim.max_command_ms, "profile.limits.max_command_ms"),
-    max_drive_cm: positive(lim.max_drive_cm, "profile.limits.max_drive_cm"),
-    max_turn_deg: positive(lim.max_turn_deg, "profile.limits.max_turn_deg"),
-    max_program_ms: positive(lim.max_program_ms, "profile.limits.max_program_ms"),
-  };
-  if (!Array.isArray(p.notes) || p.notes.some((n) => typeof n !== "string"))
-    fail("profile.notes", "must be an array of strings");
-  const profile: RobotProfile = {
-    id: text(p.id, "profile.id"),
-    roles: roles as Record<string, string>,
-    limits,
-    notes: p.notes as string[],
-  };
-  if (p.drivetrain !== undefined) {
-    const d = obj(p.drivetrain, "profile.drivetrain");
-    if (d.type !== "differential")
-      fail("profile.drivetrain.type", `must be "differential", got ${JSON.stringify(d.type)}`);
-    if (d.forward_sign !== 1 && d.forward_sign !== -1)
-      fail("profile.drivetrain.forward_sign", `must be 1 or -1, got ${JSON.stringify(d.forward_sign)}`);
-    profile.drivetrain = {
-      type: "differential",
-      pair_device: text(d.pair_device, "profile.drivetrain.pair_device"),
-      wheel_diameter_cm: positive(d.wheel_diameter_cm, "profile.drivetrain.wheel_diameter_cm"),
-      axle_track_cm: positive(d.axle_track_cm, "profile.drivetrain.axle_track_cm"),
-      forward_sign: d.forward_sign as 1 | -1,
-    };
-  }
-  return { pair, hardware, profile };
 }
 
 /** Reads the command line and every file it names. Throws with a message for the person at the terminal. */

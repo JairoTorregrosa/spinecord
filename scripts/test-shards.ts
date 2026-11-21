@@ -1,4 +1,4 @@
-// Runs the tests of every package, cross-platform: `bun run test`.
+// Runs the tests of every package and app, cross-platform: `bun run test`.
 //   bun scripts/test-shards.ts                  every test file
 //   SHARD=2/3 bun scripts/test-shards.ts        (or --shard 2/3) only the files of shard 2 of 3
 //   bun scripts/test-shards.ts --affected       only packages the diff can reach (scripts/affected.ts; --base <ref> or AFFECTED_BASE)
@@ -11,7 +11,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { affected, baseFromArgs, listPackages, root } from "./affected.ts";
+import { affected, baseFromArgs, listPackages, root, unitDir } from "./affected.ts";
 
 const TIMINGS = join(root, "test-timings.json");
 const argv = process.argv.slice(2);
@@ -46,9 +46,11 @@ function testFiles(packages: string[]): string[] {
   const out: string[] = [];
   for (const pkg of packages) {
     const glob = new Bun.Glob("**/*.{test,spec}.{ts,tsx,js,jsx,mjs,cjs}");
-    for (const file of glob.scanSync({ cwd: join(root, "packages", pkg) })) {
+    const dir = unitDir(pkg);
+    for (const file of glob.scanSync({ cwd: join(root, ...dir.split("/")) })) {
       const posix = file.split("\\").join("/");
-      if (!posix.split("/").includes("node_modules")) out.push(`packages/${pkg}/${posix}`);
+      const parts = posix.split("/");
+      if (!parts.includes("node_modules") && !parts.includes("dist")) out.push(`${dir}/${posix}`);
     }
   }
   return out.sort();
@@ -114,14 +116,14 @@ async function main(): Promise<number> {
   let failed = 0;
   try {
     for (const pkg of packages) {
-      const prefix = `packages/${pkg}/`;
+      const prefix = `${unitDir(pkg)}/`;
       const mine = files.filter((f) => f.startsWith(prefix)).map((f) => `./${f.slice(prefix.length)}`);
       if (mine.length === 0) continue;
       const report = join(tmp, `${pkg}.xml`);
       const t = Date.now();
       console.log(`\n> ${pkg}: bun test (${mine.length} file(s))`);
       const child = Bun.spawn([process.execPath, "test", ...mine, "--reporter=junit", `--reporter-outfile=${report}`], {
-        cwd: join(root, "packages", pkg),
+        cwd: join(root, ...unitDir(pkg).split("/")),
         stdin: "ignore",
         stdout: "inherit",
         stderr: "inherit",
