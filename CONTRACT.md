@@ -84,7 +84,7 @@ Generic recording of an attempt. Counters come from the call log; marks are free
 
 ## 7. Envelope and error codes
 
-`Envelope<T>` in types.ts. `isError: true` when `ok:false`. One `text` block with the JSON, plus one `image` block when an image channel was read.
+`Envelope<T>` in types.ts. `isError: true` when `ok:false`. Every result (success and error) carries the envelope as `structuredContent`, and every tool advertises its `outputSchema` (`ToolDef.output` in tools.ts: the envelope with that tool's `data` shape; object root, open objects, minimal `required`, so one schema accepts both outcomes). For clients without structured output, one `text` block repeats it: line 1 is a one-line summary, the last line is the envelope as single-line JSON. Plus one `image` block when an image channel was read. Clients that write code against the tools: `docs/code-mode.md`.
 
 | code | retryable | meaning |
 |---|---|---|

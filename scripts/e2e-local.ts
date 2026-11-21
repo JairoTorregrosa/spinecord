@@ -108,7 +108,8 @@ async function call<T = any>(
     row.ms = Math.round(performance.now() - t0);
     const content = res.content as { type: string; text?: string }[];
     check(Array.isArray(content) && content[0]?.type === "text", "content[0] is not a text block");
-    const env = JSON.parse(content[0].text!) as Envelope<T>;
+    check(typeof res.structuredContent === "object" && res.structuredContent !== null, "no structuredContent");
+    const env = res.structuredContent as unknown as Envelope<T>;
     check(typeof env.ok === "boolean", "envelope.ok is not a boolean");
     check(Array.isArray(env.next), "envelope.next is not an array");
     check((res.isError === true) === !env.ok, `isError is ${String(res.isError)} but envelope.ok is ${env.ok}`);
@@ -297,7 +298,7 @@ try {
   for (const t0 = Date.now(); ; await sleep(100)) {
     check(runnerExit === null, `twin-runner exited ${runnerExit} before ${ROBOT} came online`);
     const res = await client.callTool({ name: "list_robots", arguments: {} });
-    const env = JSON.parse((res.content as { text: string }[])[0]!.text) as Envelope<{ id: string; link: string }[]>;
+    const env = res.structuredContent as unknown as Envelope<{ id: string; link: string }[]>;
     if (env.ok && env.data.find((r) => r.id === ROBOT)?.link === "online") break;
     check(Date.now() - t0 < 20_000, `${ROBOT} is not online after 20 s`);
   }
