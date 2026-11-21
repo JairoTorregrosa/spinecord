@@ -2,6 +2,7 @@
 //   sim.world  (kind sim_world): ground truth (pose, collision, named points, line and trip meters), overhead
 //                                picture, load a world, put the robot somewhere.
 //   sim.camera (kind camera):    first-person picture from the robot's pose.
+//   sim.speaker (kind speaker):  speak{text}: makes no sound, records the text in the channel last_spoken.
 // Image channels answer Reading.image = {mime: "image/png", b64, age_ms: 0} with value null. The robot body itself (motors, sensors) is some other provider's business.
 import {
   RuntimeError,
@@ -37,6 +38,11 @@ export interface SimWorldProviderOptions {
   now?: () => number;
 }
 
+const DEVICE_IDS = "sim.world, sim.camera, sim.speaker";
+/** speak limits of the simulated speaker: the same shape a real text-to-speech speaker declares (CONTRACT §2.3). */
+export const SIM_SPEAK = { max_chars: 200, max_ms: 15000, rate_wpm: { min: 80, max: 300, default: 140 } } as const;
+const SPEAKER_CHANNELS = ["last_spoken", "spoken_count"];
+
 export class SimWorldProvider implements Provider {
   readonly id = "sim";
   readonly backend: BackendKind = "sim";
@@ -62,6 +68,9 @@ export class SimWorldProvider implements Provider {
   }
 
   private readonly changed = new Set<() => void>();
+  /** What sim.speaker said last ("" = nothing yet) and how many phrases since the last load_world or reset. */
+  private lastSpoken = "";
+  private spokenCount = 0;
 
   private get world(): World {
     return this.host.world;
@@ -104,7 +113,7 @@ export class SimWorldProvider implements Provider {
             name: "load_world",
             moves: true,
             bound: { kind: "instant", max: 0 },
-            description: `Replaces the world and puts the robot at that world's start pose; motors stop and tachos and sensors reset. "world" is one of: ${names.join(", ") || "(no named worlds registered)"}, or a whole world file as a JSON string (schema spinecord/world@1).`,
+            description: `Replaces the world and puts the robot at that world's start pose; motors stop, tachos and sensors reset, and sim.speaker forgets what it said. "world" is one of: ${names.join(", ") || "(no named worlds registered)"}, or a whole world file as a JSON string (schema spinecord/world@1).`,
             params: {
               type: "object",
               properties: { world: { type: "string" } },
@@ -117,7 +126,7 @@ export class SimWorldProvider implements Provider {
             moves: true,
             bound: { kind: "instant", max: 0 },
             description:
-              "Teleports the robot to x_cm, y_cm, heading_deg (all three optional: the default is the world's start pose) and re-zeroes the gyro. Fails if the robot would overlap a wall or obstacle.",
+              "Teleports the robot to x_cm, y_cm, heading_deg (all three optional: the default is the world's start pose), re-zeroes the gyro and clears what sim.speaker said. Fails if the robot would overlap a wall or obstacle.",
             params: {
               type: "object",
               properties: { x_cm: { type: "number" }, y_cm: { type: "number" }, heading_deg: { type: "number" } },
@@ -142,7 +151,88 @@ export class SimWorldProvider implements Provider {
         ],
         commands: [],
       },
+      {
+        id: "sim.speaker",
+        provider: this.id,
+        kind: "speaker",
+        roles: [],
+        description:
+          "Simulation only: a speaker that can say a text (speak). It makes no sound; it records what was said so a test or a program's success condition can check it.",
+        channels: [
+          {
+            name: "last_spoken",
+            type: "string",
+            description:
+              'The text of the last speak that completed, trimmed; "" when nothing was said since the last sim.world load_world or reset.',
+          },
+          {
+            name: "spoken_count",
+            type: "number",
+            description: "How many speak commands completed since the last sim.world load_world or reset.",
+          },
+        ],
+        commands: [
+          {
+            name: "speak",
+            moves: false,
+            bound: { kind: "ms", max: SIM_SPEAK.max_ms },
+            description: `Says the text. On the twin no audio is produced and the command returns at once instead of lasting as long as the speech: the text goes to last_spoken, and measured.estimated_ms is how long it would take at rate_wpm (a real speaker cuts a phrase at ${SIM_SPEAK.max_ms} ms). voice is recorded but not checked, because the voices a real speaker offers depend on its hardware.`,
+            params: {
+              type: "object",
+              properties: {
+                text: { type: "string", minLength: 1, maxLength: SIM_SPEAK.max_chars },
+                voice: { type: "string", minLength: 1, maxLength: 32 },
+                rate_wpm: {
+                  type: "number",
+                  minimum: SIM_SPEAK.rate_wpm.min,
+                  maximum: SIM_SPEAK.rate_wpm.max,
+                  default: SIM_SPEAK.rate_wpm.default,
+                },
+              },
+              required: ["text"],
+              additionalProperties: false,
+            },
+          },
+        ],
+      },
     ];
+  }
+
+  private speak(command: string, args: Record<string, Value>, signal: AbortSignal): CommandResult {
+    if (command !== "speak")
+      throw new RuntimeError("unknown_command", `sim.speaker has no command "${command}"; commands: speak`);
+    const extra = Object.keys(args).filter((k) => !["text", "voice", "rate_wpm"].includes(k));
+    if (extra.length)
+      throw new RuntimeError("invalid_argument", `speak takes text, voice, rate_wpm; unknown: ${extra.join(", ")}`);
+    const text = typeof args.text === "string" ? args.text.trim() : "";
+    if (!text) throw new RuntimeError("invalid_argument", `speak needs "text": a non-empty string`);
+    if (text.length > SIM_SPEAK.max_chars)
+      throw new RuntimeError(
+        "invalid_argument",
+        `text has ${text.length} characters, at most ${SIM_SPEAK.max_chars} fit in one phrase; split it`,
+      );
+    const voice = args.voice;
+    if (voice !== undefined && (typeof voice !== "string" || voice === ""))
+      throw new RuntimeError("invalid_argument", `voice must be a non-empty string, got ${JSON.stringify(voice)}`);
+    const asked = args.rate_wpm ?? SIM_SPEAK.rate_wpm.default;
+    if (typeof asked !== "number" || !Number.isFinite(asked))
+      throw new RuntimeError("invalid_argument", `rate_wpm must be a finite number, got ${JSON.stringify(asked)}`);
+    const rate = Math.max(SIM_SPEAK.rate_wpm.min, Math.min(SIM_SPEAK.rate_wpm.max, Math.round(asked)));
+    const clamped = rate !== asked;
+    const measured = { ...(voice === undefined ? {} : { voice }), rate_wpm: rate, chars: text.length };
+    if (signal.aborted)
+      return { requested: { ...args }, measured: { ...measured, spoken: false }, clamped, reason: "preempted", ms: 0 };
+    this.lastSpoken = text;
+    this.spokenCount++;
+    // espeak counts a word as 5 characters at its -s rate; good enough to tell a model how long a phrase is.
+    const estimated_ms = Math.min(SIM_SPEAK.max_ms, Math.round((text.length / 5 / rate) * 60000));
+    return {
+      requested: { ...args },
+      measured: { ...measured, spoken: true, estimated_ms },
+      clamped,
+      reason: clamped ? "clamped" : "completed",
+      ms: 0,
+    };
   }
 
   private pose(): number[] {
@@ -151,11 +241,19 @@ export class SimWorldProvider implements Provider {
   }
 
   async read(device: string, channels?: string[]): Promise<Reading[]> {
+    if (device === "sim.speaker") {
+      const ts = this.now();
+      return (channels ?? SPEAKER_CHANNELS).map((channel): Reading => {
+        if (!SPEAKER_CHANNELS.includes(channel))
+          throw new RuntimeError(
+            "unknown_channel",
+            `sim.speaker has no channel "${channel}"; channels: ${SPEAKER_CHANNELS.join(", ")}`,
+          );
+        return { device, channel, value: channel === "last_spoken" ? this.lastSpoken : this.spokenCount, ts };
+      });
+    }
     if (device !== "sim.world" && device !== "sim.camera")
-      throw new RuntimeError(
-        "unknown_device",
-        `provider sim has no device "${device}"; devices: sim.world, sim.camera`,
-      );
+      throw new RuntimeError("unknown_device", `provider sim has no device "${device}"; devices: ${DEVICE_IDS}`);
     this.host.tick(); // bring the physics up to now before looking
     const values = device === "sim.world" ? worldChannelSpecs(this.world).map((c) => c.name) : [];
     const wanted = channels ?? values; // omitted -> every non-image channel
@@ -186,11 +284,9 @@ export class SimWorldProvider implements Provider {
   ): Promise<CommandResult> {
     if (device === "sim.camera")
       throw new RuntimeError("unknown_command", `sim.camera has no commands; read its "frame" channel`);
+    if (device === "sim.speaker") return this.speak(command, args, signal);
     if (device !== "sim.world")
-      throw new RuntimeError(
-        "unknown_device",
-        `provider sim has no device "${device}"; devices: sim.world, sim.camera`,
-      );
+      throw new RuntimeError("unknown_device", `provider sim has no device "${device}"; devices: ${DEVICE_IDS}`);
     if (command !== "load_world" && command !== "reset")
       throw new RuntimeError("unknown_command", `sim.world has no command "${command}"; commands: load_world, reset`);
     const result = (reason: CommandResult["reason"]): CommandResult => ({
@@ -235,6 +331,7 @@ export class SimWorldProvider implements Provider {
       } catch (e) {
         throw new RuntimeError("invalid_argument", (e as Error).message);
       }
+      this.forgetSpeech();
       for (const cb of [...this.changed]) cb();
       return result("completed");
     }
@@ -262,7 +359,14 @@ export class SimWorldProvider implements Provider {
       );
     }
     this.world.setPose(pose);
+    this.forgetSpeech();
     return result("completed");
+  }
+
+  /** load_world and reset start a scene over, so what the speaker said before does not leak into the next trial. */
+  private forgetSpeech(): void {
+    this.lastSpoken = "";
+    this.spokenCount = 0;
   }
 
   /** This provider owns no actuator (the motors belong to the robot body's own provider). */

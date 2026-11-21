@@ -16,7 +16,7 @@ spec.loader.exec_module(bridge_mod)
 
 def run(positions, speed):
     bridge = bridge_mod.Bridge(sys.argv[2])
-    bridge.hello(1, {"config": {"bounds": {"max_speed_pct": 60, "max_op_ms": 250, "low_battery_v": 6.5, "max_tone_ms": 1000},
+    bridge.hello(1, {"config": {"bounds": {"max_speed_pct": 60, "max_op_ms": 250, "low_battery_v": 6.5, "max_tone_ms": 1000, "speech_volume_pct": 100},
                                 "pair": {"left": "B", "right": "C"}}})
     motor = bridge.motors["B"]
     for name in ("command", "position_sp"):

@@ -13,7 +13,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const many = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
 
 // Test principals (tokens in harness.ts). People and runtimes hold different credentials.
-const A_ROBOTS = [...many("a", 30), ...many("s", 10).map((s) => `${s}-sim`)];
+const A_ROBOTS = [...many("a", 31), ...many("s", 10).map((s) => `${s}-sim`)];
 const PRINCIPALS = [
   { principal_id: "user-a", role: "user", token_sha256: sha("token-user-a"), robot_ids: A_ROBOTS },
   { principal_id: "user-b", role: "user", token_sha256: sha("token-user-b"), robot_ids: ["b1"] },

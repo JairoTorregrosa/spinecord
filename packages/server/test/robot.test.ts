@@ -247,6 +247,32 @@ describe("activity", () => {
     await until("offline", async () => (await robot("b1")).link === "offline");
   });
 
+  it("a command that does not move gets its own declared time bound on top of the call timeout", async () => {
+    const rt = await FakeRuntime.connect("a31");
+    const say = (text: string) =>
+      tool(TOKENS.a, "command_device", {
+        robot_id: "a31",
+        device: "speaker",
+        command: "speak",
+        args: { text },
+        request_id: rid(),
+      });
+    // the runtime answers after 1100 ms: longer than the 800 ms call timeout + 200 ms margin, inside the 1500 ms bound
+    rt.answer = (c) => {
+      setTimeout(() => rt.send({ t: "result", call_id: c.call_id, ok: true, data: { reason: "completed" } }), 1100);
+      return "hang";
+    };
+    expect((await say("hola")).envelope).toMatchObject({ ok: true, data: { reason: "completed" } });
+    expect(rt.calls[0]!.deadline_ms).toBe(800 + 1500);
+    expect(rt.aborts).toEqual([]);
+    // an instant command keeps the plain call timeout
+    rt.answer = () => ({ ok: true, data: { reason: "completed" } });
+    await tool(TOKENS.a, "command_device", { robot_id: "a31", device: "speaker", command: "beep", request_id: rid() });
+    expect(rt.calls[1]!.deadline_ms).toBe(800);
+    expect((await say("x".repeat(201))).envelope).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+    rt.close();
+  });
+
   it("a call that outlives its deadline is aborted, the robot is stopped, and the call ends timed_out", async () => {
     const rt = await FakeRuntime.connect("a19");
     rt.answer = () => "hang";

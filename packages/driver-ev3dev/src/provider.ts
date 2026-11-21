@@ -62,9 +62,15 @@ export interface Ev3devHardware {
   low_battery_v: number;
   /** Longest speaker tone, ms. */
   max_tone_ms: number;
+  /** Loudness of `speak`, 1..100 (espeak amplitude; 100 is its loudest). `tone` and `beep` have no volume control. */
+  speech_volume_pct: number;
 }
 /** Documented example, NOT a default: a brick with the LEGO rechargeable battery. */
-export const EXAMPLE_EV3DEV_HARDWARE: Ev3devHardware = { low_battery_v: 6.5, max_tone_ms: 5000 };
+export const EXAMPLE_EV3DEV_HARDWARE: Ev3devHardware = {
+  low_battery_v: 6.5,
+  max_tone_ms: 5000,
+  speech_volume_pct: 100,
+};
 
 export type OutputPort = "A" | "B" | "C" | "D";
 export interface Ev3devProviderOptions {
@@ -130,7 +136,17 @@ export interface BridgeInventory {
     error?: string;
   }[];
   ports: { address: string; status: string }[];
-  capabilities: { battery: boolean; led: boolean; buttons: boolean; beep: boolean; display: boolean };
+  capabilities: { battery: boolean; led: boolean; buttons: boolean; beep: boolean; display: boolean; speak: boolean };
+  /** Text-to-speech found on the brick (`espeak` + `aplay`), or null. The limits are the bridge's. */
+  speech: {
+    voices: string[];
+    default_voice: string;
+    max_ms: number;
+    max_chars: number;
+    rate_wpm: { min: number; max: number; default: number };
+  } | null;
+  /** Why `speech` is null. */
+  no_speech: string | null;
 }
 
 const ERROR_CODES: readonly ErrorCode[] = [
@@ -374,11 +390,12 @@ export class Ev3devProvider implements Provider {
     }
     if (opts.limits.max_speed_pct > 100) fail("config.limits.max_speed_pct must be 1..100");
     if (!opts.hardware || typeof opts.hardware !== "object")
-      fail("config.hardware is required (low_battery_v, max_tone_ms); see EXAMPLE_EV3DEV_HARDWARE");
-    for (const k of ["low_battery_v", "max_tone_ms"] as const) {
+      fail("config.hardware is required (low_battery_v, max_tone_ms, speech_volume_pct); see EXAMPLE_EV3DEV_HARDWARE");
+    for (const k of ["low_battery_v", "max_tone_ms", "speech_volume_pct"] as const) {
       if (!positive(opts.hardware[k]))
         fail(`config.hardware.${k} is required and must be a number > 0, got ${JSON.stringify(opts.hardware[k])}`);
     }
+    if (opts.hardware.speech_volume_pct > 100) fail("config.hardware.speech_volume_pct must be 1..100");
     this.id = opts.id ?? "ev3";
     if (!/^[a-z0-9_-]+$/i.test(this.id)) fail(`id "${this.id}" must be letters, digits, _ or -`);
     this.roles = { ...opts.roles };
@@ -389,7 +406,11 @@ export class Ev3devProvider implements Provider {
         1,
         Math.floor(Math.min(MAX_MOTION_MS, opts.maxOpMs ?? MAX_MOTION_MS, opts.limits.max_command_ms)),
       ),
-      hw: { low_battery_v: opts.hardware.low_battery_v, max_tone_ms: Math.round(opts.hardware.max_tone_ms) },
+      hw: {
+        low_battery_v: opts.hardware.low_battery_v,
+        max_tone_ms: Math.round(opts.hardware.max_tone_ms),
+        speech_volume_pct: opts.hardware.speech_volume_pct,
+      },
       heartbeatMs: opts.heartbeatMs ?? 300,
       helloTimeoutMs: opts.helloTimeoutMs ?? 20000,
       requestTimeoutMs: opts.requestTimeoutMs ?? 2000,
@@ -487,6 +508,7 @@ export class Ev3devProvider implements Provider {
         max_op_ms: this.o.boundMs,
         low_battery_v: this.o.hw.low_battery_v,
         max_tone_ms: this.o.hw.max_tone_ms,
+        speech_volume_pct: this.o.hw.speech_volume_pct,
       },
       pair: this.o.pair,
     };
@@ -497,6 +519,11 @@ export class Ev3devProvider implements Provider {
         "ev3dev: the bridge's hello has no motors/sensors/unknown/capabilities; is the installed bridge older than this driver? Run installBridge().",
       );
     }
+    if (inv.speech === undefined)
+      throw err(
+        "misconfigured",
+        "ev3dev: the bridge's hello does not say whether the brick can speak; the installed bridge is older than this driver. Run installBridge().",
+      );
     if (inv.watchdog_ms !== BRICK_WATCHDOG_MS)
       throw err(
         "misconfigured",
@@ -832,12 +859,17 @@ export class Ev3devProvider implements Provider {
       );
     }
     const cap = inv.capabilities;
+    const speech = inv.speech;
     const beepMs = Math.min(200, o.hw.max_tone_ms);
     out.push(
       mk(
         "speaker",
         "speaker",
-        `The brick's speaker, through the brick's \`beep\` program; the volume is the brick's own setting.${cap.beep ? "" : missing("no `beep` program on its PATH")}`,
+        `The brick's speaker. tone and beep go through the brick's \`beep\` program at the brick's own volume.${cap.beep ? "" : missing("no `beep` program on its PATH")} ${
+          speech
+            ? "It can also say a text aloud (speak)."
+            : `It cannot say a text aloud: there is no speak command (${inv.no_speech ?? "no text-to-speech on the brick"}).`
+        }`,
         [],
         [
           {
@@ -860,6 +892,29 @@ export class Ev3devProvider implements Provider {
             params: obj({}),
             description: `Plays a ${beepMs} ms beep at 1000 Hz.`,
           },
+          ...(speech
+            ? [
+                {
+                  name: "speak",
+                  moves: false,
+                  bound: { kind: "ms" as const, max: speech.max_ms },
+                  params: obj(
+                    {
+                      text: { type: "string", minLength: 1, maxLength: speech.max_chars },
+                      voice: { type: "string", enum: [...speech.voices], default: speech.default_voice },
+                      rate_wpm: {
+                        type: "number",
+                        minimum: speech.rate_wpm.min,
+                        maximum: speech.rate_wpm.max,
+                        default: speech.rate_wpm.default,
+                      },
+                    },
+                    ["text"],
+                  ),
+                  description: `Says the text aloud with the brick's espeak synthesizer and returns when the speech has ended (measured.spoken true). Write the text in the language of the voice; voice is an espeak language code (default ${speech.default_voice}), rate_wpm is words per minute (default ${speech.rate_wpm.default}). One phrase at a time: a second speak while one is playing fails with busy. A phrase still playing after ${speech.max_ms} ms is cut (reason timeout, measured.spoken false); stop or aborting the call cuts the audio at once (reason preempted). Volume is fixed by the robot's configuration.`,
+                },
+              ]
+            : []),
         ],
       ),
     );
@@ -1035,7 +1090,13 @@ export class Ev3devProvider implements Provider {
     if (signal.aborted) return { requested: args, measured: {}, clamped: false, reason: "preempted", ms: 0 };
     const { id, reply } = this.request(
       { op: "command", device: local, command, args },
-      this.o.requestTimeoutMs + (cmd.moves ? this.o.boundMs : BRIDGE_STOP_VERIFY_MS),
+      // speak answers when the speech ends, so its reply may take the whole declared bound
+      this.o.requestTimeoutMs +
+        (cmd.moves
+          ? this.o.boundMs
+          : local === "speaker" && command === "speak"
+            ? cmd.bound.max
+            : BRIDGE_STOP_VERIFY_MS),
     );
     const abort = () => {
       try {

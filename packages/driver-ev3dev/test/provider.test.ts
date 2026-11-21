@@ -549,7 +549,7 @@ describe("fake brick", () => {
         op: "hello",
         id: 1,
         config: {
-          bounds: { max_speed_pct: 60, max_op_ms: 250, low_battery_v: 6.5, max_tone_ms: 1000 },
+          bounds: { max_speed_pct: 60, max_op_ms: 250, low_battery_v: 6.5, max_tone_ms: 1000, speech_volume_pct: 100 },
           pair: { left: "B", right: "C" },
         },
       }),

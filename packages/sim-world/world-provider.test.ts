@@ -45,13 +45,14 @@ const pngSize = (b64: string): [number, number] => {
 };
 
 describe("SimWorldProvider", () => {
-  test("announces sim.world and sim.camera with bounded commands and described channels", async () => {
+  test("announces sim.world, sim.camera and sim.speaker with bounded commands and described channels", async () => {
     const p = make();
     expect([p.id, p.backend]).toEqual(["sim", "sim"]);
     const devs = await p.devices();
     expect(devs.map((d) => [d.id, d.kind, d.provider])).toEqual([
       ["sim.world", "sim_world", "sim"],
       ["sim.camera", "camera", "sim"],
+      ["sim.speaker", "speaker", "sim"],
     ]);
     const world = devs[0]!;
     expect(world.channels.map((c) => [c.name, c.type])).toEqual([
@@ -213,6 +214,56 @@ describe("SimWorldProvider", () => {
     expect(await code(p.command("sim.world", "explode", {}, idle))).toBe("unknown_command");
     expect(await code(p.command("sim.camera", "zoom", {}, idle))).toBe("unknown_command");
     expect(await code(p.command("sim.arm", "reset", {}, idle))).toBe("unknown_device");
+    expect(await code(p.read("sim.speaker", ["volume"]))).toBe("unknown_channel");
+    expect(await code(p.command("sim.speaker", "tone", {}, idle))).toBe("unknown_command");
+  });
+  test("sim.speaker declares speak and records what was said in last_spoken", async () => {
+    const p = make();
+    const speaker = (await p.devices()).find((d) => d.id === "sim.speaker")!;
+    expect(speaker.channels.map((c) => [c.name, c.type])).toEqual([
+      ["last_spoken", "string"],
+      ["spoken_count", "number"],
+    ]);
+    expect(speaker.commands).toHaveLength(1);
+    expect(speaker.commands[0]).toMatchObject({
+      name: "speak",
+      moves: false,
+      bound: { kind: "ms", max: 15000 },
+      params: {
+        required: ["text"],
+        properties: { text: { type: "string", maxLength: 200 }, rate_wpm: { minimum: 80, maximum: 300 } },
+      },
+    });
+    const said = async () => (await p.read("sim.speaker")).map((r) => r.value);
+    expect(await said()).toEqual(["", 0]);
+
+    const r = await p.command("sim.speaker", "speak", { text: "  Hola, tengo hambre ", voice: "es-la" }, idle);
+    expect(r).toMatchObject({
+      reason: "completed",
+      clamped: false,
+      measured: { voice: "es-la", rate_wpm: 140, chars: 18, spoken: true, estimated_ms: 1543 },
+    });
+    expect(await said()).toEqual(["Hola, tengo hambre", 1]);
+    const fast = await p.command("sim.speaker", "speak", { text: "again", rate_wpm: 1000 }, idle);
+    expect(fast).toMatchObject({ reason: "clamped", clamped: true, measured: { rate_wpm: 300 } });
+    expect(await p.read("sim.speaker", ["last_spoken"])).toEqual([
+      { device: "sim.speaker", channel: "last_spoken", value: "again", ts: 1234 },
+    ]);
+
+    for (const bad of [{}, { text: "   " }, { text: 7 }, { text: "x".repeat(201) }, { text: "a", pitch: 2 }])
+      expect(await code(p.command("sim.speaker", "speak", bad as never, idle))).toBe("invalid_argument");
+    const ac = new AbortController();
+    ac.abort();
+    const cut = await p.command("sim.speaker", "speak", { text: "never said" }, ac.signal);
+    expect(cut).toMatchObject({ reason: "preempted", measured: { spoken: false } });
+    expect(await said()).toEqual(["again", 2]);
+
+    // a new scene forgets it, so one trial's speech cannot satisfy the next trial's success condition
+    await p.command("sim.world", "reset", {}, idle);
+    expect(await said()).toEqual(["", 0]);
+    await p.command("sim.speaker", "speak", { text: "one" }, idle);
+    await p.command("sim.world", "load_world", { world: "walls-maze" }, idle);
+    expect(await said()).toEqual(["", 0]);
   });
   test("an aborted signal resolves preempted without acting; stop has nothing to brake", async () => {
     const host = new StillHost(quietWorld());

@@ -50,7 +50,7 @@ All angles and headings are counter-clockwise-positive seen from above, in every
 | ultrasonic | distance_cm | — |
 | gyro | angle_deg, rate_deg_s | reset{} |
 | infrared | proximity_pct, beacon_heading, beacon_distance_pct, remote_buttons | — |
-| speaker | — | tone{frequency_hz, duration_ms} · beep{} |
+| speaker | last_spoken, spoken_count (twin only) | tone{frequency_hz, duration_ms} · beep{} · speak{text (≤ 200 chars), voice?, rate_wpm?} (optional, see below) |
 | display | — | text{lines[]} · clear{} |
 | led | — | set{pattern} |
 | buttons | pressed (string[] of button names) | — |
@@ -62,6 +62,8 @@ All angles and headings are counter-clockwise-positive seen from above, in every
 | distance | distance_cm | — |
 | sim_world | pose, frame (overhead image) | load_world{world} · reset{x_cm, y_cm, heading_deg} |
 
+**Speech is a declared capability, not a tool.** A speaker lists `speak` only when its hardware can say a text (an ev3dev brick with `espeak` and `aplay`; stock EV3 firmware cannot). The model finds it with `describe_device`; a speaker without it answers `unknown_command`. `speak` has `moves: false` and bound `{kind: "ms", max}` where `max` is the longest a phrase may last (15000): it blocks until the speech has ended (`measured.spoken: true`), is cut at `max` (reason `timeout`), or is aborted — `stop` or aborting the call cuts the audio (reason `preempted`). `voice` is an enum of what the hardware offers, `rate_wpm` is words per minute. A command that does not move and declares an `ms` bound may block that long: the runtime and the relay wait for the bound instead of `max_command_ms` and the plain call timeout. The twin's `sim.speaker` makes no sound and returns at once: it records the text in `last_spoken` (and counts in `spoken_count`) so a test or a program's success condition can check what was said.
+
 A new kind needs nothing but its manifest. Done-check: a microcontroller announcing `{kind:"gas", channels:[{name:"ppm"...}]}` is readable through `read_device` with zero code changes.
 
 ## 3. Robot profile
@@ -72,7 +74,7 @@ A new kind needs nothing but its manifest. Done-check: a microcontroller announc
 
 Owns chunking: it splits every motion into operations no longer than the command's declared time bound (short ~200 ms chunks only when an `until` must be evaluated), coasting between chunks with `brake:false` only when the measured round trip is small next to the chunk time (otherwise every chunk brakes), braking on the last and evaluates `until` between them. Under `until` the runtime gives every operation a deadline of ≤ 250 ms from the moment it is sent and aborts the operation there (the abort travels the same link as the request, so the device has moved for that long when it lands): that abort is a chunk end, not a preemption, and the provider answers it like any abort (motion ended, `measured` so far). A remote organ is the exception: an abort does not travel through the relay, so its operations run to the bound its manifest declares, and an organ that moves under `until` must declare a short one. Providers execute exactly one time-bounded operation per call. Runs where the hardware is: the robot's browser page (EV3 over WebHID), or a headless bun process (twins, tests). It hosts providers (`Provider` in types.ts): the EV3 provider, the sim provider, and remote organ providers proxied through the relay. It implements every `RobotTool` (types.ts) with the semantics in `tools.ts`, executing `until` by polling conditions between ≤ 250 ms chunks and programs node by node. Errors are `RuntimeError{code}` from the §7 set.
 
-Twin: `<id>-sim` is a runtime whose EV3 provider talks to a **simulated brick** (byte-level EV3 direct-command emulator backed by 2D physics), so the twin runs exactly the real EV3 code path. It adds the `sim.world` device.
+Twin: `<id>-sim` is a runtime whose EV3 provider talks to a **simulated brick** (byte-level EV3 direct-command emulator backed by 2D physics), so the twin runs exactly the real EV3 code path. It adds the `sim.world`, `sim.camera` and `sim.speaker` devices.
 
 ## 5. Programs
 

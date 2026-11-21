@@ -2,7 +2,7 @@
 // real bridge (bridge/ev3dev_bridge.py) run by the local Python against it with --root.
 // The tree is plain files: a test plays the kernel by writing `state`, `position` or `value0`.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRIDGE_FILE, ProcessLineTransport } from "../src/ssh";
@@ -15,6 +15,34 @@ export function findPython(): string | null {
   }
   return null;
 }
+
+/** Absolute path of that Python, so it starts even when the bridge is given a PATH of its own. */
+export function pythonPath(python: string): string {
+  const r = spawnSync(python, ["-c", "import sys; print(sys.executable)"], { encoding: "utf8", windowsHide: true });
+  if (r.status !== 0 || !r.stdout.trim()) throw new Error(`cannot ask ${python} for its own path: ${r.stderr}`);
+  return r.stdout.trim();
+}
+
+/** The speech stubs are /bin/sh scripts, which Windows cannot run as programs: no fake speech there. */
+export const FAKE_HAS_SPEECH = process.platform !== "win32";
+// Stand-ins for the brick's espeak and aplay. They record how they were called in files next to them:
+// espeak.args (one argument per line), aplay.args, aplay.audio (what was piped in), aplay.done (written only
+// when "playback" reached its end). espeak.exit makes espeak fail; aplay.seconds is how long playback lasts.
+const ESPEAK_STUB = `#!/bin/sh
+dir="\${0%/*}"
+if [ "$1" = "--voices" ]; then /bin/cat "$dir/voices.txt"; exit 0; fi
+: > "$dir/espeak.args"
+for a in "$@"; do printf '%s\\n' "$a" >> "$dir/espeak.args"; done
+if [ -f "$dir/espeak.exit" ]; then echo "stub: cannot synthesize" >&2; exit "$(/bin/cat "$dir/espeak.exit")"; fi
+printf 'RIFFfake'
+`;
+const APLAY_STUB = `#!/bin/sh
+dir="\${0%/*}"
+printf '%s\\n' "$@" > "$dir/aplay.args"
+/bin/cat > "$dir/aplay.audio"
+/bin/sleep "$(/bin/cat "$dir/aplay.seconds")"
+echo done > "$dir/aplay.done"
+`;
 
 export interface FakeMotor {
   port: "A" | "B" | "C" | "D";
@@ -38,9 +66,42 @@ const REPLACE_TRIES = 2000;
 export class FakeBrick {
   readonly root: string;
   private writes = 0;
-  constructor(o: { motors: FakeMotor[]; sensors: FakeSensor[]; battery_uv?: number }) {
+  /** Where the speech stubs and their records live (only with `speech`). */
+  readonly bin: string;
+  private readonly path: string | undefined;
+  /**
+   * `speech`: undefined = the bridge sees this computer's PATH (whatever is installed here);
+   * `{voices}` = the bridge's PATH holds only a stub espeak (offering those voices) and a stub aplay;
+   * `"none"` = the bridge's PATH is an empty folder, so the brick has neither.
+   */
+  constructor(o: {
+    motors: FakeMotor[];
+    sensors: FakeSensor[];
+    battery_uv?: number;
+    speech?: { voices: string[] } | "none";
+  }) {
     this.root = mkdtempSync(join(tmpdir(), "ev3dev-fake-"));
     mkdirSync(join(this.root, "tmp"));
+    this.bin = join(this.root, "bin");
+    if (o.speech !== undefined) {
+      mkdirSync(this.bin);
+      this.path = this.bin;
+    }
+    if (o.speech !== undefined && o.speech !== "none") {
+      const rows = o.speech.voices.map((v) => ` 5  ${v.padEnd(14)} M  voice-${v}  lang/${v}`);
+      writeFileSync(
+        join(this.bin, "voices.txt"),
+        ["Pty Language Age/Gender VoiceName          File          Other Languages", ...rows, ""].join("\n"),
+      );
+      writeFileSync(join(this.bin, "aplay.seconds"), "0.05\n");
+      for (const [name, body] of [
+        ["espeak", ESPEAK_STUB],
+        ["aplay", APLAY_STUB],
+      ] as const) {
+        writeFileSync(join(this.bin, name), body);
+        chmodSync(join(this.bin, name), 0o755);
+      }
+    }
     for (const cls of ["tacho-motor", "lego-sensor", "lego-port", "power_supply", "leds"])
       mkdirSync(join(this.root, "sys", "class", cls), { recursive: true });
     o.motors.forEach((m, i) => {
@@ -185,11 +246,28 @@ export class FakeBrick {
     return () => clearInterval(timer);
   }
 
+  /** A record a speech stub left, trimmed, or null when it did not write it. */
+  spoken(file: "espeak.args" | "aplay.args" | "aplay.audio" | "aplay.done"): string | null {
+    const f = join(this.bin, file);
+    return existsSync(f) ? readFileSync(f, "utf8").trim() : null;
+  }
+  /** How long the stub aplay "plays", and whether the stub espeak fails. */
+  setSpeech(o: { seconds?: number; espeakExit?: number }): void {
+    if (o.seconds !== undefined) writeFileSync(join(this.bin, "aplay.seconds"), `${o.seconds}\n`);
+    if (o.espeakExit !== undefined) writeFileSync(join(this.bin, "espeak.exit"), `${o.espeakExit}\n`);
+  }
+  /** Environment for a process that plays the brick: the PATH this fake decided on, if any. */
+  env(): Record<string, string> {
+    return { PYTHONDONTWRITEBYTECODE: "1", ...(this.path === undefined ? {} : { PATH: this.path }) };
+  }
+
   /** The real bridge, run locally against this tree. */
   transport(python: string): ProcessLineTransport {
-    return new ProcessLineTransport(python, ["-u", BRIDGE_FILE, "--root", this.root], {
+    // With a PATH of its own the bridge's Python must be named by its full path.
+    const cmd = this.path === undefined ? python : pythonPath(python);
+    return new ProcessLineTransport(cmd, ["-u", BRIDGE_FILE, "--root", this.root], {
       label: "fake brick",
-      env: { PYTHONDONTWRITEBYTECODE: "1" },
+      env: this.env(),
     });
   }
 

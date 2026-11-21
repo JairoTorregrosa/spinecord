@@ -423,6 +423,52 @@ describe("RuntimeClient", () => {
     });
     s.client.close();
   });
+  test("organs: a command that does not move may take its declared time bound, past max_command_ms", async () => {
+    const s = await setup();
+    await s.online();
+    const SPEAKER: DeviceSpec = {
+      id: "phone1.speaker",
+      provider: "phone1",
+      kind: "speaker",
+      roles: [],
+      description: "A phone that talks.",
+      channels: [],
+      commands: [
+        {
+          name: "speak",
+          description: "Says the text; answers when the speech ends.",
+          moves: false,
+          bound: { kind: "ms", max: 15000 },
+          params: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+        },
+      ],
+    };
+    s.ws.relay({ t: "organs", organs: [{ organ_id: "phone1", state: "active", devices: [SPEAKER] }] });
+    await s.clock.sleep(0);
+    const before = s.ws.of("result").length;
+    s.ws.relay({
+      t: "call",
+      call_id: "say",
+      tool: "command_device",
+      args: { device: "phone1.speaker", command: "speak", args: { text: "hola" } },
+      deadline_ms: 20000,
+      activity: "idle",
+    });
+    await s.alive(14000); // max_command_ms is 10000: the old proxy timeout (12000) has passed
+    expect(s.ws.of("result").length).toBe(before);
+    s.ws.relay({
+      t: "organ_res",
+      req_id: s.ws.of("organ_req").at(-1)!.req_id,
+      ok: true,
+      data: { requested: { text: "hola" }, measured: { spoken: true }, clamped: false, reason: "completed", ms: 14000 },
+    });
+    await s.clock.sleep(0);
+    expect(s.ws.of("result").at(-1)).toMatchObject({
+      ok: true,
+      data: { reason: "completed", measured: { spoken: true } },
+    });
+    s.client.close();
+  });
   test("stop asks an organ with moving commands and reports what it verified", async () => {
     const s = await setup();
     await s.online();

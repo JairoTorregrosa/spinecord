@@ -6,7 +6,8 @@ Runs on the brick's Python 3.5 (ev3dev-stretch) with the standard library only a
 the kernel drivers through sysfs. No f-strings, no dataclasses, no asyncio.
 
 Requests (one JSON object per line; every reply echoes "id"):
-  {"op":"hello","id":1,"config":{"bounds":{"max_speed_pct":..,"max_op_ms":..,"low_battery_v":..,"max_tone_ms":..},
+  {"op":"hello","id":1,"config":{"bounds":{"max_speed_pct":..,"max_op_ms":..,"low_battery_v":..,"max_tone_ms":..,
+                                           "speech_volume_pct":..},
                                  "pair":{"left":"B","right":"C"}}}
   {"op":"read","id":2,"device":"S4","channels":["proximity_pct"],"allow_mode_switch":false}
   {"op":"command","id":3,"device":"B","command":"run_degrees","args":{"degrees":90,"speed_pct":30}}
@@ -30,6 +31,9 @@ Safety rules of this file:
     termination signal, every tacho motor gets stop_action=brake and command=stop. The stop is
     written before anything else is done about it.
   * The main loop never blocks: stdin and stdout live in their own threads, waits are tasks.
+  * Speech (speaker.speak, only when the brick has `espeak` and `aplay`) is two child processes
+    started from argument lists, never through a shell. One phrase at a time, at most SPEAK_MAX_MS.
+    abort, stop, the watchdog and the end of this process kill both, so the audio is cut.
 
 Device names here are local ("B", "pair", "S4", "battery"); the provider adds its id prefix.
 """
@@ -53,7 +57,7 @@ try:
 except ImportError:  # Windows (tests against a fake tree)
     fcntl = None
 
-VERSION = "1"
+VERSION = "2"
 WATCHDOG_MS = 1000
 MAX_OP_MS = 3000         # ceiling for the motion one command may cause; hello's max_op_ms can only lower it
 TICK_S = 0.01
@@ -61,8 +65,12 @@ MODE_SWITCH_S = 0.1
 STOP_VERIFY_S = 0.8
 REACH_TOLERANCE_DEG = 3.0
 MIN_SPEED_COUNTS = 10
+SPEAK_MAX_MS = 15000     # longest phrase; the audio is cut there
+SPEAK_MAX_CHARS = 200
+SPEAK_RATE_WPM = (80, 300, 140)   # espeak -s: lowest, highest, default
+VOICES_TIMEOUT_S = 5
 
-BOUND_KEYS = ["max_speed_pct", "max_op_ms", "low_battery_v", "max_tone_ms"]
+BOUND_KEYS = ["max_speed_pct", "max_op_ms", "low_battery_v", "max_tone_ms", "speech_volume_pct"]
 LED_PATTERNS = ["off", "green", "red", "orange", "green_flash", "red_flash", "orange_flash",
                 "green_pulse", "red_pulse", "orange_pulse"]
 LED_COLORS = {"off": (0, 0), "green": (0, 255), "red": (255, 0), "orange": (255, 128)}
@@ -253,6 +261,7 @@ class Task(object):
         self.due = 0.0
         self.flag = None       # "preempted" | "watchdog"
         self.motors = motors or []
+        self.talk = None       # the speech this task waits for: {"espeak": Popen, "aplay": Popen}
 
 
 class Bridge(object):
@@ -271,6 +280,8 @@ class Bridge(object):
         self.ignored = []
         self.tasks = []
         self.beeps = []
+        self.speech = None         # hello: {"espeak", "aplay", "voices", "default_voice"} when the brick can speak
+        self.talk = None           # the phrase being spoken now
         self.last_touch = 0.0
 
     # ------------------------------------------------------------ paths
@@ -340,15 +351,33 @@ class Bridge(object):
                 errors.append("%s: %s" % (d, e))
         return errors
 
+    def hush(self):
+        """Cuts the phrase being spoken, if any: kills aplay (it holds the buffered audio), then espeak."""
+        talk, self.talk = self.talk, None
+        if talk is None:
+            return
+        for name in ("aplay", "espeak"):
+            try:
+                talk[name].kill()
+            except (OSError, IOError):
+                pass                             # it had already ended
+        for name in ("aplay", "espeak"):
+            try:
+                talk[name].wait()
+            except (OSError, IOError):
+                pass
+            talk[name].stderr.close()
+
     def watchdog(self):
         if self.wd_tripped:
             return
         if (now() - self.last_rx[0]) * 1000.0 <= WATCHDOG_MS:
             return
         self.stop_all_now()                      # first, before any bookkeeping or output
+        self.hush()
         self.wd_tripped = True
         for t in self.tasks:
-            if t.motors and t.flag is None:
+            if (t.motors or t.talk) and t.flag is None:
                 t.flag = "watchdog"
                 t.due = 0.0
         self.send({"ev": "watchdog", "cause": "silence", "watchdog_ms": WATCHDOG_MS})
@@ -400,6 +429,8 @@ class Bridge(object):
                 raise BridgeError("misconfigured", "config.bounds.%s is required and must be a number > 0, got %s" % (k, json.dumps(v)))
         if b["max_speed_pct"] > 100:
             raise BridgeError("misconfigured", "config.bounds.max_speed_pct must be <= 100")
+        if b["speech_volume_pct"] > 100:
+            raise BridgeError("misconfigured", "config.bounds.speech_volume_pct must be <= 100")
         pair = config.get("pair") or {}
         left, right = pair.get("left"), pair.get("right")
         if left not in list("ABCD") or right not in list("ABCD") or left == right:
@@ -408,6 +439,7 @@ class Bridge(object):
         self.op_ms = int(max(1, min(MAX_OP_MS, b["max_op_ms"])))   # never above MAX_OP_MS, whatever the config says
         self.pair = (left, right)
         self.scan()
+        self.speech, no_speech = self.find_speech()
         ports = []
         for d in sorted(glob.glob(self.p("sys", "class", "lego-port", "port*"))):
             try:
@@ -431,8 +463,38 @@ class Bridge(object):
                 "buttons": os.path.exists(self.buttons_path()),
                 "beep": shutil.which("beep") is not None,
                 "display": False,
+                "speak": self.speech is not None,
             },
+            # Not null only when the brick can speak; the provider builds speaker.speak from it.
+            "speech": None if self.speech is None else {
+                "voices": self.speech["voices"], "default_voice": self.speech["default_voice"],
+                "max_ms": SPEAK_MAX_MS, "max_chars": SPEAK_MAX_CHARS,
+                "rate_wpm": {"min": SPEAK_RATE_WPM[0], "max": SPEAK_RATE_WPM[1], "default": SPEAK_RATE_WPM[2]},
+            },
+            "no_speech": no_speech,
         })
+
+    def find_speech(self):
+        """-> (speech or None, why not). Speech needs `espeak`, `aplay` and at least one voice."""
+        espeak, aplay = shutil.which("espeak"), shutil.which("aplay")
+        if espeak is None or aplay is None:
+            lacking = [n for n, found in (("espeak", espeak), ("aplay", aplay)) if found is None]
+            return None, "no `%s` program on its PATH" % "` or `".join(lacking)
+        try:
+            out = subprocess.check_output([espeak, "--voices"], stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                          timeout=VOICES_TIMEOUT_S)
+        except (OSError, IOError, subprocess.SubprocessError) as e:
+            return None, "`espeak --voices` failed: %s" % e
+        voices = []
+        # Columns: Pty Language Age/Gender VoiceName File Other-Languages. The Language column is what -v takes.
+        for line in out.decode("utf-8", "replace").splitlines()[1:]:
+            cols = line.split()
+            if len(cols) >= 4 and re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", cols[1]) and cols[1] not in voices:
+                voices.append(cols[1])
+        if not voices:
+            return None, "`espeak --voices` lists no voice"
+        default = "es-la" if "es-la" in voices else "en" if "en" in voices else voices[0]
+        return {"espeak": espeak, "aplay": aplay, "voices": voices, "default_voice": default}, None
 
     def need_hello(self):
         if self.bounds is None:
@@ -720,6 +782,8 @@ class Bridge(object):
             except (OSError, IOError) as e:
                 raise BridgeError("unsupported", "%s: cannot run the `beep` program on the brick: %s" % (where, e))
             self.done(rid, {"frequency_hz": hz, "duration_ms": ms}, clamped, "clamped" if clamped else "completed", t0)
+        elif key == "speaker.speak" and self.speech is not None:
+            self.speak(rid, args, where, t0)
         elif key == "display.text" or key == "display.clear":
             raise BridgeError("unsupported", "%s: the ev3dev bridge does not draw on the screen (the brick's own menu owns the framebuffer)" % where)
         elif key == "led.set":
@@ -730,6 +794,85 @@ class Bridge(object):
             self.done(rid, {}, t0=t0)
         else:
             raise BridgeError("unknown_command", "device %s (%s) has no command %s" % (device, kind, json.dumps(command)))
+
+    def speak(self, rid, args, where, t0):
+        sp = self.speech
+        text = args.get("text")
+        if not isinstance(text, str):
+            raise BridgeError("invalid_argument", "%s: text must be a string, got %s" % (where, json.dumps(text)))
+        text = re.sub(r"[\x00-\x1f\x7f]+", " ", text).strip()
+        if not text:
+            raise BridgeError("invalid_argument", "%s: text is empty" % where)
+        if len(text) > SPEAK_MAX_CHARS:
+            raise BridgeError("invalid_argument", "%s: text has %d characters, at most %d fit in one phrase; split it" % (where, len(text), SPEAK_MAX_CHARS))
+        voice = args.get("voice", sp["default_voice"])
+        if voice not in sp["voices"]:
+            raise BridgeError("invalid_argument", "%s: unknown voice %s; voices: %s" % (where, json.dumps(voice), ", ".join(sp["voices"])))
+        lo, hi, usual = SPEAK_RATE_WPM
+        asked = int(round(number(args, "rate_wpm", where))) if "rate_wpm" in args else usual
+        rate = max(lo, min(hi, asked))
+        clamped = rate != asked
+        if self.talk is not None:
+            raise BridgeError("busy", "%s: the speaker is still saying the previous phrase; wait for it or call stop" % where)
+        amplitude = int(round(self.bounds["speech_volume_pct"] * 2))     # espeak -a is 0..200
+        # Argument lists, no shell. "--" ends the options, so a text that starts with "-" stays text.
+        argv = [sp["espeak"], "-v", voice, "-s", str(rate), "-a", str(amplitude), "--stdout", "--", text]
+        try:
+            espeak = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except (OSError, IOError) as e:
+            raise BridgeError("unsupported", "%s: cannot run `espeak` on the brick: %s" % (where, e))
+        try:
+            aplay = subprocess.Popen([sp["aplay"], "-q"], stdin=espeak.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except (OSError, IOError) as e:
+            espeak.kill()
+            espeak.wait()
+            espeak.stdout.close()
+            espeak.stderr.close()
+            raise BridgeError("unsupported", "%s: cannot run `aplay` on the brick: %s" % (where, e))
+        espeak.stdout.close()                    # aplay holds the only read end now
+        talk = {"espeak": espeak, "aplay": aplay}
+        self.talk = talk
+        task = Task(rid, None)
+        task.talk = talk
+        task.gen = self.speaking(task, where, {"voice": voice, "rate_wpm": rate, "chars": len(text)}, clamped, t0)
+        self.spawn(task)
+
+    def speaking(self, task, where, measured, clamped, t0):
+        talk = task.talk
+        deadline = t0 + SPEAK_MAX_MS / 1000.0
+        reason = None
+        while True:
+            if task.flag:
+                reason = task.flag
+                break
+            if talk["aplay"].poll() is not None and talk["espeak"].poll() is not None:
+                break
+            if now() >= deadline:
+                reason = "timeout"
+                break
+            yield TICK_S
+        if reason is None:
+            failed = []
+            for name in ("espeak", "aplay"):
+                detail = talk[name].stderr.read().decode("utf-8", "replace").strip()[:300]
+                talk[name].stderr.close()
+                if talk[name].returncode != 0:
+                    failed.append("`%s` exited with %s%s" % (name, talk[name].returncode, (": " + detail) if detail else ""))
+            self.talk = None
+            if failed:
+                raise BridgeError("internal", "%s: nothing or only part of the text was spoken; %s" % (where, "; ".join(failed)))
+            measured["spoken"] = True
+            self.done(task.id, measured, clamped, "clamped" if clamped else "completed", t0)
+            return
+        if self.talk is talk:
+            self.hush()                          # stop and the watchdog cut it themselves; abort and the cap cut it here
+        if reason == "watchdog":
+            self.fail(task.id, "robot_offline", "brick watchdog: no message for %d ms, the speech was cut" % WATCHDOG_MS)
+            return
+        measured["spoken"] = False
+        if reason == "timeout":
+            measured["time_limited"] = True
+        self.done(task.id, measured, clamped, reason, t0)
 
     def set_led(self, pattern):
         parts = pattern.split("_")
@@ -920,8 +1063,9 @@ class Bridge(object):
 
     def stop(self, rid):
         errors = self.stop_all_now()             # first
+        self.hush()
         for t in self.tasks:
-            if t.motors and t.flag is None:
+            if (t.motors or t.talk) and t.flag is None:
                 t.flag = "preempted"
                 t.due = 0.0
         self.spawn(Task(rid, self.verify_stop(rid, errors)))
@@ -991,7 +1135,7 @@ class Bridge(object):
                 self.command(rid, msg)
             elif op == "abort":
                 for t in self.tasks:
-                    if t.id == msg.get("target") and t.motors and t.flag is None:
+                    if t.id == msg.get("target") and (t.motors or t.talk) and t.flag is None:
                         t.flag = "preempted"
                         t.due = 0.0
             elif op == "stop":
@@ -1071,7 +1215,10 @@ def main(argv):
     try:
         bridge.run()
     finally:
-        bridge.stop_all_now()   # stdin closed, signal, broken stdout or a crash: motors are braked
+        try:
+            bridge.stop_all_now()   # stdin closed, signal, broken stdout or a crash: motors are braked
+        finally:
+            bridge.hush()           # and the speech is cut
     return 0
 
 

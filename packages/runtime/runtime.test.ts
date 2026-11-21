@@ -858,6 +858,76 @@ describe("command_device", () => {
     expect(s.mock.log[0]).toMatchObject({ device: "mock.speaker", command: "tone" });
     expect((await s.call("command_device", { device: "horn", command: "beep" })).reason).toBe("completed");
   });
+  test("a command that does not move may block for its own declared time bound, past max_command_ms", async () => {
+    // A speaker saying a text: moves false, bound in ms, answers when the speech ends.
+    const clock = new FakeClock();
+    const said: { ms: number; reason: string }[] = [];
+    const talker: Provider = {
+      id: "tts",
+      backend: "organ",
+      stop_worst_ms: 100,
+      devices: async () => [
+        {
+          id: "tts.speaker",
+          provider: "tts",
+          kind: "speaker",
+          roles: [],
+          channels: [],
+          description: "A speaker that talks.",
+          commands: [
+            {
+              name: "speak",
+              description: "Says the text; returns when the speech ends.",
+              moves: false,
+              bound: { kind: "ms", max: 15000 },
+              params: {
+                type: "object",
+                properties: { text: { type: "string", maxLength: 200 }, lasts_ms: { type: "number" } },
+                required: ["text"],
+                additionalProperties: false,
+              },
+            },
+          ],
+        },
+      ],
+      read: async () => [],
+      command: async (_device, _command, args, signal) => {
+        const t0 = clock.now();
+        await clock.sleep(args.lasts_ms as number, signal);
+        const reason = signal.aborted ? "preempted" : "completed";
+        said.push({ ms: clock.now() - t0, reason });
+        return { requested: args, measured: { spoken: !signal.aborted }, clamped: false, reason, ms: clock.now() - t0 };
+      },
+      stop: async () => ({ motors_stopped: true }),
+    };
+    const rt = createRuntime({
+      profile: { id: "r1", roles: {}, notes: [], limits: { ...LIMITS, max_command_ms: 3000 } },
+      providers: [talker],
+      clock,
+    });
+    const speak = async (lasts_ms: number, signal = new AbortController().signal) =>
+      (
+        await rt.call(
+          "command_device",
+          { device: "tts.speaker", command: "speak", args: { text: "hola", lasts_ms } },
+          signal,
+        )
+      ).data as { reason: string; measured: { spoken: boolean } };
+    // 12 s of speech with max_command_ms 3 s: not cut
+    expect(await speak(12000)).toMatchObject({ reason: "completed", measured: { spoken: true } });
+    // a device that never answers is still cut, at the declared bound
+    expect(await speak(60000)).toMatchObject({ reason: "timeout", measured: { spoken: false } });
+    expect(said).toEqual([
+      { ms: 12000, reason: "completed" },
+      { ms: 15000 + MAX_CHUNK_MS, reason: "preempted" },
+    ]);
+    // stop aborts it
+    const pending = speak(12000);
+    await clock.sleep(1000);
+    await rt.stop();
+    expect(await pending).toMatchObject({ reason: "preempted" });
+    expect(said[2]).toEqual({ ms: 1000, reason: "preempted" });
+  });
   test("args are clamped to the command bound and the profile limits, and it says so", async () => {
     const s = setup({ limits: { max_command_ms: 3000 } });
     const a = await s.call("command_device", {
