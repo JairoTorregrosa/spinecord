@@ -2,7 +2,16 @@
 // real bridge (bridge/ev3dev_bridge.py) run by the local Python against it with --root.
 // The tree is plain files: a test plays the kernel by writing `state`, `position` or `value0`.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRIDGE_FILE, ProcessLineTransport } from "../src/ssh";

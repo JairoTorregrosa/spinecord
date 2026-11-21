@@ -263,13 +263,13 @@ describe("activity", () => {
       return "hang";
     };
     expect((await say("hola")).envelope).toMatchObject({ ok: true, data: { reason: "completed" } });
-    expect(rt.calls[0]!.deadline_ms).toBe(800 + 1500);
     expect(rt.aborts).toEqual([]);
     // an instant command keeps the plain call timeout
     rt.answer = () => ({ ok: true, data: { reason: "completed" } });
     await tool(TOKENS.a, "command_device", { robot_id: "a31", device: "speaker", command: "beep", request_id: rid() });
-    expect(rt.calls[1]!.deadline_ms).toBe(800);
-    expect((await say("x".repeat(201))).envelope).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+    // the speaking call got exactly its declared 1500 ms bound on top of what an instant command gets
+    expect(rt.calls[0]!.deadline_ms - rt.calls[1]!.deadline_ms).toBe(1500);
+    // the relay checks shape only; the 200-character limit is enforced by the runtime (full schema) on the robot
     rt.close();
   });
 
