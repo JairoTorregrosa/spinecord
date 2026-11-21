@@ -33,13 +33,13 @@ import type {
   RobotTool,
   RuntimeToRelay,
 } from "../../protocol/types.ts";
-import { type Caller, type Config, canSee, loadConfig, ownersOf } from "./config.ts";
+import { type Caller, type Config, type SocketRole, loadConfig, ownersOf, socketRefusal } from "./config.ts";
 import { type Out, TOOL, ToolFail, assertTransition, errOut, okOut, toolError } from "./envelope.ts";
 import { log } from "./log.ts";
 import { checkDevices, checkProfile, resolveDevice } from "./manifest.ts";
+import { firstViolation } from "../../protocol/schema.ts";
 import { profileHash } from "../../protocol/validate.ts";
 import { checkProgram } from "./program.ts";
-import { validate } from "./schema.ts";
 import * as store from "./store.ts";
 
 export const LIBRARY = "_library";
@@ -105,7 +105,7 @@ interface Attachment {
 type RuntimeResult = Extract<RuntimeToRelay, { t: "result" }>;
 type Reply =
   | { kind: "result"; m: RuntimeResult }
-  | { kind: "timeout" }
+  | { kind: "timeout"; waited_ms: number }
   | { kind: "offline" }
   | { kind: "preempted"; m?: RuntimeResult };
 interface PendingCall {
@@ -195,6 +195,8 @@ export class RobotDO extends DurableObject<Env> {
   private actingCall: string | null = null;
   private recentMutations: number[] = [];
   private ticks = 0;
+  /** last measured round trip to the runtime (heartbeat echo); 0 until one is measured */
+  private rttMs = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -396,17 +398,18 @@ export class RobotDO extends DurableObject<Env> {
   }
 
   // ---------------------------------------------------------------- runtime socket
-  private async authorize(token: unknown): Promise<boolean> {
+  /** Null when the token is a credential of `role` bound to this robot, else the refusal (CONTRACT §8). */
+  private async refusal(token: unknown, role: SocketRole): Promise<string | null> {
     const p = typeof token === "string" ? await this.cfg.identify(token) : null;
-    return p !== null && canSee(p, this.s.robot_id);
+    return socketRefusal(p, role, this.s.robot_id);
   }
 
   private async robotHello(ws: WebSocket, a: Attachment, m: Extract<RuntimeToRelay, { t: "hello" }>): Promise<void> {
     if (m.v !== 2) return this.refuse(ws, CLOSE.REFUSED, "hello.v must be 2");
     if (m.robot_id !== this.s.robot_id)
       return this.refuse(ws, CLOSE.REFUSED, `hello.robot_id does not match this socket's robot (${this.s.robot_id})`);
-    if (!(await this.authorize(m.token)))
-      return this.refuse(ws, CLOSE.REFUSED, "unauthorized: token is not valid for this robot");
+    const denied = await this.refusal(m.token, "runtime");
+    if (denied) return this.refuse(ws, CLOSE.REFUSED, denied);
     if (m.backend !== "ev3" && m.backend !== "sim" && m.backend !== "organ")
       return this.refuse(ws, CLOSE.REFUSED, "hello.backend must be ev3, sim or organ");
     const bad = checkProfile(m.profile) ?? checkDevices(m.devices);
@@ -458,6 +461,12 @@ export class RobotDO extends DurableObject<Env> {
   private robotMessage(ws: WebSocket, m: RuntimeToRelay): void {
     switch (m.t) {
       case "hb":
+        if (isObj(m.echo) && Number.isFinite(m.echo.ts) && Number.isFinite(m.echo.held_ms))
+          // a number the runtime supplies: kept inside [0, heartbeat timeout] so it cannot stretch deadlines unbounded
+          this.rttMs = Math.min(
+            this.cfg.timing.hbTimeoutMs,
+            Math.max(0, Date.now() - m.echo.ts - Math.max(0, m.echo.held_ms)),
+          );
         this.s.battery_low = m.battery_low === true;
         // fault triggers (CONTRACT §1): a battery device reporting low, or a runtime-reported error
         this.onRuntimeFault(
@@ -501,8 +510,8 @@ export class RobotDO extends DurableObject<Env> {
     if (m.v !== 2) return this.refuse(ws, CLOSE.REFUSED, "hello.v must be 2");
     if (m.robot_id !== this.s.robot_id)
       return this.refuse(ws, CLOSE.REFUSED, `hello.robot_id does not match this socket's robot (${this.s.robot_id})`);
-    if (!(await this.authorize(m.token)))
-      return this.refuse(ws, CLOSE.REFUSED, "unauthorized: token is not valid for this robot");
+    const denied = await this.refusal(m.token, "organ");
+    if (denied) return this.refuse(ws, CLOSE.REFUSED, denied);
     if (typeof m.organ_id !== "string" || !ORGAN_ID.test(m.organ_id) || m.organ_id === "ev3" || m.organ_id === "sim")
       return this.refuse(ws, CLOSE.REFUSED, `organ_id must match ${ORGAN_ID} and not be a built-in provider name`);
     const bad = checkDevices(m.devices, m.organ_id);
@@ -868,7 +877,20 @@ export class RobotDO extends DurableObject<Env> {
   }
 
   // ---------------------------------------------------------------- dispatch to the runtime
-  /** Sends one {t:"call"} and waits for its result, the relay-side deadline, the link dropping, or a stop. */
+  /**
+   * What a deadline adds to a tool's own budget: the round trip (at least DEADLINE_MARGIN_MS, or twice the measured
+   * one) plus the runtime's announced worst-case stop. With it the runtime's own limit (max_command_ms,
+   * max_program_ms, timeout_ms, duration_ms) always ends the call first and answers with data.
+   */
+  private graceMs(): number {
+    return Math.max(this.cfg.timing.deadlineMarginMs, 2 * this.rttMs) + (this.s.stop_worst_ms ?? 0);
+  }
+
+  /**
+   * Sends one {t:"call"} and waits for its result, the relay-side deadline, the link dropping, or a stop.
+   * Two backstops behind the tool's own budget: the runtime aborts the call at budget + grace and reports what it
+   * did; the relay gives up one more grace later, when not even that report arrived.
+   */
   private dispatch(
     call_id: string,
     tool: RobotTool,
@@ -878,11 +900,13 @@ export class RobotDO extends DurableObject<Env> {
   ): Promise<Reply> {
     const ws = this.link === "online" ? this.robotSocket() : undefined;
     if (!ws) return Promise.resolve({ kind: "offline" });
+    const grace = this.graceMs();
+    const waitMs = Math.round(budgetMs + 2 * grace);
     return new Promise<Reply>((resolve) => {
       const timer = setTimeout(() => {
         this.send(this.robotSocket(), { t: "abort", call_id });
-        finish({ kind: "timeout" });
-      }, budgetMs + this.cfg.timing.deadlineMarginMs);
+        finish({ kind: "timeout", waited_ms: waitMs });
+      }, waitMs);
       const finish = (reply: Reply) => {
         if (this.pending.get(call_id) !== p) return;
         this.pending.delete(call_id);
@@ -898,7 +922,7 @@ export class RobotDO extends DurableObject<Env> {
           call_id,
           tool,
           args,
-          deadline_ms: Math.max(1, Math.round(budgetMs)),
+          deadline_ms: Math.max(1, Math.round(budgetMs + grace)),
           activity: this.s.activity,
         })
       )
@@ -940,14 +964,16 @@ export class RobotDO extends DurableObject<Env> {
   }
 
   /** Turns a runtime reply into data or a typed failure, and sets the call's terminal state. */
-  private async settle(
-    call: Call,
-    reply: Reply,
-    tool: string,
-    budgetMs: number,
-  ): Promise<{ data: unknown; image?: ImagePayload }> {
+  private async settle(call: Call, reply: Reply, tool: string): Promise<{ data: unknown; image?: ImagePayload }> {
     const fromRuntime = (m: RuntimeResult) => {
-      if (!m.ok) throw new ToolFail(m.error.code, m.error.message, undefined, m.error.retryable);
+      // a move that timed out may have partly happened: never retryable, live or replayed from the idempotency cache
+      if (!m.ok)
+        throw new ToolFail(
+          m.error.code,
+          m.error.message,
+          undefined,
+          m.error.code === "timeout" && call.moving ? false : m.error.retryable,
+        );
       const { data, image } = liftImage(m.data, m.image);
       if (image && image.age_ms > MAX_IMAGE_AGE_MS)
         throw new ToolFail(
@@ -972,7 +998,9 @@ export class RobotDO extends DurableObject<Env> {
         if (call.moving) await this.stop(`${tool} timed out`).catch(() => {});
         throw new ToolFail(
           "timeout",
-          `${tool} did not answer within ${Math.round(budgetMs + this.cfg.timing.deadlineMarginMs)} ms; it was aborted${call.moving ? " and the robot was stopped" : ""}`,
+          `${tool} did not answer within ${reply.waited_ms} ms; it was aborted${call.moving ? " and the robot was stopped. It may have moved: read the robot (read_all) before moving again" : ""}`,
+          undefined,
+          call.moving ? false : undefined,
         );
       case "preempted":
         this.step(call, "preempted");
@@ -980,6 +1008,8 @@ export class RobotDO extends DurableObject<Env> {
         throw new ToolFail(
           "timeout",
           `${tool} was preempted by stop and the runtime did not report what it had done within ${this.stopWindowMs()} ms; read the robot to see where it is`,
+          undefined,
+          call.moving ? false : undefined,
         );
     }
   }
@@ -1016,7 +1046,7 @@ export class RobotDO extends DurableObject<Env> {
       // read tools work in every online state and never wait behind an action
       const budget = this.budgetFor(tool, args, false);
       this.step(call, "dispatched"); // relay-owned or read: no queue
-      return this.settle(call, await this.dispatch(call.id, tool, args, budget, "read"), tool, budget);
+      return this.settle(call, await this.dispatch(call.id, tool, args, budget, "read"), tool);
     }
 
     this.requireControl(r);
@@ -1039,7 +1069,8 @@ export class RobotDO extends DurableObject<Env> {
           "unknown_command",
           `${device.id} has no command "${String(args.command)}"; commands: ${device.commands.map((c) => c.name).join(", ") || "none (read-only device)"}`,
         );
-      const bad = validate(command.params, args.args ?? {}, "args");
+      // shape only (required, types, enums, unknown fields): sizes are the runtime's to clamp or chunk, then check
+      const bad = firstViolation(command.params, args.args ?? {}, "args", "shape");
       if (bad)
         throw new ToolFail(
           "invalid_argument",
@@ -1085,8 +1116,8 @@ export class RobotDO extends DurableObject<Env> {
     }
     let data: unknown;
     try {
-      const res = await this.enqueue(call, budget + this.cfg.timing.deadlineMarginMs, async () =>
-        this.settle(call, await this.dispatch(call.id, tool, sent, budget, "act"), tool, budget),
+      const res = await this.enqueue(call, budget + this.graceMs(), async () =>
+        this.settle(call, await this.dispatch(call.id, tool, sent, budget, "act"), tool),
       );
       data = res.data;
       if (tool === "reset_fault" && this.s.activity === "fault") {

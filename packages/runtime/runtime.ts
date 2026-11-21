@@ -26,7 +26,7 @@ import { TOOLS } from "../protocol/tools";
 import { type Clock, linkAbort, realClock } from "./clock";
 import { compileCondition, makeEvaluator, type CompiledCondition } from "./conditions";
 import { validateProgram } from "../protocol/validate";
-import { validateSchema } from "./schema";
+import { validateSchema } from "../protocol/schema";
 
 export const STALE_IMAGE_MS = 1500; // CONTRACT §7 stale_image
 export const MAX_CHUNK_MS = 250; // CONTRACT §0.8: longest operation for a command that declares no time bound of its own

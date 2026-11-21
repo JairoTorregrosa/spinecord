@@ -18,6 +18,8 @@ const deployment = join(root, "deployments", "example");
 const ROBOT = "r1-sim";
 // the tokens of deployments/example/principals.json (packages/server/scripts/dev.md); local only
 const USER_TOKEN = "local-user-token-0000";
+// the twins connect with the runtime credential: a user token is refused on /ws/robot (CONTRACT §10)
+const RUNTIME_TOKEN = "local-runtime-token-0000";
 const BUDGET_MS = 240_000;
 const verbose = process.env.E2E_VERBOSE === "1";
 
@@ -212,7 +214,7 @@ try {
   const scratch = mkdtempSync(join(tmpdir(), "spinecord-e2e-"));
   cleanups.push(() => rmSync(scratch, { recursive: true, force: true }));
   const tokenFile = join(scratch, "token");
-  writeFileSync(tokenFile, `${USER_TOKEN}\n`);
+  writeFileSync(tokenFile, `${RUNTIME_TOKEN}\n`);
   const runnerArgs = [join(root, "apps", "twin-runner", "main.ts"), "--profile", profileFile, "--world", worldFile];
 
   // fail loud: without a token file the runner must refuse to start (exit 2), not run half-configured

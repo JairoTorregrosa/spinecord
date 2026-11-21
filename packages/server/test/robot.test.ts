@@ -59,7 +59,7 @@ describe("dispatch", () => {
       t: "call",
       tool: "drive",
       args: { distance_cm: 10 },
-      deadline_ms: 600,
+      deadline_ms: 900, // max_command_ms 600 + margin 200 + the runtime's stop_worst_ms 100
       activity: "acting",
     });
     await tool(TOKENS.a, "read_all", { robot_id: "a10" });
@@ -232,7 +232,7 @@ describe("activity", () => {
   });
 
   it("a battery device reporting low puts the robot in fault", async () => {
-    const rt = await FakeRuntime.connect("b1", { token: TOKENS.b });
+    const rt = await FakeRuntime.connect("b1", { token: TOKENS.rtB });
     // every heartbeat carries it: the link stays up, and a plain heartbeat would report the battery fine again
     rt.hb = { battery_low: true };
     await until("fault", async () => (await robot("b1")).activity === "fault");
@@ -251,15 +251,26 @@ describe("activity", () => {
     const rt = await FakeRuntime.connect("a19");
     rt.answer = () => "hang";
     rt.reportOnAbort = false;
-    const r = await drive("a19"); // budget 600 ms (profile) + 200 ms margin
+    const request_id = rid();
+    const r = await drive("a19", request_id); // budget 600 ms (profile) + twice the grace (200 ms margin + 100 ms stop)
     expect(r.envelope).toMatchObject({
       ok: false,
-      error: { code: "timeout", retryable: true },
+      error: { code: "timeout", retryable: false }, // it may have moved: nothing invites driving again
       robot: { activity: "idle" },
     });
+    expect(r.envelope.next).not.toContain("drive");
     expect(rt.aborts).toEqual([rt.calls[0]!.call_id]);
     expect(rt.stops).toBe(1);
     expect(await calls("a19")).toMatchObject([{ tool: "drive", state: "timed_out", code: "timeout" }]);
+    // the same request_id replays the stored result and reaches the robot once
+    expect((await drive("a19", request_id)).envelope).toEqual(r.envelope);
+    expect(rt.toolCalls("drive")).toHaveLength(1);
+    // a runtime that aborts the move at its deadline itself: still not retryable, whatever it claims
+    rt.answer = () => ({
+      ok: false,
+      error: { code: "timeout", message: "drive exceeded its deadline", retryable: true },
+    });
+    expect((await drive("a19")).envelope).toMatchObject({ ok: false, error: { code: "timeout", retryable: false } });
     rt.close();
   });
 });
@@ -458,7 +469,7 @@ describe("link", () => {
 
 describe("durable state", () => {
   it("after the object is evicted: the link is rebuilt from the socket, control and the idempotency cache survive", async () => {
-    const rt = await FakeRuntime.connect("b1", { token: TOKENS.b });
+    const rt = await FakeRuntime.connect("b1", { token: TOKENS.rtB });
     await tool(TOKENS.b, "reset_fault", { robot_id: "b1", request_id: rid() }); // whatever an earlier test left
     const request_id = rid();
     const first = await drive("b1", request_id, TOKENS.b);

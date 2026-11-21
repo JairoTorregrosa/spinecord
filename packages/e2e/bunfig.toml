@@ -1,0 +1,4 @@
+[test]
+# the relay's own test setup: one Worker bundle and one Miniflare per test process
+preload = ["../server/test/setup.ts"]
+timeout = 20000

@@ -220,7 +220,7 @@ describe("RuntimeClient", () => {
     expect(s.ws.of("result")[0]).toMatchObject({
       call_id: "c1",
       ok: false,
-      error: { code: "timeout", retryable: true },
+      error: { code: "timeout", retryable: false }, // it moved: repeating it is not safe
     });
     const n = s.mock.log.length;
     await s.alive(1000);

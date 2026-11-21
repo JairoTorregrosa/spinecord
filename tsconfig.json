@@ -14,6 +14,7 @@
     "packages/protocol/**/*.ts",
     "packages/driver-ev3/**/*.ts",
     "packages/runtime/**/*.ts",
+    "packages/e2e/**/*.ts",
     "packages/sim-world/**/*.ts",
     "packages/sim-ev3/**/*.ts",
     "packages/driver-ev3dev/**/*.ts",

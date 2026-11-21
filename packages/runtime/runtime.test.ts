@@ -117,13 +117,13 @@ describe("discovery", () => {
     const s = setup();
     expect((await fails(s.call("fly" as RobotTool), "invalid_argument")).message).toContain("describe_robot");
     expect((await fails(s.call("drive", { distance_cm: "far" }), "invalid_argument")).message).toContain(
-      "args.distance_cm must be number",
+      "args.distance_cm must be of type number",
     );
     expect((await fails(s.call("drive", { distance_cm: 5, speed_pct: 500 }), "invalid_argument")).message).toContain(
       "<= 100",
     );
     expect((await fails(s.call("drive", { distance_cm: 5, sped: 1 }), "invalid_argument")).message).toContain(
-      "args.sped is not allowed",
+      "args.sped unknown field",
     );
   });
   test("remote providers come and go at runtime", async () => {
@@ -928,7 +928,7 @@ describe("command_device", () => {
       s.call("command_device", { device: "horn", command: "tone", args: { frequency_hz: 5, duration_ms: 100 } }),
       "invalid_argument",
     );
-    expect(e.message).toContain("args.frequency_hz must be >= 100, got 5");
+    expect(e.message).toContain("args.frequency_hz must be >= 100 (minimum), got 5");
     expect(
       (
         await fails(

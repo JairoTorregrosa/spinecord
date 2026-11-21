@@ -3,7 +3,7 @@
 
 import { Server, createMcpHandler } from "@modelcontextprotocol/server";
 import { SERVER_INSTRUCTIONS, SERVER_NAME, SERVER_VERSION, TOOLS } from "../../protocol/tools.ts";
-import type { Config, Principal } from "./config.ts";
+import type { Config, ToolPrincipal } from "./config.ts";
 import { callTool } from "./dispatch.ts";
 
 /** tools/list payload: name, title, description, inputSchema, annotations. `scope` and `mutating` stay internal. */
@@ -15,7 +15,7 @@ export const LISTED_TOOLS = TOOLS.map((t) => ({
   annotations: t.annotations,
 }));
 
-export function buildServer(env: Env, cfg: Config, who: Principal, trace_id: string): Server {
+export function buildServer(env: Env, cfg: Config, who: ToolPrincipal, trace_id: string): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
@@ -32,6 +32,12 @@ export function buildServer(env: Env, cfg: Config, who: Principal, trace_id: str
   return server;
 }
 
-export function serveMcp(request: Request, env: Env, cfg: Config, who: Principal, trace_id: string): Promise<Response> {
+export function serveMcp(
+  request: Request,
+  env: Env,
+  cfg: Config,
+  who: ToolPrincipal,
+  trace_id: string,
+): Promise<Response> {
   return createMcpHandler(() => buildServer(env, cfg, who, trace_id)).fetch(request);
 }

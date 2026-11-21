@@ -2,7 +2,7 @@
 // tool pipeline as MCP, so state machines, logs and the call table see them the same way.
 
 import { PROGRAM_TRANSITIONS } from "../../protocol/types.ts";
-import { type Config, type Principal, ownersOf } from "./config.ts";
+import { type Config, type ToolPrincipal, ownersOf } from "./config.ts";
 import { callTool, listRobots } from "./dispatch.ts";
 import { ToolFail } from "./envelope.ts";
 import { log } from "./log.ts";
@@ -29,7 +29,7 @@ export async function serveApi(
   url: URL,
   env: Env,
   cfg: Config,
-  who: Principal,
+  who: ToolPrincipal,
   trace_id: string,
 ): Promise<Response> {
   const path = url.pathname.split("/").filter(Boolean).slice(1).map(decodeURIComponent); // after "api"

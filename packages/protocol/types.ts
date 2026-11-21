@@ -346,10 +346,15 @@ export type RuntimeToRelay =
       args?: Record<string, Value>;
     }
   | { t: "stopped"; stop_id: string; motors_stopped: boolean } // reply to {t:"stop", stop_id}
-  | { t: "hb"; ts: number; battery_low?: boolean; fault?: string }; // battery_low = any device of kind battery reports low=true
+  // battery_low = any device of kind battery reports low=true. echo = the `ts` of the last relay heartbeat and how
+  // long the runtime held it before this frame: the relay measures the round trip as now - echo.ts - echo.held_ms.
+  | { t: "hb"; ts: number; battery_low?: boolean; fault?: string; echo?: { ts: number; held_ms: number } };
 export type RelayToRuntime =
   | { t: "welcome"; session_id: string }
-  // deadline_ms is a duration. activity = relay-owned state when dispatched; the runtime allows mode-switching reads only when "idle".
+  // deadline_ms is a duration and a backstop, never the limit: it is the tool's own budget (max_command_ms,
+  // max_program_ms, timeout_ms, duration_ms) plus a margin for the round trip and a verified stop, so the runtime's
+  // own limit ends the call first and answers with data (reason "timeout", met:false, the samples).
+  // activity = relay-owned state when dispatched; the runtime allows mode-switching reads only when "idle".
   | {
       t: "call";
       call_id: string;

@@ -21,11 +21,14 @@ The only secret. JSON array, one entry per token holder; it stores hashes, never
 ```json
 [
   { "principal_id": "team-1", "role": "user", "token_sha256": "<64 hex>", "robot_ids": ["r1", "r1-sim"] },
-  { "principal_id": "ops", "role": "admin", "token_sha256": "<64 hex>", "robot_ids": ["*"] }
+  { "principal_id": "ops", "role": "admin", "token_sha256": "<64 hex>", "robot_ids": ["*"] },
+  { "principal_id": "r1-runtime", "role": "runtime", "token_sha256": "<64 hex>", "robot_ids": ["r1", "r1-sim"] },
+  { "principal_id": "r1-organs", "role": "organ", "token_sha256": "<64 hex>", "robot_ids": ["r1"] }
 ]
 ```
 
 - `role: "user"` sees and operates the robots it lists (a twin is listed like any robot). `role: "admin"` may use `["*"]`, can call the admin tools (`take_control`, `release_control`, `stop_all`) and the HTTP API.
+- `role: "runtime"` is the robot itself: the token its page or headless runner sends in `hello` on `/ws/robot`. `role: "organ"` is for providers attached on `/ws/organ` (a phone camera, a microcontroller). Both must list their robots by name (no `"*"`) and are refused by `/mcp` and `/api`. A `user` or `admin` token is refused on both sockets, so whoever operates a robot cannot impersonate it or replace its live runtime. Every robot needs a `runtime` entry or it can never come online.
 - A robot exists when some principal lists it by name. The principals that list it by name are its owners.
 - Make each token and its hash with `bun scripts/hash-token.ts` (prints `{token, token_sha256}`). Hand the token to its holder over a private channel; only the hash goes in the secret.
 - The principals of a real deployment belong in `deployments/<name>/`, without tokens.
