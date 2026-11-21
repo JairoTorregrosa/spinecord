@@ -2,6 +2,7 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { SERVER_INSTRUCTIONS, SERVER_NAME, SERVER_VERSION, TOOLS } from "../../protocol/tools.ts";
+import { assertSupported, firstViolation as validate } from "../../protocol/schema.ts";
 import { BASE, DEVICES, FakeRuntime, PROFILE, TOKENS, http, resetRelay, rid, tool } from "./harness.ts";
 
 beforeAll(resetRelay);
@@ -28,6 +29,7 @@ describe("MCP surface", () => {
         title: t.title,
         description: t.description,
         inputSchema: t.inputSchema,
+        outputSchema: t.outputSchema,
         annotations: t.annotations,
       })),
     ).toEqual(
@@ -36,35 +38,151 @@ describe("MCP surface", () => {
         title: t.title,
         description: t.description,
         inputSchema: t.input,
+        outputSchema: t.output,
         annotations: t.annotations,
       })),
     );
     // nothing internal leaks
     for (const t of tools)
-      expect(Object.keys(t).sort()).toEqual(["annotations", "description", "inputSchema", "name", "title"]);
+      expect(Object.keys(t).sort()).toEqual([
+        "annotations",
+        "description",
+        "inputSchema",
+        "name",
+        "outputSchema",
+        "title",
+      ]);
     await c.close();
   });
 
-  it("a result is one text block with the envelope; a tool error sets isError", async () => {
+  it("every outputSchema is an object-rooted envelope a strict client accepts", () => {
+    const NAME = /^[A-Za-z0-9_.-]{1,64}$/;
+    const walk = (schema: unknown, where: string): void => {
+      if (typeof schema !== "object" || schema === null) return;
+      const s = schema as Record<string, unknown>;
+      for (const [name, child] of Object.entries((s.properties as Record<string, unknown> | undefined) ?? {})) {
+        if (!NAME.test(name)) throw new Error(`${where}: property name "${name}" does not match ${NAME}`);
+        walk(child, `${where}.${name}`);
+      }
+      walk(s.items, `${where}[]`);
+      walk(s.additionalProperties, `${where}.*`);
+    };
+    for (const t of TOOLS) {
+      const where = `${t.name}.output`;
+      assertSupported(t.output, where); // only keywords the relay validator enforces, so the harness check is complete
+      expect(t.output.type).toBe("object");
+      for (const k of ["anyOf", "oneOf", "allOf", "$ref"]) expect(t.output).not.toHaveProperty(k);
+      expect(Object.keys(t.output.properties).sort()).toEqual(["data", "error", "next", "ok", "robot"]);
+      expect(t.output.required).toEqual(["ok", "next"]);
+      // the two fixed parts are the same for every tool; only `data` differs
+      expect(t.output.properties.error).toEqual(TOOLS[0]!.output.properties.error!);
+      expect(t.output.properties.robot).toEqual(TOOLS[0]!.output.properties.robot!);
+      expect(["object", "array"]).toContain(t.output.properties.data!.type as string);
+      walk(t.output, where);
+    }
+  });
+
+  it("a result is the envelope as structuredContent plus a text block (summary line, then the JSON); a tool error sets isError", async () => {
     const c = await client(TOKENS.a);
+    await c.listTools(); // the SDK client now validates every structuredContent against the advertised outputSchema
     const ok = await c.callTool({ name: "list_robots", arguments: {} });
     expect(ok.isError).toBeFalsy();
     const content = ok.content as { type: string; text: string }[];
     expect(content).toHaveLength(1);
-    const e = JSON.parse(content[0]!.text);
+    const [summary, json, ...rest] = content[0]!.text.split("\n");
+    expect(rest).toEqual([]);
+    expect(summary).toMatch(/^list_robots ok \d+ item\(s\) next=describe_robot$/);
+    const e = ok.structuredContent as { data: { id: string }[] };
+    expect(JSON.parse(json!)).toEqual(e);
     expect(Object.keys(e).sort()).toEqual(["data", "next", "ok"]);
-    expect(e.data.map((r: { id: string }) => r.id)).toContain("a1");
-    expect(e.data.map((r: { id: string }) => r.id)).not.toContain("b1");
+    expect(e.data.map((r) => r.id)).toContain("a1");
+    expect(e.data.map((r) => r.id)).not.toContain("b1");
 
     const bad = await c.callTool({ name: "read_all", arguments: { robot_id: "a2" } });
     expect(bad.isError).toBe(true);
-    expect(JSON.parse((bad.content as { text: string }[])[0]!.text)).toMatchObject({
+    // the error envelope fits the same schema (checked first: toMatchObject rewrites the fields it matches)
+    expect(validate(TOOLS.find((t) => t.name === "read_all")!.output, bad.structuredContent)).toBeNull();
+    const text = (bad.content as { text: string }[])[0]!.text.split("\n");
+    expect(text[0]).toMatch(/^read_all error robot_offline \(retryable\): .* robot=a2 link=offline activity=\w+ next=/);
+    expect(JSON.parse(text[1]!)).toEqual(bad.structuredContent);
+    expect(bad.structuredContent).toMatchObject({
       ok: false,
       robot: { id: "a2", link: "offline" },
       error: { code: "robot_offline", retryable: true },
       next: expect.any(Array),
     });
+
+    // a tool the catalog does not have still answers with an envelope; its long message is cut in the summary only
+    const ghost = await c.callTool({ name: "fly", arguments: {} });
+    expect(ghost.isError).toBe(true);
+    const [line, full] = (ghost.content as { text: string }[])[0]!.text.split("\n");
+    expect(line).toMatch(/^fly error invalid_argument: name: unknown tool "fly"; tools: .*… next=fly$/);
+    expect(line!.length).toBeLessThan(260);
+    expect(JSON.parse(full!).error.message).toContain("stop_all");
+    expect(ghost.structuredContent).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
     await c.close();
+  });
+
+  it("the SDK client accepts the structuredContent of acting, sensing and program tools", async () => {
+    const rt = await FakeRuntime.connect("a9");
+    const c = await client(TOKENS.a);
+    await c.listTools();
+    const seen: string[] = [];
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const r = await c.callTool({ name, arguments: args }); // throws if structuredContent fails the outputSchema
+      expect(r.structuredContent).toMatchObject({ ok: !r.isError });
+      expect(validate(TOOLS.find((t) => t.name === name)!.output, r.structuredContent)).toBeNull();
+      seen.push(name);
+      return r.structuredContent as { ok: boolean; data: any };
+    };
+    // data shaped like the real runtime's (packages/runtime), including a program with a failed step
+    const moved = { requested: { distance_cm: 5 }, applied: { distance_cm: 5 }, measured: { distance_cm: 4.8 } };
+    const value = { device: "ev3.pair", channel: "left_deg", value: 0, unit: "deg", ts: 1 };
+    const answers: Record<string, unknown> = {
+      read_all: { readings: [value, { ...value, value: null, error: "mode_switch_required" }], ms: 3 },
+      read_device: [value],
+      sample_device: { samples: [], min: null, max: null, mean: null, last: null, rate_hz: 10 },
+      wait_until: { met: false, after_ms: 50, readings: [value] },
+      drive: { ...moved, clamped: false, reason: "condition_met", chunks: 2, ms: 40 },
+      turn: { ...moved, clamped: true, reason: "clamped", problem: "x", chunks: 1, ms: 40 },
+    };
+    rt.answer = (f) => ({ ok: true, data: answers[f.tool] ?? { reason: "completed" } });
+    await call("list_robots", {});
+    await call("read_all", { robot_id: "a9" });
+    await call("read_device", { robot_id: "a9", device: "ev3.pair" });
+    await call("sample_device", { robot_id: "a9", device: "ev3.pair", channel: "left_deg", duration_ms: 100 });
+    const cond = { device: "ev3.pair", channel: "left_deg", op: "gt", value: 5 };
+    await call("wait_until", { robot_id: "a9", condition: cond, timeout_ms: 50 });
+    const drove = await call("drive", { robot_id: "a9", distance_cm: 5, until: cond, request_id: rid() });
+    expect(drove).toMatchObject({ ok: true, data: { reason: "condition_met", measured: { distance_cm: 4.8 } } });
+    await call("turn", { robot_id: "a9", angle_deg: 400, request_id: rid() });
+    await call("stop", { robot_id: "a9" });
+    await call("start_episode", { robot_id: "a9", label: "schemas", request_id: rid() });
+    await call("mark_episode", { robot_id: "a9", kind: "checkpoint", request_id: rid() });
+    await call("end_episode", { robot_id: "a9", outcome: "done", metrics: { score: 1 }, request_id: rid() });
+    const name = `schemas_${Date.now().toString(36)}`;
+    const saved = await call("save_program", {
+      name,
+      description: "waits",
+      body: { wait_ms: 1 },
+      request_id: rid(),
+    });
+    expect(saved).toMatchObject({ ok: true, data: { name, version: 1, state: "draft" } });
+    await call("list_programs", { query: name });
+    await call("get_program", { name });
+    // a failed step carries a typed error object (ProgramStep in packages/runtime)
+    const step = { path: "body", tool: "drive", ok: false, error: { code: "busy", message: "x" }, ms: 1 };
+    const failed = { outcome: "failed", reason: "x", steps: [step], steps_dropped: 0, ms: 2 };
+    const runSchema = TOOLS.find((t) => t.name === "run_program")!.output;
+    expect(validate(runSchema, { ok: true, data: failed, next: [] })).toBeNull();
+    expect(
+      validate(runSchema, { ok: true, data: { ...failed, steps: [{ ...step, error: "busy" }] }, next: [] }),
+    ).toMatch(/steps\[0\]\.error: must be of type object/);
+    await call("run_program", { robot_id: "a9", name, request_id: rid() }); // hardware refuses a draft: an error envelope
+    await call("retire_program", { name, version: 1, request_id: rid() });
+    expect(seen).toHaveLength(16);
+    await c.close();
+    rt.close();
   });
 
   it("an image from the runtime becomes one image block; a stale frame is stale_image", async () => {

@@ -30,6 +30,8 @@ flowchart LR
 
 Tested on a real EV3: [`docs/hardware-log.md`](docs/hardware-log.md).
 
+Sense → act loops in one model turn (Claude Code Code Mode): [`docs/code-mode.md`](docs/code-mode.md).
+
 ## Tools
 
 | Group | Tools |

@@ -3,7 +3,11 @@
 // to the robot's Durable Object.
 
 import type { DeviceSpec, Envelope, RobotProfile } from "../../protocol/types.ts";
+import { TOOLS } from "../../protocol/tools.ts";
 import { profileHash } from "../../protocol/validate.ts";
+import { firstViolation as validate } from "../../protocol/schema.ts";
+
+const OUTPUT = new Map(TOOLS.map((t) => [t.name, t.output]));
 
 const relay = (globalThis as { __RELAY__?: { url: string; migrations: string[]; logs: string[] } }).__RELAY__;
 if (!relay)
@@ -98,8 +102,17 @@ export async function tool(token: string, name: string, args: Record<string, unk
       : text,
   );
   if (body.error) throw new Error(`JSON-RPC error: ${JSON.stringify(body.error)}`);
+  // CONTRACT §7: the envelope travels as structuredContent and again as the last line of the text block
+  const envelope = body.result.structuredContent as Envelope<any>;
+  const lines = (body.result.content[0].text as string).split("\n");
+  if (lines.length !== 2 || JSON.stringify(JSON.parse(lines[1]!)) !== JSON.stringify(envelope))
+    throw new Error(`${name}: the text block must be a summary line plus the envelope JSON: ${lines.join("\\n")}`);
+  // every call of every test checks the advertised outputSchema against what the relay really returned
+  const output = OUTPUT.get(name);
+  const invalid = output ? validate(output, envelope) : null;
+  if (invalid) throw new Error(`${name}: structuredContent does not match its outputSchema: ${invalid}`);
   return {
-    envelope: JSON.parse(body.result.content[0].text),
+    envelope,
     isError: body.result.isError === true,
     content: body.result.content,
   };

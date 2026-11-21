@@ -1,8 +1,21 @@
-// The agent-facing MCP surface. Single source for tool names, descriptions and input schemas.
+// The agent-facing MCP surface. Single source for tool names, descriptions, input schemas and output schemas.
 // The relay serves these verbatim (tools/list) and validates inputs against `input` before anything else.
+// Every result is the envelope of CONTRACT §7; `output` is its JSON Schema with the tool's own `data` shape,
+// so a client that writes code against the tools knows the fields without a trial call.
 // Writing rules: first sentence = what it does and what it returns. Then: when to use, preconditions,
 // postconditions, units, failure codes. No use-case names. Everything a caller needs is here or in
 // describe_robot / describe_device output.
+
+import {
+  ACTIVITY_TRANSITIONS,
+  type BackendKind,
+  CONTROL_TRANSITIONS,
+  EPISODE_TRANSITIONS,
+  type ErrorCode,
+  LINK_TRANSITIONS,
+  PROGRAM_TRANSITIONS,
+  type StopReason,
+} from "./types";
 
 export const SERVER_NAME = "spinecord";
 export const SERVER_VERSION = "2.0.0";
@@ -17,7 +30,16 @@ How to work:
 5. Test on the twin first. Each robot "<id>" has a twin "<id>-sim" with the same devices plus a "sim.world" device. Programs (save_program, verify_program, run_program) must pass on the twin before they run on hardware.
 6. Call stop the moment something looks wrong. stop never waits behind another call.
 
-Every result is JSON: {ok, robot:{id, backend, link, activity, control, episode}, data | error:{code, message, retryable, retry_after_ms?}, next:[suggested tools]}. Errors are never disguised as data; a missing value is null with an error string. Mutating tools take request_id: reuse it to retry safely (the robot will not act twice). Units: cm, degrees (positive = counter-clockwise), speed in percent of max, time in ms.`;
+Every result is JSON: {ok, robot:{id, backend, link, activity, control, episode}, data | error:{code, message, retryable, retry_after_ms?}, next:[suggested tools]}. Errors are never disguised as data; a missing value is null with an error string. Mutating tools take request_id: reuse it to retry safely (the robot will not act twice). Units: cm, degrees (positive = counter-clockwise), speed in percent of max, time in ms.
+
+Result format: structuredContent is the envelope and matches the tool's outputSchema. The text block repeats it for clients without structured output: line 1 is a one-line summary, the last line is the envelope as single-line JSON.
+
+If you write code that calls these tools (several calls in one script):
+- Compose the whole sense → act loop in one script and return only what you need; do not spend a model turn per call.
+- Check \`ok\` after every call. On ok:false leave the loop at once and return the error; never continue on stale data.
+- A script that moves the robot wraps the motion in try/finally and calls stop in the finally whenever it did not finish cleanly.
+- Bound every loop (iterations and total time) and keep the script well under 10 minutes; prefer one call with \`until\` over a fast polling loop.
+- Use a fresh request_id per intended action and reuse it only to retry that same call. After a failed or unanswered moving call, read the robot (read_all) before sending a new request_id: it may already have moved.`;
 
 const robotId = { type: "string", description: 'Robot id from list_robots, e.g. "t3" or its twin "t3-sim".' } as const;
 const requestId = {
@@ -43,6 +65,8 @@ export interface ToolDef {
   title: string;
   description: string;
   input: { type: "object"; properties: Record<string, unknown>; required?: string[]; additionalProperties: false };
+  /** JSON Schema 2020-12 of the result envelope {ok, robot?, data | error, next} with this tool's `data`. Served as outputSchema. */
+  output: OutputSchema;
   annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
   scope: "user" | "admin";
   mutating: boolean; // true → requires request_id, control, activity checks
@@ -52,7 +76,7 @@ const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, o
 const act = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
 const meta = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 
-export const TOOLS: ToolDef[] = [
+const CATALOG: Omit<ToolDef, "output">[] = [
   // ---------- Discovery ----------
   {
     name: "list_robots",
@@ -492,3 +516,307 @@ export const TOOLS: ToolDef[] = [
     input: { type: "object", properties: {}, additionalProperties: false },
   },
 ];
+
+// ---------- Output schemas ----------
+// Built from the types in types.ts: enums come from the transition tables or from lists that tsc checks against
+// the unions. Clients reject a result that does not match its schema, so a schema promises only what the relay
+// guarantees: objects stay open (no additionalProperties:false); `required` and `enum` appear only on what the
+// relay builds itself (envelope, robot state, error, library, episodes, control). Data a runtime or an attached
+// device produces is passed through unverified, so there the fields are typed and the expected values are named
+// in the description (`named`), but nothing is required.
+// Keywords are limited to what the relay validator implements (type, enum, properties, required, items).
+
+type Schema = Record<string, unknown>;
+export type OutputSchema = {
+  type: "object";
+  properties: Record<string, Schema>;
+  required: string[];
+};
+
+/** A list of every member of a string union; tsc fails when the union gains a member the list lacks. */
+const every =
+  <T extends string>() =>
+  <const A extends readonly T[]>(members: A & ([T] extends [A[number]] ? unknown : never)): readonly T[] =>
+    members;
+const keys = <K extends string>(table: Record<K, unknown>): K[] => Object.keys(table) as K[];
+
+const ERROR_CODES = every<ErrorCode>()([
+  "unauthorized",
+  "unknown_robot",
+  "unknown_device",
+  "unknown_channel",
+  "unknown_command",
+  "unsupported",
+  "robot_offline",
+  "busy",
+  "not_in_control",
+  "illegal_state",
+  "invalid_argument",
+  "fault",
+  "timeout",
+  "stop_unverified",
+  "provider_stale",
+  "stale_image",
+  "program_not_runnable",
+  "rate_limited",
+  "internal",
+  "misconfigured",
+]);
+const STOP_REASONS = every<StopReason>()(["completed", "condition_met", "timeout", "clamped", "stalled", "preempted"]);
+const BACKENDS = every<BackendKind>()(["ev3", "sim", "organ"]);
+
+const str = { type: "string" } as const;
+const num = { type: "number" } as const;
+const int = { type: "integer" } as const;
+const bool = { type: "boolean" } as const;
+const strings = { type: "array", items: str } as const;
+const nullable = (type: string, extra: Schema = {}): Schema => ({ type: [type, "null"], ...extra });
+const oneOf = (values: readonly string[]): Schema => ({ type: "string", enum: [...values] });
+/** A string whose expected values are documented, not enforced (runtime-produced data). */
+const named = (values: readonly string[], note = ""): Schema => ({
+  type: "string",
+  description: `${values.join(" | ")}${note ? `. ${note}` : ""}`,
+});
+const obj = (properties: Record<string, Schema>, required: string[] = [], description?: string): Schema => ({
+  type: "object",
+  ...(description ? { description } : {}),
+  properties,
+  ...(required.length ? { required } : {}),
+});
+const list = (items: Schema, description?: string): Schema => ({
+  type: "array",
+  ...(description ? { description } : {}),
+  items,
+});
+const freeform = (description: string): Schema => ({ type: "object", description });
+
+const activity = oneOf(keys(ACTIVITY_TRANSITIONS));
+const control = oneOf(keys(CONTROL_TRANSITIONS));
+const episodeState = oneOf(keys(EPISODE_TRANSITIONS));
+const programState = oneOf(keys(PROGRAM_TRANSITIONS));
+const stateFields = {
+  id: str,
+  backend: { type: ["string", "null"], enum: [...BACKENDS, null], description: "null until the first connection" },
+  link: oneOf(keys(LINK_TRANSITIONS)),
+  activity,
+  control,
+  episode: episodeState,
+};
+const robotState = obj(
+  stateFields,
+  Object.keys(stateFields),
+  "Robot state after the call. Absent for tools that address no robot.",
+);
+const toolError = obj(
+  { code: oneOf(ERROR_CODES), message: str, retryable: bool, retry_after_ms: num },
+  ["code", "message", "retryable"],
+  "Present when ok is false.",
+);
+
+/** The envelope around one tool's data (CONTRACT §7). One schema covers success and failure: check `ok`. */
+const envelope = (data: Schema): OutputSchema => ({
+  type: "object",
+  properties: {
+    ok: { type: "boolean", description: "true → data is present; false → error is present." },
+    robot: robotState,
+    data,
+    error: toolError,
+    next: list(str, "Suggested next tools."),
+  },
+  required: ["ok", "next"],
+});
+
+const reading = obj(
+  {
+    device: str,
+    channel: str,
+    value: {
+      type: ["number", "boolean", "string", "array", "null"],
+      description: "null when the read failed (see error) or the channel is an image.",
+    },
+    unit: str,
+    ts: { type: "number", description: "Capture time, ms." },
+    error: str,
+  },
+  [],
+  "One channel value.",
+);
+const readings = list(reading);
+const commandResult = obj({
+  requested: freeform("What was asked."),
+  applied: freeform("What was sent after clamping to the limits."),
+  measured: freeform(
+    "What happened, from encoders and gyro: drive and arc give distance_cm and heading_change_deg, turn gives angle_deg and source.",
+  ),
+  clamped: bool,
+  reason: named(STOP_REASONS, "Anything but completed or condition_met means the request was not fully done."),
+  problem: { type: "string", description: "Present when the motion went wrong, e.g. a wheel turned backwards." },
+  chunks: num,
+  ms: num,
+});
+const deviceFields = { id: str, provider: str, kind: str, roles: strings, description: str };
+const channelSpec = obj({
+  name: str,
+  type: named(["number", "boolean", "string", "vector", "image"]),
+  unit: str,
+  range: list(num),
+  length: num,
+  max_rate_hz: num,
+  approx: str,
+  mode_group: str,
+  active: { type: "boolean", description: "false → reading it needs a mode switch: name it in channels." },
+  description: str,
+});
+const commandSpec = obj({
+  name: str,
+  description: str,
+  params: freeform("JSON Schema of the command's args."),
+  bound: obj({ kind: named(["degrees", "ms", "instant"]), params: strings, max: num }),
+  moves: bool,
+});
+const verifiedOn = { twin_id: str, profile_hash: str, at: num };
+const programSummary = {
+  name: str,
+  version: int,
+  description: str,
+  state: programState,
+  success_rate: nullable("number"),
+  requires: strings,
+  author: str,
+  verified_on: nullable("object", { properties: verifiedOn }),
+};
+const programFields = {
+  ...programSummary,
+  body: freeform("Program tree."),
+  success: freeform("Success condition."),
+  pass_rate: num,
+  created_at: num,
+};
+const programKey = ["name", "version", "state"];
+const program = obj(programFields, programKey);
+const episode = obj(
+  {
+    id: str,
+    robot_id: str,
+    label: str,
+    tags: strings,
+    state: episodeState,
+    started_at: num,
+    ended_at: num,
+    elapsed_ms: num,
+    calls: num,
+    moving_calls: num,
+    stops: num,
+    errors: num,
+    marks: list(obj({ at: num, kind: str, note: str })),
+    outcome: str,
+    metrics: { type: "object", additionalProperties: num },
+  },
+  ["id", "state"],
+);
+const controlChange = obj({ control, stop: obj({ motors_stopped: nullable("boolean"), note: str }) }, ["control"]);
+
+const DATA: Record<string, Schema> = {
+  list_robots: list(
+    obj(
+      {
+        ...stateFields,
+        battery_low: nullable("boolean"),
+        profile_hash: nullable("string"),
+        fault_reason: nullable("string"),
+      },
+      Object.keys(stateFields),
+    ),
+  ),
+  describe_robot: obj({
+    id: str,
+    backend: named(BACKENDS),
+    devices: list(
+      obj({ ...deviceFields, channels: list(str, "Channel names."), commands: list(str, "Command names.") }),
+    ),
+    roles: { type: "object", additionalProperties: str, description: "role → device id" },
+    drivetrain: nullable("object", { description: "null → drive, turn and arc are unsupported." }),
+    limits: obj({
+      max_speed_pct: num,
+      max_command_ms: num,
+      max_drive_cm: num,
+      max_turn_deg: num,
+      max_program_ms: num,
+    }),
+    notes: strings,
+  }),
+  describe_device: obj({ ...deviceFields, channels: list(channelSpec), commands: list(commandSpec) }),
+  read_device: readings,
+  read_all: obj({ readings, ms: num }),
+  sample_device: obj({
+    samples: list({ type: "array" }, "[t_ms, value] pairs."),
+    min: nullable("number"),
+    max: nullable("number"),
+    mean: nullable("number"),
+    last: nullable("number"),
+    rate_hz: num,
+    unit: str,
+    reason: { type: "string", description: '"preempted" when a stop cut the sampling short.' },
+  }),
+  wait_until: obj({ met: bool, after_ms: num, readings, reason: str }),
+  drive: commandResult,
+  turn: commandResult,
+  arc: commandResult,
+  command_device: commandResult,
+  stop: obj({ motors_stopped: bool, activity }, ["motors_stopped"]),
+  reset_fault: obj({ activity: named(["idle"]) }),
+  save_program: program,
+  list_programs: list(obj(programSummary, programKey)),
+  get_program: obj(
+    {
+      ...programFields,
+      runs: list(obj({ robot_id: str, backend: str, outcome: str, ms: num, created_at: num })),
+    },
+    programKey,
+  ),
+  verify_program: obj(
+    {
+      success_rate: nullable("number", { description: "null when no full set of trials ran." }),
+      outcomes: list(obj({ trial: int, outcome: str, reason: str, ms: num })),
+      state: programState,
+      verified_on: obj(verifiedOn),
+      missing: list(str, "Devices the twin cannot simulate."),
+      note: str,
+    },
+    ["success_rate", "outcomes", "state"],
+  ),
+  run_program: obj({
+    outcome: named(["succeeded", "failed", "aborted", "timeout"]),
+    reason: str,
+    steps: list(
+      obj({
+        path: str,
+        tool: str,
+        ok: bool,
+        reason: str,
+        error: obj({ code: named(ERROR_CODES), message: str }),
+        ms: num,
+      }),
+    ),
+    steps_dropped: num,
+    ms: num,
+  }),
+  retire_program: program,
+  start_episode: obj({ id: str, label: str, state: episodeState, started_at: num }, ["id"]),
+  mark_episode: episode,
+  end_episode: episode,
+  take_control: controlChange,
+  release_control: controlChange,
+  stop_all: list(
+    obj({ robot_id: str, motors_stopped: bool, link: str, error: { type: "string", description: "Error code." } }, [
+      "robot_id",
+      "motors_stopped",
+    ]),
+  ),
+};
+
+export const TOOLS: ToolDef[] = CATALOG.map((t) => {
+  const data = DATA[t.name];
+  if (!data) throw new Error(`tools.ts: ${t.name} has no output schema`);
+  return { ...t, output: envelope(data) };
+});
