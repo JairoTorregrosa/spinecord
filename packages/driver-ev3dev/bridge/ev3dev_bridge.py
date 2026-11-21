@@ -99,6 +99,32 @@ def read_attr(path):
         return f.read().strip()
 
 
+class SysfsValueError(BridgeError, ValueError):
+    """A sysfs attribute that does not hold the number its driver documents.
+
+    Never retried: on a brick it means a driver fault. It is a ValueError too, so a read that
+    reports a failed value per channel (null plus the error) keeps doing so.
+    """
+    def __init__(self, path, raw, expected):
+        BridgeError.__init__(self, "internal", "sysfs attribute %s reads %r, expected %s" % (path, raw, expected))
+
+
+def read_int(path):
+    raw = read_attr(path)
+    try:
+        return int(raw)
+    except ValueError:
+        raise SysfsValueError(path, raw, "an integer")
+
+
+def read_float(path):
+    raw = read_attr(path)
+    try:
+        return float(raw)
+    except ValueError:
+        raise SysfsValueError(path, raw, "a number")
+
+
 def write_attr(path, value):
     with open(path, "w") as f:
         f.write(str(value))
@@ -136,8 +162,8 @@ class Motor(object):
         self.port = port
         self.address = read_attr(os.path.join(directory, "address"))
         self.driver = read_attr(os.path.join(directory, "driver_name"))
-        self.cpr = int(read_attr(os.path.join(directory, "count_per_rot")))
-        self.max_speed = int(read_attr(os.path.join(directory, "max_speed")))
+        self.cpr = read_int(os.path.join(directory, "count_per_rot"))
+        self.max_speed = read_int(os.path.join(directory, "max_speed"))
         self.commands = read_list(os.path.join(directory, "commands"))
         self.stop_actions = read_list(os.path.join(directory, "stop_actions"))
         self.owner = None      # id of the command running on this motor
@@ -146,11 +172,14 @@ class Motor(object):
     def get(self, name):
         return read_attr(os.path.join(self.dir, name))
 
+    def get_int(self, name):
+        return read_int(os.path.join(self.dir, name))
+
     def set(self, name, value):
         write_attr(os.path.join(self.dir, name), value)
 
     def counts(self):
-        return int(self.get("position"))
+        return self.get_int("position")
 
     def deg(self, counts):
         return counts * 360.0 / self.cpr
@@ -184,6 +213,12 @@ class Sensor(object):
 
     def get(self, name):
         return read_attr(os.path.join(self.dir, name))
+
+    def get_int(self, name):
+        return read_int(os.path.join(self.dir, name))
+
+    def get_float(self, name):
+        return read_float(os.path.join(self.dir, name))
 
     def set(self, name, value):
         write_attr(os.path.join(self.dir, name), value)
@@ -453,7 +488,7 @@ class Bridge(object):
         try:
             if kind == "motor":
                 values["position_deg"] = (tidy(obj.deg(obj.counts())), None)
-                values["speed_deg_s"] = (tidy(obj.deg(int(obj.get("speed")))), None)
+                values["speed_deg_s"] = (tidy(obj.deg(obj.get_int("speed"))), None)
                 values["stalled"] = (bool(obj.stalled), None)
             elif kind == "motor_pair":
                 l, r = self.motors[self.pair[0]], self.motors[self.pair[1]]
@@ -463,7 +498,7 @@ class Bridge(object):
                 path = self.battery_path()
                 if path is None:
                     raise IOError("no power_supply with voltage_now")
-                volts = int(read_attr(path)) / 1000000.0
+                volts = read_int(path) / 1000000.0
                 values["voltage_v"] = (round(volts, 2), None)
                 values["low"] = (volts < self.bounds["low_battery_v"], None)
             elif kind == "buttons":
@@ -534,11 +569,11 @@ class Bridge(object):
             sensor.set("mode", mode)
             yield MODE_SWITCH_S
         try:
-            decimals = int(sensor.get("decimals"))
+            decimals = sensor.get_int("decimals")
         except (OSError, IOError, ValueError):
             decimals = DEFAULT_DECIMALS.get(mode, 0)
         scale = float(10 ** decimals)
-        self.got = [float(sensor.get("value%d" % i)) / scale for i in range(count)]
+        self.got = [sensor.get_float("value%d" % i) / scale for i in range(count)]
 
     def read_sensor(self, rid, sensor, names, switch):
         values = {}
@@ -557,12 +592,12 @@ class Bridge(object):
                 vals = self.got
                 for m in same:
                     values[m] = self.decode(sensor, m, vals)
+            except (OSError, IOError, ValueError) as e:   # first: SysfsValueError is a BridgeError too
+                for m in same:
+                    values[m] = (None, "sensor on port %d returned no value (unplugged?): %s" % (sensor.port, e))
             except BridgeError as e:
                 for m in same:
                     values[m] = (None, e.message if e.code == "mode_switch_required" else "%s: %s" % (e.code, e.message))
-            except (OSError, IOError, ValueError) as e:
-                for m in same:
-                    values[m] = (None, "sensor on port %d returned no value (unplugged?): %s" % (sensor.port, e))
         mode = None
         try:
             mode = sensor.get("mode")
@@ -575,7 +610,7 @@ class Bridge(object):
             if s.kind != "touch":
                 continue
             try:
-                pressed = float(s.get("value0")) >= 0.5
+                pressed = s.get_float("value0") >= 0.5
             except (OSError, IOError, ValueError):
                 continue
             if s.was_pressed and not pressed:
@@ -729,7 +764,7 @@ class Bridge(object):
         while True:
             moving = []
             for m in motors:
-                speed = int(m.get("speed"))
+                speed = m.get_int("speed")
                 if "running" in m.state() or speed != 0:
                     moving.append("port %s speed=%d" % (m.port, speed))
             if not moving:
@@ -807,7 +842,7 @@ class Bridge(object):
                 i, m, travel = absolute[n]
                 direction = 1 if travel > 0 else -1
                 passed = (m.counts() - goals[n]) * direction >= 0
-                if passed and int(m.get("speed")) * direction > 0:
+                if passed and m.get_int("speed") * direction > 0:
                     # Already past the target and still rolling the commanded way: an absolute move
                     # would drive it BACK. The travel is done; brake if asked, never reverse.
                     if action == "brake":
@@ -899,7 +934,7 @@ class Bridge(object):
             for d in self.motor_dirs():
                 try:
                     state = read_attr(os.path.join(d, "state")).split()
-                    speed = int(read_attr(os.path.join(d, "speed")))
+                    speed = read_int(os.path.join(d, "speed"))
                     if "running" in state or speed != 0:
                         moving.append("%s state=%s speed=%d" % (os.path.basename(d), " ".join(state) or "idle", speed))
                 except (OSError, IOError, ValueError) as e:

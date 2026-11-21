@@ -199,6 +199,7 @@ export class FakeRuntime {
   closed: { code: number; reason: string } | null = null;
   welcomed = false;
   private waiters: { tool: string; n: number; resolve: (c: CallFrame) => void }[] = [];
+  private frameWaiters: { t: string; n: number; resolve: (f: any) => void }[] = [];
   /** what the runtime answers to a call; "hang" = keep working until aborted */
   answer: (c: CallFrame) => Answer = () => ({ ok: true, data: { reason: "completed" } });
   /** verdict of the next stop; null = say nothing (stop cannot be verified) */
@@ -257,6 +258,11 @@ export class FakeRuntime {
   }
   private on(m: any): void {
     this.frames.push(m);
+    this.frameWaiters = this.frameWaiters.filter((w) => {
+      const got = this.frames.filter((f) => f.t === w.t)[w.n - 1];
+      if (got) w.resolve(got);
+      return !got;
+    });
     if (m.t === "welcome") this.welcomed = true;
     if (m.t === "call") {
       this.calls.push(m);
@@ -293,6 +299,15 @@ export class FakeRuntime {
     const got = this.toolCalls(tool)[n - 1];
     if (got) return Promise.resolve(got);
     return new Promise((resolve) => this.waiters.push({ tool, n, resolve }));
+  }
+  /**
+   * Resolves with the n-th frame of type `t`, as soon as it has arrived. A worker log line (`logged`) and an HTTP
+   * reply travel on other channels than this socket: neither says that a frame the relay sent has arrived here.
+   */
+  frame(t: string, n = 1): Promise<any> {
+    const got = this.frames.filter((f) => f.t === t)[n - 1];
+    if (got) return Promise.resolve(got);
+    return new Promise((resolve) => this.frameWaiters.push({ t, n, resolve }));
   }
   toolCalls(tool: string): CallFrame[] {
     return this.calls.filter((c) => c.tool === tool);

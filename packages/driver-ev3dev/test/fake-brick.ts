@@ -2,7 +2,7 @@
 // real bridge (bridge/ev3dev_bridge.py) run by the local Python against it with --root.
 // The tree is plain files: a test plays the kernel by writing `state`, `position` or `value0`.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRIDGE_FILE, ProcessLineTransport } from "../src/ssh";
@@ -31,10 +31,16 @@ export interface FakeSensor {
 /** LED directory names contain ":", which Windows file systems reject, so the fake has no LEDs there. */
 export const FAKE_HAS_LEDS = process.platform !== "win32";
 
+/** Windows refuses to replace a file while another process has it open; the bridge's reads last microseconds. */
+const SHARING = ["EPERM", "EACCES", "EBUSY"];
+const REPLACE_TRIES = 2000;
+
 export class FakeBrick {
   readonly root: string;
+  private writes = 0;
   constructor(o: { motors: FakeMotor[]; sensors: FakeSensor[]; battery_uv?: number }) {
     this.root = mkdtempSync(join(tmpdir(), "ev3dev-fake-"));
+    mkdirSync(join(this.root, "tmp"));
     for (const cls of ["tacho-motor", "lego-sensor", "lego-port", "power_supply", "leds"])
       mkdirSync(join(this.root, "sys", "class", cls), { recursive: true });
     o.motors.forEach((m, i) => {
@@ -91,6 +97,25 @@ export class FakeBrick {
     this.setButtons([]);
   }
 
+  /**
+   * Replaces an attribute file in one step (write a temporary file, rename it over the attribute), as the kernel
+   * does: a reader sees the old value or the new one, never an empty or half-written file. Writing in place
+   * truncates first, and the bridge, which polls these files from another process, then reads "".
+   */
+  private put(file: string, data: string | Uint8Array): void {
+    const tmp = join(this.root, "tmp", `w${this.writes++}`);
+    writeFileSync(tmp, data);
+    for (let i = 1; ; i++) {
+      try {
+        renameSync(tmp, file);
+        return;
+      } catch (e) {
+        if (i >= REPLACE_TRIES || !SHARING.includes((e as NodeJS.ErrnoException).code ?? "")) throw e;
+        Bun.sleepSync(1);
+      }
+    }
+  }
+
   motorDir(i: number): string {
     return join(this.root, "sys", "class", "tacho-motor", `motor${i}`);
   }
@@ -98,13 +123,13 @@ export class FakeBrick {
     return readFileSync(join(this.motorDir(i), attr), "utf8").trim();
   }
   setMotor(i: number, attr: string, value: string | number): void {
-    writeFileSync(join(this.motorDir(i), attr), `${value}\n`);
+    this.put(join(this.motorDir(i), attr), `${value}\n`);
   }
   sensor(i: number, attr: string): string {
     return readFileSync(join(this.root, "sys", "class", "lego-sensor", `sensor${i}`, attr), "utf8").trim();
   }
   setSensor(i: number, attr: string, value: string | number): void {
-    writeFileSync(join(this.root, "sys", "class", "lego-sensor", `sensor${i}`, attr), `${value}\n`);
+    this.put(join(this.root, "sys", "class", "lego-sensor", `sensor${i}`, attr), `${value}\n`);
   }
   led(side: 0 | 1, color: "red" | "green", attr: string): string {
     return readFileSync(
@@ -116,7 +141,7 @@ export class FakeBrick {
   setButtons(codes: number[]): void {
     const bitmap = new Uint8Array(96);
     for (const c of codes) bitmap[c >> 3] |= 1 << (c & 7);
-    writeFileSync(join(this.root, "dev", "input", "by-path", "platform-gpio_keys-event"), bitmap);
+    this.put(join(this.root, "dev", "input", "by-path", "platform-gpio_keys-event"), bitmap);
   }
 
   /**
@@ -133,10 +158,10 @@ export class FakeBrick {
       if (busy) return;
       let cmd: string;
       try {
-        cmd = this.motor(i, "command");
+        cmd = this.motor(i, "command"); // "" while the bridge is mid-write: no run command yet
       } catch {
         return;
-      } // the bridge is mid-write
+      }
       if (cmd !== "run-to-rel-pos" && cmd !== "run-to-abs-pos" && cmd !== "run-timed") return;
       busy = true;
       this.setMotor(i, "state", "running");

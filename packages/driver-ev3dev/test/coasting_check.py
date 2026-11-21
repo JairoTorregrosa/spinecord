@@ -23,8 +23,8 @@ def run(positions, speed):
         bridge_mod.write_attr(os.path.join(motor.dir, name), "")
     seq = list(positions)
     motor.counts = lambda: seq.pop(0) if len(seq) > 1 else seq[0]
-    real_get = motor.get
-    motor.get = lambda name: str(speed) if name == "speed" else real_get(name)
+    real_get, real_get_int = motor.get, motor.get_int
+    motor.get_int = lambda name: speed if name == "speed" else real_get_int(name)
     bridge.command(2, {"device": "B", "command": "run_degrees", "args": {"degrees": -27, "speed_pct": 25, "brake": False}})
     for _ in range(200):
         if not bridge.tasks:
