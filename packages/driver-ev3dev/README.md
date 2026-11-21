@@ -1,0 +1,92 @@
+# @spinecord/driver-ev3dev
+
+The contract `Provider` for a LEGO EV3 running [ev3dev](https://www.ev3dev.org) (ev3dev-stretch). It emits the same device kinds, ids, channels and commands as the stock-firmware driver, so a model sees the same robot whichever firmware the brick runs.
+
+Two halves:
+
+| File                      | Runs on      | What it is                                                                                                             |
+| ------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `bridge/ev3dev_bridge.py` | the brick    | One Python 3.5 file, standard library only. JSON lines on stdin/stdout, hardware through sysfs. Owns the safety rules. |
+| `src/provider.ts`         | the computer | `Ev3devProvider implements Provider` over a `LineTransport`. No I/O of its own.                                        |
+| `src/ssh.ts`              | the computer | `SshLineTransport` (the system `ssh` client), `installBridge()`, `ProcessLineTransport`.                               |
+| `scripts/smoke-ssh.ts`    | the computer | Read-only check of a real brick.                                                                                       |
+| `test/fake-brick.ts`      | tests        | A fake sysfs tree; the real bridge runs against it with the local Python.                                              |
+
+Tests: `bun test` in this folder (needs a local `python3` or `python`; without one the brick tests are skipped with a message). Typecheck: `bun run typecheck`.
+
+## Using it
+
+```ts
+import { Ev3devProvider, SshLineTransport, installBridge } from "@spinecord/driver-ev3dev";
+
+const ssh = { host: "192.168.0.50", user: "robot" }; // port, identityFile, options are optional
+await installBridge(ssh); // copies the bridge to ~/spinecord/ev3dev_bridge.py
+const ev3 = new Ev3devProvider(new SshLineTransport(ssh), {
+  limits: profile.limits, // required: the robot profile's limits
+  hardware: myDeployment.ev3dev.hardware, // required: { low_battery_v, max_tone_ms }
+});
+const devices = await ev3.devices();
+await ev3.command("ev3.pair", "run_pair", { left_deg: 40, right_deg: 40, speed_pct: 30, brake: false }, signal);
+await ev3.close(); // stops the heartbeat; the brick brakes
+```
+
+`limits` and `hardware` are required; a missing or non-positive field throws `RuntimeError("misconfigured")`. `EXAMPLE_EV3DEV_HARDWARE` is a documented example and is never applied by itself. Other options: `id` (default `ev3`), `pair` (default B left, C right), `roles`, `heartbeatMs` (300), `helloTimeoutMs` (20000, covers the ssh handshake and Python start), `requestTimeoutMs` (2000), `linkSilenceMs` (3000), `stopLinkMs` (700).
+
+### ssh
+
+`SshLineTransport` spawns `ssh` with an argument array (no shell on the computer), so it works with OpenSSH on macOS, Linux and Windows 10+. It runs `python3 -u <remote path>` on the brick. It uses `BatchMode=yes`: the brick must accept a key (ssh never prompts for the password), and the brick's host key must already be known. `host`, `user`, `port` and the remote path are checked against plain character sets because ssh and the remote shell parse them. `installBridge()` sends the file through ssh's stdin (no scp), writes to a temporary name, renames, and compares the byte count.
+
+## Safety, as built
+
+- **One command = one operation**, bounded by time on the brick: at most `maxOpMs` of motion (default and ceiling `MAX_MOTION_MS` = 3000 ms, never above `limits.max_command_ms`; the bridge has the same ceiling and ignores a larger value). It can be that long because the brick has its own watchdog, and one long operation avoids chaining coasting chunks over a slow link. Motion uses only `run-to-abs-pos` and `run-timed`; `run-forever` and `run-direct` are never written. A degree move is sent as an absolute target: the encoder position read at the start of the operation plus the delta, capped to what fits in the time bound. `run-to-rel-pos` is not used: on a real brick it counts from the previous target, not from the motor's position, so after a coasting overshoot the next relative move ran backward (seen on hardware, covered by a regression test). A degree target that has not arrived at the time bound is braked and reported with reason `timeout` and `measured.time_limited: true`. The provider never chunks; the runtime does.
+- **Watchdog on the brick**: with no line for 1000 ms, or when stdin closes, or on SIGTERM/SIGHUP/SIGINT, the bridge writes `stop_action=brake` and `command=stop` to every tacho motor. The provider sends a heartbeat every 300 ms. Worst case after the computer or the link dies mid-move: the motors are braked 1000 ms after the last message.
+- **Stop** writes the brake to every motor first, then waits up to 800 ms until every motor is not `running` and reads `speed` 0. `stop_worst_ms` = 800 + `stopLinkMs`. With the link closed, `stop()` throws `robot_offline` because nothing can be verified.
+- **Never backward.** The position is read immediately before the target is written and again immediately before the command. If the motor is already past the target and still rolling the commanded way (it was coasting from the previous operation), no run command is written: the operation ends as completed with the measured travel, braking if `brake` is true. Seen on hardware twice before this rule; covered by `test/coasting_check.py`.
+- **Coasting.** With `brake: false` the motor is still turning when the command returns. `measured` is the encoder change from the position read at the start of the operation to the moment of return, not where the motor comes to rest; the next operation starts from wherever the motor is by then. End a coasting sequence with a braking operation or `brake{}`.
+- **Reads never write.** A sensor channel of another mode comes back `null` with error `mode_switch_required` unless the read names it and passes `allow_mode_switch`; a switch updates the `active` flags and calls `onDevicesChanged` listeners.
+
+## Device mapping
+
+| Device                           | ev3dev source                                                   | Notes                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ev3.A`..`ev3.D` motor           | `/sys/class/tacho-motor/motorN` by `address`                    | degrees = counts x 360 / `count_per_rot`; speed percent = share of the motor's own `max_speed`. `stalled` = the last operation moved under 0.5 degrees when 4 or more were expected by its end.                                                                                                                                                   |
+| `ev3.pair` motor_pair            | the two pair motors                                             | See below.                                                                                                                                                                                                                                                                                                                             |
+| `ev3.S1`..`ev3.S4`               | `/sys/class/lego-sensor/sensorN` by `address` and `driver_name` | touch `TOUCH`; color `COL-REFLECT`, `COL-AMBIENT`, `COL-COLOR`, `RGB-RAW`; ultrasonic `US-DIST-CM` scaled by `decimals`; gyro `GYRO-ANG`, `GYRO-RATE`, negated to counter-clockwise-positive; infrared `IR-PROX`, `IR-SEEK`, `IR-REMOTE`. A mode the sensor does not list in `modes` gives a null reading that names the modes it has. |
+| touch `presses`                  | counted by the bridge                                           | ev3dev has no bump-count mode; the bridge samples the button about 50 times a second.                                                                                                                                                                                                                                                  |
+| any other sensor or motor driver | —                                                               | Listed as kind `unknown` with its driver name; never skipped.                                                                                                                                                                                                                                                                          |
+| `ev3.speaker`                    | the `beep` program                                              | No volume control. Without `beep` on the brick the commands fail with `unsupported` and the description says so.                                                                                                                                                                                                                       |
+| `ev3.display`                    | —                                                               | Listed, but `text` and `clear` always fail with `unsupported`: the brick's menu owns the framebuffer.                                                                                                                                                                                                                                  |
+| `ev3.led`                        | `/sys/class/leds/led{0,1}:{red,green}:brick-status`             | Both sides together. flash and pulse use the kernel `timer` trigger; the stock double pulse is not reproduced.                                                                                                                                                                                                                         |
+| `ev3.buttons`                    | `EVIOCGKEY` on `/dev/input/by-path/platform-gpio_keys-event`    | The brick's menu reacts to the same buttons.                                                                                                                                                                                                                                                                                           |
+| `ev3.battery`                    | `/sys/class/power_supply/*/voltage_now`                         |                                                                                                                                                                                                                                                                                                                                        |
+
+### run_pair precision
+
+The bridge writes both motors' setpoints, then the two `command` files one after the other, with `speed_sp` in proportion to each motor's travel so both need the same time. That is all the synchronization there is: the starts are a few milliseconds apart (two sysfs writes from Python on the brick's CPU) and each motor regulates its own speed, so a wheel under more load lags during the move and the other does not wait for it, unlike the stock firmware's synchronized opcode. Each motor still aims at its own encoder target. A wheel whose proportional speed would fall under 10 counts/s is run at 10. Read `measured.left_deg` and `measured.right_deg`.
+
+## Bridge protocol
+
+One JSON object per line. Device names are local (`B`, `pair`, `S4`, `battery`).
+
+| Request                                                                                                           | Reply                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `{"op":"hello","id","config":{"bounds":{max_speed_pct,max_op_ms,low_battery_v,max_tone_ms},"pair":{left,right}}}` | inventory: `motors`, `sensors` (with raw `driver_name`, `mode`, `modes`), `unknown`, `ports`, `capabilities`, `watchdog_ms`, `max_op_ms` |
+| `{"op":"read","id","device","channels","allow_mode_switch"}`                                                      | `readings:[{channel,value,error?}]`, `mode` for sensors                                                                                  |
+| `{"op":"command","id","device","command","args"}`                                                                 | `result:{measured,clamped,reason,ms}`                                                                                                    |
+| `{"op":"abort","target":<command id>}`                                                                            | none; the command answers with reason `preempted`                                                                                        |
+| `{"op":"stop","id"}`                                                                                              | `motors_stopped`, `detail` when false                                                                                                    |
+| `{"op":"hb"}`                                                                                                     | `{"ev":"hb"}`                                                                                                                            |
+
+Errors are `{"id","ok":false,"code","message"}` with contract error codes. `--root DIR` (or `SYSFS_ROOT`) points the bridge at another tree; tests use it.
+
+## Smoke check on a real brick
+
+```
+bun scripts/smoke-ssh.ts --host <host> --user robot [--port 22] [--identity <key file>]
+```
+
+Installs the bridge, then prints the inventory and one read of every device as JSON. The transport is wrapped by `readOnlyTransport`, which throws on anything but `hello`, `read` and `hb` and on reads that switch a sensor mode, so the script cannot move the robot. When the script closes the link, the bridge does what it always does on a closed link: it writes brake and stop to the (idle) motors.
+
+## Not verified on hardware yet
+
+Everything here is tested against the fake tree only. To confirm on a brick: the exact mode names and `decimals` per sensor, that `state` shows `running` right after a command write (first hardware run: read-only smoke, single operations, pair brake and stop behaved; chained coasting operations exposed the relative-target bug fixed above and have not been re-run since), `speed` reading exactly 0 at rest, brake overshoot against the 3-degree arrival tolerance, the 0.1 s wait after a mode switch, the gyro reset by mode switch, the `EVIOCGKEY` button read, write permission of the ssh user on the LED `trigger` files, how smooth coasting chunks are over an ssh round trip, and the Python 3.5 runtime itself (the syntax is checked with a minimum-version linter, not run on 3.5).

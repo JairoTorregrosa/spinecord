@@ -1,0 +1,11 @@
+{
+  "name": "@spinecord/driver-ev3dev",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p .",
+    "smoke:ssh": "bun scripts/smoke-ssh.ts"
+  }
+}

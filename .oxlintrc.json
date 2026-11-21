@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "off",
+    "perf": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off"
+  },
+  "rules": {
+    "no-shadow": "off",
+    "no-underscore-dangle": "off",
+    "no-unmodified-loop-condition": "off",
+    "no-new": "off"
+  },
+  "env": { "builtin": true, "es2024": true },
+  "ignorePatterns": ["**/worker-configuration.d.ts", "**/fixtures/**", "**/dist/**", "**/.wrangler/**"]
+}

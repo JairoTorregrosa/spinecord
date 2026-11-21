@@ -1,0 +1,11 @@
+{
+  "name": "@spinecord/sim-ev3",
+  "private": true,
+  "type": "module",
+  "module": "index.ts",
+  "scripts": {
+    "test": "bun test",
+    "build:demo": "bun scripts/build-demo.ts",
+    "demo": "bun scripts/serve-demo.ts"
+  }
+}

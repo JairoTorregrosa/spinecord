@@ -1,0 +1,14 @@
+[
+  {
+    "principal_id": "user-1",
+    "role": "user",
+    "token_sha256": "cb8d4803297270b4a06fe132db781a0b67bef574b4daefeb93e58033ea097eaf",
+    "robot_ids": ["r1", "r1-sim"]
+  },
+  {
+    "principal_id": "admin",
+    "role": "admin",
+    "token_sha256": "db5ce8cd5311885cd9809c64b09d0118a42e60cb160dc5301377b60c717743ee",
+    "robot_ids": ["*"]
+  }
+]

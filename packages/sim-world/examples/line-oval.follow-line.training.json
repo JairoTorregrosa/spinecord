@@ -1,0 +1,134 @@
+{
+  "schema": "spinecord/training@1",
+  "name": "line-oval.follow-line",
+  "description": "Example for the line-oval world: follow the black line with one colour sensor. Device names are roles the twin must bind: color (a colour sensor looking down) and sim.world.",
+  "observe": [
+    {
+      "device": "color",
+      "channel": "reflected_pct",
+      "bins": [15, 75]
+    }
+  ],
+  "actions": [
+    {
+      "name": "forward",
+      "left_cm": 2,
+      "right_cm": 2
+    },
+    {
+      "name": "left",
+      "left_cm": -0.84,
+      "right_cm": 0.84
+    },
+    {
+      "name": "right",
+      "left_cm": 0.84,
+      "right_cm": -0.84
+    }
+  ],
+  "speed_cm_s": 20,
+  "start": {
+    "kind": "on_line",
+    "line": 0,
+    "lateral_cm": 1,
+    "heading_deg": 15
+  },
+  "reward": {
+    "per_step": -0.1,
+    "max_steps": 250,
+    "terms": [
+      {
+        "when": {
+          "device": "sim.world",
+          "channel": "collided",
+          "op": "eq",
+          "value": true
+        },
+        "reward": -10,
+        "terminal": "failure"
+      },
+      {
+        "when": {
+          "device": "sim.world",
+          "channel": "line_distance_cm",
+          "op": "gt",
+          "value": 20
+        },
+        "reward": 0,
+        "terminal": "failure"
+      },
+      {
+        "when": {
+          "device": "sim.world",
+          "channel": "line_travel_cm",
+          "op": "gt",
+          "value": 100
+        },
+        "reward": 0,
+        "terminal": "success"
+      },
+      {
+        "when": {
+          "all": [
+            {
+              "device": "sim.world",
+              "channel": "odometer_cm",
+              "op": "changed"
+            },
+            {
+              "device": "color",
+              "channel": "reflected_pct",
+              "op": "gte",
+              "value": 75
+            }
+          ]
+        },
+        "reward": -0.9
+      },
+      {
+        "when": {
+          "all": [
+            {
+              "device": "sim.world",
+              "channel": "odometer_cm",
+              "op": "changed"
+            },
+            {
+              "device": "color",
+              "channel": "reflected_pct",
+              "op": "lt",
+              "value": 15
+            }
+          ]
+        },
+        "reward": 0.5
+      },
+      {
+        "when": {
+          "all": [
+            {
+              "device": "sim.world",
+              "channel": "odometer_cm",
+              "op": "changed"
+            },
+            {
+              "device": "color",
+              "channel": "reflected_pct",
+              "op": "gte",
+              "value": 15
+            },
+            {
+              "device": "color",
+              "channel": "reflected_pct",
+              "op": "lt",
+              "value": 75
+            }
+          ]
+        },
+        "reward": 2.1
+      }
+    ]
+  },
+  "alpha": 0.1,
+  "gamma": 0.9
+}

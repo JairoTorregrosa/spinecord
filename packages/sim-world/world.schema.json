@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "spinecord 2D world (spinecord/world@1)",
+  "description": "Units: cm and degrees. Origin bottom-left, x right, y up, heading 0 = +x, counter-clockwise-positive. The environment and the sensor placement only; the drivetrain comes from the robot profile. Validated in code by parseWorld (world.ts), which is the authority.",
+  "type": "object",
+  "required": [
+    "schema",
+    "name",
+    "arena",
+    "start"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "spinecord/world@1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "arena": {
+      "type": "object",
+      "required": [
+        "width_cm",
+        "height_cm"
+      ],
+      "properties": {
+        "width_cm": {
+          "type": "number",
+          "minimum": 1
+        },
+        "height_cm": {
+          "type": "number",
+          "minimum": 1
+        }
+      }
+    },
+    "obstacles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rect"
+      },
+      "description": "Solid boxes: the robot stalls against them and the distance sensor sees them."
+    },
+    "zones": {
+      "type": "array",
+      "description": "Coloured floor rectangles (later ones paint over earlier ones; lines paint over zones).",
+      "items": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/rect"
+          }
+        ],
+        "required": [
+          "color"
+        ],
+        "properties": {
+          "color": {
+            "enum": [
+              "black",
+              "blue",
+              "green",
+              "yellow",
+              "red",
+              "white",
+              "brown"
+            ]
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "lines": {
+      "type": "array",
+      "description": "Black floor lines as polylines. Line 0 is the one the follow-line task uses.",
+      "items": {
+        "type": "object",
+        "required": [
+          "points",
+          "width_cm"
+        ],
+        "properties": {
+          "points": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "width_cm": {
+            "type": "number",
+            "minimum": 0.1
+          },
+          "closed": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "points": {
+      "type": "array",
+      "description": "Named points: generic labels a task or a success check can refer to.",
+      "items": {
+        "type": "object",
+        "required": [
+          "label",
+          "x",
+          "y",
+          "radius_cm"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "radius_cm": {
+            "type": "number",
+            "minimum": 0.1
+          }
+        }
+      }
+    },
+    "start": {
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "heading_deg"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "heading_deg": {
+          "type": "number"
+        }
+      }
+    },
+    "noise": {
+      "type": "object",
+      "description": "Overrides of the default noise (see NoiseConfig in world.ts).",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Sections owned by other packages, keyed by their name; the world model keeps them verbatim and does not interpret them. Whoever reads a section validates it.",
+      "additionalProperties": true
+    },
+    "body": {
+      "type": "object",
+      "description": "Outline of the robot body and where its sensors sit, measured from the centre of the wheel axle (see BodyShape in world.ts). Wheel size and axle track are NOT here: they come from the robot profile.",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    }
+  },
+  "$defs": {
+    "rect": {
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "w": {
+          "type": "number",
+          "minimum": 0
+        },
+        "h": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

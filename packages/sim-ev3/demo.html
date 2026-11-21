@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>2D twin</title>
+    <style>
+      body {
+        font:
+          15px/1.4 system-ui,
+          sans-serif;
+        margin: 16px;
+        background: #f4f2ec;
+        color: #222;
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, auto) minmax(260px, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+      canvas {
+        max-width: 100%;
+        border-radius: 6px;
+        background: #fff;
+      }
+      button,
+      select {
+        font: inherit;
+        padding: 6px 10px;
+        margin: 2px;
+        border-radius: 6px;
+        border: 1px solid #999;
+        background: #fff;
+        cursor: pointer;
+      }
+      button.stop {
+        background: #d33;
+        color: #fff;
+        border-color: #a11;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      textarea {
+        width: 100%;
+        height: 260px;
+        font:
+          12px/1.35 ui-monospace,
+          monospace;
+        box-sizing: border-box;
+      }
+      pre {
+        background: #fff;
+        padding: 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        overflow: auto;
+        margin: 6px 0;
+        white-space: pre-wrap;
+      }
+      h2 {
+        font-size: 15px;
+        margin: 14px 0 4px;
+      }
+      .err {
+        color: #b00;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 style="font-size: 18px; margin: 0 0 10px">2D twin: simulated EV3 brick</h1>
+    <main>
+      <div>
+        <canvas id="arena"></canvas>
+        <div>
+          <select id="world"></select>
+          <label>or your own world (.json) <input type="file" id="worldFile" accept=".json,application/json" /></label
+          ><br />
+          <button data-drive="40">Forward 250 ms</button>
+          <button data-drive="-40">Back 250 ms</button>
+          <button data-turn="left">Turn left 250 ms</button>
+          <button data-turn="right">Turn right 250 ms</button>
+          <button id="stop" class="stop">Stop</button>
+        </div>
+        <h2>Sensors (read with 99 1D)</h2>
+        <pre id="sensors"></pre>
+        <h2>Robot camera</h2>
+        <canvas id="camera" width="160" height="120" style="width: 320px; image-rendering: pixelated"></canvas>
+        <h2>Last EV3 packet (real bytes)</h2>
+        <pre id="result">—</pre>
+      </div>
+      <div>
+        <h2>Train from a spec (data, no code)</h2>
+        <select id="spec"></select>
+        <label
+          >episodes
+          <select id="episodes">
+            <option>300</option>
+            <option selected>1000</option>
+            <option>3000</option>
+          </select></label
+        >
+        <label>spec from a file <input type="file" id="specFile" accept=".json,application/json" /></label>
+        <textarea id="specText" spellcheck="false"></textarea>
+        <button id="train">Train</button>
+        <button id="play" disabled>Watch what it learned</button>
+        <div id="status"></div>
+        <canvas id="curve" width="420" height="180"></canvas>
+      </div>
+    </main>
+    <script type="module" src="./dist/demo.js"></script>
+  </body>
+</html>

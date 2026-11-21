@@ -1,0 +1,35 @@
+{
+  "name": "spinecord",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JairoTorregrosa/spinecord"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "prepare": "lefthook install",
+    "lint": "oxlint",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "check": "bun scripts/typecheck.ts",
+    "boundaries": "bun scripts/check-boundaries.ts",
+    "test": "bun scripts/test-shards.ts",
+    "test:record": "bun scripts/test-shards.ts --record",
+    "ci": "bun scripts/ci.ts",
+    "e2e": "bun scripts/e2e-local.ts"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "bun-types": "1.3.14",
+    "lefthook": "2.2.2",
+    "miniflare": "5.20261103.0-beta",
+    "oxfmt": "0.77.0",
+    "oxlint": "1.92.0",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "bun@1.3.14"
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 120,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": true,
+  "singleQuote": false,
+  "endOfLine": "lf",
+  "ignorePatterns": [
+    "**/worker-configuration.d.ts",
+    "**/fixtures/**",
+    "**/*.schema.json",
+    "**/dist/**",
+    "**/.wrangler/**",
+    "**/*.md",
+    "bun.lock",
+    "test-timings.json"
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "schema": "spinecord/training@1",
+  "name": "line-oval.reach-D",
+  "description": "Example for the line-oval world: reach the named point D without touching a wall. Device names are roles the twin must bind: distance (an ultrasonic sensor looking forward) and sim.world.",
+  "observe": [
+    {
+      "device": "sim.world",
+      "channel": "bearing_to.D",
+      "bins": [-112.5, -67.5, -22.5, 22.5, 67.5, 112.5]
+    },
+    {
+      "device": "sim.world",
+      "channel": "distance_to.D",
+      "bins": [20, 50]
+    },
+    {
+      "device": "distance",
+      "channel": "distance_cm",
+      "bins": [12, 30]
+    }
+  ],
+  "actions": [
+    {
+      "name": "forward",
+      "left_cm": 4,
+      "right_cm": 4
+    },
+    {
+      "name": "left",
+      "left_cm": -1.57,
+      "right_cm": 1.57
+    },
+    {
+      "name": "right",
+      "left_cm": 1.57,
+      "right_cm": -1.57
+    }
+  ],
+  "speed_cm_s": 20,
+  "start": {
+    "kind": "anywhere",
+    "away_from": {
+      "point": "D",
+      "cm": 35
+    }
+  },
+  "reward": {
+    "per_step": -0.2,
+    "max_steps": 150,
+    "terms": [
+      {
+        "when": {
+          "device": "sim.world",
+          "channel": "collided",
+          "op": "eq",
+          "value": true
+        },
+        "reward": -20,
+        "terminal": "failure"
+      },
+      {
+        "when": {
+          "device": "sim.world",
+          "channel": "at_point",
+          "op": "eq",
+          "value": "D"
+        },
+        "reward": 50,
+        "terminal": "success"
+      },
+      {
+        "when": {
+          "all": [
+            {
+              "device": "sim.world",
+              "channel": "odometer_cm",
+              "op": "changed"
+            },
+            {
+              "device": "sim.world",
+              "channel": "bearing_to.D",
+              "op": "gt",
+              "value": -67.5
+            },
+            {
+              "device": "sim.world",
+              "channel": "bearing_to.D",
+              "op": "lt",
+              "value": 67.5
+            }
+          ]
+        },
+        "reward": 1.5
+      },
+      {
+        "when": {
+          "all": [
+            {
+              "device": "sim.world",
+              "channel": "odometer_cm",
+              "op": "changed"
+            },
+            {
+              "device": "sim.world",
+              "channel": "bearing_to.D",
+              "op": "gt",
+              "value": -22.5
+            },
+            {
+              "device": "sim.world",
+              "channel": "bearing_to.D",
+              "op": "lt",
+              "value": 22.5
+            }
+          ]
+        },
+        "reward": 2.3
+      },
+      {
+        "when": {
+          "all": [
+            {
+              "device": "sim.world",
+              "channel": "odometer_cm",
+              "op": "changed"
+            },
+            {
+              "any": [
+                {
+                  "device": "sim.world",
+                  "channel": "bearing_to.D",
+                  "op": "gt",
+                  "value": 90
+                },
+                {
+                  "device": "sim.world",
+                  "channel": "bearing_to.D",
+                  "op": "lt",
+                  "value": -90
+                }
+              ]
+            }
+          ]
+        },
+        "reward": -3
+      }
+    ]
+  },
+  "alpha": 0.1,
+  "gamma": 0.9
+}

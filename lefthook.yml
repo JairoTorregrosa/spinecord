@@ -1,0 +1,19 @@
+# Git hooks, installed by `bun install` (root "prepare" script) on macOS, Windows and Linux.
+pre-commit:
+  piped: true
+  jobs:
+    - name: bun fmt
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs,json,css,md,yml,yaml}"
+      # `bun fmt` is the package script (whole repo); this formats only the staged files
+      run: bunx oxfmt --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+    - name: oxlint
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs}"
+      run: bunx oxlint --deny-warnings {staged_files}
+    - name: gitleaks
+      # runs `gitleaks git --staged --no-banner --redact`; says so and passes when gitleaks is not installed
+      run: bun scripts/gitleaks-staged.ts
+    # Ready for the first React frontend under apps/*:
+    # - name: react-doctor
+    #   glob: "apps/**/*.{ts,tsx,js,jsx}"
+    #   run: bunx react-doctor@0.9.23 --staged --scope changed --blocking error --no-score --yes

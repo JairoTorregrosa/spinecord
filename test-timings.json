@@ -1,0 +1,24 @@
+{
+  "note": "Milliseconds of test time per file, used by scripts/test-shards.ts to balance CI shards. Rewrite with: bun run test:record",
+  "files": {
+    "packages/protocol/validate.test.ts": 2,
+    "packages/driver-ev3dev/test/provider.test.ts": 7083,
+    "packages/driver-ev3/encode.test.ts": 3,
+    "packages/driver-ev3/link-fake-transport.test.ts": 299,
+    "packages/driver-ev3/provider.test.ts": 8924,
+    "packages/server/test/fsm.test.ts": 1,
+    "packages/server/test/mcp.test.ts": 309,
+    "packages/server/test/programs.test.ts": 414,
+    "packages/server/test/robot.test.ts": 11840,
+    "packages/runtime/client.test.ts": 224,
+    "packages/runtime/runtime.test.ts": 1395,
+    "packages/sim-ev3/brick.test.ts": 434,
+    "packages/sim-ev3/provider-on-brick.test.ts": 2897,
+    "packages/sim-ev3/twin.test.ts": 2,
+    "packages/sim-world/learn.test.ts": 2234,
+    "packages/sim-world/render.test.ts": 163,
+    "packages/sim-world/train-supervisor.test.ts": 513,
+    "packages/sim-world/world-provider.test.ts": 56,
+    "packages/sim-world/world.test.ts": 3
+  }
+}

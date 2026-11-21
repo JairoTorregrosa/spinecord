@@ -1,0 +1,90 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "walls-maze",
+  "arena": {
+    "width_cm": 150,
+    "height_cm": 100
+  },
+  "obstacles": [
+    { "x": 45, "y": 0, "w": 8, "h": 55 },
+    { "x": 95, "y": 45, "w": 8, "h": 55 }
+  ],
+  "zones": [
+    {
+      "x": 125,
+      "y": 5,
+      "w": 20,
+      "h": 20,
+      "color": "green",
+      "label": "B"
+    },
+    {
+      "x": 5,
+      "y": 5,
+      "w": 20,
+      "h": 20,
+      "color": "blue",
+      "label": "A"
+    }
+  ],
+  "lines": [
+    {
+      "points": [
+        [10, 85],
+        [35, 85]
+      ],
+      "width_cm": 3,
+      "closed": false
+    }
+  ],
+  "points": [
+    {
+      "label": "B",
+      "x": 135,
+      "y": 15,
+      "radius_cm": 9
+    },
+    {
+      "label": "A",
+      "x": 15,
+      "y": 15,
+      "radius_cm": 9
+    },
+    {
+      "label": "C",
+      "x": 49,
+      "y": 78,
+      "radius_cm": 9
+    },
+    {
+      "label": "D",
+      "x": 99,
+      "y": 22,
+      "radius_cm": 9
+    }
+  ],
+  "start": {
+    "x": 15,
+    "y": 15,
+    "heading_deg": 90
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.02
+  },
+  "extensions": {
+    "ev3": {
+      "motors": {
+        "A": "medium",
+        "B": "large",
+        "C": "large"
+      },
+      "sensors": {
+        "1": "touch",
+        "2": "gyro",
+        "3": "color",
+        "4": "ir"
+      }
+    }
+  }
+}

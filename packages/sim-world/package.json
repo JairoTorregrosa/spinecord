@@ -1,0 +1,9 @@
+{
+  "name": "@spinecord/sim-world",
+  "private": true,
+  "type": "module",
+  "module": "index.ts",
+  "scripts": {
+    "test": "bun test"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@spinecord/ev3",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "test": "bun test"
+  }
+}

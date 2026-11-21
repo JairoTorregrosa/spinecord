@@ -1,0 +1,199 @@
+import { test, expect, describe } from "bun:test";
+import { World, parseWorld, COLOR, WORLD_SCHEMA } from "./world";
+import { join } from "node:path";
+import { loadWorldFile } from "./world-file";
+import { EXAMPLES, DRIVE, config, quietWorld } from "./testkit";
+
+describe("world files", () => {
+  test("both examples load from disk: environment and sensor placement, no drivetrain", async () => {
+    for (const name of ["line-oval", "walls-maze"]) {
+      const cfg = await loadWorldFile(join(import.meta.dir, "examples", `${name}.json`));
+      expect(cfg.name).toBe(name);
+      expect(cfg.body).toEqual({
+        front_cm: 8,
+        back_cm: 10,
+        half_width_cm: 6,
+        color_sensor_x_cm: 7,
+        color_spot_radius_cm: 1,
+        distance_sensor_x_cm: 8,
+      });
+      expect(JSON.stringify(cfg)).not.toMatch(/wheel_diameter|axle_track/);
+      expect(new World(cfg, 1).drive).toBeNull();
+    }
+  });
+  test("wheel geometry in a world file is refused: it belongs to the robot profile", () => {
+    const base = structuredClone(EXAMPLES.lineOval) as Record<string, any>;
+    expect(() => parseWorld({ ...base, robot: { wheel_diameter_cm: 5.6 } })).toThrow(/come from the robot profile/);
+    expect(() => parseWorld({ ...base, body: { axle_track_cm: 12 } })).toThrow(
+      /body\.axle_track_cm is not a known field/,
+    );
+    expect(parseWorld({ ...base, body: { color_sensor_x_cm: 3 } }).body.color_sensor_x_cm).toBe(3);
+    expect(() => parseWorld({ ...base, points: [{ label: "a b", x: 1, y: 1, radius_cm: 2 }] })).toThrow(
+      /may only use letters/,
+    );
+  });
+  test("a bad file fails naming the field", () => {
+    const base = structuredClone(EXAMPLES.lineOval) as Record<string, any>;
+    expect(() => parseWorld({ ...base, schema: "x" })).toThrow(/schema must be "spinecord\/world@1"/);
+    expect(() => parseWorld({ ...base, arena: { width_cm: 120 } })).toThrow(/arena\.height_cm/);
+    expect(() => parseWorld({ ...base, zones: [{ x: 0, y: 0, w: 1, h: 1, color: "pink" }] })).toThrow(
+      /zones\[0\]\.color/,
+    );
+    expect(() => parseWorld({ ...base, brick: {} })).toThrow(/brick is not a known section/);
+    expect(() => parseWorld({ ...base, noise: { wobble: 1 } })).toThrow(/noise\.wobble/);
+    expect(() =>
+      parseWorld({
+        ...base,
+        points: [
+          { label: "A", x: 1, y: 1, radius_cm: 2 },
+          { label: "A", x: 2, y: 2, radius_cm: 2 },
+        ],
+      }),
+    ).toThrow(/repeated/);
+    expect(() => new World(parseWorld({ ...base, start: { x: 2, y: 2, heading_deg: 0 } }), 1)).toThrow(
+      /does not fit at the start pose \(2, 2\)/,
+    );
+    expect(() => parseWorld({ schema: WORLD_SCHEMA })).toThrow(/arena must be an object/);
+  });
+  test("loadWorldFile fails loud on a missing file", async () => {
+    await expect(loadWorldFile(join(import.meta.dir, "examples", "no-such-world.json"))).rejects.toThrow(/cannot read/);
+  });
+});
+
+describe("physics", () => {
+  test("same seed, same trajectory; another seed differs", () => {
+    const run = (seed: number) => {
+      const w = new World(config(), seed, DRIVE);
+      w.advance(30, 30, 20);
+      w.advance(-5, 5, 10);
+      w.advance(10, 10, 20);
+      return w.pose;
+    };
+    expect(run(7)).toEqual(run(7));
+    expect(run(7)).not.toEqual(run(8));
+  });
+  test("drives straight the commanded distance without noise", () => {
+    const w = quietWorld();
+    const r = w.advance(20, 20, 20);
+    expect(r.stalled).toBe(false);
+    expect(w.pose.x).toBeCloseTo(63, 6);
+    expect(w.pose.y).toBeCloseTo(25, 6);
+    expect(r.ms).toBeCloseTo(1000, 3);
+  });
+  test("turning left is positive: wheel arcs rotate the robot about the axle", () => {
+    const w = quietWorld();
+    const arc = (Math.PI / 2) * 6;
+    w.advance(-arc, arc, 10);
+    expect((w.pose.th * 180) / Math.PI).toBeCloseTo(90, 6);
+    expect(w.senseGyro()).toBe(90);
+    expect(w.pose.x).toBeCloseTo(43, 6);
+  });
+  test("a wall stops the robot: stalled, and it never passes through", () => {
+    const w = quietWorld();
+    const r = w.advance(200, 200, 25);
+    expect(r.stalled).toBe(true);
+    expect(w.pose.x).toBeLessThanOrEqual(112);
+    expect(w.pose.x).toBeGreaterThan(110);
+    expect(r.left_cm).toBeLessThan(70);
+    expect(w.senseTouch()).toBe(1);
+  });
+  test("an obstacle blocks too", () => {
+    const w = quietWorld();
+    w.setPose({ x: 30, y: 45, th: 0 });
+    expect(w.advance(60, 60, 25).stalled).toBe(true);
+    expect(w.pose.x + 8).toBeLessThanOrEqual(55);
+    expect(w.pose.x + 8).toBeGreaterThan(53.5);
+  });
+  test("the axle track comes from the drive geometry handed in; without one the wheels cannot roll the body", () => {
+    const wide = new World(config(), 1, { axle_track_cm: 24 }),
+      narrow = quietWorld();
+    const arc = (Math.PI / 2) * 6;
+    wide.cfg.noise.motor = 0; // same config object is not shared: config() parses afresh
+    narrow.advance(-arc, arc, 10);
+    wide.advance(-arc, arc, 10);
+    expect((narrow.pose.th * 180) / Math.PI).toBeCloseTo(90, 6);
+    expect(Math.abs((wide.pose.th * 180) / Math.PI - 45)).toBeLessThan(2); // twice the track, half the turn
+    const none = new World(config(), 1);
+    expect(() => none.advance(5, 5, 10)).toThrow(/no drivetrain geometry/);
+    expect(none.pose).toEqual({ x: 43, y: 25, th: 0 });
+    expect(() => new World(config(), 1, { axle_track_cm: 0 })).toThrow(/axle_track_cm must be > 0/);
+    expect(narrow.clone().drive).toEqual(DRIVE);
+  });
+  test("trip meters: the odometer ignores spins, line travel follows the line, a teleport zeroes both", () => {
+    const w = quietWorld();
+    w.advance(20, 20, 20);
+    expect(w.odometer_cm).toBeCloseTo(20, 6);
+    expect(w.line_travel_cm).toBeCloseTo(20, 1); // the start pose sits on the line, heading along it
+    w.advance(-9, 9, 10);
+    expect(w.odometer_cm).toBeCloseTo(20, 6);
+    w.advance(9, -9, 10);
+    w.advance(-5, -5, 20);
+    expect(w.odometer_cm).toBeCloseTo(25, 6);
+    expect(w.line_travel_cm).toBeCloseTo(15, 1);
+    const noisy = new World(config(), 2, DRIVE);
+    for (let i = 0; i < 20; i++) noisy.advance(-1.57, 1.57, 20); // spinning with wheel noise is still not travel
+    expect(noisy.odometer_cm).toBe(0);
+    w.setPose({ x: 60, y: 15, th: 0 });
+    expect([w.odometer_cm, w.line_travel_cm]).toEqual([0, 0]);
+  });
+  test("noise is small by default", () => {
+    const w = new World(config(), 3, DRIVE);
+    w.advance(50, 50, 20);
+    expect(Math.abs(w.pose.x - 93)).toBeLessThan(2.5);
+    expect(Math.abs(w.pose.x - 93)).toBeGreaterThan(0);
+  });
+});
+
+describe("sensors", () => {
+  test("color: black on the line, white off it, zone colours by id", () => {
+    const w = quietWorld();
+    expect(w.senseColorId()).toBe(COLOR.black); // start: sensor (7 cm ahead) over the line
+    expect(w.senseReflect()).toBe(6);
+    w.setPose({ x: 43, y: 35, th: 0 });
+    expect(w.senseColorId()).toBe(COLOR.white);
+    expect(w.senseReflect()).toBe(85);
+    w.setPose({ x: 15, y: 30, th: -Math.PI / 2 }); // sensor at (15, 23): zone D (yellow)
+    expect(w.senseColorId()).toBe(COLOR.yellow);
+    w.setPose({ x: 15, y: 60, th: Math.PI / 2 }); // sensor at (15, 67): zone A (red)
+    expect(w.senseColorId()).toBe(COLOR.red);
+  });
+  test("reflect is intermediate on the edge of the line", () => {
+    const w = quietWorld();
+    w.setPose({ x: 43, y: 26.5, th: 0 }); // sensor centre exactly on the line edge (line 25 ± 1.5)
+    const r = w.senseReflect();
+    expect(r).toBeGreaterThan(25);
+    expect(r).toBeLessThan(70);
+  });
+  test("ultrasonic: distance from the sensor to the wall, clamped at 3 cm", () => {
+    const w = quietWorld();
+    expect(w.senseUltrasonic()).toBeCloseTo(120 - 43 - 8, 1);
+    w.advance(200, 200, 25);
+    expect(w.senseUltrasonic()).toBe(3);
+  });
+  test("ultrasonic sees the obstacle, and the cone catches what a single ray misses", () => {
+    const w = quietWorld();
+    w.setPose({ x: 30, y: 45, th: 0 });
+    expect(w.senseUltrasonic()).toBeCloseTo(55 - 38, 1);
+    w.setPose({ x: 30, y: 52, th: 0 }); // straight ray passes 2 cm above the box
+    expect(w.rayDistance()).toBeCloseTo(120 - 38, 1);
+    expect(w.senseUltrasonic()).toBeLessThan(25);
+  });
+  test("IR proximity is a percentage of about 70 cm", () => {
+    const w = quietWorld();
+    w.setPose({ x: 77, y: 20, th: 0 }); // 35 cm to the wall
+    expect(w.senseIrProximity()).toBe(50);
+  });
+  test("sensor noise is seeded and does not disturb the motion", () => {
+    const a = new World(config(), 5, DRIVE),
+      b = new World(config(), 5, DRIVE);
+    for (let i = 0; i < 20; i++) a.senseUltrasonic();
+    a.advance(20, 20, 20);
+    b.advance(20, 20, 20);
+    expect(a.pose).toEqual(b.pose);
+  });
+  test("named points are data; an unknown label fails listing the known ones", () => {
+    const w = quietWorld();
+    expect(w.point("A")).toEqual({ label: "A", x: 15, y: 75, radius: 9 });
+    expect(() => w.point("kitchen")).toThrow(/unknown point "kitchen".*A, B, C, D/);
+  });
+});

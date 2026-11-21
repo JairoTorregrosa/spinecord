@@ -1,0 +1,185 @@
+{
+ "_source": "Generated 2026-11-21 from BrandonVP/OpenMindstorms python/openev3/protocol.py (MIT License, (c) its authors) with the encoders LC0/LC1/LC2/LC4/LC/LCS/GV/op/direct_command. Golden bytes only; regenerate with that library.",
+ "cases": {
+  "tone_1000hz_1000ms_vol2": {
+   "hex": "0f 00 07 00 80 00 00 94 01 81 02 82 e8 03 82 e8 03",
+   "globals": 0,
+   "counter": 7,
+   "reply": false
+  },
+  "stop_all_brake": {
+   "hex": "09 00 01 00 00 00 00 a3 00 0f 01",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "power_B_-40": {
+   "hex": "0a 00 01 00 00 00 00 a4 00 02 81 d8",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "speed_BC_75": {
+   "hex": "0a 00 01 00 00 00 00 a5 00 06 81 4b",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "start_BC": {
+   "hex": "08 00 01 00 00 00 00 a6 00 06",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "step_speed_BC_50_0_900_180_brake": {
+   "hex": "12 00 01 00 00 00 00 ae 00 06 81 32 00 82 84 03 82 b4 00 01",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "step_speed_A_-30_0_45_0_coast": {
+   "hex": "0e 00 01 00 00 00 00 ae 00 01 22 00 81 2d 00 00",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "time_speed_D_20_0_250_0_brake": {
+   "hex": "0f 00 01 00 00 00 00 af 00 08 14 00 82 fa 00 00 01",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "step_sync_BC_50_0_360_brake": {
+   "hex": "13 00 01 00 00 00 00 b0 00 06 81 32 82 00 00 83 68 01 00 00 01",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "step_sync_BC_-30_200_100000_coast": {
+   "hex": "12 00 01 00 00 00 00 b0 00 06 22 82 c8 00 83 a0 86 01 00 00",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "step_sync_BC_30_-200_131_brake": {
+   "hex": "12 00 01 00 00 00 00 b0 00 06 1e 82 38 ff 83 83 00 00 00 01",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "time_sync_BC_40_0_250_brake": {
+   "hex": "13 00 01 00 00 00 00 b1 00 06 81 28 82 00 00 83 fa 00 00 00 01",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "read_B": {
+   "hex": "0a 00 01 00 00 05 00 a8 00 01 64 60",
+   "globals": 5,
+   "counter": 1,
+   "reply": true
+  },
+  "get_count_C": {
+   "hex": "09 00 01 00 00 04 00 b3 00 02 60",
+   "globals": 4,
+   "counter": 1,
+   "reply": true
+  },
+  "clr_count_BC": {
+   "hex": "08 00 01 00 00 00 00 b2 00 06",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "test_busy_all": {
+   "hex": "09 00 01 00 00 01 00 a9 00 0f 60",
+   "globals": 1,
+   "counter": 1,
+   "reply": true
+  },
+  "ready_si_port3_mode0": {
+   "hex": "0d 00 01 00 00 04 00 99 1d 00 02 00 00 01 60",
+   "globals": 4,
+   "counter": 1,
+   "reply": true
+  },
+  "ready_si_port1_mode4_x3": {
+   "hex": "0f 00 01 00 00 0c 00 99 1d 00 00 00 04 03 60 64 68",
+   "globals": 12,
+   "counter": 1,
+   "reply": true
+  },
+  "ready_raw_port2_type29_mode2": {
+   "hex": "0d 00 01 00 00 04 00 99 1c 00 01 1d 02 01 60",
+   "globals": 4,
+   "counter": 1,
+   "reply": true
+  },
+  "get_typemode_all8": {
+   "hex": "35 00 01 00 00 10 00 99 05 00 00 60 61 99 05 00 01 62 63 99 05 00 02 64 65 99 05 00 03 66 67 99 05 00 10 68 69 99 05 00 11 6a 6b 99 05 00 12 6c 6d 99 05 00 13 6e 6f",
+   "globals": 16,
+   "counter": 1,
+   "reply": true
+  },
+  "input_stop_all": {
+   "hex": "08 00 01 00 00 00 00 99 0d 00",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "battery_v_and_pct": {
+   "hex": "0b 00 01 00 00 05 00 81 01 60 81 12 64",
+   "globals": 5,
+   "counter": 1,
+   "reply": true
+  },
+  "led_orange_pulse": {
+   "hex": "08 00 01 00 00 00 00 82 1b 09",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "button_enter_pressed": {
+   "hex": "09 00 01 00 00 01 00 83 09 02 60",
+   "globals": 1,
+   "counter": 1,
+   "reply": true
+  },
+  "fill_window_white": {
+   "hex": "0a 00 01 00 00 00 00 84 13 00 00 00",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "text_hola_2_14": {
+   "hex": "10 00 01 00 00 00 00 84 05 01 02 0e 84 48 6f 6c 61 00",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "text_far_x100_y110": {
+   "hex": "11 00 01 00 00 00 00 84 05 01 81 64 81 6e 84 65 76 33 00",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "update": {
+   "hex": "07 00 01 00 00 00 00 84 00",
+   "globals": 0,
+   "counter": 1,
+   "reply": true
+  },
+  "gv1_index40": {
+   "hex": "0a 00 01 00 00 2c 00 b3 00 00 e1 28",
+   "globals": 44,
+   "counter": 1,
+   "reply": true
+  },
+  "counter_wrap": {
+   "hex": "07 00 ff ff 00 00 00 84 00",
+   "globals": 0,
+   "counter": 65535,
+   "reply": true
+  }
+ }
+}

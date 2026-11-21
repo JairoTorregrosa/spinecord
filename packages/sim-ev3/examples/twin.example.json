@@ -1,0 +1,37 @@
+{
+  "description": "Example twin configuration (not a default): a two-wheel driving base with large motors on B and C, a free medium motor on A, and four sensors. `pair` are the ports of the synced motor pair, the same value the EV3 provider is configured with; `profile` is a contract RobotProfile.",
+  "pair": {
+    "left": "B",
+    "right": "C"
+  },
+  "profile": {
+    "id": "example-sim",
+    "roles": {
+      "left_wheel": "ev3.B",
+      "right_wheel": "ev3.C",
+      "arm": "ev3.A",
+      "touch": "ev3.S1",
+      "gyro": "ev3.S2",
+      "color": "ev3.S3",
+      "distance": "ev3.S4"
+    },
+    "drivetrain": {
+      "type": "differential",
+      "pair_device": "ev3.pair",
+      "wheel_diameter_cm": 5.6,
+      "axle_track_cm": 12,
+      "forward_sign": 1
+    },
+    "limits": {
+      "max_speed_pct": 60,
+      "max_command_ms": 15000,
+      "max_drive_cm": 100,
+      "max_turn_deg": 360,
+      "max_program_ms": 120000
+    },
+    "notes": [
+      "Colour sensor points down, 7 cm ahead of the axle.",
+      "Distance sensor looks forward from the front edge."
+    ]
+  }
+}
