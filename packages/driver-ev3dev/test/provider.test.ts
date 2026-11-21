@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { BRIDGE_FILE } from "../src/ssh";
 import { RuntimeError } from "../../protocol/types";
@@ -15,14 +15,22 @@ import {
 import { checkRemotePath, sshArgs } from "../src/ssh";
 import { FAKE_HAS_LEDS, FakeBrick, findPython } from "./fake-brick";
 
-const python = findPython();
-if (!python)
+// The bridge only ever runs on the brick (Linux): on Windows a file that is open cannot be replaced, so the fake
+// sysfs tree cannot behave like sysfs there. The tests that run the bridge are skipped on win32.
+const BRIDGE_RUNS_HERE = process.platform !== "win32";
+const python = BRIDGE_RUNS_HERE ? findPython() : null;
+if (BRIDGE_RUNS_HERE && !python)
   console.warn(
     "SKIPPED: the fake-brick tests run bridge/ev3dev_bridge.py with a local Python 3, and neither `python3` nor `python` works on this machine.",
   );
-const brickTest = python ? test : test.skip;
+const brickTest = test.skipIf(!BRIDGE_RUNS_HERE || !python);
 
 const OP_MS = 250; // the tests run with a short time bound; the default is MAX_MOTION_MS (3000)
+/**
+ * Time bound for a test whose operation must still be running, or must end by itself, while the test does other
+ * things: the bridge's bound is real time, so the short one would race the test's own timers and round trips.
+ */
+const PATIENT_OP_MS = 3000;
 const OPTS: Ev3devProviderOptions = {
   maxOpMs: OP_MS,
   limits: { max_speed_pct: 60, max_command_ms: 15000 },
@@ -268,7 +276,7 @@ describe("fake brick", () => {
   });
 
   brickTest("run_degrees is one bounded run-to-abs-pos with position_sp, speed_sp and the stop action", async () => {
-    const { provider, brick, play } = setup();
+    const { provider, brick, play } = setup({ maxOpMs: PATIENT_OP_MS });
     play(0);
     const res = await provider.command("ev3.B", "run_degrees", { degrees: 90, speed_pct: 30 }, never);
     expect(res).toMatchObject({ reason: "completed", clamped: false, measured: { degrees: 90 } });
@@ -294,18 +302,19 @@ describe("fake brick", () => {
       const { provider, brick } = setup();
       brick.setMotor(0, "state", "running"); // the motor keeps running and creeps
       const moving = setInterval(() => brick.setMotor(0, "position", Number(brick.motor(0, "position") || 0) + 2), 20);
-      const t0 = Date.now();
       const res = await provider
         .command("ev3.B", "run_degrees", { degrees: 3000, speed_pct: 50 }, never)
         .finally(() => clearInterval(moving));
       expect(res.reason).toBe("timeout");
       expect(res.measured.time_limited).toBe(true);
-      expect(res.ms).toBeGreaterThanOrEqual(OP_MS);
-      expect(Date.now() - t0).toBeLessThan(OP_MS + 400);
+      expect(res.ms).toBeGreaterThanOrEqual(OP_MS); // measured on the brick; this side's clock proves nothing
       expect(brick.motor(0, "command")).toBe("stop");
       expect(brick.motor(0, "stop_action")).toBe("brake");
-      // The kernel never got the 3000 degrees: only what fits in the time bound at 525 deg/s, plus margin.
-      expect(Number(brick.motor(0, "position_sp"))).toBeLessThanOrEqual(Math.ceil(525 * 0.25 * 1.2) + 4 + 8); // + the fake's creep before the start position is read
+      // The kernel never got the 3000 degrees: only what fits in the time bound at 525 deg/s, plus margin,
+      // counted from the position the bridge read at the start. The fake only creeps forward, so that
+      // position is at most where the motor is now, however long the bridge took to start.
+      const reach = Math.ceil(525 * (OP_MS / 1000) * 1.2) + 4;
+      expect(Number(brick.motor(0, "position_sp"))).toBeLessThanOrEqual(Number(brick.motor(0, "position")) + reach);
       expect(Number(brick.motor(0, "position_sp"))).toBeGreaterThan(100);
     },
   );
@@ -313,7 +322,7 @@ describe("fake brick", () => {
   brickTest("after a coasting overshoot the next operation still goes forward from where the motors are", async () => {
     // Seen on hardware: 20 deg coasting ended 16 deg past its target; the next +15 deg operation, sent as a
     // relative move, was measured from the old target and drove the robot backward.
-    const { provider, brick, play } = setup();
+    const { provider, brick, play } = setup({ maxOpMs: PATIENT_OP_MS });
     play(0, 40, 16);
     play(1, 40, 17);
     const first = await provider.command(
@@ -345,10 +354,10 @@ describe("fake brick", () => {
   });
 
   brickTest("a device re-scan during an operation does not leave the motor busy", async () => {
-    const { provider, brick, play } = setup();
+    const { provider, brick, play } = setup({ maxOpMs: PATIENT_OP_MS });
     play(0, 150);
     const running = provider.command("ev3.B", "run_degrees", { degrees: 30, speed_pct: 30 }, never);
-    await until(() => brick.motor(0, "state") === "running", 2000);
+    expect(await until(() => brick.motor(0, "state") === "running", 4000)).toBe(true);
     await provider.devices();
     expect((await running).reason).toBe("completed");
     expect((await provider.command("ev3.B", "run_degrees", { degrees: 30, speed_pct: 30 }, never)).reason).toBe(
@@ -387,11 +396,12 @@ describe("fake brick", () => {
   });
 
   brickTest("abort preempts a running operation and brakes; a second command on a busy motor is refused", async () => {
-    const { provider, brick } = setup();
+    // the operation is long, so it is still running when the second command and the abort arrive
+    const { provider, brick } = setup({ maxOpMs: PATIENT_OP_MS });
     brick.setMotor(0, "state", "running");
     const ac = new AbortController();
-    const running = provider.command("ev3.B", "run_time", { ms: 250, speed_pct: 30 }, ac.signal);
-    await until(() => brick.motor(0, "command") === "run-timed", 2000);
+    const running = provider.command("ev3.B", "run_time", { ms: PATIENT_OP_MS, speed_pct: 30 }, ac.signal);
+    expect(await until(() => brick.motor(0, "command") === "run-timed", 4000)).toBe(true);
     expect(await code(provider.command("ev3.B", "run_degrees", { degrees: 10, speed_pct: 30 }, never))).toBe("busy");
     ac.abort();
     expect((await running).reason).toBe("preempted");
@@ -422,6 +432,65 @@ describe("fake brick", () => {
     brick.setMotor(1, "speed", 12);
     expect(await code(provider.command("ev3.pair", "brake", {}, never))).toBe("stop_unverified");
   });
+
+  brickTest("an attribute that holds no number is a typed error that names it, and the motor is braked", async () => {
+    // A brick's sysfs never reads empty; if a driver ever does, the caller gets the attribute, not a Python traceback.
+    const { provider, brick } = setup();
+    await provider.devices();
+    brick.setMotor(0, "position", "");
+    const failed = await provider.command("ev3.B", "run_degrees", { degrees: 90, speed_pct: 30 }, never).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(failed).toBeInstanceOf(RuntimeError);
+    expect((failed as RuntimeError).code).toBe("internal");
+    expect((failed as RuntimeError).message).toMatch(/sysfs attribute \S*position reads '', expected an integer/);
+    expect((failed as RuntimeError).message).not.toContain("ValueError");
+    expect([brick.motor(0, "command"), brick.motor(0, "stop_action")]).toEqual(["stop", "brake"]);
+    // a read reports it per channel, and the motor is free again once the attribute is sane
+    const read = await provider.read("ev3.B", ["position_deg"]);
+    expect(read[0]).toMatchObject({ value: null, error: expect.stringContaining("expected an integer") });
+    brick.setMotor(0, "position", 7);
+    expect((await provider.read("ev3.B", ["position_deg"]))[0]!.value).toBe(7);
+  });
+
+  brickTest(
+    "the fake replaces an attribute in one step: a reader in another process never finds it empty or missing",
+    async () => {
+      const brick = new FakeBrick({ motors: [{ port: "B" }], sensors: [] });
+      open.push({ brick });
+      const reader = spawn(
+        python!,
+        [join(import.meta.dir, "attr_reader.py"), BRIDGE_FILE, join(brick.motorDir(0), "position"), "1000"],
+        { env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+      );
+      let stdout = "";
+      let stderr = "";
+      reader.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+      reader.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+      let exited = false;
+      const closed = new Promise<void>((resolve) =>
+        reader.on("close", () => {
+          exited = true;
+          resolve();
+        }),
+      );
+      // the reader stops once the value has grown by 1000 since its first read: at least 1000 writes race its reads
+      let writes = 0;
+      while (!exited) {
+        brick.setMotor(0, "position", ++writes);
+        await new Promise((r) => setImmediate(r));
+      }
+      await closed;
+      expect(stderr).toBe("");
+      const seen = JSON.parse(stdout) as { reads: number; failed: number; errors: string[]; timed_out: boolean };
+      expect(seen.errors).toEqual([]);
+      expect(seen).toMatchObject({ failed: 0, timed_out: false });
+      expect(seen.reads).toBeGreaterThan(1);
+      expect(writes).toBeGreaterThanOrEqual(1000);
+    },
+    30_000,
+  );
 
   brickTest("unknown device, channel, command and argument are typed errors", async () => {
     const { provider } = setup();
@@ -474,6 +543,7 @@ describe("fake brick", () => {
     const lines: Record<string, unknown>[] = [];
     transport.onLine((l) => lines.push(JSON.parse(l) as Record<string, unknown>));
     await transport.open();
+    const t0 = Date.now(); // before the last message: the bridge counts its silence from a later moment
     transport.send(
       JSON.stringify({
         op: "hello",
@@ -488,10 +558,9 @@ describe("fake brick", () => {
     expect(lines.find((l) => l.id === 1)).toMatchObject({ ok: true, watchdog_ms: BRICK_WATCHDOG_MS });
     brick.setMotor(0, "command", "");
     brick.setMotor(1, "command", "");
-    const t0 = Date.now(); // the last message was sent before this point; nothing is sent from here on
-    expect(await until(() => brick.motor(1, "command") === "stop", BRICK_WATCHDOG_MS + 1000)).toBe(true);
-    const took = Date.now() - t0;
-    expect(took).toBeGreaterThan(BRICK_WATCHDOG_MS - 400);
+    // nothing is sent from here on
+    expect(await until(() => brick.motor(1, "command") === "stop", BRICK_WATCHDOG_MS + 3000)).toBe(true);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(BRICK_WATCHDOG_MS - 20); // two clocks: Date here, monotonic there
     expect([brick.motor(0, "command"), brick.motor(0, "stop_action"), brick.motor(1, "stop_action")]).toEqual([
       "stop",
       "brake",

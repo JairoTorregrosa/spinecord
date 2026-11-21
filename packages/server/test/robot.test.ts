@@ -379,9 +379,10 @@ describe("stop", () => {
       tool(TOKENS.admin, "stop", { robot_id: "a23" }),
     ]);
     await logged("stop_joined", { robot_id: "a23" });
-    const frames = rt.frames.filter((f) => f.t === "stop");
-    expect(frames).toHaveLength(1);
-    rt.send({ t: "stopped", stop_id: frames[0].stop_id, motors_stopped: true });
+    // the log line and the {t:"stop"} frame travel on different channels: the frame may still be on its way
+    const frame = await rt.frame("stop");
+    expect(rt.frames.filter((f) => f.t === "stop")).toHaveLength(1);
+    rt.send({ t: "stopped", stop_id: frame.stop_id, motors_stopped: true });
     const [x, y] = await both;
     expect(x.envelope.ok && y.envelope.ok).toBe(true);
     expect(y.envelope).toEqual(x.envelope);
@@ -662,7 +663,8 @@ describe("organs", () => {
 
     // stop reaches organs too
     await tool(TOKENS.a, "stop", { robot_id: "a30" });
-    expect(organ.frames.some((f) => f.t === "stop")).toBe(true);
+    // the stop is answered by the runtime; the organ's frame travels on its own socket
+    await until("stop frame at the organ", () => organ.frames.some((f) => f.t === "stop"));
 
     organ.heartbeat = false;
     await until("stale", () => organs()?.[0]?.state === "stale");
