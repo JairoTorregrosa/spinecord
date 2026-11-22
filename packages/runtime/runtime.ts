@@ -1486,13 +1486,16 @@ class RuntimeImpl implements LocalRuntime {
       try {
         const e = ev ?? makeEvaluator(compileCondition(cond, this.resolver, `program ${path}`), this.readFn);
         // One answer is needed: a poll without a value is asked again until the evaluator answers or gives up.
+        // A program interrupted while it waits (its budget spent, the call aborted) ends as interrupted.
         let r = await e.poll();
-        while (r.unreadable && !budget.signal.aborted) {
+        while (r.unreadable) {
           await this.clock.sleep(UNTIL_POLL_MS, budget.signal);
+          check();
           r = await e.poll();
         }
         return r.met;
       } catch (err) {
+        if (err instanceof End) throw err;
         throw new End(
           "failed",
           `${path}: ${err instanceof RuntimeError ? `${err.code}: ${err.message}` : String(err)}`,

@@ -592,6 +592,12 @@ describe("conditions and wait_until", () => {
       body: { if: { cond: until, then: { succeed: "read at the third poll" }, else: { fail: "taken as not met" } } },
     });
     expect(r).toMatchObject({ outcome: "succeeded", reason: "read at the third poll" });
+    // a program whose budget runs out while a condition is asked again ends as timeout, whatever the next poll says
+    const late = setup({ limits: { max_program_ms: 15 } });
+    let q = 0;
+    late.mock.values.set("mock.gas.ppm", () => (++q <= 2 ? null : 900));
+    const over = await late.call("run_program", { body: { wait_ms: 1 }, success: until });
+    expect(over.outcome).toBe("timeout");
   });
   test("a channel whose null means nothing in view is not met while null, and can be waited on", async () => {
     const BEACON: DeviceSpec = {
