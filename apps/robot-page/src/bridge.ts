@@ -140,7 +140,15 @@ export function startBridge(env: BridgeEnv): Bridge {
     emit();
   }
 
-  async function open(d: HidDeviceLike): Promise<void> {
+  // one open at a time: the automatic one at load and the button's may come together
+  let opening: Promise<void> | null = null;
+  function open(d: HidDeviceLike): Promise<void> {
+    opening ??= openOnce(d).finally(() => {
+      opening = null;
+    });
+    return opening;
+  }
+  async function openOnce(d: HidDeviceLike): Promise<void> {
     if (deviceState === "ready") return;
     if (d.vendorId !== USB_VID || d.productId !== USB_PID) throw new Error("that device is not an EV3");
     if (!d.opened) await d.open();

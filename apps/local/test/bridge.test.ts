@@ -99,6 +99,28 @@ describe("a stock EV3 lent by the page", () => {
     expect(r.entry.page.status().socket).not.toBe("open");
   });
 
+  test("the automatic open and the button together open the EV3 once", async () => {
+    const r = await rig();
+    const { hid } = fakeHid({ granted: [r.usb.device], chooser: [r.usb.device] });
+    const errors: unknown[] = [];
+    const page = startBridge({
+      hid,
+      url: `ws://127.0.0.1:${r.bridge.port}/hid`,
+      openSocket: (url) =>
+        new WebSocket(url, {
+          headers: { Origin: r.bridge.url.slice(0, -1) },
+        } as unknown as string[]) as unknown as BridgeSocket,
+      onStatus: () => {},
+    });
+    r.entry.page = page;
+    await page.choose().catch((e) => errors.push(e));
+    await r.online();
+    expect(errors).toEqual([]);
+    expect(page.status().device).toBe("ready");
+    // one listener: each reply reaches the process once, so the link sees no stray packets
+    expect(await r.tool("drive", { distance_cm: 3, speed_pct: 40 })).toMatchObject({ ok: true });
+  });
+
   test("the socket is only for the page served here, and for one page", async () => {
     const r = await rig();
     const stranger = r.openPage("http://example.com");

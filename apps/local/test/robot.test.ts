@@ -140,6 +140,25 @@ describe("backstop", () => {
   });
 });
 
+describe("backstop without a link", () => {
+  test("a hung move whose robot went offline ends as timeout and leaves the robot idle", async () => {
+    const mock = new MockProvider({ clock: realClock });
+    let taken = false;
+    mock.command = () => {
+      taken = true;
+      return new Promise(() => {});
+    };
+    const robot = new LocalRobot({ id: "m1", deadlineMarginMs: 50 });
+    const limits = { ...PROFILE.limits, max_command_ms: 100 };
+    await robot.attach(createRuntime({ profile: { ...PROFILE, limits }, providers: [mock], clock: realClock }));
+    const move = callTool([robot], "drive", { robot_id: "m1", distance_cm: 5 });
+    await until("the driver to take the command", () => taken);
+    robot.detach("the cable was pulled");
+    expect((await move).envelope).toMatchObject({ ok: false, error: { code: "timeout" } });
+    expect(robot.view()).toMatchObject({ link: "offline", activity: "idle" });
+  });
+});
+
 describe("link", () => {
   test("a robot without a runtime is offline: calls answer robot_offline with what to do", async () => {
     const robot = new LocalRobot({ id: "m1", connect: "Open the page." });

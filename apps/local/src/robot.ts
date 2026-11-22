@@ -233,7 +233,14 @@ export class LocalRobot {
       if (moving) {
         // this call gives its claim up: the stop verifies the motors and does not wait for a call that hangs
         this.move = null;
-        await this.stop().catch(() => {});
+        try {
+          await this.stop();
+        } catch {
+          // no link to stop through (the robot went offline meanwhile): the move is over all the same
+          const now = this.activity as RobotActivity;
+          if (now === "acting" || now === "running_program")
+            this.toActivity("idle", `${tool} timed out, robot offline`);
+        }
       }
       throw new LocalError(
         "timeout",
