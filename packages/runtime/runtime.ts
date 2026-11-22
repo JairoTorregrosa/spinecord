@@ -125,9 +125,10 @@ interface Track {
   // before that operation is sent. The read and the operation travel the same link in that order, so the
   // caller awaits it only when it needs the answer before sending.
   mark(): Promise<number>;
-  // After that operation ended with `measured`: the fraction done now, and the part of it that happened
-  // between operations (coasting on, or creeping after a brake), which no operation's `measured` shows.
-  done(measured: Record<string, Value> | undefined): Promise<{ f: number; drift: number }>;
+  // After that operation ended with `measured`: the fraction done now, the fraction its reading showed when
+  // it started, and the part that happened between operations (coasting on, or creeping after a brake),
+  // which no operation's `measured` shows.
+  done(measured: Record<string, Value> | undefined): Promise<{ f: number; start: number; drift: number }>;
   // A reading of its own, with nothing running: the fraction done.
   settle(): Promise<number>;
 }
@@ -817,10 +818,12 @@ class RuntimeImpl implements LocalRuntime {
       if (noProgress >= 3) reason = "stalled";
       return noProgress >= 3;
     };
-    // The latest operation as it was judged from its own `measured`, until a reading of the device confirms it.
+    // The latest operation as it was judged from its own `measured`, until the next reading of the device (the
+    // one the following operation starts from, or the closing one) says what it really moved since the
+    // reading it started from. Two readings, never a reading against an operation's word.
     let unread:
       | {
-          f0: number;
+          s0: number;
           step: number;
           cut: boolean;
           n: number;
@@ -846,7 +849,7 @@ class RuntimeImpl implements LocalRuntime {
             const u = unread;
             unread = undefined;
             if (u) {
-              const moved = (read - u.f0) * lead;
+              const moved = (read - u.s0) * lead;
               noProgress = u.noProgress;
               creep = u.creep;
               if (reversed(moved, u.step, u.n, u.asked) || stuck(moved, u.step, u.cut)) break;
@@ -937,15 +940,27 @@ class RuntimeImpl implements LocalRuntime {
               : v;
         // delta = fraction of the whole move this chunk really covered, signed along the commanded direction
         let delta: number;
+        let own: number | undefined; // what this operation says it moved by itself
+        let startedAt = 0;
+        let verdict = false; // the operation before this one, judged again by the readings, ended the move
         const got = res.measured?.[leadKey];
         if (o.track) {
           const at = await o.track.done(res.measured);
+          startedAt = at.start;
+          const u = unread;
+          unread = undefined;
+          if (u) {
+            noProgress = u.noProgress;
+            creep = u.creep;
+            const moved = (at.start - u.s0) * lead;
+            verdict = reversed(moved, u.step, u.n, u.asked) || stuck(moved, u.step, u.cut);
+          }
           delta = at.f - f;
           // What the device moved by itself before this operation says for how long it keeps going after one
           // that ends the same way (coasting or braked), at the speed of the operation before it.
           const gap = at.drift * lead;
           if (chunks > 1 && rate > 0) keepsMs[before] = Math.min(Math.max(0, gap / rate), 1000);
-          const own = delta * lead - (exact ? 0 : gap);
+          own = delta * lead - (exact ? 0 : gap);
           const ownMs = wall - (latency() ?? 0);
           if (own > 0 && ownMs >= 10) rate = own / ownMs;
           before = coast ? "coast" : "brake";
@@ -954,13 +969,15 @@ class RuntimeImpl implements LocalRuntime {
         } else if (typeof got === "number" && !byTime) delta = got / o.targets[leadKey]!;
         else delta = ended ? 0 : step / lead; // an operation cut short that reports nothing is credited nothing
         const movedLead = delta * lead; // degrees (or ms) along the commanded direction
-        unread = o.track && { f0: f, step, cut, n: chunks, asked: args[leadKey], noProgress, creep };
+        const judged = own ?? movedLead; // with a track: this operation alone, until the readings say more
+        if (verdict) break;
+        unread = o.track && { s0: startedAt, step, cut, n: chunks, asked: args[leadKey], noProgress, creep };
         f = Math.min(1, Math.max(0, f + delta));
         if (signal.aborted || (res.reason === "preempted" && !ended)) {
           reason = "preempted";
           break;
         }
-        if (reversed(movedLead, step, chunks, args[leadKey])) break;
+        if (reversed(judged, step, chunks, args[leadKey])) break;
         if (res.reason === "stalled") {
           reason = "stalled";
           break;
@@ -969,7 +986,7 @@ class RuntimeImpl implements LocalRuntime {
           reason = "condition_met";
           break;
         }
-        if (stuck(movedLead, step, cut)) break;
+        if (stuck(judged, step, cut)) break;
         if (!byTime) {
           const motionMs = wall - (latency() ?? 0);
           const floor = integer ? 2 : 1;
@@ -1046,7 +1063,7 @@ class RuntimeImpl implements LocalRuntime {
         const got = measured?.[leadKey];
         // an operation that does not say what it moved is measured with a read of its own, as it always was
         est = typeof got === "number" ? ahead(start) + got : ahead(await this.encoders(pair));
-        return { f: frac(est), drift: target === 0 ? 0 : drift / target };
+        return { f: frac(est), start: frac(ahead(start)), drift: target === 0 ? 0 : drift / target };
       },
       settle: async () => {
         const [enc, g] = await Promise.all([this.encoders(pair), this.gyroAngle(gyro)]);

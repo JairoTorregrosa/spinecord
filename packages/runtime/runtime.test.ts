@@ -857,6 +857,14 @@ describe("drivetrain", () => {
       expect(d.reason).toBe("stalled");
       expect(pairLog(s.mock).length).toBe(3); // three operations without progress, not until max_command_ms
       expect(d.measured.distance_cm).toBe(0);
+      // a driver that overstates is not a reversal: the wheels only went forward, so the move goes on to its target
+      const h = setup();
+      h.mock.echo = true;
+      h.mock.slip = 0.5;
+      const g = await h.call("drive", { distance_cm: 30 });
+      expect(g.reason).toBe("completed");
+      expect(g.problem).toBeUndefined();
+      expect(h.mock.left).toBeCloseTo(30 * DEG_PER_CM, -1);
       const r = setup({ latency_ms: 600, op_ms: 2000, limits: { max_command_ms: 60000 } });
       r.mock.echo = true;
       r.mock.reverseFromOp = 1; // and one that drives the wrong way
