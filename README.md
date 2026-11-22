@@ -45,7 +45,7 @@ cd spinecord
 bun install --filter @spinecord/local
 ```
 
-`--filter @spinecord/local` installs what the local server needs and nothing of the development toolchain: 6 packages, 16 MB, under 1 s measured on a fresh clone with an empty cache (macOS, Apple M1 Pro; a plain `bun install` is 124 packages, 318 MB, 16 s).
+`--filter @spinecord/local` installs what the local server needs and nothing of the development toolchain: 6 packages, 16 MB. Measured on a fresh clone with an empty cache: 0.7 s on macOS (Apple M1 Pro), 1.1 s on a Windows CI runner. A plain `bun install` is 124 packages, 318 MB, 16 s on the same Mac.
 
 Then register it with Claude Code, with the full path of the clone:
 
