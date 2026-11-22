@@ -205,17 +205,25 @@ export function checkRemotePath(path: string): string {
 }
 
 /**
- * The remote command that starts the bridge. A file named like a Python module is imported, so Python keeps its
- * bytecode in `__pycache__` next to it and a start skips compiling 60 KB of source (seconds on an EV3); any
- * other name is run as a script.
+ * The remote command that starts the bridge. A file named like a Python module is imported from its own folder
+ * (that folder replaces the session's working folder as the first entry of `sys.path`), so Python keeps its
+ * bytecode in `__pycache__` next to it and a start skips compiling 60 KB of source (seconds on an EV3). A module
+ * without `run` (a bridge from before `run`, or a name Python had already loaded, such as `os`) is run as a script
+ * instead, so it answers its own hello and the version check decides. Any other file name is run as a script.
  */
 export function bridgeCommand(remotePath: string): string {
   const path = checkRemotePath(remotePath);
   const name = posix.basename(path);
   const m = /^([A-Za-z_][A-Za-z0-9_]*)\.py$/.exec(name);
   if (!m) return `python3 -u ${path}`;
-  const mod = m[1]!;
-  return `python3 -u -c "import os, sys; sys.path.insert(0, os.path.expanduser('${posix.dirname(path)}')); import ${mod}; ${mod}.run(['${name}'])"`;
+  const code = [
+    "import os, sys, runpy",
+    `d = os.path.expanduser('${posix.dirname(path)}')`,
+    "sys.path[0] = d",
+    `m = __import__('${m[1]!}')`,
+    `getattr(m, 'run', None) and m.run(['${name}']) or runpy.run_path(os.path.join(d, '${name}'), run_name='__main__')`,
+  ].join("; ");
+  return `python3 -u -c "${code}"`;
 }
 
 /** Runs the installed bridge on the brick with `python3 -u` over ssh. */
@@ -237,7 +245,9 @@ export async function installBridge(
   const remotePath = checkRemotePath(o.remotePath ?? DEFAULT_REMOTE_PATH);
   const dir = posix.dirname(remotePath);
   const data = await readFile(o.localFile ?? BRIDGE_FILE);
-  const remote = `mkdir -p ${dir} && cat > ${remotePath}.tmp && mv ${remotePath}.tmp ${remotePath} && wc -c < ${remotePath}`;
+  // the compiled bytecode goes with the file it came from: Python trusts a .pyc whose source has the same size and
+  // modification second, which a reinstall within one second can have
+  const remote = `mkdir -p ${dir} && rm -rf ${dir}/__pycache__ && cat > ${remotePath}.tmp && mv ${remotePath}.tmp ${remotePath} && wc -c < ${remotePath}`;
   const label = `ssh ${o.user}@${o.host}`;
   const out = await new Promise<string>((resolve, reject) => {
     const child = spawn(o.sshCommand ?? "ssh", [...sshArgs(o), remote], {

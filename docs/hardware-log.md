@@ -36,9 +36,11 @@ Newest first. Commit = the revision of this repository that ran.
 
 | Date | Commit | Robot and link | Check | Result |
 | --- | --- | --- | --- | --- |
-| 2026-11-22 | this PR | R ³ | the guard: `kill` of the guard process, robot idle | ✓ the bridge braked every motor and ended (exit 3, "the guard process ended (exit -15)"); `offline`, then `online` by itself with a new guard |
-| 2026-11-22 | this PR | R ³ | `kill -9` of the bridge 0.8 s into a 40 cm `drive` at 30 % | ✓ both motors at speed 0 0.6 s after the kill (guard); the drive answered `robot_offline` after 2.4 s; `offline`, then `online` by itself |
-| 2026-11-22 | this PR | R ³ | start of the bridge, `python3 -u` on the file against `import` with `__pycache__` | 9.2–12.7 s against 6.8 s on the brick; with a busy brick a bare `python3 -c pass` took 40.8 s |
+| 2026-11-22 | 4059118 ⁴ | R ³ | the guard: `kill` of the guard process, robot idle | ✓ the bridge braked every motor and ended (exit 3, "the guard process ended (exit -15)"); `offline`, then `online` by itself with a new guard |
+| 2026-11-22 | 4059118 ⁴ | R ³ | `kill -9` of the bridge 0.8 s into a 40 cm `drive` at 30 % | ✓ both motors at speed 0 0.6 s after the kill (guard); the drive answered `robot_offline` after 2.4 s; `offline`, then `online` by itself |
+| 2026-11-22 | 4059118 | R ³ | connect, one server | ✓ `online` 27 s after the server started, `idle` |
+| 2026-11-22 | 4059118 ⁴ | R ³ | the stops at connection, timed | the first missed its 1.5 s bound (`no reply to stop within 1500 ms`), the second was verified in 846 ms |
+| 2026-11-22 | 4059118 | R ³ | start of the bridge, `python3 -u` on the file against `import` with `__pycache__` | 9.2–12.7 s against 6.8 s on the brick; with a busy brick a bare `python3 -c pass` took 40.8 s |
 | 2026-11-22 | a0c67c9 | R ³ | connect | ✗ every hello past 20 s while another process started bridges in a loop (load 7, swap in use); with one server ✓ `online` after 24–28 s, in `fault`: the stop at connection missed its 1.5 s bound (the next stops took 95–190 ms) |
 | 2026-11-22 | a0c67c9 | R ³ | the `stop` tool from a Code Mode script 1.5 s into a 100 cm `drive` at 30 % | ✓ `motors_stopped: true` in 497 ms; the drive answered `preempted` after 18.3 cm |
 | 2026-11-22 | a0c67c9 | R ³ | `Esc` in Claude Code (interactive, Code Mode on) 1.5 s into a 100 cm `drive` at 30 % | ✓ `cancelled` with `action: "stop"`, `stop verified`, the drive answered `preempted` after 2.3 s |
@@ -55,6 +57,8 @@ Newest first. Commit = the revision of this repository that ran.
 | 2026-11-21 | not recorded ¹ | R ² | square via the runtime (drive 15 cm / turn 90° ×4), one bridge operation per side (bound 3 s, the runtime chunks to the declared bound) | ✓ sides 15.0–15.5 cm, turns 90.5–92.9°, no reversal, all `completed`, 35.9 s (direct on brick: 9.0 s; the gap is about 0.6 s tunnel round trip per operation) |
 
 ¹ The revision of these runs was not recorded. Their results were first committed in `335ea3c`, where the bridge is version 1 (no guard process, no `read_many`).
+
+⁴ The launch by import and the 60 s hello of 4059118, with two stops at connection instead of three; the timed run also logged each stop's duration.
 
 ³ R on 2026-11-22: battery 8.27 V, IR on S4 in `IR-PROX`, 56 MB of RAM with three of the owner's Python programs started at boot; on a phone's Wi-Fi hotspot, ping 21–149 ms; `forward_sign` −1 in its robot file. Server and Claude Code (Fable 5.2) on macOS.
 
