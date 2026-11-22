@@ -350,8 +350,8 @@ describe("fake brick", () => {
   );
 
   brickTest("after a coasting overshoot the next operation still goes forward from where the motors are", async () => {
-    // Seen on hardware: 20 deg coasting ended 16 deg past its target; the next +15 deg operation, sent as a
-    // relative move, was measured from the old target and drove the robot backward.
+    // A 20 deg coasting operation ends 16 deg past its target. The next +15 deg operation counts from where the
+    // motors are: a relative move would count from the old target and drive the robot backward.
     const { provider, brick, play } = setup({ maxOpMs: PATIENT_OP_MS });
     play(0, 40, 16);
     play(1, 40, 17);

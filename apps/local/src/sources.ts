@@ -1,6 +1,7 @@
 // Where a robot's runtime comes from. Each source wires packages together and hands the runtime to a LocalRobot:
 //   twin     SimBrick + the real Ev3Provider + SimWorldProvider, built at start
-//   ev3dev   Ev3devProvider over the system ssh client, connected at start and again each time the link closes
+//   ev3dev   Ev3devProvider over the system ssh client; the robot starts offline and is connected in the
+//            background, at start and each time the link closes, until a link holds
 //   ev3      the real Ev3Provider over the bridge page's socket, built each time the page opens an EV3
 import { Ev3Provider } from "../../../packages/driver-ev3/provider";
 import type { Transport } from "../../../packages/driver-ev3/transport";
@@ -72,37 +73,46 @@ export interface HardwareLink {
 }
 /**
  * Keeps a robot attached through links that can close. `connect` opens one and resolves when the robot is online
- * through it. A link that closes, during the handshake or after it, puts the robot offline, and a new one is
- * opened every `reconnectMs` until one holds. Logs `gone`, `ready` and `attach_failed`.
+ * through it. `start` does the same without being waited for: the robot stays offline while the attempt runs, and
+ * an attempt that fails is followed by the next. A link that closes, during the handshake or after it, puts the
+ * robot offline, and a new one is opened every `reconnectMs` until one holds. `open` may do what a link needs
+ * first (copy a bridge to the brick); when it throws, the attempt failed. Logs `gone`, `ready` and `attach_failed`.
  */
 export function keepAttached(
   robot: LocalRobot,
-  open: () => HardwareLink,
+  open: () => HardwareLink | Promise<HardwareLink>,
   o: { log: Log; reconnectMs?: number },
-): { connect(): Promise<void>; end(): void; close(): Promise<void> } {
+): { connect(): Promise<void>; start(): void; end(): void; close(): Promise<void> } {
   // The link the robot is online through; null while the robot is offline.
   let live: HardwareLink | null = null;
   let ended = false;
   let retry: ReturnType<typeof setTimeout> | null = null;
+  /** One attempt nobody waits for: online and `ready`, or the reason in `list_robots` and the next attempt. */
+  const attempt = (): void => {
+    if (ended) return;
+    connect().then(
+      () => {
+        if (!ended) o.log("ready");
+      },
+      (e: unknown) => {
+        // a configuration the attempts cannot change by themselves (a bridge of another version on the brick)
+        robot.attachFailed((e as Error).message, e instanceof RuntimeError && e.code === "misconfigured");
+        o.log("attach_failed", { error: (e as Error).message });
+        again();
+      },
+    );
+  };
   const again = (): void => {
     if (ended) return;
     retry = setTimeout(() => {
       retry = null;
-      if (ended) return;
-      connect().then(
-        () => o.log("ready"),
-        (e: unknown) => {
-          // a configuration the attempts cannot change by themselves (a bridge of another version on the brick)
-          robot.attachFailed((e as Error).message, e instanceof RuntimeError && e.code === "misconfigured");
-          o.log("attach_failed", { error: (e as Error).message });
-          again();
-        },
-      );
+      attempt();
     }, o.reconnectMs ?? 2000);
     retry.unref?.();
   };
   const connect = async (): Promise<void> => {
-    const link = open();
+    const link = await open();
+    if (ended) return void (await link.close().catch(() => {}));
     let closed: string | null = null;
     link.onClose((reason) => {
       closed ??= reason;
@@ -130,6 +140,7 @@ export function keepAttached(
   };
   return {
     connect,
+    start: attempt,
     end() {
       ended = true;
       if (retry) clearTimeout(retry);
@@ -138,7 +149,11 @@ export function keepAttached(
   };
 }
 
-/** Builds every robot of the config. Throws when one that must be there at start (twin, ev3dev) cannot be built. */
+/**
+ * Builds every robot of the config. A twin is online when this returns. A robot on hardware starts offline with
+ * its `connect` hint and comes online when its hardware answers: an ev3dev brick through attempts that run by
+ * themselves, a stock EV3 when a person opens it on the bridge page.
+ */
 export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<Fleet> {
   const robots: LocalRobot[] = [];
   const bricks = new Map<string, SimBrick>();
@@ -161,16 +176,22 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     } else if (s.source === "ev3dev") {
       const robot = new LocalRobot({
         id: s.id,
-        connect: `Check that the brick is on and that ssh ${s.ssh.user}@${s.ssh.host} works; this server connects again by itself.`,
+        connect: `Check that the brick is on and that "ssh ${s.ssh.user}@${s.ssh.host}" connects from this computer without asking for a password or about the host key; this server keeps trying by itself.`,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
       });
-      if (s.installBridge) o.log("bridge_installed", { robot_id: s.id, ...(await installBridge(s.ssh)) });
+      // --install-bridge: part of every attempt until one copy has succeeded, so a brick that is off at start
+      // gets its bridge when it answers
+      let bridgeToInstall = s.installBridge;
       const { pair } = s.robot;
       const profile = { ...s.robot.profile, id: s.id };
       const link = keepAttached(
         robot,
-        () => {
+        async () => {
+          if (bridgeToInstall) {
+            o.log("bridge_installed", { robot_id: s.id, ...(await installBridge(s.ssh)) });
+            bridgeToInstall = false;
+          }
           const transport = new SshLineTransport(s.ssh);
           let provider!: Ev3devProvider;
           const runtime = createRuntime({
@@ -187,7 +208,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         },
         { log: (ev, fields) => o.log(`ev3dev_${ev}`, { robot_id: s.id, ...fields }), reconnectMs: o.reconnectMs },
       );
-      await link.connect();
+      link.start();
       enders.push(link.end);
       closers.push(link.close);
       robots.push(robot);
