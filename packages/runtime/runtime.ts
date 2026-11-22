@@ -31,6 +31,13 @@ import { validateSchema } from "../protocol/schema";
 export const STALE_IMAGE_MS = 1500; // CONTRACT §7 stale_image
 export const MAX_CHUNK_MS = 250; // CONTRACT §0.8: longest operation for a command that declares no time bound of its own
 export const MAX_SAMPLE_HZ = 50;
+// CONTRACT §4: while an operation runs under `until`, the condition is read again this often, or as often as
+// one read takes when the link is slower. A channel's max_rate_hz does not slow it down: reading a sensor
+// faster than it refreshes costs nothing (reads have no side effects) and shortens the wait for its next value.
+export const UNTIL_POLL_MS = 10;
+// How old a timed round trip may be and still let the first chunk of a move coast: about what a move itself
+// relies on between two of its chunks. Older than this, the link is timed again before anything moves.
+export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
 const RETRYABLE: readonly ErrorCode[] = [
   "robot_offline",
   "busy",
@@ -102,6 +109,29 @@ interface Entry {
   provider: Provider;
   remote: boolean;
 }
+// A condition being watched while operations run. `first` is the outcome of the poll made before anything
+// moves; `state()` is what the watch knows now; `fresh()` waits for a poll that starts after the call.
+// state() and fresh() throw what a poll threw (a channel that needs a mode switch, an unknown device).
+interface Monitor {
+  readonly first: Promise<boolean>;
+  state(): boolean;
+  fresh(): Promise<boolean>;
+  stop(): void;
+}
+// Where a device really is during a chunked move, from a measurement of its own (wheel encoders).
+// Fractions are of the whole move, signed along the commanded direction (negative = moved the wrong way).
+interface Track {
+  // Reads the position the next operation starts from; resolves to the fraction done there. Called right
+  // before that operation is sent. The read and the operation travel the same link in that order, so the
+  // caller awaits it only when it needs the answer before sending.
+  mark(): Promise<number>;
+  // After that operation ended with `measured`: the fraction done now, the fraction its reading showed when
+  // it started, and the part that happened between operations (coasting on, or creeping after a brake),
+  // which no operation's `measured` shows.
+  done(measured: Record<string, Value> | undefined): Promise<{ f: number; start: number; drift: number }>;
+  // A reading of its own, with nothing running: the fraction done.
+  settle(): Promise<number>;
+}
 const MAX_STEPS = 500;
 const round1 = (x: number) => Math.round(x * 10) / 10;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -117,6 +147,9 @@ class RuntimeImpl implements LocalRuntime {
   private readonly clock: Clock;
   private readonly chunkMs: number;
   private entries = new Map<string, Entry>();
+  // Round trip of the latest timed read of each provider: the evidence for coasting between chunks.
+  private readonly linkMs = new WeakMap<Provider, number>();
+  private readonly linkAt = new WeakMap<Provider, number>(); // when that read came back
   private readonly inflight = new Set<AbortController>();
   private scan: Promise<void>;
   readonly backend: BackendKind;
@@ -569,8 +602,16 @@ class RuntimeImpl implements LocalRuntime {
     );
   }
 
+  // One read of a device, timed: the latest round trip of its provider's link.
+  private async timedRead(e: Entry, channels: string[]): Promise<Reading[]> {
+    const asked = this.clock.now();
+    const got = await this.readEntry(e, channels);
+    this.linkMs.set(e.provider, this.clock.now() - asked);
+    this.linkAt.set(e.provider, this.clock.now());
+    return got;
+  }
   private async encoders(pair: Entry): Promise<{ l: number; r: number }> {
-    const [l, r] = await this.readEntry(pair, ["left_deg", "right_deg"]);
+    const [l, r] = await this.timedRead(pair, ["left_deg", "right_deg"]);
     if (typeof l!.value !== "number" || typeof r!.value !== "number")
       throw rerr(
         "internal",
@@ -588,22 +629,87 @@ class RuntimeImpl implements LocalRuntime {
     } // heading then falls back to encoders and says so in `source`
   }
 
+  // Watches a condition for as long as the caller keeps operations running (CONTRACT §4): polls its devices
+  // every max(UNTIL_POLL_MS, the round trip of one such read) and calls `trip` the
+  // moment it is met or cannot be evaluated, so the caller aborts the operation in flight instead of waiting
+  // for it to end. One poll at a time; reads here never switch a sensor mode.
+  private monitor(cond: CompiledCondition, trip: () => void): Monitor {
+    const ev = makeEvaluator(cond, this.readFn);
+    let met = false,
+      failed = false,
+      stopped = false,
+      error: unknown,
+      started = 0,
+      done = 0,
+      wanted = 1;
+    let nap: AbortController | undefined;
+    let waiters: (() => void)[] = [];
+    const wake = () => {
+      for (const w of waiters.splice(0)) w();
+    };
+    const settled = () => met || failed || stopped;
+    const result = () => {
+      if (failed) throw error;
+      return met;
+    };
+    const until = async (n: number) => {
+      while (done < n && !settled()) await new Promise<void>((r) => waiters.push(r));
+      return result();
+    };
+    void (async () => {
+      while (!settled()) {
+        const asked = this.clock.now();
+        started++;
+        try {
+          if ((await ev.poll()).met) met = true;
+        } catch (err) {
+          failed = true;
+          error = err;
+        }
+        done = started;
+        if (stopped) break;
+        if (met || failed) trip();
+        wake();
+        if (settled() || wanted > done) continue;
+        const took = this.clock.now() - asked;
+        nap = new AbortController();
+        await this.clock.sleep(Math.max(UNTIL_POLL_MS, took) - took, nap.signal);
+        nap = undefined;
+      }
+      wake();
+    })();
+    const first = until(1);
+    first.catch(() => {}); // surfaced by whoever awaits it
+    return {
+      first,
+      state: result,
+      fresh: () => {
+        wanted = started + 1;
+        nap?.abort();
+        return until(wanted);
+      },
+      stop: () => {
+        stopped = true;
+        nap?.abort();
+        wake();
+      },
+    };
+  }
+
   // The only chunker (CONTRACT §4). Splits one bounded motion into operations of about chunk_ms (never more
   // than 250 ms of device time, which the provider enforces on the hardware), coasting between chunks
-  // (brake:false) and braking on the last one, and evaluates `until` between chunks; under `until` it also
-  // ends every operation itself at 250 ms of motion, whatever bound the device declares. `targets` are the totals
-  // of the command's bound params; every chunk sends the same fraction of each.
+  // (brake:false) and braking on the last one. Under `until` the condition is watched while every operation
+  // runs and ends it the moment it is met, and the runtime also ends every operation itself at 250 ms of
+  // motion, whatever bound the device declares. `targets` are the totals of the command's bound params; every
+  // chunk sends the same fraction of each.
   private async chunked(o: {
     entry: Entry;
     cmd: CommandSpec;
     base: Record<string, Value>;
     targets: Record<string, number>;
     unit: "degrees" | "ms"; // what the targets measure; ms targets are sliced by time, degree targets adaptively
-    // Signed fraction done from an independent measurement (encoders), negative = moved the wrong way;
-    // absent → the provider's `measured` is used.
-    progress?: () => Promise<number>;
-    latency_ms?: number; // a measured round trip to the device (e.g. the first encoder read)
-    ev?: ReturnType<typeof makeEvaluator>;
+    track?: Track; // an independent measurement of progress; absent → the provider's `measured` is used
+    until?: CompiledCondition; // watched for the whole run; ends it with reason condition_met
     signal: AbortSignal;
     t0: number;
   }): Promise<{
@@ -631,7 +737,7 @@ class RuntimeImpl implements LocalRuntime {
     // How long one operation should last (CONTRACT §4): the command's declared time bound, or short chunks
     // while an `until` must be evaluated between them. A command without a time bound gets chunk_ms.
     const declaredMs = cmd.bound.kind === "ms" ? cmd.bound.max : undefined;
-    const sliceMs = o.ev ? Math.min(declaredMs ?? this.chunkMs, this.chunkMs) : (declaredMs ?? this.chunkMs);
+    const sliceMs = o.until ? Math.min(declaredMs ?? this.chunkMs, this.chunkMs) : (declaredMs ?? this.chunkMs);
     // Under `until` a degree target must not hide a long operation (a slow motor, a device with a long declared
     // bound): the runtime itself ends every operation at cutMs of motion by aborting it, which is a chunk end,
     // not a preemption. Not armed when the device already cuts sooner, nor for ms targets (sliced above), nor
@@ -639,43 +745,123 @@ class RuntimeImpl implements LocalRuntime {
     // of an operation still running. There the organ's own declared bound is the limit.
     const cutAt = Math.min(MAX_CHUNK_MS, 1.25 * sliceMs);
     const abortable = entry.provider.backend !== "organ";
-    const cutMs = o.ev && !byTime && abortable && (declaredMs === undefined || declaredMs > cutAt) ? cutAt : undefined;
+    const cutMs =
+      o.until && !byTime && abortable && (declaredMs === undefined || declaredMs > cutAt) ? cutAt : undefined;
     const aimMs = Math.min(
       declaredMs !== undefined && sliceMs === declaredMs ? 0.8 * declaredMs : sliceMs, // stay inside the device's own cut
       cutMs === undefined ? Infinity : 0.8 * cutMs, // and inside the runtime's
     );
-    let latency = o.latency_ms; // smallest round trip seen; it is not motion time
-    if (latency === undefined && canCoast) {
-      // one timed read of the device tells whether the link is fast enough to chain coasting chunks
-      const ch = entry.spec.channels.find((c) => c.type !== "image" && c.active !== false);
-      if (ch) {
-        const asked = this.clock.now();
-        await this.readEntry(entry, [ch.name]);
-        latency = this.clock.now() - asked;
-      }
-    }
+    // The link's round trip, which is not motion time: the latest timed read of this provider. With a track
+    // every operation travels with one, so a link that gets slower mid-move shows before the next is sent.
+    const latency = () => this.linkMs.get(entry.provider);
     // Coast between chunks only on a link whose round trip is small next to the chunk: on a slow link the
     // device would roll uncontrolled between operations, so there every operation brakes.
-    const coastOk = () => canCoast && latency !== undefined && latency < aimMs / 4;
+    const coastOk = () => canCoast && (latency() ?? Infinity) < aimMs / 4;
+    // Coasting needs a round trip measured just now: in this call before anything moves, or no longer ago
+    // than LINK_FRESH_MS (moves sent back to back, as a program or a script does). What an older call saw may
+    // be long gone. With a track, a link last seen slow needs none: every operation brakes there, and the
+    // readings that travel with the operations show it when the link is fast again. Without one nothing else
+    // would ever time the link, so one read does, on every call.
+    const fresh = () => this.clock.now() - (this.linkAt.get(entry.provider) ?? -Infinity) <= LINK_FRESH_MS;
+    let proven = !canCoast || (latency() !== undefined && (!coastOk() || fresh()));
+    if (canCoast && !o.track) {
+      const ch = entry.spec.channels.find((c) => c.type !== "image" && c.active !== false);
+      if (ch) await this.timedRead(entry, [ch.name]);
+      else this.linkMs.delete(entry.provider); // nothing to time it with: never coast
+      proven = true;
+    }
     // Degree targets on a fast link, or under `until`: a small probe first, then chunks sized from the speed
     // just measured (degrees moved / motion time, round trip taken out). No device speed is assumed.
     // Otherwise the whole remainder goes in one operation and the device's time bound cuts it if needed.
-    const sized = () => !byTime && (coastOk() || o.ev !== undefined || declaredMs === undefined);
+    const sized = () => !byTime && (coastOk() || o.until !== undefined || declaredMs === undefined);
     let chunkLead = 20;
     let f = 0,
+      drift = 0, // degrees the device is expected to move by itself before the next operation starts
+      rate = 0, // lead degrees per ms of motion in the latest operation
+      checked = false, // f comes from a reading taken after the last operation
       chunks = 0,
       noProgress = 0,
       creep = 0, // degrees gained over the latest deadline-cut operations
       clamped = false,
       coasting = false,
       braked = false;
+    let before: "coast" | "brake" = "brake"; // how the previous operation left the device
+    const keepsMs: { coast?: number; brake?: number } = {};
     let reason: StopReason | undefined;
     let problem: string | undefined;
+    // The operation in flight, and whether the watch ended it: that abort is the condition, not a preemption.
+    let flying: AbortController | undefined;
+    let tripped = false;
+    const mon =
+      o.until &&
+      this.monitor(o.until, () => {
+        if (!flying) return;
+        tripped = true;
+        flying.abort();
+      });
+    // Reversal and stall detection (CONTRACT §0.8), on what one operation really moved along the commanded
+    // direction. Both end the move by setting `reason`.
+    const reversed = (moved: number, step: number, n: number, asked: Value | undefined): boolean => {
+      if (byTime || moved >= -Math.max(3, 0.2 * step)) return false;
+      // Moving away from the target is never corrected by sending more: stop here and say so.
+      reason = "stalled";
+      problem = `reversed: operation ${n} asked ${cmd.name} ${leadKey} ${asked} but ${entry.spec.id} moved ${round1(moved * Math.sign(o.targets[leadKey]!))} (opposite direction). The move was stopped and braked; check the driver and how the motors are mounted (drivetrain.forward_sign).`;
+      return true;
+    };
+    const stuck = (moved: number, step: number, wasCut: boolean): boolean => {
+      if (byTime) return false;
+      // An operation the runtime cut was never going to cover its step: there, motion that adds up over the
+      // cut operations is progress, however slow the motor.
+      creep = wasCut ? creep + moved : 0;
+      if (wasCut && creep >= tol) creep = noProgress = 0;
+      else noProgress = wasCut || moved < 0.1 * step ? noProgress + 1 : 0;
+      if (noProgress >= 3) reason = "stalled";
+      return noProgress >= 3;
+    };
+    // The latest operation as it was judged from its own `measured`, until the next reading of the device (the
+    // one the following operation starts from, or the closing one) says what it really moved since the
+    // reading it started from. Two readings, never a reading against an operation's word.
+    let unread:
+      | {
+          s0: number;
+          step: number;
+          cut: boolean;
+          n: number;
+          asked: Value | undefined;
+          noProgress: number;
+          creep: number;
+        }
+      | undefined;
+    // A reading that must be awaited before the first operation shares its wait with the condition's first poll.
+    let early = o.track && (!proven || !abortable) ? o.track.mark() : undefined;
+    early?.catch(() => {});
     try {
-      if (o.ev && (await o.ev.poll()).met) reason = "condition_met";
+      if (mon && (await mon.first)) reason = "condition_met";
       while (!reason) {
-        const remaining = (1 - f) * lead;
+        let remaining = (1 - f) * lead - drift;
         if (remaining < tol) {
+          // What the operations reported, or what the device is expected to roll by itself, says the target is
+          // reached: a reading with nothing running decides, so a device still coasting is braked first.
+          if (o.track && !checked) {
+            if (coasting) {
+              await entry.provider.command(entry.spec.id, "brake", {}, new AbortController().signal);
+              coasting = false;
+            }
+            const read = await o.track.settle();
+            drift = 0;
+            checked = true;
+            // The reading, not the operation's own word, says what that operation did: judge it again.
+            const u = unread;
+            unread = undefined;
+            if (u) {
+              const moved = (read - u.s0) * lead;
+              noProgress = u.noProgress;
+              creep = u.creep;
+              if (reversed(moved, u.step, u.n, u.asked) || stuck(moved, u.step, u.cut)) break;
+            }
+            f = Math.min(1, Math.max(0, read));
+            continue;
+          }
           reason = "completed";
           break;
         }
@@ -687,7 +873,27 @@ class RuntimeImpl implements LocalRuntime {
           reason = "timeout";
           break;
         }
-        const step = Math.min(remaining, opCap, byTime ? sliceMs : sized() ? chunkLead : Infinity);
+        const size = () => Math.min(remaining, opCap, byTime ? sliceMs : sized() ? chunkLead : Infinity);
+        // The reading this operation starts from travels with it. It is awaited first only when its answer is
+        // needed before sending: to prove the link fast enough to coast, or when the device is a remote organ
+        // (no order is promised through the relay).
+        const marked = early ?? o.track?.mark();
+        early = undefined;
+        marked?.catch(() => {}); // a failed reading surfaces at done(), after the operation it travelled with
+        const exact = marked !== undefined && (!proven || !abortable);
+        if (marked && exact) {
+          f = Math.min(1, Math.max(0, await marked));
+          proven = true;
+          drift = 0;
+          remaining = (1 - f) * lead;
+          if (remaining < tol) continue; // decided at the top, with the device braked
+          if (signal.aborted) continue;
+        }
+        if (mon?.state()) {
+          reason = "condition_met"; // met while a reading was awaited: nothing more is sent
+          break;
+        }
+        const step = size();
         const last = step >= remaining - 1e-9;
         const args: Record<string, Value> = { ...o.base };
         for (const k of keys) args[k] = q((o.targets[k]! * step) / lead);
@@ -716,13 +922,20 @@ class RuntimeImpl implements LocalRuntime {
             op.abort();
           });
         let res: CommandResult;
+        tripped = false;
+        // Not for a remote organ: the abort would not reach it, and the next chunk must not be sent on top of
+        // an operation still running. Its condition is read between operations, below.
+        if (abortable) flying = op;
         try {
           res = await entry.provider.command(entry.spec.id, cmd.name, args, op.signal);
         } finally {
+          flying = undefined;
           settled.abort(); // the deadline timer goes away with its operation
           signal.removeEventListener("abort", preempt);
         }
+        const ended = cut || tripped; // the runtime ended this operation itself
         const wall = this.clock.now() - sent;
+        checked = false;
         chunks++;
         clamped ||= res.clamped;
         for (const [k, v] of Object.entries(res.measured ?? {}))
@@ -732,52 +945,69 @@ class RuntimeImpl implements LocalRuntime {
               : v;
         // delta = fraction of the whole move this chunk really covered, signed along the commanded direction
         let delta: number;
+        let own: number | undefined; // what this operation says it moved by itself
+        let startedAt = 0;
+        let verdict = false; // the operation before this one, judged again by the readings, ended the move
         const got = res.measured?.[leadKey];
-        if (o.progress) {
-          const asked = this.clock.now();
-          const raw = await o.progress();
-          latency = Math.min(latency ?? Infinity, this.clock.now() - asked);
-          delta = raw - f;
+        if (o.track) {
+          const at = await o.track.done(res.measured);
+          startedAt = at.start;
+          const u = unread;
+          unread = undefined;
+          if (u) {
+            noProgress = u.noProgress;
+            creep = u.creep;
+            const moved = (at.start - u.s0) * lead;
+            verdict = reversed(moved, u.step, u.n, u.asked) || stuck(moved, u.step, u.cut);
+          }
+          delta = at.f - f;
+          // What the device moved by itself before this operation says for how long it keeps going after one
+          // that ends the same way (coasting or braked), at the speed of the operation before it.
+          const gap = at.drift * lead;
+          if (chunks > 1 && rate > 0) keepsMs[before] = Math.min(Math.max(0, gap / rate), 1000);
+          own = delta * lead - (exact ? 0 : gap);
+          const ownMs = wall - (latency() ?? 0);
+          if (own > 0 && ownMs >= 10) rate = own / ownMs;
+          before = coast ? "coast" : "brake";
+          // Until one such gap was seen: a coasting device keeps going for the link's round trip, a braked one stops.
+          drift = Math.min(Math.max(0, rate * (keepsMs[before] ?? (coast ? (latency() ?? 0) : 0))), step);
         } else if (typeof got === "number" && !byTime) delta = got / o.targets[leadKey]!;
-        else delta = cut ? 0 : step / lead; // an operation cut short that reports nothing is credited nothing
+        else delta = ended ? 0 : step / lead; // an operation cut short that reports nothing is credited nothing
         const movedLead = delta * lead; // degrees (or ms) along the commanded direction
+        const judged = own ?? movedLead; // with a track: this operation alone, until the readings say more
+        if (verdict) break;
+        unread = o.track && { s0: startedAt, step, cut, n: chunks, asked: args[leadKey], noProgress, creep };
         f = Math.min(1, Math.max(0, f + delta));
-        if (signal.aborted || (res.reason === "preempted" && !cut)) {
+        if (signal.aborted || (res.reason === "preempted" && !ended)) {
           reason = "preempted";
           break;
         }
-        if (!byTime && movedLead < -Math.max(3, 0.2 * step)) {
-          // Moving away from the target is never corrected by sending more: stop here and say so.
-          reason = "stalled";
-          problem = `reversed: operation ${chunks} asked ${cmd.name} ${leadKey} ${args[leadKey]} but ${entry.spec.id} moved ${round1(movedLead * Math.sign(o.targets[leadKey]!))} (opposite direction). The move was stopped and braked; check the driver and how the motors are mounted (drivetrain.forward_sign).`;
-          break;
-        }
+        if (reversed(judged, step, chunks, args[leadKey])) break;
         if (res.reason === "stalled") {
           reason = "stalled";
           break;
         }
+        if (mon?.state()) {
+          reason = "condition_met";
+          break;
+        }
+        if (stuck(judged, step, cut)) break;
         if (!byTime) {
-          // An operation the runtime cut was never going to cover its step: there, motion that adds up over the
-          // cut operations is progress, however slow the motor.
-          creep = cut ? creep + movedLead : 0;
-          if (cut && creep >= tol) creep = noProgress = 0;
-          else noProgress = cut || movedLead < 0.1 * step ? noProgress + 1 : 0;
-          if (noProgress >= 3) {
-            reason = "stalled";
-            break;
-          }
-          const motionMs = wall - (latency ?? 0);
+          const motionMs = wall - (latency() ?? 0);
           const floor = integer ? 2 : 1;
           if (movedLead > 0 && motionMs >= 10)
             chunkLead = Math.max(floor, Math.min((movedLead / motionMs) * aimMs, chunkLead * 4));
           else if (motionMs < 10) chunkLead = Math.max(floor, chunkLead * 2); // too fast to time: probe bigger
         }
-        if (o.ev && (await o.ev.poll()).met) {
+        // A device that now stands still (the operation braked) or that an abort cannot reach waits for a
+        // reading taken after the operation; one that coasts gets its next operation at once, watched.
+        if (mon && (!coast || !abortable) && (await mon.fresh())) {
           reason = "condition_met";
           break;
         }
       }
     } finally {
+      mon?.stop();
       // The last operation sent did not brake and no braking one follows (early end, timeout, error, or the
       // target was reached while coasting): brake this device, and only this device, now. A brake that fails
       // is an error, except after an abort, where the caller is already stopping everything.
@@ -806,16 +1036,48 @@ class RuntimeImpl implements LocalRuntime {
     const { dt, pair, cmd } = this.drivetrain(tool);
     const t0 = this.clock.now();
     const gyro = this.gyro();
-    const enc0 = await this.encoders(pair);
-    const latency_ms = this.clock.now() - t0; // one read round trip
-    const g0 = await this.gyroAngle(gyro);
     const leftLeads = Math.abs(L) >= Math.abs(R);
     const target = leftLeads ? L : R;
-    let enc = enc0;
-    const progress = async () => {
-      enc = await this.encoders(pair);
-      const done = leftLeads ? enc.l - enc0.l : enc.r - enc0.r;
-      return target === 0 ? 1 : done / target; // signed: negative = the wheels went the wrong way
+    const leadKey = leftLeads ? "left_deg" : "right_deg";
+    type Enc = { l: number; r: number };
+    // Wheels and heading before the move come from the reading that travels with the first operation, and
+    // after it from one reading taken with nothing running: no provider call is made only to measure.
+    let before: Promise<[Enc, number | undefined]> | undefined;
+    let enc0: Enc | undefined;
+    let at: Promise<Enc> | undefined; // where the operation in flight started
+    let est = 0; // lead wheel degrees done when the latest operation ended
+    let after: { enc: Enc; g: number | undefined } | undefined; // read with nothing running since
+    const ahead = (e: Enc) => (leftLeads ? e.l - enc0!.l : e.r - enc0!.r);
+    const frac = (deg: number) => (target === 0 ? 1 : deg / target); // signed: negative = the wheels went the wrong way
+    const track: Track = {
+      mark: () => {
+        after = undefined;
+        const read = this.encoders(pair);
+        before ??= Promise.all([read, this.gyroAngle(gyro)]);
+        before.catch(() => {});
+        at = read;
+        return read.then((e) => {
+          enc0 ??= e;
+          return frac(ahead(e));
+        });
+      },
+      done: async (measured) => {
+        const start = await at!;
+        enc0 ??= start;
+        const drift = ahead(start) - est;
+        const got = measured?.[leadKey];
+        // an operation that does not say what it moved is measured with a read of its own, as it always was
+        est = typeof got === "number" ? ahead(start) + got : ahead(await this.encoders(pair));
+        return { f: frac(est), start: frac(ahead(start)), drift: target === 0 ? 0 : drift / target };
+      },
+      settle: async () => {
+        const [enc, g] = await Promise.all([this.encoders(pair), this.gyroAngle(gyro)]);
+        before ??= Promise.resolve([enc, g]); // nothing was sent: the move starts and ends here
+        enc0 ??= (await before)[0];
+        after = { enc, g };
+        est = ahead(enc);
+        return frac(est);
+      },
     };
     const run = await this.chunked({
       entry: pair,
@@ -823,20 +1085,22 @@ class RuntimeImpl implements LocalRuntime {
       base: { speed_pct: speed },
       targets: { left_deg: L, right_deg: R },
       unit: "degrees",
-      progress,
-      latency_ms,
-      ev: until && makeEvaluator(until, this.readFn),
+      track,
+      until,
       signal,
       t0,
     });
     let reason = run.reason;
     if (reason === "completed" && (clamped || run.clamped)) reason = "clamped";
-    if (run.braked) enc = await this.encoders(pair); // the brake{} after a coasting chunk moved the wheels a little more
+    // An early end, or the brake{} after a coasting chunk, moved the wheels since the last reading.
+    if (!after || run.braked) await track.settle();
+    const [, g0] = await before!;
+    const { enc, g: g1 } = after!;
+    const start = enc0!;
 
-    const dl = dt.forward_sign * (enc.l - enc0.l);
-    const dr = dt.forward_sign * (enc.r - enc0.r);
+    const dl = dt.forward_sign * (enc.l - start.l);
+    const dr = dt.forward_sign * (enc.r - start.r);
     const cmPerDeg = (Math.PI * dt.wheel_diameter_cm) / 360;
-    const g1 = g0 === undefined ? undefined : await this.gyroAngle(gyro);
     const source = g0 !== undefined && g1 !== undefined ? "gyro" : "encoders";
     // Providers normalize angles to the contract's sign (counter-clockwise positive), so the gyro is trusted as is.
     const heading = source === "gyro" ? g1! - g0! : ((dr - dl) * dt.wheel_diameter_cm) / (2 * dt.axle_track_cm);
@@ -848,7 +1112,7 @@ class RuntimeImpl implements LocalRuntime {
       data: {
         requested,
         applied,
-        measured: { ...measured, left_deg: round1(enc.l - enc0.l), right_deg: round1(enc.r - enc0.r) },
+        measured: { ...measured, left_deg: round1(enc.l - start.l), right_deg: round1(enc.r - start.r) },
         clamped: clamped || run.clamped,
         reason,
         ...(run.problem ? { problem: run.problem } : {}),
@@ -927,7 +1191,7 @@ class RuntimeImpl implements LocalRuntime {
           base,
           targets,
           unit: cmd.bound.kind === "ms" ? "ms" : "degrees",
-          ev: until && makeEvaluator(until, this.readFn),
+          until,
           signal,
           t0,
         });
@@ -956,7 +1220,16 @@ class RuntimeImpl implements LocalRuntime {
       !cmd.moves && cmd.bound.kind === "ms" ? Math.max(lim.max_command_ms, cmd.bound.max) : lim.max_command_ms;
     const single: Run = async (signal) => {
       const t0 = this.clock.now();
-      const ev = until && makeEvaluator(until, this.readFn);
+      // The operation in flight and why the runtime ended it, if it did.
+      let flying: AbortController | undefined;
+      let why: "condition_met" | "timeout" | undefined;
+      const mon =
+        until &&
+        this.monitor(until, () => {
+          if (!flying) return;
+          why = "condition_met";
+          flying.abort();
+        });
       const total: Record<string, Value> = {};
       const done = (reason: StopReason, anyClamp: boolean, ops: number): RuntimeResult => ({
         data: {
@@ -969,64 +1242,51 @@ class RuntimeImpl implements LocalRuntime {
           ms: Math.round(this.clock.now() - t0),
         },
       });
-      if (ev && (await ev.poll()).met) return done("condition_met", clamped, 0);
-      let args = { ...applied };
-      let anyClamp = clamped;
-      for (let ops = 1; ; ops++) {
-        if (signal.aborted) return done("preempted", anyClamp, ops - 1);
-        const child = new AbortController();
-        linkAbort(signal, child);
-        const wake = new AbortController();
-        linkAbort(child.signal, wake);
-        let why: "condition_met" | "timeout" | undefined;
-        let pollError: unknown;
-        let finished = false;
-        const watcher = (async () => {
-          while (!finished && !child.signal.aborted) {
-            await this.clock.sleep(cmd.moves ? 50 : 250, wake.signal);
-            if (finished || child.signal.aborted) return;
-            if (this.clock.now() - t0 >= waitMs + MAX_CHUNK_MS) {
-              why = "timeout";
-              child.abort();
-              return;
-            }
-            if (!ev) continue;
-            try {
-              if ((await ev.poll()).met && !finished) {
-                why = "condition_met";
-                child.abort();
-              }
-            } catch (err) {
-              pollError = err;
-              child.abort();
-            }
+      try {
+        if (mon && (await mon.first)) return done("condition_met", clamped, 0);
+        let args = { ...applied };
+        let anyClamp = clamped;
+        for (let ops = 1; ; ops++) {
+          if (signal.aborted) return done("preempted", anyClamp, ops - 1);
+          const child = new AbortController();
+          linkAbort(signal, child);
+          // The call's own time limit, counted from its start.
+          const limit = new AbortController();
+          void this.clock.sleep(Math.max(0, t0 + waitMs + MAX_CHUNK_MS - this.clock.now()), limit.signal).then(() => {
+            if (limit.signal.aborted || child.signal.aborted) return;
+            why = "timeout";
+            child.abort();
+          });
+          why = undefined;
+          let res: CommandResult;
+          flying = child;
+          try {
+            res = await e.provider.command(e.spec.id, cmd.name, args, child.signal);
+          } finally {
+            flying = undefined;
+            limit.abort();
           }
-        })();
-        let res: CommandResult;
-        try {
-          res = await e.provider.command(e.spec.id, cmd.name, args, child.signal);
-        } finally {
-          finished = true;
-          wake.abort();
-          await watcher;
+          mon?.state(); // a condition that could not be read is an error, not a result
+          anyClamp ||= res.clamped;
+          const m = res.measured ?? {};
+          for (const [k, v] of Object.entries(m))
+            total[k] =
+              typeof v === "number" && typeof (total[k] ?? 0) === "number"
+                ? ((total[k] as number | undefined) ?? 0) + v
+                : v;
+          if (signal.aborted) return done("preempted", anyClamp, ops);
+          if (why && res.reason === "preempted") return done(why, anyClamp, ops);
+          if (!(cmd.moves && res.reason === "timeout" && m.time_limited === true))
+            return done(res.reason, anyClamp, ops);
+          if (this.clock.now() - t0 >= lim.max_command_ms) return done("timeout", anyClamp, ops);
+          if (mon && (await mon.fresh())) return done("condition_met", anyClamp, ops);
+          const rest = { ...args };
+          for (const [k, v] of Object.entries(args))
+            if (typeof v === "number" && typeof m[k] === "number") rest[k] = v - (m[k] as number);
+          args = rest;
         }
-        if (pollError) throw pollError;
-        anyClamp ||= res.clamped;
-        const m = res.measured ?? {};
-        for (const [k, v] of Object.entries(m))
-          total[k] =
-            typeof v === "number" && typeof (total[k] ?? 0) === "number"
-              ? ((total[k] as number | undefined) ?? 0) + v
-              : v;
-        if (signal.aborted) return done("preempted", anyClamp, ops);
-        if (why && res.reason === "preempted") return done(why, anyClamp, ops);
-        if (!(cmd.moves && res.reason === "timeout" && m.time_limited === true)) return done(res.reason, anyClamp, ops);
-        if (this.clock.now() - t0 >= lim.max_command_ms) return done("timeout", anyClamp, ops);
-        if (ev && (await ev.poll()).met) return done("condition_met", anyClamp, ops);
-        const rest = { ...args };
-        for (const [k, v] of Object.entries(args))
-          if (typeof v === "number" && typeof m[k] === "number") rest[k] = v - (m[k] as number);
-        args = rest;
+      } finally {
+        mon?.stop();
       }
     };
     return cmd.moves ? moving(single) : single;

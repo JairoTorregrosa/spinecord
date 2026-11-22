@@ -3,7 +3,7 @@ import { RuntimeError } from "../protocol/types";
 import type { DeviceSpec, Limits, Provider, RobotProfile, RobotTool, RuntimeResult } from "../protocol/types";
 import { FakeClock } from "./clock";
 import { MockProvider } from "./mock";
-import { createRuntime, MAX_CHUNK_MS } from "./runtime";
+import { createRuntime, LINK_FRESH_MS, MAX_CHUNK_MS, UNTIL_POLL_MS } from "./runtime";
 
 const LIMITS = {
   max_speed_pct: 80,
@@ -515,6 +515,55 @@ describe("drivetrain", () => {
     expect(s.mock.left).toBeGreaterThanOrEqual(300);
     expect(s.mock.left - 300).toBeLessThan(biggest);
   });
+  test("until is watched while an operation runs: the move ends within one poll of the condition, not at the chunk's end", async () => {
+    const s = setup();
+    const t0 = s.clock.now();
+    const AT = 137; // inside the second operation (the 20 degree probe ends at 67 ms)
+    s.mock.values.set("mock.color.reflected_pct", () => (s.clock.now() - t0 >= AT ? 8 : 50));
+    const d = await s.call("drive", {
+      distance_cm: 60,
+      until: { device: "floor_color", channel: "reflected_pct", op: "lt", value: 20 },
+    });
+    expect(d.reason).toBe("condition_met");
+    expect(d.chunks).toBe(2);
+    expect(d.ms).toBeGreaterThanOrEqual(AT);
+    expect(d.ms).toBeLessThanOrEqual(AT + UNTIL_POLL_MS);
+    const last = pairLog(s.mock).at(-1)!;
+    expect(last.reason).toBe("preempted"); // the operation in flight was aborted, which ends its motion
+    expect(last.ms).toBeLessThan(100); // it was asked about 200 ms of motion
+    expect(s.mock.left).toBeLessThan((300 * (AT + UNTIL_POLL_MS)) / 1000 + 0.01); // 300 deg/s: nothing rolled past the abort
+    expect(s.mock.log.at(-1)).toMatchObject({ device: "mock.pair", command: "brake" }); // it was coasting
+    expect(s.mock.stops).toBe(0); // the end of a move, not a stop of the robot
+    // a single operation is watched the same way
+    const m = setup();
+    const m0 = m.clock.now();
+    m.mock.values.set("mock.gas.ppm", () => (m.clock.now() - m0 >= 33 ? 900 : 400));
+    const e = await m.call("command_device", {
+      device: "mock.arm",
+      command: "run_to_position",
+      args: { position_deg: 400, speed_pct: 20 },
+      until: { device: "mock.gas", channel: "ppm", op: "gt", value: 500 },
+    });
+    expect(e.reason).toBe("condition_met");
+    expect(e.ms).toBeLessThanOrEqual(33 + UNTIL_POLL_MS);
+  });
+  test("on a slow link the watch reads as often as one read takes, and the abort still cuts the operation", async () => {
+    const s = setup({ latency_ms: 100, limits: { max_command_ms: 20000 } });
+    const t0 = s.clock.now();
+    const AT = 620;
+    s.mock.values.set("mock.color.reflected_pct", () => (s.clock.now() - t0 >= AT ? 8 : 50));
+    const d = await s.call("drive", {
+      distance_cm: 60,
+      speed_pct: 10,
+      until: { device: "floor_color", channel: "reflected_pct", op: "lt", value: 20 },
+    });
+    expect(d.reason).toBe("condition_met");
+    // seen by a read that reaches the sensor at most one read later, known one half round trip after that
+    expect(d.ms).toBeLessThanOrEqual(AT + 100 + 50 + 100 + 100); // + the abort's way there and the final reading
+    const polls = s.mock.reads.filter((r) => r === "mock.color").length;
+    expect(polls).toBeLessThanOrEqual(Math.ceil(d.ms / 100) + 1); // back to back, never piled up
+    expect(pairLog(s.mock).every((c) => c.args.brake === true)).toBe(true); // 100 ms is too slow to coast
+  });
   test("until that is already true moves nothing", async () => {
     const s = setup();
     const d = await s.call("drive", {
@@ -730,6 +779,117 @@ describe("drivetrain", () => {
       expect(pairLog(s.mock).every((c) => c.reason !== "preempted")).toBe(true);
       expect(pairLog(s.mock)[0]!.ms).toBe(2000); // the 20 degree probe ran whole
     });
+    test("no provider call is made only to measure: readings travel with the operations", async () => {
+      const s = setup({ latency_ms: 600, gyro: true, limits: { max_command_ms: 20000 } });
+      await s.call("drive", { distance_cm: 2, speed_pct: 25 }); // the first move of a session times the link
+      s.mock.log.length = 0;
+      s.mock.reads.length = 0;
+      const d = await s.call("drive", { distance_cm: 15, speed_pct: 25 });
+      const ops = pairLog(s.mock);
+      expect(d.reason).toBe("completed");
+      expect(d.measured.distance_cm).toBeCloseTo(15, 0);
+      expect(d.measured.source).toBe("gyro");
+      // one reading of the wheels per operation, one of the gyro before, and one of each at the end
+      expect(s.mock.reads.filter((r) => r === "mock.pair").length).toBe(ops.length + 1);
+      expect(s.mock.reads.filter((r) => r === "mock.gyro").length).toBe(2);
+      // and none of them is waited for by itself except the last: one round trip per operation plus one
+      const motion = ops.reduce((a, c) => a + c.ms - 600, 0);
+      expect(d.ms).toBeLessThanOrEqual((ops.length + 1) * 600 + motion + 5);
+      expect(s.mock.reads[0]).toBe("mock.pair"); // made before the first operation was sent, not after
+    });
+    test("a link that got slower since the last move is found out before anything coasts", async () => {
+      const s = setup({ limits: { max_command_ms: 20000 } });
+      await s.call("drive", { distance_cm: 10, speed_pct: 25 });
+      expect(pairLog(s.mock).some((c) => c.args.brake === false)).toBe(true); // fast link: chunks coast
+      s.mock.log.length = 0;
+      s.mock.latency = 600;
+      s.mock.coastDeg = 16; // would roll on if the runtime coasted on what it measured during the last move
+      await s.clock.sleep(LINK_FRESH_MS + 1);
+      const d = await s.call("drive", { distance_cm: 10, speed_pct: 25 });
+      expect(d.reason).toBe("completed");
+      expect(pairLog(s.mock).every((c) => c.args.brake === true)).toBe(true);
+      expect(s.mock.brakes).toEqual([]);
+      expect(d.measured.distance_cm).toBeCloseTo(10, 0);
+      // a move sent right behind another trusts what that one just measured: if the link changed in between,
+      // one 20 degree probe coasts before the reading that travels with it says so, and no more
+      const q = setup({ limits: { max_command_ms: 20000 } });
+      await q.call("drive", { distance_cm: 10, speed_pct: 25 });
+      q.mock.log.length = 0;
+      q.mock.latency = 600;
+      const e = await q.call("drive", { distance_cm: 10, speed_pct: 25 });
+      const sent = pairLog(q.mock);
+      expect(e.reason).toBe("completed");
+      expect(sent[0]!.args).toMatchObject({ brake: false, left_deg: 20 });
+      expect(sent.slice(1).every((c) => c.args.brake === true)).toBe(true);
+      // and back: the readings that travel with the braking operations show the link is fast again
+      s.mock.log.length = 0;
+      s.mock.latency = 0;
+      s.mock.coastDeg = 0;
+      await s.call("drive", { distance_cm: 20, speed_pct: 25 });
+      const brakes = pairLog(s.mock).map((c) => c.args.brake);
+      expect(brakes[0]).toBe(true); // last seen slow: the first operation brakes
+      expect(brakes.slice(1, -1).some((b) => b === false)).toBe(true);
+    });
+    test("what the wheels roll between coasting chunks is expected, so the last chunk does not overshoot", async () => {
+      const s = setup();
+      s.mock.coastDeg = 8; // every brake:false operation rolls on 8 degrees that its `measured` does not show
+      const d = await s.call("drive", { distance_cm: 30, speed_pct: 30 });
+      expect(d.reason).toBe("completed");
+      expect(Math.abs(s.mock.left - 30 * DEG_PER_CM)).toBeLessThan(2); // within 0.1 cm, not one roll (8 degrees) past
+      expect(d.measured.left_deg).toBeCloseTo(s.mock.left, 0); // and the report is a reading, not a sum
+    });
+    test("a move is not done because the wheels were expected to roll the rest: the reading decides", async () => {
+      const s = setup({ latency_ms: 30 }); // fast enough to coast; the mock does not roll on by itself
+      const d = await s.call("drive", { distance_cm: 1.4 }); // 28.6 degrees: the 20 degree probe and a rest
+      expect(d.reason).toBe("completed");
+      expect(s.mock.left).toBeCloseTo(1.4 * DEG_PER_CM, 0);
+      expect(d.measured.distance_cm).toBeCloseTo(1.4, 1);
+    });
+    test("a reading that fails mid-move ends the move with an error and leaves nothing rolling", async () => {
+      const s = setup();
+      s.mock.values.set("mock.pair.left_deg", () => {
+        if (pairLog(s.mock).length >= 2) s.mock.failRead = "mock.pair"; // unplugged from the third reading on
+        return s.mock.left;
+      });
+      const e = await fails(s.call("drive", { distance_cm: 30 }), "internal");
+      expect(e.message).toContain("mock.pair unplugged");
+      expect(s.mock.log.at(-1)).toMatchObject({ device: "mock.pair", command: "brake" });
+    });
+    test("an operation is judged by a reading of the wheels, not by its own word", async () => {
+      // one long braking operation per move, and a driver whose `measured` repeats the request
+      const s = setup({ latency_ms: 600, op_ms: 2000, limits: { max_command_ms: 60000 } });
+      s.mock.echo = true;
+      s.mock.slip = 0; // the wheels do not turn
+      const d = await s.call("drive", { distance_cm: 15, speed_pct: 25 });
+      expect(d.reason).toBe("stalled");
+      expect(pairLog(s.mock).length).toBe(3); // three operations without progress, not until max_command_ms
+      expect(d.measured.distance_cm).toBe(0);
+      // a driver that overstates is not a reversal: the wheels only went forward, so the move goes on to its target
+      const h = setup();
+      h.mock.echo = true;
+      h.mock.slip = 0.5;
+      const g = await h.call("drive", { distance_cm: 30 });
+      expect(g.reason).toBe("completed");
+      expect(g.problem).toBeUndefined();
+      expect(h.mock.left).toBeCloseTo(30 * DEG_PER_CM, -1);
+      const r = setup({ latency_ms: 600, op_ms: 2000, limits: { max_command_ms: 60000 } });
+      r.mock.echo = true;
+      r.mock.reverseFromOp = 1; // and one that drives the wrong way
+      const e = await r.call("drive", { distance_cm: 15, speed_pct: 25 });
+      expect(e.reason).toBe("stalled");
+      expect(e.problem).toContain("reversed");
+      expect(pairLog(r.mock).length).toBe(1);
+    });
+    test("a remote organ's condition is read before each of its operations: once met, nothing more is sent", async () => {
+      const s = setup({ op_ms: 3000, backend: "organ", latency_ms: 40 });
+      const t0 = s.clock.now();
+      // true from 2050 ms on, while the reply of the first operation (the 20 degree probe, 2000 ms) is on its way
+      s.mock.values.set("mock.color.reflected_pct", () => (s.clock.now() - t0 >= 2050 ? 8 : 50));
+      const until = { device: "floor_color", channel: "reflected_pct", op: "lt", value: 20 };
+      const d = await s.call("drive", { distance_cm: 30, speed_pct: 1, until });
+      expect(d.reason).toBe("condition_met");
+      expect(pairLog(s.mock).length).toBe(1);
+    });
     test("when max_command_ms runs out mid-move the result is timeout and nothing is left rolling", async () => {
       const s = setup({ latency_ms: 600, limits: { max_command_ms: 3000 } });
       const d = await s.call("drive", { distance_cm: 40, speed_pct: 25 });
@@ -757,15 +917,15 @@ describe("drivetrain", () => {
       expect(r).toMatchObject({ outcome: "failed", steps: [{ ok: false, reason: "stalled" }] });
       expect(p.mock.log.at(-1)).toMatchObject({ command: "brake" }); // fast link: it was coasting, so it is braked
     });
-    test("a coasting operation cut at the driver's time bound is still braked when the move ends there", async () => {
+    test("a coasting operation that the condition ends midway is still braked when the move ends there", async () => {
       const s = setup();
-      s.mock.coastDeg = 60; // makes the speed estimate high, so the next chunk overruns 250 ms
+      s.mock.coastDeg = 60;
       const d = await s.call("drive", {
         distance_cm: 60,
         until: { device: "mock.pair", channel: "left_deg", op: "gte", value: 150 },
       });
       const ops = pairLog(s.mock);
-      expect(ops.at(-1)).toMatchObject({ reason: "timeout", args: { brake: false } });
+      expect(ops.at(-1)).toMatchObject({ reason: "preempted", args: { brake: false } });
       expect(d.reason).toBe("condition_met");
       expect(s.mock.log.at(-1)).toMatchObject({ device: "mock.pair", command: "brake" });
       expect(s.mock.brakes).toEqual(["mock.pair"]);
@@ -1045,6 +1205,17 @@ describe("command_device", () => {
       }),
       "invalid_argument",
     );
+  });
+  test("a single motor's link is timed on every call: slow brakes every operation, fast again coasts again", async () => {
+    const s = setup({ latency_ms: 600, limits: { max_command_ms: 60000 } });
+    const run = { device: "mock.arm", command: "run_degrees", args: { degrees: 300, speed_pct: 20 } };
+    const armLog = () => s.mock.log.filter((x) => x.command === "run_degrees");
+    expect((await s.call("command_device", run)).reason).toBe("completed");
+    expect(armLog().every((c) => c.args.brake === true)).toBe(true);
+    s.mock.log.length = 0;
+    s.mock.latency = 0;
+    expect((await s.call("command_device", run)).reason).toBe("completed");
+    expect(armLog().some((c) => c.args.brake === false)).toBe(true);
   });
   test("abort → preempted", async () => {
     const s = setup();
