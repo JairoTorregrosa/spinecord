@@ -38,6 +38,10 @@ export const UNTIL_POLL_MS = 10;
 // How old a timed round trip may be and still let the first chunk of a move coast: about what a move itself
 // relies on between two of its chunks. Older than this, the link is timed again before anything moves.
 export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
+// Coasting is decided on the slow end of the link: the 90th percentile (nearest rank) of the latest
+// LINK_WINDOW timed round trips of a provider. One fast answer on a slow link proves nothing.
+export const LINK_WINDOW = 10;
+export const LINK_PERCENTILE = 0.9;
 // A device re-scan that failed is tried again after this long, doubling after every failure up to the max.
 export const SCAN_RETRY_MS = 250;
 export const SCAN_RETRY_MAX_MS = 5000;
@@ -139,8 +143,10 @@ class RuntimeImpl implements LocalRuntime {
   private readonly clock: Clock;
   private readonly chunkMs: number;
   private entries = new Map<string, Entry>();
-  // Round trip of the latest timed read of each provider: the evidence for coasting between chunks.
+  // Round trip of the latest timed read of each provider (what the link costs right now), and the latest
+  // LINK_WINDOW of them, oldest first: the evidence for coasting between chunks.
   private readonly linkMs = new WeakMap<Provider, number>();
+  private readonly linkSeen = new WeakMap<Provider, number[]>();
   private readonly linkAt = new WeakMap<Provider, number>(); // when that read came back
   private readonly inflight = new Set<AbortController>();
   // What every call waits for: the latest scan. It rejects only while no scan has ever succeeded.
@@ -575,9 +581,21 @@ class RuntimeImpl implements LocalRuntime {
   private async timedRead(e: Entry, channels: string[]): Promise<Reading[]> {
     const asked = this.clock.now();
     const got = await this.readEntry(e, channels);
-    this.linkMs.set(e.provider, this.clock.now() - asked);
+    const took = this.clock.now() - asked;
+    this.linkMs.set(e.provider, took);
     this.linkAt.set(e.provider, this.clock.now());
+    const seen = this.linkSeen.get(e.provider) ?? [];
+    seen.push(took);
+    if (seen.length > LINK_WINDOW) seen.shift();
+    this.linkSeen.set(e.provider, seen);
     return got;
+  }
+  // The round trip the link is good for: a high percentile of its recent timed reads, never the best one.
+  private linkSlowMs(p: Provider): number | undefined {
+    const seen = this.linkSeen.get(p);
+    if (!seen?.length || this.linkMs.get(p) === undefined) return undefined;
+    const sorted = [...seen].sort((a, b) => a - b);
+    return sorted[Math.ceil(LINK_PERCENTILE * sorted.length) - 1];
   }
   private async encoders(pair: Entry): Promise<{ l: number; r: number }> {
     const [l, r] = await this.timedRead(pair, ["left_deg", "right_deg"]);
@@ -723,8 +741,9 @@ class RuntimeImpl implements LocalRuntime {
     // every operation travels with one, so a link that gets slower mid-move shows before the next is sent.
     const latency = () => this.linkMs.get(entry.provider);
     // Coast between chunks only on a link whose round trip is small next to the chunk: on a slow link the
-    // device would roll uncontrolled between operations, so there every operation brakes.
-    const coastOk = () => canCoast && (latency() ?? Infinity) < aimMs / 4;
+    // device would roll uncontrolled between operations, so there every operation brakes. "Small" is judged
+    // on the slow end of the recent round trips (linkSlowMs), so one fast answer among slow ones never coasts.
+    const coastOk = () => canCoast && (this.linkSlowMs(entry.provider) ?? Infinity) < aimMs / 4;
     // Coasting needs a round trip measured just now: in this call before anything moves, or no longer ago
     // than LINK_FRESH_MS (moves sent back to back, as a program or a script does). What an older call saw may
     // be long gone. With a track, a link last seen slow needs none: every operation brakes there, and the
@@ -735,7 +754,10 @@ class RuntimeImpl implements LocalRuntime {
     if (canCoast && !o.track) {
       const ch = entry.spec.channels.find((c) => c.type !== "image" && c.active !== false);
       if (ch) await this.timedRead(entry, [ch.name]);
-      else this.linkMs.delete(entry.provider); // nothing to time it with: never coast
+      else {
+        this.linkMs.delete(entry.provider); // nothing to time it with: never coast
+        this.linkSeen.delete(entry.provider);
+      }
       proven = true;
     }
     // Degree targets on a fast link, or under `until`: a small probe first, then chunks sized from the speed
@@ -860,7 +882,10 @@ class RuntimeImpl implements LocalRuntime {
           reason = "timeout";
           break;
         }
-        const size = () => Math.min(remaining, opCap, byTime ? sliceMs : sized() ? chunkLead : Infinity);
+        // A time target never asks for more than the call's budget still holds.
+        const budgetMs = o.t0 + this.prof.limits.max_command_ms - this.clock.now();
+        const size = () =>
+          Math.min(remaining, opCap, byTime ? Math.min(sliceMs, budgetMs) : sized() ? chunkLead : Infinity);
         // The reading this operation starts from travels with it. It is awaited first only when its answer is
         // needed before sending: to prove the link fast enough to coast.
         const marked = early ?? o.track?.mark();
@@ -908,6 +933,15 @@ class RuntimeImpl implements LocalRuntime {
             cut = true;
             op.abort();
           });
+        // The call's budget (max_command_ms) is watched while the operation runs, like the deadline above: an
+        // operation still running when it is spent is aborted there, whatever bound the device declares.
+        let spent = false;
+        void this.clock.sleep(budgetMs, settled.signal).then(async () => {
+          await this.clock.sleep(0, settled.signal);
+          if (settled.signal.aborted || op.signal.aborted) return;
+          spent = true;
+          op.abort();
+        });
         let res: CommandResult;
         tripped = false;
         flying = op;
@@ -918,7 +952,7 @@ class RuntimeImpl implements LocalRuntime {
           settled.abort(); // the deadline timer goes away with its operation
           signal.removeEventListener("abort", preempt);
         }
-        const ended = cut || tripped; // the runtime ended this operation itself
+        const ended = cut || tripped || spent; // the runtime ended this operation itself
         const wall = this.clock.now() - sent;
         checked = false;
         chunks++;
@@ -965,6 +999,10 @@ class RuntimeImpl implements LocalRuntime {
         f = Math.min(1, Math.max(0, f + delta));
         if (signal.aborted || (res.reason === "preempted" && !ended)) {
           reason = "preempted";
+          break;
+        }
+        if (spent) {
+          reason = "timeout";
           break;
         }
         if (reversed(judged, step, chunks, args[leadKey])) break;

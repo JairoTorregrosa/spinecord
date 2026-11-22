@@ -107,6 +107,10 @@ export interface Ev3devProviderOptions {
 /** What the bridge reports in `hello`. Raw sysfs names are kept so a mismatch is visible. */
 export interface BridgeInventory {
   bridge: string;
+  /** The brick-side guard process is running: it brakes every motor when the bridge process ends, however it ends. */
+  guard: boolean;
+  /** Why not, when `guard` is false. */
+  no_guard: string | null;
   python: string;
   watchdog_ms: number;
   max_op_ms: number;
@@ -546,6 +550,11 @@ export class Ev3devProvider implements Provider {
       throw err(
         "misconfigured",
         `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${MIN_BRIDGE_VERSION} or newer. Run installBridge().`,
+      );
+    if (inv.guard !== true)
+      throw err(
+        "misconfigured",
+        `ev3dev: the bridge's guard process is not running (${String(inv.no_guard)}). It is what brakes the motors when the bridge process is killed on the brick, so the robot is not used without it. Check the brick's free memory and its python3.`,
       );
     if (inv.watchdog_ms !== BRICK_WATCHDOG_MS)
       throw err(

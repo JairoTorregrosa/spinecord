@@ -590,6 +590,55 @@ describe("fake brick", () => {
     expect(await until(() => lines.some((l) => l.ev === "watchdog"), 1000)).toBe(true);
   });
 
+  brickTest("guard: a bridge killed outright mid-move leaves no motor pushing", async () => {
+    // No motor is played: the wheel never arrives, as against a wall. Only a write of stop ends the kernel's move.
+    const brick = new FakeBrick({ motors: [{ port: "B" }, { port: "C" }], sensors: [] });
+    open.push({ brick });
+    const bridge = spawn(python!, ["-u", BRIDGE_FILE, "--root", brick.root], {
+      env: { ...process.env, ...brick.env() },
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const exited = new Promise<void>((resolve) => bridge.on("exit", () => resolve()));
+    try {
+      const lines: Record<string, unknown>[] = [];
+      let buf = "";
+      bridge.stdout.on("data", (d: Buffer) => {
+        buf += d.toString("utf8");
+        for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (line) lines.push(JSON.parse(line) as Record<string, unknown>);
+        }
+      });
+      const bounds = {
+        max_speed_pct: 60,
+        max_op_ms: PATIENT_OP_MS,
+        low_battery_v: 6.5,
+        max_tone_ms: 1000,
+        speech_volume_pct: 100,
+      };
+      const send = (msg: Record<string, unknown>) => bridge.stdin.write(`${JSON.stringify(msg)}\n`);
+      send({ op: "hello", id: 1, config: { bounds, pair: { left: "B", right: "C" } } });
+      expect(await until(() => lines.some((l) => l.id === 1), 5000)).toBe(true);
+      expect(lines.find((l) => l.id === 1)).toMatchObject({ ok: true, guard: true, no_guard: null });
+      const args = { left_deg: 720, right_deg: 720, speed_pct: 30, brake: false };
+      send({ op: "command", id: 2, device: "pair", command: "run_pair", args });
+      expect(await until(() => brick.motor(1, "command") === "run-to-abs-pos", 900)).toBe(true);
+      expect([brick.motor(0, "command"), brick.motor(0, "stop_action")]).toEqual(["run-to-abs-pos", "coast"]);
+      bridge.kill("SIGKILL"); // no handler runs: the bridge's own watchdog and time cap die with it
+      await exited;
+      expect(lines.some((l) => l.id === 2)).toBe(false); // the operation was still in flight
+      expect(
+        await until(() => brick.motor(0, "command") === "stop" && brick.motor(1, "command") === "stop", 5000),
+      ).toBe(true);
+      expect([brick.motor(0, "stop_action"), brick.motor(1, "stop_action")]).toEqual(["brake", "brake"]);
+    } finally {
+      bridge.kill("SIGKILL");
+      await exited;
+    }
+  });
+
   brickTest("closing the link brakes every motor", async () => {
     const { provider, brick } = setup();
     await provider.devices();

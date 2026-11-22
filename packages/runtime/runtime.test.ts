@@ -3,7 +3,15 @@ import { RuntimeError } from "../protocol/types";
 import type { DeviceSpec, Limits, Provider, RobotProfile, RobotTool, RuntimeResult } from "../protocol/types";
 import { FakeClock } from "./clock";
 import { MockProvider } from "./mock";
-import { createRuntime, LINK_FRESH_MS, MAX_CHUNK_MS, SCAN_RETRY_MAX_MS, SCAN_RETRY_MS, UNTIL_POLL_MS } from "./runtime";
+import {
+  createRuntime,
+  LINK_FRESH_MS,
+  LINK_WINDOW,
+  MAX_CHUNK_MS,
+  SCAN_RETRY_MAX_MS,
+  SCAN_RETRY_MS,
+  UNTIL_POLL_MS,
+} from "./runtime";
 
 const LIMITS = {
   max_speed_pct: 80,
@@ -928,14 +936,38 @@ describe("drivetrain", () => {
       expect(e.reason).toBe("completed");
       expect(sent[0]!.args).toMatchObject({ brake: false, left_deg: 20 });
       expect(sent.slice(1).every((c) => c.args.brake === true)).toBe(true);
-      // and back: the readings that travel with the braking operations show the link is fast again
+      // and back: the readings that travel with the braking operations show the link is fast again, and
+      // coasting returns once the slow round trips are the rare ones among the recent readings
       s.mock.log.length = 0;
       s.mock.latency = 0;
       s.mock.coastDeg = 0;
-      await s.call("drive", { distance_cm: 20, speed_pct: 25 });
+      const pairReads = () => s.mock.reads.filter((r) => r === "mock.pair").length;
+      const reads0 = pairReads();
+      let drives = 0;
+      while (!pairLog(s.mock).some((c) => c.args.brake === false) && drives < 6) {
+        await s.call("drive", { distance_cm: 20, speed_pct: 25 });
+        drives++;
+      }
       const brakes = pairLog(s.mock).map((c) => c.args.brake);
       expect(brakes[0]).toBe(true); // last seen slow: the first operation brakes
-      expect(brakes.slice(1, -1).some((b) => b === false)).toBe(true);
+      expect(brakes.indexOf(false)).toBeGreaterThanOrEqual(LINK_WINDOW - 2); // not at the first fast answer
+      expect(brakes.includes(false)).toBe(true);
+      expect(pairReads() - reads0).toBeGreaterThanOrEqual(LINK_WINDOW - 1);
+    });
+    test("one fast round trip among slow ones never coasts: the slow end of the recent readings decides", async () => {
+      const s = setup({ latency_ms: 600, limits: { max_command_ms: 60000 } });
+      await s.call("drive", { distance_cm: 10, speed_pct: 25 }); // the link is known slow
+      // one answer comes back fast (the read that closes a move that has nothing left to do)
+      s.mock.latency = 0;
+      await s.call("drive", { distance_cm: 0.01, speed_pct: 25 });
+      s.mock.latency = 600;
+      s.mock.log.length = 0;
+      s.mock.coastDeg = 16; // what a coasting chunk would roll on, uncontrolled, during a 600 ms round trip
+      const d = await s.call("drive", { distance_cm: 10, speed_pct: 25 });
+      expect(d.reason).toBe("completed");
+      expect(pairLog(s.mock).every((c) => c.args.brake === true)).toBe(true);
+      expect(s.mock.brakes).toEqual([]);
+      expect(d.measured.distance_cm).toBeCloseTo(10, 0);
     });
     test("what the wheels roll between coasting chunks is expected, so the last chunk does not overshoot", async () => {
       const s = setup();
@@ -997,6 +1029,28 @@ describe("drivetrain", () => {
       expect((await fast.call("drive", { distance_cm: 90, speed_pct: 10 })).reason).toBe("timeout");
       expect(fast.mock.log.at(-1)).toMatchObject({ device: "mock.pair", command: "brake" });
       expect(fast.mock.stops).toBe(0);
+    });
+    test("max_command_ms is watched while an operation runs: a long operation is cut there, not at the device's bound", async () => {
+      // the device takes operations of up to 3 s; the call may last 1 s
+      const s = setup({ op_ms: 3000, latency_ms: 600, limits: { max_command_ms: 1000 } });
+      const t0 = s.clock.now();
+      const d = await s.call("drive", { distance_cm: 90, speed_pct: 10 }); // 18 s of motion
+      expect(d.reason).toBe("timeout");
+      const op = pairLog(s.mock).at(-1)!;
+      expect(op.reason).toBe("preempted"); // aborted in flight
+      expect(s.mock.left).toBeLessThanOrEqual(100 * 1.0 + 0.01); // 100 deg/s for at most the budget
+      expect(s.clock.now() - t0).toBeLessThan(1000 + 3 * 600 + 1); // the budget, the abort's way, the closing read
+      expect(d.measured.distance_cm).toBeGreaterThan(0);
+
+      // a time target is sized to what the budget still holds
+      const m = setup({ limits: { max_command_ms: 600 } });
+      const run = { device: "mock.arm", command: "run_time", args: { ms: 600, speed_pct: 20 } };
+      const m0 = m.clock.now();
+      const e = await m.call("command_device", run);
+      const asked = m.mock.log.filter((x) => x.command === "run_time").map((x) => Number(x.args.ms));
+      expect(asked.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(600);
+      expect(m.clock.now() - m0).toBeLessThanOrEqual(600);
+      expect(["completed", "timeout"]).toContain(e.reason);
     });
     test("a chunk that moves the wrong way ends the move at once, naming the reversal", async () => {
       const s = setup({ latency_ms: 600, limits: { max_command_ms: 20000 } });
@@ -1303,16 +1357,19 @@ describe("command_device", () => {
       "invalid_argument",
     );
   });
-  test("a single motor's link is timed on every call: slow brakes every operation, fast again coasts again", async () => {
+  test("a single motor's link is timed on every call: slow brakes every operation, and coasting returns when the slow round trip is one in LINK_WINDOW", async () => {
     const s = setup({ latency_ms: 600, limits: { max_command_ms: 60000 } });
     const run = { device: "mock.arm", command: "run_degrees", args: { degrees: 300, speed_pct: 20 } };
     const armLog = () => s.mock.log.filter((x) => x.command === "run_degrees");
     expect((await s.call("command_device", run)).reason).toBe("completed");
     expect(armLog().every((c) => c.args.brake === true)).toBe(true);
-    s.mock.log.length = 0;
     s.mock.latency = 0;
-    expect((await s.call("command_device", run)).reason).toBe("completed");
-    expect(armLog().some((c) => c.args.brake === false)).toBe(true);
+    for (let fast = 1; fast <= LINK_WINDOW - 1; fast++) {
+      s.mock.log.length = 0;
+      expect((await s.call("command_device", run)).reason).toBe("completed");
+      // one timed read per call: the slow one is the 90th percentile until nine fast ones stand next to it
+      expect(armLog().some((c) => c.args.brake === false)).toBe(fast === LINK_WINDOW - 1);
+    }
   });
   test("abort → preempted", async () => {
     const s = setup();

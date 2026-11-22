@@ -21,8 +21,12 @@ Replies: {"id":n,"ok":true,...} or {"id":n,"ok":false,"code":<contract ErrorCode
 Events:  {"ev":"hb"}, {"ev":"watchdog","cause":"silence"}.
 
 Safety rules of this file:
-  * Motion uses only run-to-abs-pos and run-timed, which the kernel driver bounds by itself.
-    run-forever and run-direct are never written. A degree move is always sent as an absolute
+  * Motion uses only run-to-abs-pos and run-timed; run-forever and run-direct are never written.
+    The kernel driver ends run-timed by itself after time_sp, and run-to-abs-pos when the motor
+    arrives: a motor that cannot arrive (a blocked wheel) keeps pushing until something writes
+    stop, because the kernel has no time limit for a position move. That something is this
+    process (the time cap of the operation, the watchdog) and, when this process is killed, the
+    guard below. A degree move is always sent as an absolute
     target = the position read at the start of the operation + the delta. run-to-rel-pos is
     not used: on a real brick it counts from the previous target, not from where the motor
     is, so after a coasting overshoot the next relative move ran backward.
@@ -33,6 +37,12 @@ Safety rules of this file:
   * Watchdog: when no line arrives for WATCHDOG_MS, or stdin closes, or the process gets a
     termination signal, every tacho motor gets stop_action=brake and command=stop. The stop is
     written before anything else is done about it.
+  * Guard: main() starts a second, tiny Python process that holds the read end of a pipe from
+    this one. When this process ends in any way (SIGKILL and the kernel's out-of-memory killer
+    included) the pipe closes, and the guard writes stop_action=brake and command=stop to every
+    tacho motor, then exits. It does nothing else and reads nothing but that pipe. hello says
+    whether it is running ("guard"); it does not cover a brick whose kernel or power fails, nor
+    a bridge that hangs without ending (the watchdog runs in the bridge's own main loop).
   * The main loop never blocks: stdin and stdout live in their own threads, waits are tasks.
     It wakes at least every TICK_S for the watchdog and the touch sensors. A running motor is
     looked at when that can change something: at once after its command, then at half the time
@@ -64,6 +74,22 @@ except ImportError:  # Windows (tests against a fake tree)
     fcntl = None
 
 VERSION = "4"            # 4: beacon_heading counter-clockwise-positive, guard process
+# The guard process (see the safety rules above): waits for its stdin to close, then brakes every motor.
+GUARD_SOURCE = """
+import glob, os, sys
+try:
+    sys.stdin.read()
+except Exception:
+    pass
+for d in sorted(glob.glob(os.path.join(sys.argv[1], "sys", "class", "tacho-motor", "motor*"))):
+    for attr, value in (("stop_action", "brake"), ("command", "stop")):
+        try:
+            fd = os.open(os.path.join(d, attr), os.O_WRONLY | os.O_TRUNC)   # an attribute that exists, never a new file
+            os.write(fd, value.encode("ascii"))
+            os.close(fd)
+        except Exception:
+            pass
+"""
 WATCHDOG_MS = 1000
 MAX_OP_MS = 3000         # ceiling for the motion one command may cause; hello's max_op_ms can only lower it
 TICK_S = 0.01
@@ -275,6 +301,17 @@ class Sensor(object):
                 "channel_modes": dict((c, self.channels[c][0]) for c in self.channels)}
 
 
+def start_guard(root):
+    """Starts the guard process. Its stdin is a pipe only this process holds: it closes when this process ends."""
+    if not sys.executable:
+        raise OSError("this Python does not know its own executable, so a second one cannot be started")
+    extra = {}
+    if os.name == "posix":
+        extra["start_new_session"] = True   # a signal sent to this process's group does not reach the guard
+    return subprocess.Popen([sys.executable, "-S", "-c", GUARD_SOURCE, root], stdin=subprocess.PIPE,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **extra)
+
+
 def brake_now(motor_dir):
     """stop_action=brake then command=stop. The stop is written even if the first write fails."""
     err = None
@@ -318,6 +355,8 @@ class Bridge(object):
         self.last_touch = 0.0
         self.battery = None        # path of the battery's voltage_now, once found
         self.sink = None           # read_many: the answers of its reads are collected here instead of sent
+        self.guard = None          # main(): the guard process
+        self.no_guard = "the bridge was not started through main()"
 
     # ------------------------------------------------------------ paths
 
@@ -488,6 +527,8 @@ class Bridge(object):
         leds = all(os.path.exists(self.led_path(side, color, "brightness")) for side in (0, 1) for color in ("red", "green"))
         self.ok(rid, {
             "bridge": VERSION,
+            "guard": self.guard is not None and self.guard.poll() is None,
+            "no_guard": None if self.guard is not None and self.guard.poll() is None else self.no_guard,
             "python": "%d.%d.%d" % tuple(sys.version_info[:3]),
             "watchdog_ms": WATCHDOG_MS,
             "motors": [self.motors[k].info() for k in sorted(self.motors)],
@@ -1307,6 +1348,11 @@ def main(argv):
         sys.stderr.write("ev3dev_bridge: %s has no sys/class; is this an ev3dev brick?\n" % root)
         return 2
     bridge = Bridge(root)
+    try:
+        bridge.guard = start_guard(root)
+        bridge.no_guard = "the guard process ended by itself"
+    except (OSError, ValueError) as e:
+        bridge.no_guard = "the guard process could not be started: %s" % e
 
     def on_signal(signum, frame):
         raise SystemExit(0)
