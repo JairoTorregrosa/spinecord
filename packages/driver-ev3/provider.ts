@@ -135,7 +135,7 @@ const ccw: Decode = ([v]) => {
   return { value: r === 0 ? 0 : -r };
 };
 const MODE_NOTE =
-  "Shares the sensor with the other channels of its mode_group: only the channels of the current mode are active. Reading another one needs a mode switch (name it and pass allow_mode_switch), which takes up to ~1 s.";
+  "Shares the sensor with the other channels of its mode_group: only the channels of the current mode are active. Reading another one needs a mode switch, done only when a read names that channel while the robot is idle; it takes up to ~1 s.";
 
 const SENSOR_KINDS: Record<number, { kind: string; description: string; channels: SensorChannel[]; reset?: boolean }> =
   {

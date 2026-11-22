@@ -1,4 +1,4 @@
-// Builds the viewer bundles (page + training worker) into ev3/dist. Run: bun run build:demo
+// Builds the viewer bundles (page + training worker) into packages/sim-ev3/dist. Run in packages/sim-ev3: bun run build:demo
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");

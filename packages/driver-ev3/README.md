@@ -1,4 +1,4 @@
-# @spinecord/ev3
+# @spinecord/driver-ev3
 
 EV3 direct commands over any byte transport, and `Ev3Provider`, the contract `Provider` for a stock-firmware LEGO EV3. Owns the EV3 protocol only: no kinematics, no conditions, no networking.
 
@@ -16,7 +16,7 @@ Tests: `bun test` in this folder. Typecheck: `bunx tsc --noEmit -p .`
 ## Using the provider
 
 ```ts
-import { Ev3Provider, WebHIDTransport } from "@spinecord/ev3";
+import { Ev3Provider, WebHIDTransport } from "@spinecord/driver-ev3";
 
 const transport = await WebHIDTransport.request(); // needs a user gesture in Chrome
 const ev3 = new Ev3Provider(transport, {

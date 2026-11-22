@@ -1,5 +1,5 @@
 {
-  "name": "@spinecord/ev3",
+  "name": "@spinecord/driver-ev3",
   "private": true,
   "type": "module",
   "main": "index.ts",

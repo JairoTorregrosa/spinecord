@@ -253,7 +253,7 @@ export class SimWorldProvider implements Provider {
       });
     }
     if (device !== "sim.world" && device !== "sim.camera")
-      throw new RuntimeError("unknown_device", `provider sim has no device "${device}"; devices: ${DEVICE_IDS}`);
+      throw new RuntimeError("unknown_device", `the simulation has no device "${device}"; its devices: ${DEVICE_IDS}`);
     this.host.tick(); // bring the physics up to now before looking
     const values = device === "sim.world" ? worldChannelSpecs(this.world).map((c) => c.name) : [];
     const wanted = channels ?? values; // omitted -> every non-image channel
@@ -286,7 +286,7 @@ export class SimWorldProvider implements Provider {
       throw new RuntimeError("unknown_command", `sim.camera has no commands; read its "frame" channel`);
     if (device === "sim.speaker") return this.speak(command, args, signal);
     if (device !== "sim.world")
-      throw new RuntimeError("unknown_device", `provider sim has no device "${device}"; devices: ${DEVICE_IDS}`);
+      throw new RuntimeError("unknown_device", `the simulation has no device "${device}"; its devices: ${DEVICE_IDS}`);
     if (command !== "load_world" && command !== "reset")
       throw new RuntimeError("unknown_command", `sim.world has no command "${command}"; commands: load_world, reset`);
     const result = (reason: CommandResult["reason"]): CommandResult => ({
