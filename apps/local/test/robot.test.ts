@@ -254,6 +254,76 @@ describe("a twin in this process", () => {
   });
 });
 
+describe("shutdown", () => {
+  test("two twins, one with a slower stop: a drive sent during shutdown is refused and no wheel turns", async () => {
+    const twin = (id: string) => ({ source: "twin" as const, id, robot: example.robot, world: example.world, seed: 1 });
+    const example = loadConfig([]).robots[0] as Extract<
+      ReturnType<typeof loadConfig>["robots"][number],
+      { source: "twin" }
+    >;
+    const fleet = await buildFleet({ port: 0, robots: [twin("slow-sim"), twin("fast-sim")] }, { log: () => {} });
+    const [slow, fast] = fleet.robots as [LocalRobot, LocalRobot];
+    const rt = slow.runtime()!;
+    const stop = rt.stop.bind(rt);
+    let fastStopped = false;
+    const fastRt = fast.runtime()!;
+    const fastStop = fastRt.stop.bind(fastRt);
+    fastRt.stop = async () => {
+      const r = await fastStop();
+      fastStopped = true;
+      return r;
+    };
+    rt.stop = async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      return stop();
+    };
+    const ending = fleet.shutdown();
+    // refused from the moment shutdown is asked for, before any stop has been issued
+    const early = (await callTool(fleet.robots, "drive", { robot_id: "fast-sim", distance_cm: 20 })).envelope;
+    await until("the fast twin's stop to be verified", () => fastStopped);
+    const late = (await callTool(fleet.robots, "drive", { robot_id: "fast-sim", distance_cm: 20 })).envelope;
+    for (const e of [early, late]) {
+      expect(e).toMatchObject({ ok: false, error: { code: "robot_offline", retryable: false } });
+      expect(!e.ok && e.error.message).toContain("shutting down");
+      expect(e.next).not.toContain("drive");
+    }
+    expect((await callTool(fleet.robots, "list_robots", {})).envelope).toMatchObject({
+      ok: false,
+      error: { code: "robot_offline", retryable: false },
+    });
+    expect(await ending).toEqual([
+      { robot_id: "slow-sim", motors_stopped: true },
+      { robot_id: "fast-sim", motors_stopped: true },
+    ]);
+    for (const brick of fleet.bricks.values()) {
+      brick.tick();
+      expect(brick.busy()).toBe(false);
+      const at = brick.tacho("B");
+      await new Promise((r) => setTimeout(r, 100));
+      brick.tick();
+      expect(brick.tacho("B")).toBe(at);
+    }
+    // and it stays refused once the process is on its way out
+    expect((await callTool(fleet.robots, "read_all", { robot_id: "slow-sim" })).envelope).toMatchObject({
+      ok: false,
+      error: { code: "robot_offline", retryable: false },
+    });
+  });
+
+  test("stop on a robot without a link rejects, it does not throw", async () => {
+    const robot = new LocalRobot({ id: "m1" });
+    let thrown = false;
+    let pending: Promise<unknown> | undefined;
+    try {
+      pending = robot.stop();
+    } catch {
+      thrown = true;
+    }
+    expect(thrown).toBe(false);
+    await expect(pending!).rejects.toMatchObject({ code: "robot_offline" });
+  });
+});
+
 describe("next", () => {
   test("every suggested tool is a served tool, and every served tool has suggestions", () => {
     const served = new Set(LOCAL_TOOLS.map((t) => t.name));

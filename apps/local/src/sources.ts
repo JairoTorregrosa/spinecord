@@ -148,6 +148,8 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     bricks,
     bridge,
     async shutdown() {
+      // every robot refuses calls before the first stop is issued
+      for (const r of robots) r.beginShutdown();
       const out = await Promise.all(robots.map(async (r) => ({ robot_id: r.id, motors_stopped: await r.shutdown() })));
       for (const close of closers) await Promise.resolve(close()).catch(() => {});
       return out;

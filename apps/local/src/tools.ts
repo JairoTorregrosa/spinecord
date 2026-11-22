@@ -9,7 +9,7 @@ import {
   type LocalEnvelope,
   type ToolError,
 } from "../../../packages/protocol/types";
-import { LocalError, type LocalRobot } from "./robot";
+import { LocalError, shuttingDown, type LocalRobot } from "./robot";
 
 export const TOOL: ReadonlyMap<string, ToolDef> = new Map(LOCAL_TOOLS.map((t) => [t.name, t]));
 // fail at start if the catalog uses a schema keyword the validator would not enforce
@@ -83,6 +83,10 @@ export async function callTool(
   const input = (args ?? {}) as Record<string, unknown>;
   const violation = firstViolation(def.input, input);
   if (violation) return fail(name, { code: "invalid_argument", message: `${name}: ${violation}`, retryable: false });
+  if (robots.some((r) => r.shuttingDown)) {
+    const e = shuttingDown();
+    return fail(name, { code: e.code, message: e.message, retryable: false });
+  }
   if (name === "list_robots") return { envelope: { ok: true, data: robots.map((r) => r.listing()), next: next(name) } };
   const robot = robots.find((r) => r.id === input.robot_id);
   if (!robot)

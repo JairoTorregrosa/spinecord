@@ -41,12 +41,20 @@ export interface RobotOptions {
   id: string;
   /** What a person must do to bring this robot online while it is offline (the page to open); null when nothing. */
   connect?: string | null;
-  onTransition?: (fsm: "link" | "activity", from: string, to: string, why: string) => void;
+  onTransition?: (fsm: "link" | "activity" | "life", from: string, to: string, why: string) => void;
   /** Default DEADLINE_MARGIN_MS. */
   deadlineMarginMs?: number;
   /** The client cancelled a call in flight. */
   onCancel?: (tool: string, moving: boolean) => void;
 }
+
+/** The life of a robot in its process. In `closing` and `closed` every call is refused; only the shutdown's own stop runs. */
+export type Life = "serving" | "closing" | "closed";
+export const LIFE_TRANSITIONS: Record<Life, readonly Life[]> = {
+  serving: ["closing"],
+  closing: ["closed"],
+  closed: [],
+};
 
 /** A moving call's hold on the robot. `ended` resolves when its runtime call has fully ended. */
 interface Claim {
@@ -56,11 +64,16 @@ interface Claim {
 const MAY_HAVE_MOVED =
   "The move had started and may have partly happened: read the robot (read_all) before moving again.";
 
+/** What every call answers once the process has started to end. */
+export const shuttingDown = (): LocalError =>
+  new LocalError("robot_offline", "The server is shutting down: its robots are being stopped and it takes no calls.");
+
 export class LocalRobot {
   readonly id: string;
   private readonly connectHint: string | null;
   private link: RobotLink = "offline";
   private activity: RobotActivity = "idle";
+  private life: Life = "serving";
   private faultReason: string | null = null;
   private rt: LocalRuntime | null = null;
   /** The one moving call in flight: its identity and when it has fully ended. */
@@ -88,6 +101,16 @@ export class LocalRobot {
     this.o.onTransition?.("activity", this.activity, next, why);
     this.activity = next;
     if (next !== "fault" && next !== "stopping") this.faultReason = null;
+  }
+  private toLife(next: Life): void {
+    if (!LIFE_TRANSITIONS[this.life].includes(next))
+      throw new Error(`${this.id}: illegal life transition ${this.life} → ${next}`);
+    this.o.onTransition?.("life", this.life, next, "the process is ending");
+    this.life = next;
+  }
+  /** True from the moment the process starts to end. */
+  get shuttingDown(): boolean {
+    return this.life !== "serving";
   }
   private fault(reason: string): void {
     this.toActivity("fault", reason);
@@ -186,6 +209,7 @@ export class LocalRobot {
 
   /** `cancel` is the client's cancellation of this call: a moving call is then stopped (verified), any other is aborted. */
   async call(tool: string, args: Record<string, unknown>, cancel?: AbortSignal): Promise<RuntimeResult> {
+    if (this.life !== "serving") throw shuttingDown();
     const rt = this.online();
     if (tool === "stop") return { data: await this.stop() };
     if (tool === "reset_fault") return this.resetFault(rt);
@@ -297,7 +321,13 @@ export class LocalRobot {
   /** Brakes everything and aborts every call in flight. Never waits behind another call; a second stop joins the first. */
   stop(): Promise<{ motors_stopped: boolean; activity: RobotActivity }> {
     if (this.stopRun) return this.stopRun;
-    const rt = this.online();
+    let rt: LocalRuntime;
+    try {
+      rt = this.online();
+    } catch (e) {
+      // callers hold a promise in every case
+      return Promise.reject(e);
+    }
     const cameFromFault = this.activity === "fault";
     const preempted = this.move;
     this.move = null;
@@ -376,17 +406,28 @@ export class LocalRobot {
     return this.resetRun;
   }
 
-  /** Process exit: the same verified stop, joined with one already running, then the runtime is let go. null = there was no link to stop through. */
+  /**
+   * The process starts to end: from this call on, synchronously, the robot takes no calls. Called on every robot
+   * of the process before any of them is stopped, so no call can start on one while another is still stopping.
+   */
+  beginShutdown(): void {
+    if (this.life === "serving") this.toLife("closing");
+  }
+  /** After beginShutdown: the verified stop, joined with one already running, then the runtime is let go. null = there was no link to stop through. */
   async shutdown(): Promise<boolean | null> {
+    this.beginShutdown();
+    if (this.life === "closed") return null;
     const rt = this.rt;
-    if (!rt || this.link !== "online") return null;
-    let stopped = false;
-    try {
-      stopped = (await this.stop()).motors_stopped;
-    } catch {
-      /* reported as not stopped */
+    let stopped: boolean | null = null;
+    if (rt && this.link === "online") {
+      try {
+        stopped = (await this.stop()).motors_stopped;
+      } catch {
+        stopped = false;
+      }
+      rt.dispose();
     }
-    rt.dispose();
+    this.toLife("closed");
     return stopped;
   }
 }
