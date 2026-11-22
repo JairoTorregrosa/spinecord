@@ -263,6 +263,22 @@ describe("the process ends", () => {
     }
   });
 
+  // /dev/full opens and refuses every write (ENOSPC): a disk that filled up while the server ran
+  test.skipIf(process.platform !== "linux")(
+    "--log-file whose writes fail: one line says so on stderr, calls are served and the robots are stopped at the end",
+    async () => {
+      const s = await startServer(["--log-file", "/dev/full"]);
+      const drive = await s.tool("drive", { robot_id: R, distance_cm: 3, speed_pct: 50 });
+      expect(drive.envelope).toMatchObject({ ok: true, data: { reason: "completed" } });
+      expect(await s.closeStdin()).toBe(0);
+      jsonRpcOnly(s);
+      expect(s.events("log_file_failed")).toMatchObject([{ path: "/dev/full" }]);
+      expect(s.events("call")).toHaveLength(1);
+      expect(s.events("stopped")).toMatchObject([{ robot_id: R, motors_stopped: true }]);
+      expect(s.events("exit")).toHaveLength(1);
+    },
+  );
+
   test("a wrong flag exits 2 with the usage on stderr and nothing on stdout", async () => {
     const child = Bun.spawn([process.execPath, MAIN, "--twin", "missing.json"], {
       stdin: "ignore",
