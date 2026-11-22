@@ -33,14 +33,19 @@ const code = (p: Promise<unknown>) =>
     (e) => (e instanceof RuntimeError ? e.code : `not a RuntimeError: ${e}`),
   );
 const opcodesSent = (fake: FakeEV3) => fake.sent.flatMap((s) => s.opcodes);
+/** What a packet does: its first opcode that is not the tacho read (B3) a start travels behind. */
+const act = (s: { opcodes: number[] }) => s.opcodes.find((o) => o !== E.OP.OUTPUT_GET_COUNT) ?? s.opcodes[0];
 const motionOps = (fake: FakeEV3) =>
-  fake.sent.filter((s) => [0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xa4, 0xa5, 0xa6].includes(s.opcodes[0]));
+  fake.sent.filter((s) => [0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xa4, 0xa5, 0xa6].includes(act(s)));
 const value = async (ev3: Ev3Provider, device: string, channel: string) => (await ev3.read(device, [channel]))[0].value;
-/** Decodes the constants of the first opcode of a packet, after opcode and layer. */
+/** Decodes the constants of the opcode a packet acts with (see act), after opcode and layer. */
 function params(packet: Uint8Array): number[] {
   const b = E.decodeCommand(packet).bytecodes;
   const out: number[] = [];
-  for (let at = 2; at < b.length;) {
+  let at = 0;
+  while (b[at] === E.OP.OUTPUT_GET_COUNT) at += 4; // B3, layer, index, GV0
+  for (at += 2; at < b.length;) {
+    if (b[at] === E.OP.OUTPUT_GET_COUNT || b[at] === E.OP.OUTPUT_TEST) break; // the reads behind an early stop
     const r = E.readParam(b, at);
     out.push(r.param.value as number);
     at = r.next;
@@ -65,9 +70,9 @@ function expectSafe(fake: FakeEV3) {
   }
   // every motion is bounded by time on the brick, at most 250 ms
   for (const s of motionOps(fake)) {
-    expect([E.OP.OUTPUT_TIME_SPEED, E.OP.OUTPUT_TIME_SYNC]).toContain(s.opcodes[0] as 0xaf);
+    expect([E.OP.OUTPUT_TIME_SPEED, E.OP.OUTPUT_TIME_SYNC]).toContain(act(s) as 0xaf);
     const p = params(s.packet);
-    const ms = s.opcodes[0] === E.OP.OUTPUT_TIME_SPEED ? p[2] + p[3] + p[4] : p[3];
+    const ms = act(s) === E.OP.OUTPUT_TIME_SPEED ? p[2] + p[3] + p[4] : p[3];
     expect(ms).toBeGreaterThan(0);
     expect(ms).toBeLessThanOrEqual(MAX_MOTION_MS);
   }
@@ -536,7 +541,7 @@ describe("command(): one time-bounded operation each", () => {
     expect(fake.busy()).toBe(false);
     const ops = motionOps(fake);
     expect(ops.length).toBe(1);
-    expect(ops[0].opcodes[0]).toBe(E.OP.OUTPUT_TIME_SPEED);
+    expect(act(ops[0])).toBe(E.OP.OUTPUT_TIME_SPEED);
     const [mask, speed, t1, t2, t3, brake] = params(ops[0].packet);
     expect([mask, speed, t1, t3, brake]).toEqual([2, 50, 0, 0, 1]);
     expect(t2).toBe(Math.ceil((60 / 500) * 1000 * 1.2) + 30); // estimate with margin, well under the bound
@@ -762,7 +767,7 @@ describe("command(): motor_pair.run_pair", () => {
     expect(r.requested).toEqual({ left_deg: 80, right_deg: 40, speed_pct: 50 });
     expect(r.measured).toEqual({ left_deg: fake.tacho("B"), right_deg: fake.tacho("C"), time_limited: false });
     const op = motionOps(fake)[0];
-    expect(op.opcodes[0]).toBe(E.OP.OUTPUT_TIME_SYNC);
+    expect(act(op)).toBe(E.OP.OUTPUT_TIME_SYNC);
     const [mask, speed, turn, ms, brake] = params(op.packet);
     expect([mask, speed, turn, brake]).toEqual([6, 50, 50, 1]);
     expect(ms).toBe(Math.ceil((80 / 500) * 1000 * 1.2) + 30);
@@ -1061,7 +1066,7 @@ describe("fail loud: link errors become contract error codes", () => {
   test("a lost reply during an operation rejects with RuntimeError timeout (retryable), never a result", async () => {
     const { fake, ev3 } = rig();
     await ev3.devices();
-    fake.dropNext(1, (ops) => ops[0] === E.OP.OUTPUT_TIME_SYNC);
+    fake.dropNext(1, (ops) => ops.includes(E.OP.OUTPUT_TIME_SYNC));
     const outcome = await ev3
       .command("ev3.pair", "run_pair", { left_deg: 300, right_deg: 300, speed_pct: 30 }, never())
       .then(
@@ -1192,7 +1197,7 @@ describe("a whole session stays inside the safe command set", () => {
     await ev3.command("ev3.S2", "reset", {}, never());
     await ev3.command("ev3.display", "text", { lines: ["abc"] }, never());
     await ev3.stop();
-    expect(fake.sent.length).toBeGreaterThan(30);
+    expect(fake.sent.length).toBeGreaterThan(20);
     expect(motionOps(fake).length).toBe(4);
     expectSafe(fake);
   });

@@ -63,9 +63,14 @@ export interface RuntimeCall {
 /** Records every packet on its way to the brick. The brick writes the opcodes it executed into its own log entry. */
 class TapTransport implements Transport {
   packets: Packet[] = [];
-  constructor(private readonly brick: SimBrick) {}
+  constructor(
+    private readonly brick: SimBrick,
+    private readonly usb: { packet_ms: number },
+  ) {}
   async send(bytes: Uint8Array): Promise<Uint8Array> {
     const at = now();
+    // the cable: a packet reaches the brick this much later (USB HID costs about 2 ms per exchange)
+    if (this.usb.packet_ms > 0) await sleep(this.usb.packet_ms);
     const sent = this.brick.send(bytes);
     const entry = this.brick.log[this.brick.log.length - 1]!;
     const p: Packet = { at, ms: 0, opcodes: entry.opcodes };
@@ -147,6 +152,8 @@ export interface Twin {
   runtime: LocalRuntime;
   /** Round trip added to every provider call, ms. Mutable: one twin serves every link profile. */
   link: { round_trip_ms: number };
+  /** Latency added to every packet between the provider and the brick, ms. Mutable; 0 unless a metric says so. */
+  usb: { packet_ms: number };
   packets: Packet[];
   ops: ProviderOp[];
   calls: RuntimeCall[];
@@ -161,7 +168,8 @@ export async function buildTwin(id: string, seed: number): Promise<Twin> {
     axle_track_cm: profile.drivetrain!.axle_track_cm,
   });
   const brick = new SimBrick({ world, drivetrain: drivetrainFromProfile(profile, EXAMPLE.pair) });
-  const tap = new TapTransport(brick);
+  const usb = { packet_ms: 0 };
+  const tap = new TapTransport(brick, usb);
   const link = { round_trip_ms: 0 };
   const ops: ProviderOp[] = [];
   const calls: RuntimeCall[] = [];
@@ -190,7 +198,7 @@ export async function buildTwin(id: string, seed: number): Promise<Twin> {
       rec.ms = now() - rec.at;
     }
   };
-  return { id, profile, brick, world, ev3, runtime, link, packets: tap.packets, ops, calls, ready_ms };
+  return { id, profile, brick, world, ev3, runtime, link, usb, packets: tap.packets, ops, calls, ready_ms };
 }
 
 /** Connects the twin's runtime to the relay with the real client over a real WebSocket. Resolves when online. */

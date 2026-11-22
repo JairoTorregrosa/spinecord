@@ -27,6 +27,8 @@ import type {
 export const MAX_MOTION_MS = 3000;
 /** The bridge brakes every motor after this long without a message. Fixed in the bridge, not configurable. */
 export const BRICK_WATCHDOG_MS = 1000;
+/** Oldest bridge this driver talks to (its hello's `bridge`): the first one that answers `read_many`. */
+export const MIN_BRIDGE_VERSION = 3;
 /** How long the bridge waits for every motor to read speed 0 after a stop. */
 export const BRIDGE_STOP_VERIFY_MS = 800;
 export const MODE_SWITCH_REQUIRED = "mode_switch_required";
@@ -336,6 +338,13 @@ const fail = (m: string): never => {
 const positive = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v > 0;
 const missing = (what: string) => ` Not found on this brick (${what}): it answers with an error.`;
 
+/** An error line of the bridge as a contract error; a code the contract does not know is `internal`. */
+const bridgeError = (code: unknown, message: unknown): RuntimeError =>
+  err(
+    ERROR_CODES.includes(code as ErrorCode) ? (code as ErrorCode) : "internal",
+    `ev3dev: ${String(message ?? "the bridge reported an error without a message")}`,
+  );
+
 type LinkState = "closed" | "opening" | "ready";
 interface Pending {
   resolve: (v: Record<string, unknown>) => void;
@@ -345,6 +354,18 @@ interface Pending {
 interface Lookup {
   spec: DeviceSpec;
   local: string;
+}
+/** What the bridge answers to one read, alone or inside read_many. */
+interface ReadReply {
+  readings?: { channel: string; value: Value | null; error?: string }[];
+  mode?: unknown;
+}
+/** A read waiting to leave with the others of the same turn. */
+interface QueuedRead {
+  device: string;
+  channels: string[];
+  resolve: (r: ReadReply) => void;
+  reject: (e: Error) => void;
 }
 
 export class Ev3devProvider implements Provider {
@@ -371,6 +392,7 @@ export class Ev3devProvider implements Provider {
   private specs: Map<string, DeviceSpec> | null = null;
   private readonly modes = new Map<number, string | null>(); // current mode per sensor port
   private readonly pending = new Map<number, Pending>();
+  private readQueue: QueuedRead[] = [];
   private readonly listeners = new Set<() => void>();
   private nextId = 1;
   private lastRx = 0;
@@ -462,8 +484,7 @@ export class Ev3devProvider implements Provider {
       p.resolve(msg);
       return;
     }
-    const code = ERROR_CODES.includes(msg.code as ErrorCode) ? (msg.code as ErrorCode) : "internal";
-    p.reject(err(code, `ev3dev: ${String(msg.message ?? "the bridge reported an error without a message")}`));
+    p.reject(bridgeError(msg.code, msg.message));
   }
 
   private teardown(reason: string): void {
@@ -523,6 +544,11 @@ export class Ev3devProvider implements Provider {
       throw err(
         "misconfigured",
         "ev3dev: the bridge's hello does not say whether the brick can speak; the installed bridge is older than this driver. Run installBridge().",
+      );
+    if (!(Number(inv.bridge) >= MIN_BRIDGE_VERSION))
+      throw err(
+        "misconfigured",
+        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${MIN_BRIDGE_VERSION} or newer (read_many). Run installBridge().`,
       );
     if (inv.watchdog_ms !== BRICK_WATCHDOG_MS)
       throw err(
@@ -1026,6 +1052,7 @@ export class Ev3devProvider implements Provider {
    * One Reading per channel, without changing anything on the brick. A channel that cannot be read has
    * value null and an error, never a default. Sensor channels of a mode other than the current one come
    * back as null + "mode_switch_required" unless they are named in `channels` AND opts.allow_mode_switch is true.
+   * Reads issued in the same turn (a read of every device) leave as one request line and come back as one.
    */
   async read(device: string, channels?: string[], opts?: { allow_mode_switch?: boolean }): Promise<Reading[]> {
     const { spec, local } = await this.lookup(device);
@@ -1040,11 +1067,14 @@ export class Ev3devProvider implements Provider {
     }
     if (!names.length) return [];
     const allow = channels !== undefined && opts?.allow_mode_switch === true;
-    const res = await this.request(
-      { op: "read", device: local, channels: names, allow_mode_switch: allow },
-      this.o.requestTimeoutMs + (allow ? 1000 : 0),
-    ).reply;
-    const got = res.readings as { channel: string; value: Value | null; error?: string }[];
+    // A read that may switch a mode waits for the sensor and goes alone; the others share a line.
+    const res: ReadReply = allow
+      ? await this.request(
+          { op: "read", device: local, channels: names, allow_mode_switch: true },
+          this.o.requestTimeoutMs + 1000,
+        ).reply
+      : await this.readTogether(local, names);
+    const got = res.readings;
     if (!Array.isArray(got)) throw err("internal", `ev3dev: read of ${spec.id} returned no readings`);
     const ts = Date.now();
     const out = names.map((n): Reading => {
@@ -1057,6 +1087,46 @@ export class Ev3devProvider implements Provider {
     });
     this.noteMode(local, res.mode);
     return out;
+  }
+
+  /** Queues one read; a microtask later every read queued by then is sent as one `read_many` line. */
+  private readTogether(device: string, channels: string[]): Promise<ReadReply> {
+    return new Promise((resolve, reject) => {
+      this.readQueue.push({ device, channels, resolve, reject });
+      if (this.readQueue.length === 1) queueMicrotask(() => this.flushReads());
+    });
+  }
+
+  private flushReads(): void {
+    const batch = this.readQueue;
+    this.readQueue = [];
+    const body =
+      batch.length === 1
+        ? { op: "read", device: batch[0]!.device, channels: batch[0]!.channels, allow_mode_switch: false }
+        : { op: "read_many", reads: batch.map((r) => ({ device: r.device, channels: r.channels })) };
+    this.request(body, this.o.requestTimeoutMs).reply.then(
+      (res) => {
+        if (batch.length === 1) return batch[0]!.resolve(res);
+        const results = res.results as ({ ok?: boolean; code?: unknown; message?: unknown } & ReadReply)[];
+        if (!Array.isArray(results) || results.length !== batch.length) {
+          const e = err(
+            "internal",
+            `ev3dev: read_many of ${batch.length} reads returned ${JSON.stringify(res.results)}`,
+          );
+          for (const r of batch) r.reject(e);
+          return;
+        }
+        // Each read is answered as if it had been sent alone: one that failed fails alone.
+        batch.forEach((r, i) => {
+          const one = results[i]!;
+          if (one?.ok === true) r.resolve(one);
+          else r.reject(bridgeError(one?.code, one?.message));
+        });
+      },
+      (e: Error) => {
+        for (const r of batch) r.reject(e);
+      },
+    );
   }
 
   // ------------------------------------------------------------- command
@@ -1139,7 +1209,7 @@ export class Ev3devProvider implements Provider {
 }
 
 /** Ops that cannot move or change anything on the brick. */
-export const READ_ONLY_OPS = ["hello", "read", "hb"] as const;
+export const READ_ONLY_OPS = ["hello", "read", "read_many", "hb"] as const;
 /**
  * Wraps a transport so that only hello, read and hb reach the brick, and no read may switch a sensor
  * mode. Anything else throws before it is sent. For checks that must not move a robot.

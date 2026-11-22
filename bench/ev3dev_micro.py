@@ -11,7 +11,7 @@ Prints one JSON object: {"python": "...", "samples": {name: [ms, ...]}}.
 
 For run_pair a thread plays the kernel motor driver with a motor that arrives at once (it writes
 position = position_sp as soon as it sees the run command), so the sample is the bridge's overhead
-around a move (writing the command, noticing the arrival on its 10 ms tick, braking, answering),
+around a move (writing the command, noticing the arrival, braking, answering),
 not motion time.
 """
 import glob
@@ -131,13 +131,21 @@ def main(argv):
         _, ms = b.call({"op": "read", "device": ultrasonic[0], "channels": ["distance_cm"]})
         if i >= warm:
             samples["read_one"].append(ms)
-    # read_all as the runtime issues it: one read per device, all written before any reply is awaited
+    # read_all as the provider issues it. A bridge with read_many gets every device in one request line;
+    # an older one gets one read per device, all written before any reply is awaited.
+    many = int(inv.get("bridge", "0")) >= 3
     for i in range(warm + n):
         t0 = time.perf_counter()
-        ids = [b.send({"op": "read", "device": d}) for d in devices]
-        b.flush()
-        for rid in ids:
-            b.wait(rid)
+        if many:
+            reply, _ = b.call({"op": "read_many", "reads": [{"device": d} for d in devices]})
+            bad = [r for r in reply["results"] if not r.get("ok")]
+            if bad or len(reply["results"]) != len(devices):
+                raise RuntimeError("read_many did not read every device: %s" % json.dumps(reply))
+        else:
+            ids = [b.send({"op": "read", "device": d}) for d in devices]
+            b.flush()
+            for rid in ids:
+                b.wait(rid)
         if i >= warm:
             samples["read_all"].append((time.perf_counter() - t0) * 1000.0)
 

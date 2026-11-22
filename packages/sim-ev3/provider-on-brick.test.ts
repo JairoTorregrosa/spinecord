@@ -25,6 +25,7 @@ function twin(world: World = quietWorld(), drivetrain: BrickDrivetrain | null = 
     degPerSecAt100: LARGE_DEG_S,
     pollMs: 2,
     now,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms / SPEEDUP)),
   });
   return { world, brick, ev3 };
 }
