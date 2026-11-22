@@ -2,8 +2,11 @@
 // through their manifests and the Provider interface; the only kinds it names are motor_pair (drivetrain)
 // and gyro (heading source). Limits come from the profile. The process around it (apps/local) owns the link and activity state.
 import { RETRYABLE, RuntimeError } from "../protocol/types";
+import { newTraceId, stackOf } from "../protocol/types";
 import type {
   BackendKind,
+  Clamp,
+  InternalFailure,
   CommandResult,
   CommandSpec,
   DeviceSpec,
@@ -87,7 +90,11 @@ export interface ProgramStep {
   tool: string;
   ok: boolean;
   reason?: string;
-  error?: { code: ErrorCode; message: string };
+  error?: { code: ErrorCode; message: string; trace_id?: string };
+  /** What the step's call measured: the `measured` of the same call made outside a program. */
+  measured?: Record<string, Value>;
+  /** true when the step's call cut an argument to a limit. */
+  clamped?: true;
   ms: number;
 }
 export interface ProgramResult {
@@ -135,6 +142,25 @@ interface Track {
 const MAX_STEPS = 500;
 const round1 = (x: number) => Math.round(x * 10) / 10;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+/** The clamp of one argument, or none when it was sent as asked. */
+const cut = (arg: string, requested: number, applied: number, target: boolean): Clamp[] =>
+  requested === applied ? [] : [{ arg, requested, applied, target }];
+// How a command that reached its end reports clamping (CONTRACT §0.2): `clamped` is true when anything was cut,
+// by the runtime (`clamps`) or by the device; the reason is "clamped" only when a target was cut, so that less
+// was done than asked. A cut speed, or any other argument that is not the target, leaves the reason "completed".
+// A device's own reason "clamped" is a completed operation: the runtime caps every bound parameter before it sends.
+function clampFields(
+  reason: StopReason,
+  clamps: Clamp[],
+  byDevice: boolean,
+): { clamped: boolean; clamps?: Clamp[]; reason: StopReason } {
+  const ended = reason === "clamped" ? "completed" : reason;
+  return {
+    clamped: clamps.length > 0 || byDevice,
+    ...(clamps.length ? { clamps } : {}),
+    reason: ended === "completed" && clamps.some((c) => c.target) ? "clamped" : ended,
+  };
+}
 
 export function createRuntime(opts: RuntimeOptions): LocalRuntime {
   return new RuntimeImpl(opts);
@@ -196,6 +222,7 @@ class RuntimeImpl implements LocalRuntime {
     return Math.max(...this.local.map((p) => p.stop_worst_ms)) + STOP_OVERHEAD_MS;
   }
   private acting = 0; // moving calls in flight; explicit mode-switching reads are refused meanwhile
+  private movesSent = 0; // moving operations handed to a provider, ever: a call compares it before and after
   private callerActivity: RobotActivity = "idle"; // activity of the call being planned, as its caller reported it
   private readonly unsubscribe: (() => void)[] = [];
   dispose(): void {
@@ -499,26 +526,49 @@ class RuntimeImpl implements LocalRuntime {
     return e?.spec.channels.some((c) => c.name === "angle_deg" && c.type === "number") ? e : undefined;
   }
 
-  private speed(a: Args): { speed: number; clamped: boolean } {
+  private speed(a: Args): { asked: number; speed: number; clamps: Clamp[] } {
     const asked = (a.speed_pct as number | undefined) ?? 30;
     const speed = Math.min(asked, this.prof.limits.max_speed_pct);
-    return { speed, clamped: speed !== asked };
+    return { asked, speed, clamps: cut("speed_pct", asked, speed, false) };
+  }
+
+  // The smallest move a drivetrain makes (CONTRACT §4): its pair is commanded in steps of wheel rotation (whole
+  // degrees when the command's parameters are integers), and a target under one step would be sent as nothing
+  // or as a whole step. A target of exactly 0 asks for no motion and is answered as done.
+  private smallestStep(
+    tool: string,
+    field: string,
+    asked: number,
+    unit: string,
+    cmd: CommandSpec,
+    leadDeg: number,
+    perDeg: number, // units of `field` per degree of the leading wheel
+  ): void {
+    const props = cmd.params.properties as Record<string, { type?: string } | undefined>;
+    const step = ["left_deg", "right_deg"].some((k) => props[k]?.type === "integer") ? 1 : 0.5;
+    if (leadDeg === 0 || Math.abs(leadDeg) >= step) return;
+    const min = Math.ceil(step * perDeg * 100) / 100;
+    throw rerr(
+      "invalid_argument",
+      `${tool}: ${field} ${asked} is below the smallest move this drivetrain makes, ${min} ${unit} (its wheels are commanded in steps of ${step} deg of rotation), so nothing was sent and nothing moved. Ask for at least ${min} ${unit}, or 0 for no motion; moves this small overshoot by a few wheel degrees, so read measured.`,
+    );
   }
 
   private planDrive(a: Args): Run {
-    const { dt } = this.drivetrain("drive");
+    const { dt, cmd } = this.drivetrain("drive");
     const lim = this.prof.limits;
     const asked = a.distance_cm as number;
     const dist = Math.sign(asked) * Math.min(Math.abs(asked), lim.max_drive_cm);
     const sp = this.speed(a);
     const wheel = (dt.forward_sign * 360 * dist) / (Math.PI * dt.wheel_diameter_cm);
+    this.smallestStep("drive", "distance_cm", asked, "cm", cmd, wheel, (Math.PI * dt.wheel_diameter_cm) / 360);
     const until = a.until === undefined ? undefined : compileCondition(a.until, this.resolver, "until");
     return moving((signal) =>
       this.move(
         "drive",
-        { distance_cm: asked, speed_pct: (a.speed_pct as number | undefined) ?? 30 },
+        { distance_cm: asked, speed_pct: sp.asked },
         { distance_cm: dist, speed_pct: sp.speed },
-        dist !== asked || sp.clamped,
+        [...cut("distance_cm", asked, dist, true), ...sp.clamps],
         wheel,
         wheel,
         sp.speed,
@@ -529,18 +579,19 @@ class RuntimeImpl implements LocalRuntime {
   }
 
   private planTurn(a: Args): Run {
-    const { dt } = this.drivetrain("turn");
+    const { dt, cmd } = this.drivetrain("turn");
     const asked = a.angle_deg as number;
     const angle = Math.sign(asked) * Math.min(Math.abs(asked), this.prof.limits.max_turn_deg);
     const sp = this.speed(a);
     const w = (dt.forward_sign * angle * dt.axle_track_cm) / dt.wheel_diameter_cm; // positive angle = counter-clockwise: right wheel forward
+    this.smallestStep("turn", "angle_deg", asked, "deg", cmd, w, dt.wheel_diameter_cm / dt.axle_track_cm);
     const until = a.until === undefined ? undefined : compileCondition(a.until, this.resolver, "until");
     return moving((signal) =>
       this.move(
         "turn",
-        { angle_deg: asked, speed_pct: (a.speed_pct as number | undefined) ?? 30 },
+        { angle_deg: asked, speed_pct: sp.asked },
         { angle_deg: angle, speed_pct: sp.speed },
-        angle !== asked || sp.clamped,
+        [...cut("angle_deg", asked, angle, true), ...sp.clamps],
         -w,
         w,
         sp.speed,
@@ -553,7 +604,7 @@ class RuntimeImpl implements LocalRuntime {
   // radius_cm > 0 to the robot's center; angle_deg = heading change (positive = curve left); direction = which
   // way the robot travels. Wheel paths: center path ± heading change × half the axle track.
   private planArc(a: Args): Run {
-    const { dt } = this.drivetrain("arc");
+    const { dt, cmd } = this.drivetrain("arc");
     const lim = this.prof.limits;
     const radius = a.radius_cm as number;
     const asked = a.angle_deg as number;
@@ -567,14 +618,27 @@ class RuntimeImpl implements LocalRuntime {
     const toDeg = (cm: number) => (dt.forward_sign * 360 * cm) / (Math.PI * dt.wheel_diameter_cm);
     const left = toDeg(center - (theta * dt.axle_track_cm) / 2);
     const right = toDeg(center + (theta * dt.axle_track_cm) / 2);
+    // the outer wheel leads: its path per degree of heading is (radius + half the axle track)
+    const lead = Math.abs(left) >= Math.abs(right) ? left : right;
+    this.smallestStep(
+      "arc",
+      "angle_deg",
+      asked,
+      "deg",
+      cmd,
+      lead,
+      (dt.wheel_diameter_cm * 180) / (360 * (radius + dt.axle_track_cm / 2)),
+    );
     const until = a.until === undefined ? undefined : compileCondition(a.until, this.resolver, "until");
-    const speed_pct = (a.speed_pct as number | undefined) ?? 30;
     return moving((signal) =>
       this.move(
         "arc",
-        { radius_cm: radius, angle_deg: asked, direction, speed_pct },
+        { radius_cm: radius, angle_deg: asked, direction, speed_pct: sp.asked },
         { radius_cm: radius, angle_deg: round1(angle), direction, speed_pct: sp.speed },
-        angle !== asked || sp.clamped,
+        [
+          ...(angle !== asked ? [{ arg: "angle_deg", requested: asked, applied: round1(angle), target: true }] : []),
+          ...sp.clamps,
+        ],
         left,
         right,
         sp.speed,
@@ -978,6 +1042,7 @@ class RuntimeImpl implements LocalRuntime {
         let res: CommandResult;
         tripped = false;
         flying = op;
+        if (cmd.moves) this.movesSent++;
         try {
           res = await entry.provider.command(entry.spec.id, cmd.name, args, op.signal);
         } finally {
@@ -1087,14 +1152,24 @@ class RuntimeImpl implements LocalRuntime {
   }
 
   // The error of a watch that ended a move, with what the move had done by then.
-  private endedMove(error: unknown, measured: Record<string, Value>): unknown {
+  // A watch that failed before any operation was sent ended nothing: the error says that nothing moved.
+  private endedMove(error: unknown, measured: Record<string, Value>, sent: number): unknown {
     if (!(error instanceof RuntimeError)) return error;
+    if (sent === 0)
+      return new RuntimeError(
+        error.code,
+        /nothing was sent/i.test(error.message)
+          ? error.message
+          : `${error.message} Nothing was sent: the robot did not move.`,
+        error.retryable,
+        measured,
+      ).from(error);
     return new RuntimeError(
       error.code,
       `${error.message} The move was ended and the device braked. Measured so far: ${JSON.stringify(measured)}.`,
       error.retryable,
       measured,
-    );
+    ).from(error);
   }
 
   // Executes wheel targets (degrees, forward_sign already applied). Progress comes from the wheel encoders,
@@ -1103,7 +1178,7 @@ class RuntimeImpl implements LocalRuntime {
     tool: "drive" | "turn" | "arc",
     requested: Record<string, Value>,
     applied: Record<string, Value>,
-    clamped: boolean,
+    clamps: Clamp[],
     L: number,
     R: number,
     speed: number,
@@ -1143,7 +1218,7 @@ class RuntimeImpl implements LocalRuntime {
         enc0 ??= start;
         const drift = ahead(start) - est;
         const got = measured?.[leadKey];
-        // an operation that does not say what it moved is measured with a read of its own, as it always was
+        // an operation that does not say what it moved is measured with a read of its own
         est = typeof got === "number" ? ahead(start) + got : ahead(await this.encoders(pair));
         return { f: frac(est), start: frac(ahead(start)), drift: target === 0 ? 0 : drift / target };
       },
@@ -1167,8 +1242,6 @@ class RuntimeImpl implements LocalRuntime {
       signal,
       t0,
     });
-    let reason = run.reason;
-    if (reason === "completed" && (clamped || run.clamped)) reason = "clamped";
     // An early end, or the brake{} after a coasting chunk, moved the wheels since the last reading.
     if (!after || run.braked)
       await track.settle().catch((err) => {
@@ -1192,14 +1265,13 @@ class RuntimeImpl implements LocalRuntime {
     };
     measured.left_deg = round1(enc.l - start.l);
     measured.right_deg = round1(enc.r - start.r);
-    if (run.failure) throw this.endedMove(run.failure.error, measured);
+    if (run.failure) throw this.endedMove(run.failure.error, measured, run.chunks);
     return {
       data: {
         requested,
         applied,
         measured,
-        clamped: clamped || run.clamped,
-        reason,
+        ...clampFields(run.reason, clamps, run.clamped),
         ...(run.readings ? { readings: run.readings } : {}),
         ...(run.problem ? { problem: run.problem } : {}),
         chunks: run.chunks,
@@ -1222,12 +1294,13 @@ class RuntimeImpl implements LocalRuntime {
     // Clamp first, then validate what will really be sent: a value over the bound is cut and reported,
     // anything else that breaks the schema is an invalid_argument.
     const applied: Record<string, Value> = { ...requested };
-    let clamped = false;
-    const cap = (key: string, max: number) => {
+    const clamps: Clamp[] = [];
+    // A bound parameter is the command's target: cutting it means less is done than asked. Speed is not.
+    const cap = (key: string, max: number, target: boolean) => {
       const v = applied[key];
       if (typeof v === "number" && Math.abs(v) > max) {
         applied[key] = Math.sign(v) * max;
-        clamped = true;
+        clamps.push({ arg: key, requested: v, applied: applied[key] as number, target });
       }
     };
     // A moving command bounded in ms declares the longest single operation; the runtime chains operations, so
@@ -1241,8 +1314,9 @@ class RuntimeImpl implements LocalRuntime {
           : cmd.bound.kind === "ms"
             ? Math.min(cmd.bound.max, lim.max_command_ms)
             : cmd.bound.max,
+        true,
       );
-    cap("speed_pct", lim.max_speed_pct);
+    if (!(cmd.bound.params ?? []).includes("speed_pct")) cap("speed_pct", lim.max_speed_pct, false);
     const chunkKeys =
       cmd.moves && cmd.bound.kind !== "instant"
         ? (cmd.bound.params ?? []).filter((k) => typeof applied[k] === "number" && applied[k] !== 0)
@@ -1281,15 +1355,13 @@ class RuntimeImpl implements LocalRuntime {
           signal,
           t0,
         });
-        if (run.failure) throw this.endedMove(run.failure.error, run.measured);
-        const anyClamp = clamped || run.clamped;
+        if (run.failure) throw this.endedMove(run.failure.error, run.measured, run.chunks);
         return {
           data: {
             requested,
             applied,
             measured: run.measured,
-            clamped: anyClamp,
-            reason: run.reason === "completed" && anyClamp ? "clamped" : run.reason,
+            ...clampFields(run.reason, clamps, run.clamped),
             ...(run.readings ? { readings: run.readings } : {}),
             ...(run.problem ? { problem: run.problem } : {}),
             chunks: run.chunks,
@@ -1323,13 +1395,12 @@ class RuntimeImpl implements LocalRuntime {
           signal,
         );
       const total: Record<string, Value> = {};
-      const done = (reason: StopReason, anyClamp: boolean, ops: number): RuntimeResult => ({
+      const done = (reason: StopReason, byDevice: boolean, ops: number): RuntimeResult => ({
         data: {
           requested,
           applied,
           measured: total,
-          clamped: anyClamp,
-          reason: reason === "completed" && anyClamp ? "clamped" : reason,
+          ...clampFields(reason, clamps, byDevice),
           ...(reason === "condition_met" && mon?.readings() ? { readings: mon.readings() } : {}),
           ...(ops > 1 ? { chunks: ops } : {}),
           ms: Math.round(this.clock.now() - t0),
@@ -1340,13 +1411,14 @@ class RuntimeImpl implements LocalRuntime {
         try {
           return (await poll) ?? false;
         } catch (err) {
-          throw this.endedMove(err, total);
+          throw this.endedMove(err, total, sentOps);
         }
       };
+      let sentOps = 0;
       try {
-        if (await watched(mon?.first)) return done("condition_met", clamped, 0);
+        if (await watched(mon?.first)) return done("condition_met", false, 0);
         let args = { ...applied };
-        let anyClamp = clamped;
+        let anyClamp = false;
         for (let ops = 1; ; ops++) {
           if (signal.aborted) return done("preempted", anyClamp, ops - 1);
           const child = new AbortController();
@@ -1361,6 +1433,8 @@ class RuntimeImpl implements LocalRuntime {
           why = undefined;
           let res: CommandResult;
           flying = child;
+          sentOps = ops;
+          if (cmd.moves) this.movesSent++;
           try {
             res = await e.provider.command(e.spec.id, cmd.name, args, child.signal);
           } finally {
@@ -1377,7 +1451,7 @@ class RuntimeImpl implements LocalRuntime {
           try {
             mon?.state(); // a condition that could not be read is an error, not a result
           } catch (err) {
-            throw this.endedMove(err, total);
+            throw this.endedMove(err, total, sentOps);
           }
           if (signal.aborted) return done("preempted", anyClamp, ops);
           if (why && res.reason === "preempted") return done(why, anyClamp, ops);
@@ -1454,7 +1528,7 @@ class RuntimeImpl implements LocalRuntime {
         this.plan(c.tool, c.args);
       } catch (err) {
         throw err instanceof RuntimeError
-          ? new RuntimeError(err.code, `program ${c.path} (${c.tool}): ${err.message}`, err.retryable)
+          ? new RuntimeError(err.code, `program ${c.path} (${c.tool}): ${err.message}`, err.retryable).from(err)
           : err;
       }
     }
@@ -1468,6 +1542,7 @@ class RuntimeImpl implements LocalRuntime {
   ): Promise<RuntimeResult> {
     const t0 = this.clock.now();
     const steps: ProgramStep[] = [];
+    const internal: InternalFailure[] = [];
     let dropped = 0;
     const record = (s: ProgramStep) => {
       if (steps.length < MAX_STEPS) steps.push(s);
@@ -1565,23 +1640,33 @@ class RuntimeImpl implements LocalRuntime {
       try {
         data = (await this.plan(tool, args ?? {})(budget.signal)).data as Record<string, unknown>;
       } catch (err) {
-        const e =
-          err instanceof RuntimeError
-            ? { code: err.code, message: err.message }
-            : { code: "internal" as ErrorCode, message: String((err as Error)?.message ?? err) };
-        record({ path, tool, ok: false, error: e, ms: ms() });
+        const typed = err instanceof RuntimeError ? err : this.unexpected(`${path} (${tool})`, err);
+        // the program answers with data, so the failure's stack reaches the log through the result
+        if (typed.code === "internal")
+          internal.push({
+            trace_id: (typed.trace_id ??= newTraceId()),
+            message: typed.message,
+            stack: stackOf(typed),
+          });
+        const e = { code: typed.code, message: typed.message, ...(typed.trace_id ? { trace_id: typed.trace_id } : {}) };
+        record({ path, tool, ok: false, error: e, ...(typed.measured ? { measured: typed.measured } : {}), ms: ms() });
         throw new End("failed", `${path} (${tool}) failed: ${e.code}: ${e.message}`);
       }
       const reason = String(data.reason);
+      // what the step did, as the same call outside a program reports it
+      const did = {
+        ...(isObj(data.measured) ? { measured: data.measured as Record<string, Value> } : {}),
+        ...(data.clamped === true ? { clamped: true as const } : {}),
+      };
       if (reason === "preempted") {
-        record({ path, tool, ok: false, reason, ms: ms() });
+        record({ path, tool, ok: false, reason, ...did, ms: ms() });
         throw interrupted();
       }
       if (tool !== "wait_until" && (reason === "stalled" || reason === "timeout")) {
-        record({ path, tool, ok: false, reason, ms: ms() });
+        record({ path, tool, ok: false, reason, ...did, ms: ms() });
         throw new End("failed", `${path} (${tool}) ended with reason ${reason}`);
       }
-      record({ path, tool, ok: true, reason, ms: ms() });
+      record({ path, tool, ok: true, reason, ...did, ms: ms() });
     };
 
     let end: End;
@@ -1608,7 +1693,7 @@ class RuntimeImpl implements LocalRuntime {
       steps_dropped: dropped,
       ms: Math.round(this.clock.now() - t0),
     };
-    return { data: result };
+    return { data: result, ...(internal.length ? { internal } : {}) };
   }
 
   // ---------- dispatch ----------
@@ -1689,27 +1774,41 @@ class RuntimeImpl implements LocalRuntime {
     const ctl = new AbortController();
     linkAbort(signal, ctl);
     this.inflight.add(ctl);
+    // One moving call at a time per robot (CONTRACT §1), so the operations sent meanwhile are this call's.
+    let sentBefore: number | undefined;
     try {
       await this.scan;
       this.callerActivity = ctx?.activity ?? "idle"; // plan() is synchronous, so this cannot interleave
       const run = this.plan(tool, args ?? {});
       if (!run.moves) return await run(ctl.signal);
       this.acting++;
+      sentBefore = this.movesSent;
       try {
-        return await run(ctl.signal);
+        const result = await run(ctl.signal);
+        return { ...result, moved: this.movesSent > sentBefore };
       } finally {
         this.acting--;
       }
     } catch (err) {
-      if (err instanceof RuntimeError) throw err;
-      const trace = Math.random().toString(36).slice(2, 10);
-      throw rerr(
-        "internal",
-        `${tool} failed unexpectedly (trace_id ${trace}): ${String((err as Error)?.message ?? err)}`,
-      );
+      const typed = err instanceof RuntimeError ? err : this.unexpected(tool, err);
+      if (sentBefore !== undefined) typed.moved = this.movesSent > sentBefore;
+      throw typed;
     } finally {
       this.inflight.delete(ctl);
     }
+  }
+  // An error no part of the runtime or its drivers typed: a bug, or a device that broke its interface. It gets
+  // a trace id, which its message carries, and keeps what caused it, so the process can log the stack under
+  // that id (CONTRACT §6).
+  private unexpected(what: string, err: unknown): RuntimeError {
+    const trace = newTraceId();
+    const e = rerr(
+      "internal",
+      `${what} failed unexpectedly (trace_id ${trace}): ${String((err as Error)?.message ?? err)}`,
+    );
+    e.trace_id = trace;
+    e.cause = err;
+    return e;
   }
 }
 

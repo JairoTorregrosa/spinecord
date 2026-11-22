@@ -4,7 +4,10 @@
 // a null the device itself reports (Reading.absent: nothing in view) is a value: its comparisons are false. On any other channel one poll without a value
 // leaves the condition not met for that poll, and UNREADABLE_POLLS of them in a row on the same comparison end
 // the evaluation with condition_unreadable, so whoever watches it (a move's `until`, wait_until, a program)
-// stops and says so. Reads here never switch a sensor mode.
+// stops and says so. Reads here never switch a sensor mode: a comparison on a channel whose mode group is not
+// active is refused when the condition is compiled, before anything is sent, and so is a comparison that the
+// channel's declared range can never make true. `changed` on a channel that declares `noise` needs a difference
+// larger than it in CHANGED_POLLS polls in a row.
 import { RuntimeError } from "../protocol/types";
 import type { ChannelSpec, CompareOp, DeviceSpec, Reading, Value } from "../protocol/types";
 import { validateCondition } from "../protocol/validate";
@@ -18,6 +21,7 @@ type Leaf = {
   op: CompareOp;
   value?: number | boolean | string;
   absent: boolean; // the channel's null means "nothing there" (ChannelSpec.null_when_absent)
+  noise: number; // `changed` takes a difference up to this as no change (ChannelSpec.noise, else 0)
 };
 type Node = { leaf: number } | { any: Node[] } | { all: Node[] } | { not: Node };
 export interface CompiledCondition {
@@ -33,7 +37,21 @@ export const UNREADABLE_POLLS = 3;
 // Polls in a row that decided nothing, whichever comparison lacked its value, that end an evaluation: channels
 // failing in turn never reach UNREADABLE_POLLS each, and whoever waits for an answer must get one.
 export const UNDECIDED_POLLS = 10;
+// Polls in a row that must differ from the first value by more than the channel's declared noise before
+// `changed` holds on such a channel: one reading far out is an outlier, two are a change.
+export const CHANGED_POLLS = 2;
 const bad = (msg: string) => new RuntimeError("invalid_argument", msg);
+// A condition never switches a sensor mode, so a channel whose mode group is not active cannot be compared.
+// The fix is a read_device that names the channel, and `next` starts with it.
+function inactive(where: string, device: string, channel: string, group?: string, active: string[] = []): RuntimeError {
+  const e = bad(
+    `${where}: nothing was sent and nothing moved. Channel ${device}.${channel} is not active: its sensor is in another mode${
+      group ? ` of mode group "${group}"` : ""
+    }${active.length ? ` (active: ${active.join(", ")})` : ""}, and a condition never switches a sensor mode. While the robot is idle, call read_device with device "${device}" and channels ["${channel}"] to switch the mode (describe_device tells the side effects: switching a gyro resets its angle), then send this call again.`,
+  );
+  e.next = ["read_device"];
+  return e;
+}
 
 export function compileCondition(cond: unknown, reg: Resolver, path = "condition"): CompiledCondition {
   const issues = validateCondition(cond, path);
@@ -62,6 +80,14 @@ function build(o: Record<string, unknown>, reg: Resolver, path: string, leaves: 
       `${path}: device ${spec.id} has no channel "${String(o.channel)}". Valid channels: ${spec.channels.map((x) => x.name).join(", ") || "(none)"}`,
     );
   checkLeafTypes(path, ch, op, o.value);
+  if (ch.active === false)
+    throw inactive(
+      path,
+      spec.id,
+      ch.name,
+      ch.mode_group,
+      spec.channels.filter((x) => x.mode_group === ch.mode_group && x.active !== false).map((x) => x.name),
+    );
   if (leaves.length >= MAX_LEAVES) throw bad(`${path}: a condition may have at most ${MAX_LEAVES} comparisons`);
   leaves.push({
     device: spec.id,
@@ -69,6 +95,7 @@ function build(o: Record<string, unknown>, reg: Resolver, path: string, leaves: 
     op,
     value: o.value as Leaf["value"],
     absent: ch.null_when_absent === true,
+    noise: typeof ch.noise === "number" && ch.noise > 0 ? ch.noise : 0,
   });
   return { leaf: leaves.length - 1 };
 }
@@ -88,19 +115,42 @@ function checkLeafTypes(path: string, ch: ChannelSpec, op: CompareOp, value: unk
     );
   if (op !== "eq" && op !== "neq" && ch.type !== "number")
     throw bad(`${path}: op ${op} needs a number channel; "${ch.name}" is ${ch.type}. Use eq or neq`);
+  // A comparison the channel's declared range can never make true is a mistake wherever it stands (under
+  // `not` it would always hold): a move guarded by it would run its whole length.
+  if (ch.type === "number" && ch.range && typeof value === "number") {
+    const [lo, hi] = ch.range;
+    const never: Partial<Record<CompareOp, boolean>> = {
+      lt: value <= lo,
+      lte: value < lo,
+      gt: value >= hi,
+      gte: value > hi,
+      eq: value < lo || value > hi,
+    };
+    if (never[op])
+      throw bad(
+        `${path}: nothing was sent and nothing moved. "${ch.name}" ${op} ${value} can never be true: the range of ${ch.name} is [${lo}, ${hi}]${ch.unit ? ` ${ch.unit}` : ""}. Use a value the channel can reach (describe_device gives the range and what its ends mean)`,
+      );
+  }
 }
 
-const same = (a: Value, b: Value) =>
-  Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((x, i) => x === b[i]) : a === b;
+// Two values of one channel are the same when no number in them differs by more than the channel's noise.
+const near = (a: unknown, b: unknown, noise: number) =>
+  typeof a === "number" && typeof b === "number" ? Math.abs(a - b) <= noise : a === b;
+const same = (a: Value, b: Value, noise: number) =>
+  Array.isArray(a) && Array.isArray(b)
+    ? a.length === b.length && a.every((x, i) => near(x, b[i], noise))
+    : near(a, b, noise);
 
-// One evaluator per wait/move: `changed` compares against the first value this evaluator saw, and the count of
-// polls without a value runs across its polls. `unreadable: true` = this poll decided nothing (met is false).
+// One evaluator per wait/move: `changed` compares against the first value this evaluator saw (on a channel that
+// declares noise: a difference larger than it, in CHANGED_POLLS polls in a row), and the count of polls without
+// a value runs across its polls. `unreadable: true` = this poll decided nothing (met is false).
 export function makeEvaluator(
   c: CompiledCondition,
   read: ReadFn,
 ): { poll(): Promise<{ met: boolean; unreadable: boolean; readings: Reading[] }> } {
   const baseline: (Value | null | undefined)[] = c.leaves.map(() => undefined);
   const blindPolls: number[] = c.leaves.map(() => 0);
+  const apart: number[] = c.leaves.map(() => 0); // polls in a row in which a `changed` leaf differed from its first value
   let undecided = 0;
   const byDevice = new Map<string, string[]>();
   for (const l of c.leaves) {
@@ -116,7 +166,9 @@ export function makeEvaluator(
         return false;
       }
       const was = baseline[i]!;
-      return was === null || v === null ? was !== v : !same(was, v);
+      const differs = was === null || v === null ? was !== v : !same(was, v, l.noise);
+      apart[i] = differs ? apart[i]! + 1 : 0;
+      return apart[i]! >= (l.noise > 0 ? CHANGED_POLLS : 1);
     }
     if (v === null) return false; // nothing there: no comparison holds
     const w = l.value!;
@@ -147,10 +199,8 @@ export function makeEvaluator(
       const groups = await Promise.all([...byDevice].map(([device, channels]) => read(device, channels)));
       const readings = groups.flat();
       const needsSwitch = readings.find((r) => r.error === "mode_switch_required");
-      if (needsSwitch)
-        throw bad(
-          `Channel ${needsSwitch.device}.${needsSwitch.channel} is not active: reading it needs a sensor mode switch, which a condition never does. While the robot is idle, call read_device naming that channel to switch the mode, then retry.`,
-        );
+      // the registry said active and the device says otherwise (a mode switched since the last scan)
+      if (needsSwitch) throw inactive("condition", needsSwitch.device, needsSwitch.channel);
       const got = c.leaves.map((l) => readings.find((r) => r.device === l.device && r.channel === l.channel));
       const value = (i: number): Value | null => got[i]?.value ?? null;
       let unreadable = false;

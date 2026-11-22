@@ -1109,7 +1109,7 @@ describe("drivetrain", () => {
       await s.call("drive", { distance_cm: 10, speed_pct: 25 }); // the link is known slow
       // one answer comes back fast (the read that closes a move that has nothing left to do)
       s.mock.latency = 0;
-      await s.call("drive", { distance_cm: 0.01, speed_pct: 25 });
+      await s.call("drive", { distance_cm: 0, speed_pct: 25 });
       s.mock.latency = 600;
       s.mock.log.length = 0;
       s.mock.coastDeg = 16; // what a coasting chunk would roll on, uncontrolled, during a 600 ms round trip
