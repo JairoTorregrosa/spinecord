@@ -42,7 +42,7 @@ Per robot, two machines. Their transition tables are exported from `types.ts` (`
 
 ### 2.2 Conventions
 
-All angles and headings are counter-clockwise-positive seen from above, in every channel and command. Channels that share a `mode_group` need a sensor mode switch; only `active` ones are read by default, and a switch happens only when the caller names the channel and the robot is idle. Providers normalize hardware that reports otherwise (the EV3 gyro is clockwise-positive natively). Distances in cm, speeds in percent unless the unit says otherwise. Image channels return `Reading.image`, never a string in `value`.
+Headings, turn angles and rotation rates about the vertical axis are counter-clockwise-positive seen from above (left is positive), in every channel and command: a gyro's `angle_deg` and `rate_deg_s`, an infrared sensor's `beacon_heading`, `turn` and `arc` angles, a pose heading. Motor shaft degrees (`position_deg`, `left_deg`, `right_deg`, the degrees of a motor command) are rotation in the motor's own forward direction, not headings. Channels that share a `mode_group` need a sensor mode switch; only `active` ones are read by default, and a switch happens only when the caller names the channel and the robot is idle. Providers normalize hardware that reports otherwise (the EV3 gyro is clockwise-positive natively, the infrared beacon heading is negative to the left). Distances in cm, speeds in percent unless the unit says otherwise. Image channels return `Reading.image`, never a string in `value`.
 
 ### 2.3 Kinds the providers announce (`kind` is an open string; the runtime only depends on `motor_pair` for drivetrain tools and `gyro` for headings)
 

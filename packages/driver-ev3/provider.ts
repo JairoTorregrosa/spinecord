@@ -306,14 +306,16 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
           mode: 1,
           count: 2,
           decode: ([h, d]) =>
-            d < 0 || d > 100 ? { value: null, error: "no beacon in view on channel 1" } : { value: Math.round(h) },
+            // native: negative = beacon to the left; the contract is counter-clockwise-positive (left = positive)
+            d < 0 || d > 100 ? { value: null, error: "no beacon in view on channel 1" } : { value: -Math.round(h) + 0 },
           spec: {
             name: "beacon_heading",
             type: "number",
             range: [-25, 25],
             max_rate_hz: 5,
-            approx: `Unitless, negative = beacon to the left. ${MODE_NOTE}`,
-            description: "Direction of the remote beacon (channel 1).",
+            approx: `Unitless, positive = beacon to the left (counter-clockwise), 0 = straight ahead. ${MODE_NOTE}`,
+            description:
+              "Direction of the remote beacon (channel 1). The provider negates the sensor's native value, which is negative to the left.",
           },
         },
         {

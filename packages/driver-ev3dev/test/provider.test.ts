@@ -252,6 +252,27 @@ describe("fake brick", () => {
     expect((await provider.read("ev3.S2", ["angle_deg"]))[0]!.value).toBe(15);
   });
 
+  brickTest(
+    "beacon_heading is counter-clockwise-positive: the native value, negative to the left, is negated",
+    async () => {
+      const { provider, brick } = setup();
+      const heading = async () =>
+        (await provider.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"], { allow_mode_switch: true })).map(
+          (r) => r.value,
+        );
+      brick.setSensor(2, "value0", -7);
+      brick.setSensor(2, "value1", 33);
+      expect(await heading()).toEqual([7, 33]);
+      expect(brick.sensor(2, "mode")).toBe("IR-SEEK");
+      brick.setSensor(2, "value0", 12);
+      expect(await heading()).toEqual([-12, 33]);
+      brick.setSensor(2, "value0", 0);
+      expect(Object.is((await heading())[0], 0)).toBe(true);
+      brick.setSensor(2, "value1", -128);
+      expect(await heading()).toEqual([null, null]);
+    },
+  );
+
   brickTest("a read never switches a sensor mode unless the channel is named with allow_mode_switch", async () => {
     const { provider, brick } = setup();
     let changed = 0;

@@ -63,7 +63,7 @@ try:
 except ImportError:  # Windows (tests against a fake tree)
     fcntl = None
 
-VERSION = "3"            # 3: read_many, motors looked at on arrival
+VERSION = "4"            # 4: beacon_heading counter-clockwise-positive, guard process
 WATCHDOG_MS = 1000
 MAX_OP_MS = 3000         # ceiling for the motion one command may cause; hello's max_op_ms can only lower it
 TICK_S = 0.01
@@ -689,7 +689,10 @@ class Bridge(object):
         if channel in ("beacon_heading", "beacon_distance_pct"):
             if vals[1] < 0 or vals[1] > 100:
                 return (None, "no beacon in view on channel 1")
-            return (int(round(vals[0] if channel == "beacon_heading" else vals[1])), None)
+            if channel == "beacon_distance_pct":
+                return (int(round(vals[1])), None)
+            h = int(round(vals[0]))
+            return (0 if h == 0 else -h, None)   # native negative = left -> contract counter-clockwise-positive
         return (int(round(vals[0])), None)
 
     def sensor_values(self, sensor, mode, count, switch):
