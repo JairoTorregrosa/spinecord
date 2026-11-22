@@ -10,6 +10,9 @@ Requests (one JSON object per line; every reply echoes "id"):
                                            "speech_volume_pct":..},
                                  "pair":{"left":"B","right":"C"}}}
   {"op":"read","id":2,"device":"S4","channels":["proximity_pct"],"allow_mode_switch":false}
+  {"op":"read_many","id":5,"reads":[{"device":"B"},{"device":"S4","channels":["proximity_pct"]}]}
+                                       several reads, one answer: {"results":[<what each read alone answers>]}.
+                                       It never switches a sensor mode.
   {"op":"command","id":3,"device":"B","command":"run_degrees","args":{"degrees":90,"speed_pct":30}}
   {"op":"abort","target":3}            no reply; command 3 answers with reason "preempted"
   {"op":"stop","id":4}                 brakes every motor, verifies, answers motors_stopped
@@ -31,6 +34,9 @@ Safety rules of this file:
     termination signal, every tacho motor gets stop_action=brake and command=stop. The stop is
     written before anything else is done about it.
   * The main loop never blocks: stdin and stdout live in their own threads, waits are tasks.
+    It wakes at least every TICK_S for the watchdog and the touch sensors. A running motor is
+    looked at when that can change something: at once after its command, then at half the time
+    its target still needs, down to MOTION_TICK_S on arrival and never rarer than TICK_S.
   * Speech (speaker.speak, only when the brick has `espeak` and `aplay`) is two child processes
     started from argument lists, never through a shell. One phrase at a time, at most SPEAK_MAX_MS.
     abort, stop, the watchdog and the end of this process kill both, so the audio is cut.
@@ -57,10 +63,11 @@ try:
 except ImportError:  # Windows (tests against a fake tree)
     fcntl = None
 
-VERSION = "2"
+VERSION = "3"            # 3: read_many, motors looked at on arrival
 WATCHDOG_MS = 1000
 MAX_OP_MS = 3000         # ceiling for the motion one command may cause; hello's max_op_ms can only lower it
 TICK_S = 0.01
+MOTION_TICK_S = 0.002    # shortest wait between two looks at a running motor
 MODE_SWITCH_S = 0.1
 STOP_VERIFY_S = 0.8
 REACH_TOLERANCE_DEG = 3.0
@@ -103,8 +110,13 @@ def now():
 
 
 def read_attr(path):
-    with open(path, "r") as f:
-        return f.read().strip()
+    # One open, one read, one close on the file descriptor itself: a sysfs attribute is at most a page,
+    # and Python's text layer costs more than the read (every look at a motor is three of these).
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        return os.read(fd, 4096).decode("utf-8").strip()
+    finally:
+        os.close(fd)
 
 
 class SysfsValueError(BridgeError, ValueError):
@@ -164,6 +176,25 @@ def cut(v, limit):
     return v, False
 
 
+def next_look(timed_left_s, travel):
+    """Seconds until a running operation is looked at again.
+
+    A timed run: when its time is up. A degree move (`travel`: a (counts still to go, counts per second)
+    pair per moving motor): half the time the farthest motor still needs at its commanded speed, so the
+    looks get closer together toward the target, where the answer is due. Never rarer than TICK_S (the
+    time cap and a blocked wheel are noticed as before) and never closer than MOTION_TICK_S (a look is
+    three sysfs reads per motor on a slow processor).
+    """
+    if timed_left_s is not None:
+        wait = timed_left_s
+    else:
+        wait = 0.0
+        for left, speed in travel:
+            if left > 0:
+                wait = max(wait, left / float(speed) / 2.0)
+    return max(MOTION_TICK_S, min(TICK_S, wait))
+
+
 class Motor(object):
     def __init__(self, directory, port):
         self.dir = directory
@@ -216,6 +247,7 @@ class Sensor(object):
         self.kind = SENSORS[self.driver][0]
         self.channels = SENSORS[self.driver][1]
         self.modes = read_list(os.path.join(directory, "modes"))
+        self.decimals = {}     # mode -> its `decimals` attribute, once read
         self.presses = 0       # touch only: bumps counted by this process
         self.was_pressed = False
 
@@ -283,6 +315,9 @@ class Bridge(object):
         self.speech = None         # hello: {"espeak", "aplay", "voices", "default_voice"} when the brick can speak
         self.talk = None           # the phrase being spoken now
         self.last_touch = 0.0
+        self.mode_seen = None      # the mode the read in progress found its sensor in
+        self.battery = None        # path of the battery's voltage_now, once found
+        self.sink = None           # read_many: the answers of its reads are collected here instead of sent
 
     # ------------------------------------------------------------ paths
 
@@ -329,6 +364,9 @@ class Bridge(object):
                 return
 
     def send(self, obj):
+        if self.sink is not None:
+            self.sink.append(obj)
+            return
         self.outq.put((json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8"))
 
     def ok(self, rid, extra):
@@ -438,6 +476,7 @@ class Bridge(object):
         self.bounds = dict((k, b[k]) for k in BOUND_KEYS)
         self.op_ms = int(max(1, min(MAX_OP_MS, b["max_op_ms"])))   # never above MAX_OP_MS, whatever the config says
         self.pair = (left, right)
+        self.battery = None
         self.scan()
         self.speech, no_speech = self.find_speech()
         ports = []
@@ -557,7 +596,9 @@ class Bridge(object):
                 values["left_deg"] = (tidy(l.deg(l.counts())), None)
                 values["right_deg"] = (tidy(r.deg(r.counts())), None)
             elif kind == "battery":
-                path = self.battery_path()
+                if self.battery is None:
+                    self.battery = self.battery_path()
+                path = self.battery
                 if path is None:
                     raise IOError("no power_supply with voltage_now")
                 volts = read_int(path) / 1000000.0
@@ -569,6 +610,36 @@ class Bridge(object):
             for n in names:
                 values[n] = (None, "internal: %s" % e)
         self.reply_readings(rid, names, values)
+
+    def read_many(self, rid, msg):
+        """Several reads, one answer line. Each read is answered as `read` answers it alone, errors included,
+        so a device that cannot be read does not take the others with it. No read here may switch a mode."""
+        self.need_hello()
+        reads = msg.get("reads")
+        if not isinstance(reads, list):
+            raise BridgeError("invalid_argument", "read_many needs reads: a list of {device, channels}")
+        results = []
+        for item in reads:
+            box = []
+            self.sink = box
+            try:
+                try:
+                    if not isinstance(item, dict):
+                        raise BridgeError("invalid_argument", "each read is an object {device, channels}")
+                    self.read(None, {"device": item.get("device"), "channels": item.get("channels")})
+                except BridgeError as e:
+                    box.append({"ok": False, "code": e.code, "message": e.message})
+                except (OSError, IOError) as e:
+                    box.append({"ok": False, "code": "internal", "message": "sysfs: %s" % e})
+            finally:
+                self.sink = None
+            if len(box) != 1:
+                # A read without a mode switch answers before it returns; anything else is a fault of this file.
+                self.tasks = [t for t in self.tasks if t.id is not None or t.motors or t.talk]
+                raise BridgeError("internal", "read of %s inside read_many gave %d answers, expected 1" % (json.dumps(item), len(box)))
+            box[0].pop("id", None)
+            results.append(box[0])
+        self.ok(rid, {"results": results})
 
     def reply_readings(self, rid, names, values, extra=None):
         out = []
@@ -625,20 +696,26 @@ class Bridge(object):
         """Generator: leaves the values of `mode` in self.got. Writes the mode only when `switch` is true."""
         if sensor.modes is not None and mode not in sensor.modes:
             raise BridgeError("unsupported", "sensor %s has no mode %s; it offers: %s" % (sensor.driver, mode, " ".join(sensor.modes)))
-        if sensor.get("mode") != mode:
+        self.mode_seen = sensor.get("mode")
+        if self.mode_seen != mode:
             if not switch:
                 raise BridgeError("mode_switch_required", "mode_switch_required")
+            self.mode_seen = None                # after a switch the mode is read again, not assumed
             sensor.set("mode", mode)
             yield MODE_SWITCH_S
-        try:
-            decimals = sensor.get_int("decimals")
-        except (OSError, IOError, ValueError):
-            decimals = DEFAULT_DECIMALS.get(mode, 0)
+        decimals = sensor.decimals.get(mode)
+        if decimals is None:
+            try:
+                # Fixed by the driver for each mode: read once per sensor and mode.
+                decimals = sensor.decimals[mode] = sensor.get_int("decimals")
+            except (OSError, IOError, ValueError):
+                decimals = DEFAULT_DECIMALS.get(mode, 0)
         scale = float(10 ** decimals)
         self.got = [sensor.get_float("value%d" % i) / scale for i in range(count)]
 
     def read_sensor(self, rid, sensor, names, switch):
         values = {}
+        self.mode_seen = None
         for n in names:
             if n in values:
                 continue
@@ -660,11 +737,13 @@ class Bridge(object):
             except BridgeError as e:
                 for m in same:
                     values[m] = (None, e.message if e.code == "mode_switch_required" else "%s: %s" % (e.code, e.message))
-        mode = None
-        try:
-            mode = sensor.get("mode")
-        except (OSError, IOError):
-            pass
+        # The mode this read found the sensor in. Read here only if nothing above did, or a switch was written.
+        mode = self.mode_seen
+        if mode is None:
+            try:
+                mode = sensor.get("mode")
+            except (OSError, IOError):
+                pass
         self.reply_readings(rid, names, values, {"mode": mode})
 
     def sample_touch(self):
@@ -947,6 +1026,7 @@ class Bridge(object):
             start = [m.counts() for m in motors]
             targets = []   # counts each motor must travel, signed; None for timed runs
             expected = []  # degrees each motor should cover in this operation if nothing blocks it
+            speeds = []    # counts per second each motor was told to turn at (0: it does not move)
             active = []
             absolute = []  # (index, motor, signed counts to travel) of degree moves
             for i, mv in enumerate(moves):
@@ -958,15 +1038,18 @@ class Bridge(object):
                     m.set("time_sp", int(timed_ms))
                     targets.append(None)
                     expected.append(m.deg(speed) * timed_ms / 1000.0)
+                    speeds.append(speed)
                     active.append((m, "run-timed"))
                 else:
                     counts = m.to_counts(mv["deg"])
                     targets.append(counts)
                     if counts == 0:
                         expected.append(0.0)
+                        speeds.append(0)
                         active.append((m, "stop"))
                     else:
                         speed = max(MIN_SPEED_COUNTS, speed)
+                        speeds.append(speed)
                         # The kernel is told no more than it can cover within the time bound (plus 20 %),
                         # so the move stays short even if this process dies before its own time cap.
                         reach = int(speed * self.op_ms / 1000.0 * 1.2) + m.to_counts(REACH_TOLERANCE_DEG) + 1
@@ -1000,8 +1083,14 @@ class Bridge(object):
             cap = t0 + (self.op_ms if timed_ms is None else timed_ms + 100) / 1000.0
             tol = [m.to_counts(REACH_TOLERANCE_DEG) for m in motors]
             at = start
+            # The first look comes right behind the command: a move that is already there answers at once.
+            wait = MOTION_TICK_S
+            if any(c is not None and c != 0 and abs(c) <= tol[i] for i, c in enumerate(targets)):
+                # A move inside the arrival tolerance is judged on "running" alone, and the driver needs
+                # a moment to show it: this one gets the full tick.
+                wait = TICK_S
             while reason is None:
-                yield TICK_S
+                yield wait
                 if task.flag:
                     reason = task.flag
                     break
@@ -1025,6 +1114,15 @@ class Bridge(object):
                         if expected[i] >= 4 and abs(motors[i].deg(at[i] - start[i])) < 0.5:
                             blocked = True
                     reason = "stalled" if blocked else ("completed" if done else "timeout")
+                elif timed_ms is not None:
+                    wait = next_look(timed_ms / 1000.0 - (t - t0), None)
+                else:
+                    left = []
+                    for i in range(len(motors)):
+                        want = targets[i]
+                        if want != 0:
+                            left.append((abs(want) - tol[i] - (at[i] - start[i]) * (1 if want >= 0 else -1), speeds[i]))
+                    wait = next_look(None, left)
             if reason != "completed":
                 for m in motors:
                     m.brake()
@@ -1131,6 +1229,8 @@ class Bridge(object):
                 self.hello(rid, msg)
             elif op == "read":
                 self.read(rid, msg)
+            elif op == "read_many":
+                self.read_many(rid, msg)
             elif op == "command":
                 self.command(rid, msg)
             elif op == "abort":
@@ -1141,7 +1241,7 @@ class Bridge(object):
             elif op == "stop":
                 self.stop(rid)
             else:
-                raise BridgeError("invalid_argument", "unknown op %s; ops: hello, read, command, abort, stop, hb" % json.dumps(op))
+                raise BridgeError("invalid_argument", "unknown op %s; ops: hello, read, read_many, command, abort, stop, hb" % json.dumps(op))
         except BridgeError as e:
             self.fail(rid, e.code, e.message)
         except (OSError, IOError) as e:

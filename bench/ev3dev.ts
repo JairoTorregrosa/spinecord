@@ -35,7 +35,7 @@ const fakeBrick = () =>
 const WHAT: Record<string, string> = {
   bridge_hello: "ev3dev bridge: hello (rescan of sysfs), request line to reply, timed in Python",
   bridge_read_one: "ev3dev bridge: read ultrasonic distance_cm, timed in Python",
-  bridge_read_all: "ev3dev bridge: one read per device (9 devices), pipelined as read_all does, timed in Python",
+  bridge_read_all: "ev3dev bridge: every device read (9 devices) the way the provider's read_all asks, timed in Python",
   bridge_run_pair:
     "ev3dev bridge: run_pair with a motor that arrives at once (overhead around a move), timed in Python",
   bridge_stop: "ev3dev bridge: verified stop with idle motors, timed in Python",

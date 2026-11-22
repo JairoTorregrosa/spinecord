@@ -593,4 +593,209 @@ describe("fake brick", () => {
     expect(brick.motor(0, "command")).toBe("");
     expect(brick.sensor(0, "mode")).toBe("IR-PROX");
   });
+
+  /** The provider on a transport that keeps every request line it sends (heartbeats left out). */
+  function tapped(wrap: (t: LineTransport) => LineTransport = (t) => t) {
+    const { brick } = setup();
+    const inner = wrap(brick.transport(python!));
+    const sent: { op: string; reads?: { device: string; channels: string[] }[] }[] = [];
+    const transport: LineTransport = {
+      open: () => inner.open(),
+      close: () => inner.close(),
+      onLine: (cb) => inner.onLine(cb),
+      onClose: (cb) => inner.onClose(cb),
+      send(line) {
+        const msg = JSON.parse(line) as (typeof sent)[number];
+        if (msg.op !== "hb") sent.push(msg);
+        inner.send(line);
+      },
+    };
+    const provider = new Ev3devProvider(transport, OPTS);
+    open.push({ brick, provider });
+    return { brick, provider, sent };
+  }
+
+  brickTest("a read of every device is one request line, answered as the same reads one by one", async () => {
+    const { provider, brick, sent } = tapped();
+    const specs = await provider.devices();
+    brick.setMotor(1, "position", 123);
+    brick.setButtons([28]);
+    const alone = [];
+    for (const d of specs) alone.push(await provider.read(d.id));
+    sent.length = 0;
+    const together = await Promise.all(specs.map((d) => provider.read(d.id)));
+    expect(sent.map((m) => m.op)).toEqual(["read_many"]);
+    // devices without channels (speaker, display, led, the unknown sensor) are not asked about
+    expect(sent[0]!.reads!.map((r) => r.device)).toEqual(["B", "C", "pair", "S2", "S3", "S4", "buttons", "battery"]);
+    const plain = (rs: typeof together) => rs.map((r) => r.map(({ ts: _ts, ...rest }) => rest));
+    expect(plain(together)).toEqual(plain(alone));
+    const flat = together.flat();
+    expect(flat.find((r) => r.channel === "right_deg")!.value).toBe(123);
+    expect(flat.find((r) => r.channel === "distance_cm")!.value).toBe(255);
+    expect(flat.find((r) => r.device === "ev3.buttons")!.value).toEqual(["enter"]);
+    expect(flat.find((r) => r.channel === "beacon_heading")!.error).toBe("mode_switch_required");
+    // one read by itself is still the plain request
+    sent.length = 0;
+    await provider.read("ev3.S3");
+    expect(sent.map((m) => m.op)).toEqual(["read"]);
+  });
+
+  brickTest("inside a shared read, a device that cannot be read fails alone and no mode is switched", async () => {
+    const { provider, brick, sent } = tapped();
+    await provider.devices();
+    brick.setSensor(1, "value0", "garbage"); // the ultrasonic's driver is broken
+    let changed = 0;
+    provider.onDevicesChanged(() => changed++);
+    sent.length = 0;
+    const [us, ir, battery, switching] = await Promise.all([
+      provider.read("ev3.S3"),
+      provider.read("ev3.S4", ["remote_buttons"]),
+      provider.read("ev3.battery"),
+      provider.read("ev3.S2", ["rate_deg_s"], { allow_mode_switch: true }),
+    ]);
+    // the read that may switch a mode travels alone; the other three share a line
+    expect(sent.map((m) => m.op).sort()).toEqual(["read", "read_many"]);
+    expect(sent.find((m) => m.op === "read_many")!.reads!.length).toBe(3);
+    expect(us![0]).toMatchObject({ value: null });
+    expect(us![0]!.error).toContain("garbage");
+    expect(ir![0]!.error).toBe("mode_switch_required");
+    expect(brick.sensor(2, "mode")).toBe("IR-PROX");
+    expect(battery!.map((r) => r.value)).toEqual([7.65, false]);
+    expect(switching![0]!.error).toBeUndefined();
+    expect(brick.sensor(0, "mode")).toBe("GYRO-RATE");
+    expect(changed).toBe(1);
+  });
+
+  brickTest(
+    "read_many on the bridge: each read is answered as alone, errors included, and never switches",
+    async () => {
+      const brick = new FakeBrick({
+        motors: [{ port: "B" }],
+        sensors: [{ port: 4, driver: "lego-ev3-ir", mode: "IR-PROX", modes: IR_MODES, values: [50] }],
+        battery_uv: 7000000,
+      });
+      const transport = brick.transport(python!);
+      open.push({ brick, transport });
+      const lines: Record<string, unknown>[] = [];
+      transport.onLine((l) => lines.push(JSON.parse(l) as Record<string, unknown>));
+      transport.onClose(() => {});
+      await transport.open();
+      const ask = async (msg: Record<string, unknown>) => {
+        transport.send(JSON.stringify(msg));
+        expect(await until(() => lines.some((l) => l.id === msg.id), 5000)).toBe(true);
+        return lines.find((l) => l.id === msg.id)!;
+      };
+      const bounds = {
+        max_speed_pct: 60,
+        max_op_ms: 250,
+        low_battery_v: 6.5,
+        max_tone_ms: 5000,
+        speech_volume_pct: 80,
+      };
+      const hello = await ask({ op: "hello", id: 1, config: { bounds, pair: { left: "B", right: "C" } } });
+      expect(Number(hello.bridge)).toBeGreaterThanOrEqual(3);
+      const reply = await ask({
+        op: "read_many",
+        id: 2,
+        reads: [
+          { device: "B", channels: ["position_deg"] },
+          { device: "nope" },
+          { device: "S4", channels: ["remote_buttons"], allow_mode_switch: true },
+          { device: "S4", channels: ["bogus"] },
+          { device: "battery" },
+          "not an object",
+        ],
+      });
+      expect(reply.ok).toBe(true);
+      expect(reply.results).toEqual([
+        { ok: true, readings: [{ channel: "position_deg", value: 0 }] },
+        { ok: false, code: "unknown_device", message: expect.stringContaining('unknown device "nope"') },
+        {
+          ok: true,
+          mode: "IR-PROX",
+          readings: [{ channel: "remote_buttons", value: null, error: "mode_switch_required" }],
+        },
+        { ok: false, code: "unknown_channel", message: expect.stringContaining("bogus") },
+        {
+          ok: true,
+          readings: [
+            { channel: "voltage_v", value: 7 },
+            { channel: "low", value: false },
+          ],
+        },
+        { ok: false, code: "invalid_argument", message: expect.stringContaining("each read is an object") },
+      ]);
+      expect(brick.sensor(0, "mode")).toBe("IR-PROX");
+      expect((await ask({ op: "read_many", id: 3, reads: "B" })).code).toBe("invalid_argument");
+      // the bridge still answers plain reads afterwards
+      expect(((await ask({ op: "read", id: 4, device: "S4" })).readings as { value: unknown }[])[0]!.value).toBe(50);
+    },
+  );
+
+  brickTest("a read-only transport lets a shared read through", async () => {
+    const { provider, sent } = tapped(readOnlyTransport);
+    await provider.devices();
+    sent.length = 0;
+    const [us, ir] = await Promise.all([provider.read("ev3.S3"), provider.read("ev3.S4", ["proximity_pct"])]);
+    expect(sent.map((m) => m.op)).toEqual(["read_many"]);
+    expect([us![0]!.value, ir![0]!.value]).toEqual([255, 37]);
+  });
+
+  brickTest("a running motor is looked at when it matters: half the time left, between 2 ms and the tick", () => {
+    const r = spawnSync(python!, [join(import.meta.dir, "next_look_check.py"), BRIDGE_FILE], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+    });
+    expect(r.stderr).toBe("");
+    const out = JSON.parse(r.stdout) as Record<string, number>;
+    expect(out.tick).toBe(0.01);
+    expect(out.motion_tick).toBe(0.002);
+    expect(out.far).toBe(out.tick!);
+    expect(out.near).toBeCloseTo(0.005, 9);
+    expect(out.pair).toBeCloseTo(0.005, 9);
+    expect(out.arrived).toBe(out.motion_tick!);
+    expect(out.no_travel).toBe(out.motion_tick!);
+    expect(out.timed_long).toBe(out.tick!);
+    expect(out.timed_short).toBeCloseTo(0.004, 9);
+    expect(out.timed_over).toBe(out.motion_tick!);
+  });
+});
+
+describe("bridge version", () => {
+  test("a bridge older than read_many fails loud at hello and names the fix", async () => {
+    let onLine: (line: string) => void = () => {};
+    const sent: string[] = [];
+    const old: LineTransport = {
+      open: async () => {},
+      close: async () => {},
+      onLine: (cb) => {
+        onLine = cb;
+      },
+      onClose: () => {},
+      send(line) {
+        const msg = JSON.parse(line) as { op: string; id?: number };
+        sent.push(msg.op);
+        if (msg.op !== "hello") return;
+        const hello = {
+          id: msg.id,
+          ok: true,
+          bridge: "2",
+          watchdog_ms: BRICK_WATCHDOG_MS,
+          motors: [],
+          sensors: [],
+          unknown: [],
+          capabilities: {},
+          speech: null,
+        };
+        queueMicrotask(() => onLine(JSON.stringify(hello)));
+      },
+    };
+    const provider = new Ev3devProvider(old, OPTS);
+    const e = await provider.devices().catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(RuntimeError);
+    expect((e as RuntimeError).code).toBe("misconfigured");
+    expect((e as RuntimeError).message).toContain("installBridge");
+    expect(sent.filter((op) => op !== "hb")).toEqual(["hello"]);
+    await provider.close();
+  });
 });
