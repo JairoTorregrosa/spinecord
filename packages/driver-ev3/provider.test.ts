@@ -489,6 +489,11 @@ describe("read(): no side effects", () => {
       ),
     ).toEqual([7, 33]); // native -7 = to the left; the contract is counter-clockwise-positive
     expect(fake.modeSwitches).toBe(1);
+    const s4 = (await ev3.devices()).find((d) => d.id === "ev3.S4")!;
+    expect(s4.channels.filter((c) => c.null_when_absent).map((c) => c.name)).toEqual([
+      "beacon_heading",
+      "beacon_distance_pct",
+    ]);
     fake.setSensor(4, 33, [12, 40], 1);
     expect((await ev3.read("ev3.S4", ["beacon_heading"]))[0].value).toBe(-12);
     fake.setSensor(4, 33, [0, 40], 1);

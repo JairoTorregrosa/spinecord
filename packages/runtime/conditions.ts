@@ -1,8 +1,10 @@
 // Condition compiler and evaluator. Shape rules live in packages/protocol/validate.ts (single owner); this
 // file adds what needs real devices: names resolve (id or role), channels exist, value types fit the channel.
-// A condition is evaluated only when every channel it names was read: a channel without a value ends the
-// evaluation with condition_unreadable, so whoever watches it (a move's `until`, wait_until, a program) stops
-// and says so. A sensor that cannot be read is never "not met". Reads here never switch a sensor mode.
+// A reading without a value is never silently "not met". On a channel whose manifest says null_when_absent
+// (nothing in view) null is a value: its comparisons are false. On any other channel one poll without a value
+// leaves the condition not met for that poll, and UNREADABLE_POLLS of them in a row on the same comparison end
+// the evaluation with condition_unreadable, so whoever watches it (a move's `until`, wait_until, a program)
+// stops and says so. Reads here never switch a sensor mode.
 import { RuntimeError } from "../protocol/types";
 import type { ChannelSpec, CompareOp, DeviceSpec, Reading, Value } from "../protocol/types";
 import { validateCondition } from "../protocol/validate";
@@ -10,7 +12,13 @@ import { validateCondition } from "../protocol/validate";
 export interface Resolver {
   resolve(name: string): DeviceSpec; // throws unknown_device listing valid ids and roles
 }
-type Leaf = { device: string; channel: string; op: CompareOp; value?: number | boolean | string };
+type Leaf = {
+  device: string;
+  channel: string;
+  op: CompareOp;
+  value?: number | boolean | string;
+  absent: boolean; // the channel's null means "nothing there" (ChannelSpec.null_when_absent)
+};
 type Node = { leaf: number } | { any: Node[] } | { all: Node[] } | { not: Node };
 export interface CompiledCondition {
   leaves: Leaf[];
@@ -19,6 +27,9 @@ export interface CompiledCondition {
 export type ReadFn = (device: string, channels: string[]) => Promise<Reading[]>;
 
 const MAX_LEAVES = 32;
+// Polls in a row without a value, on the same comparison, that end an evaluation. One failed exchange with a
+// brick is not a broken sensor; three polls of a watched move are about 30 ms, inside one chunk.
+export const UNREADABLE_POLLS = 3;
 const bad = (msg: string) => new RuntimeError("invalid_argument", msg);
 
 export function compileCondition(cond: unknown, reg: Resolver, path = "condition"): CompiledCondition {
@@ -49,7 +60,13 @@ function build(o: Record<string, unknown>, reg: Resolver, path: string, leaves: 
     );
   checkLeafTypes(path, ch, op, o.value);
   if (leaves.length >= MAX_LEAVES) throw bad(`${path}: a condition may have at most ${MAX_LEAVES} comparisons`);
-  leaves.push({ device: spec.id, channel: ch.name, op, value: o.value as Leaf["value"] });
+  leaves.push({
+    device: spec.id,
+    channel: ch.name,
+    op,
+    value: o.value as Leaf["value"],
+    absent: ch.null_when_absent === true,
+  });
   return { leaf: leaves.length - 1 };
 }
 
@@ -73,27 +90,31 @@ function checkLeafTypes(path: string, ch: ChannelSpec, op: CompareOp, value: unk
 const same = (a: Value, b: Value) =>
   Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((x, i) => x === b[i]) : a === b;
 
-// One evaluator per wait/move: `changed` compares against the first value this evaluator saw.
+// One evaluator per wait/move: `changed` compares against the first value this evaluator saw, and the count of
+// polls without a value runs across its polls. `unreadable: true` = this poll decided nothing (met is false).
 export function makeEvaluator(
   c: CompiledCondition,
   read: ReadFn,
-): { poll(): Promise<{ met: boolean; readings: Reading[] }> } {
-  const baseline: (Value | undefined)[] = c.leaves.map(() => undefined);
+): { poll(): Promise<{ met: boolean; unreadable: boolean; readings: Reading[] }> } {
+  const baseline: (Value | null | undefined)[] = c.leaves.map(() => undefined);
+  const blindPolls: number[] = c.leaves.map(() => 0);
   const byDevice = new Map<string, string[]>();
   for (const l of c.leaves) {
     const list = byDevice.get(l.device) ?? [];
     if (!list.includes(l.channel)) list.push(l.channel);
     byDevice.set(l.device, list);
   }
-  const leafValue = (i: number, v: Value): boolean => {
+  const leafValue = (i: number, v: Value | null): boolean => {
     const l = c.leaves[i]!;
     if (l.op === "changed") {
       if (baseline[i] === undefined) {
         baseline[i] = v;
         return false;
       }
-      return !same(baseline[i]!, v);
+      const was = baseline[i]!;
+      return was === null || v === null ? was !== v : !same(was, v);
     }
+    if (v === null) return false; // nothing there: no comparison holds
     const w = l.value!;
     switch (l.op) {
       case "contains":
@@ -127,21 +148,29 @@ export function makeEvaluator(
           `Channel ${needsSwitch.device}.${needsSwitch.channel} is not active: reading it needs a sensor mode switch, which a condition never does. While the robot is idle, call read_device naming that channel to switch the mode, then retry.`,
         );
       const got = c.leaves.map((l) => readings.find((r) => r.device === l.device && r.channel === l.channel));
-      const blind = c.leaves.flatMap((l, i) =>
-        got[i]?.value === null || got[i]?.value === undefined
-          ? [`${l.device}.${l.channel} (${got[i]?.error ?? "no value"})`]
-          : [],
-      );
-      if (blind.length)
-        throw new RuntimeError(
-          "condition_unreadable",
-          `The condition cannot be evaluated: ${[...new Set(blind)].join("; ")} returned no value. A channel that cannot be read is never taken as "not met". Check the sensor and its cable (read_all), then decide again.`,
-        );
+      const value = (i: number): Value | null => got[i]?.value ?? null;
+      let unreadable = false;
+      for (let i = 0; i < c.leaves.length; i++) {
+        const l = c.leaves[i]!;
+        if (value(i) !== null || l.absent) {
+          blindPolls[i] = 0;
+          continue;
+        }
+        unreadable = true;
+        if (++blindPolls[i]! >= UNREADABLE_POLLS)
+          throw new RuntimeError(
+            "condition_unreadable",
+            `The condition cannot be evaluated: ${l.device}.${l.channel} returned no value in ${blindPolls[i]} polls in a row (${got[i]?.error ?? "no value"}). A channel that cannot be read is never taken as "not met". Read the robot (read_all); if the channel stays without a value, check the sensor and its cable.`,
+          );
+      }
+      // A poll with a comparison that could not be read decides nothing: not met, and `changed` keeps its baseline.
+      if (unreadable) return { met: false, unreadable, readings };
       return {
         met: evalNode(
           c.tree,
-          c.leaves.map((_, i) => leafValue(i, got[i]!.value as Value)),
+          c.leaves.map((_, i) => leafValue(i, value(i))),
         ),
+        unreadable,
         readings,
       };
     },

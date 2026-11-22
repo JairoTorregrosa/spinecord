@@ -310,6 +310,7 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
             d < 0 || d > 100 ? { value: null, error: "no beacon in view on channel 1" } : { value: -Math.round(h) + 0 },
           spec: {
             name: "beacon_heading",
+            null_when_absent: true,
             type: "number",
             range: [-25, 25],
             max_rate_hz: 5,
@@ -325,6 +326,7 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
             d < 0 || d > 100 ? { value: null, error: "no beacon in view on channel 1" } : { value: Math.round(d) },
           spec: {
             name: "beacon_distance_pct",
+            null_when_absent: true,
             type: "number",
             unit: "pct",
             range: [0, 100],

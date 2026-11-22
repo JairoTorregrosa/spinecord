@@ -258,45 +258,51 @@ describe("a twin in this process", () => {
     await move;
   });
 
-  test("a distance sensor unplugged mid-drive ends `until` with condition_unreadable, wheels stopped, measured so far", async () => {
-    const fleet = await buildFleet(loadConfig([]), { log: () => {} });
-    const robot = fleet.robots[0]!;
-    const brick = fleet.bricks.get(robot.id)!;
-    const move = callTool(fleet.robots, "drive", {
-      robot_id: robot.id,
-      distance_cm: 40,
-      speed_pct: 20,
-      until: { device: "distance", channel: "distance_cm", op: "lt", value: 10 },
-    });
-    await until("the simulated wheels to turn", () => {
+  test("a distance sensor that fails mid-drive ends `until` with a typed error, wheels stopped, measured so far", async () => {
+    // silent: plugged in, no values (condition_unreadable). unplugged: the port leaves the registry (unknown_device).
+    for (const failure of ["silent", "unplugged"] as const) {
+      const fleet = await buildFleet(loadConfig([]), { log: () => {} });
+      const robot = fleet.robots[0]!;
+      const brick = fleet.bricks.get(robot.id)!;
+      const move = callTool(fleet.robots, "drive", {
+        robot_id: robot.id,
+        distance_cm: 40,
+        speed_pct: 20,
+        until: { device: "distance", channel: "distance_cm", op: "lt", value: 10 },
+      });
+      await until("the simulated wheels to turn", () => {
+        brick.tick();
+        return brick.tacho("B") > 20;
+      });
+      if (failure === "silent") brick.silenceSensor(4);
+      else brick.unplugSensor(4);
+      const { envelope } = await move;
+      expect(envelope.ok).toBe(false);
+      if (envelope.ok) throw new Error("unreachable");
+      expect(envelope.error.retryable).toBe(false);
+      if (failure === "silent") {
+        expect(envelope.error.code).toBe("condition_unreadable");
+        expect(envelope.error.message).toContain("ev3.S4.distance_cm returned no value in 3 polls in a row");
+        expect(envelope.next[0]).toBe("read_all");
+      } else expect(["unknown_device", "condition_unreadable"]).toContain(envelope.error.code);
+      expect(envelope.robot).toMatchObject({ link: "online", activity: "idle" });
+      const measured = envelope.error.measured!;
+      expect(measured.distance_cm as number).toBeGreaterThan(0);
+      expect(measured.distance_cm as number).toBeLessThan(20); // 40 cm were asked
       brick.tick();
-      return brick.tacho("B") > 20;
-    });
-    brick.unplugSensor(4);
-    const { envelope } = await move;
-    expect(envelope.ok).toBe(false);
-    if (envelope.ok) throw new Error("unreachable");
-    expect(envelope.error.code).toBe("condition_unreadable");
-    expect(envelope.error.retryable).toBe(false);
-    expect(envelope.error.message).toContain("ev3.S4.distance_cm");
-    expect(envelope.next[0]).toBe("read_all");
-    expect(envelope.robot).toMatchObject({ link: "online", activity: "idle" });
-    const measured = envelope.error.measured!;
-    expect(measured.distance_cm as number).toBeGreaterThan(0);
-    expect(measured.distance_cm as number).toBeLessThan(20); // 40 cm were asked
-    brick.tick();
-    expect(brick.busy()).toBe(false);
-    const at = brick.tacho("B");
-    expect(measured.left_deg).toBe(at);
-    await new Promise((r) => setTimeout(r, 150));
-    brick.tick();
-    expect(brick.tacho("B")).toBe(at); // nothing turns after the error
-    // the robot keeps working: the port is gone from the registry, everything else answers
-    const all = await callTool(fleet.robots, "read_all", { robot_id: robot.id });
-    expect(all.envelope.ok).toBe(true);
-    const again = await callTool(fleet.robots, "drive", { robot_id: robot.id, distance_cm: 2 });
-    expect(again.envelope).toMatchObject({ ok: true, data: { reason: "completed" } });
-    await fleet.shutdown();
+      expect(brick.busy()).toBe(false);
+      const at = brick.tacho("B");
+      expect(measured.left_deg).toBe(at);
+      await new Promise((r) => setTimeout(r, 150));
+      brick.tick();
+      expect(brick.tacho("B")).toBe(at); // nothing turns after the error
+      // the robot keeps working
+      const all = await callTool(fleet.robots, "read_all", { robot_id: robot.id });
+      expect(all.envelope.ok).toBe(true);
+      const again = await callTool(fleet.robots, "drive", { robot_id: robot.id, distance_cm: 2 });
+      expect(again.envelope).toMatchObject({ ok: true, data: { reason: "completed" } });
+      await fleet.shutdown();
+    }
   });
 
   test("the example files exist where a bare start looks for them", async () => {
@@ -451,14 +457,18 @@ describe("a link that can close", () => {
   test("why an attempt failed shows in list_robots until an attempt succeeds", async () => {
     const robot = new LocalRobot({ id: "m1", connect: "check the link" });
     const closers: ((reason: string) => void)[] = [];
-    let refuse = false;
+    let refuse: "no" | "misconfigured" | "robot_offline" = "no";
     const link = keepAttached(
       robot,
       () => {
         const mock = new MockProvider({ clock: realClock });
-        if (refuse)
+        const code = refuse;
+        if (code !== "no")
           mock.devices = async () => {
-            throw new RuntimeError("misconfigured", "the bridge is version 2, this driver expects 3; reinstall it");
+            throw new RuntimeError(
+              code,
+              code === "misconfigured" ? "the bridge is version 2, this driver expects 3; reinstall it" : "ssh refused",
+            );
           };
         return {
           runtime: createRuntime({ profile: PROFILE, providers: [mock], clock: realClock }),
@@ -470,14 +480,20 @@ describe("a link that can close", () => {
     );
     try {
       await link.connect();
-      refuse = true;
+      refuse = "robot_offline";
       closers[0]!("the peer went away");
       await until("a failed attempt", () => (robot.listing().connect ?? "").includes("last attempt failed"));
       expect(robot.listing()).toMatchObject({
         link: "offline",
-        connect: "check the link The last attempt failed: the bridge is version 2, this driver expects 3; reinstall it",
+        connect: "check the link The last attempt failed: ssh refused",
       });
-      refuse = false;
+      // a configuration the attempts cannot change: the hint says a person must act, not that it comes back
+      refuse = "misconfigured";
+      await until("a misconfigured attempt", () => (robot.listing().connect ?? "").includes("reinstall it"));
+      expect(robot.listing().connect).toBe(
+        "This robot does not come online by itself: every attempt fails until this is fixed. the bridge is version 2, this driver expects 3; reinstall it",
+      );
+      refuse = "no";
       await until("the robot is online again", () => robot.listing().link === "online");
       expect(robot.listing().connect).toBeNull();
     } finally {

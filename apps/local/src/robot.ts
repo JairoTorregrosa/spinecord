@@ -73,6 +73,7 @@ export class LocalRobot {
   readonly id: string;
   private readonly connectBase: string | null;
   private attachError: string | null = null; // why the last attempt to bring the robot online failed
+  private attachNeedsPerson = false; // that failure repeats until a person changes something (a bridge to reinstall)
   private link: RobotLink = "offline";
   private activity: RobotActivity = "idle";
   private life: Life = "serving";
@@ -124,11 +125,14 @@ export class LocalRobot {
   /** What a person must do to bring the robot online, with the reason the last attempt failed when one did. */
   private get connectHint(): string | null {
     if (this.attachError === null) return this.connectBase;
+    if (this.attachNeedsPerson)
+      return `This robot does not come online by itself: every attempt fails until this is fixed. ${this.attachError}`;
     return `${this.connectBase ? `${this.connectBase} ` : ""}The last attempt failed: ${this.attachError}`;
   }
   /** A source tried to bring the robot online and could not; `list_robots` shows why until an attach succeeds. */
-  attachFailed(why: string): void {
+  attachFailed(why: string, needsPerson = false): void {
     this.attachError = why;
+    this.attachNeedsPerson = needsPerson;
   }
   listing() {
     return {

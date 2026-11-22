@@ -441,6 +441,11 @@ const channelSpec = obj({
   approx: str,
   mode_group: str,
   active: { type: "boolean", description: "false → reading it needs a mode switch: name it in channels." },
+  null_when_absent: {
+    type: "boolean",
+    description:
+      "true → null is an answer (nothing in view), not a failure: a condition on this channel is then not met, never condition_unreadable.",
+  },
   description: str,
 });
 const commandSpec = obj({

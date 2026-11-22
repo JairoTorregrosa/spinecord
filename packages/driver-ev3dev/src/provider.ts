@@ -111,6 +111,8 @@ export interface BridgeInventory {
   guard: boolean;
   /** Why not, when `guard` is false. */
   no_guard: string | null;
+  /** Process id of the guard on the brick, null when it is not running. */
+  guard_pid: number | null;
   python: string;
   watchdog_ms: number;
   max_op_ms: number;
@@ -290,6 +292,7 @@ const SENSOR_KINDS: Record<string, { description: string; channels: ChannelSpec[
       },
       {
         name: "beacon_heading",
+        null_when_absent: true,
         type: "number",
         range: [-25, 25],
         max_rate_hz: 5,
@@ -299,6 +302,7 @@ const SENSOR_KINDS: Record<string, { description: string; channels: ChannelSpec[
       },
       {
         name: "beacon_distance_pct",
+        null_when_absent: true,
         type: "number",
         unit: "pct",
         range: [0, 100],
@@ -549,7 +553,7 @@ export class Ev3devProvider implements Provider {
     if (!(Number(inv.bridge) >= MIN_BRIDGE_VERSION))
       throw err(
         "misconfigured",
-        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${MIN_BRIDGE_VERSION} or newer. Run installBridge().`,
+        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${MIN_BRIDGE_VERSION} or newer. Reinstall it: start the server with --install-bridge (in a config file: "install_bridge": true), or call installBridge() from code. Every connection attempt fails here until then.`,
       );
     if (inv.guard !== true)
       throw err(

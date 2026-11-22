@@ -42,6 +42,8 @@ export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
 // LINK_WINDOW timed round trips of a provider. One fast answer on a slow link proves nothing.
 export const LINK_WINDOW = 10;
 export const LINK_PERCENTILE = 0.9;
+// Fewer timed round trips than this say nothing about a link: no coasting on them.
+export const LINK_MIN_SAMPLES = 3;
 // A device re-scan that failed is tried again after this long, doubling after every failure up to the max.
 export const SCAN_RETRY_MS = 250;
 export const SCAN_RETRY_MAX_MS = 5000;
@@ -441,7 +443,12 @@ class RuntimeImpl implements LocalRuntime {
       const t0 = this.clock.now();
       const ev = makeEvaluator(cond, this.readFn);
       for (;;) {
-        const r = await ev.poll();
+        let r = await ev.poll();
+        // A poll without a value is asked again at once: it is an answer only when it repeats (conditions.ts).
+        while (r.unreadable && !signal.aborted) {
+          await this.clock.sleep(UNTIL_POLL_MS, signal);
+          r = await ev.poll();
+        }
         const after_ms = Math.round(this.clock.now() - t0);
         if (r.met) return { data: { met: true, after_ms, readings: r.readings } };
         if (signal.aborted) return { data: { met: false, after_ms, readings: r.readings, reason: "preempted" } };
@@ -590,12 +597,14 @@ class RuntimeImpl implements LocalRuntime {
     this.linkSeen.set(e.provider, seen);
     return got;
   }
-  // The round trip the link is good for: a high percentile of its recent timed reads, never the best one.
+  // The round trip the link is good for: the larger of its latest timed read and a high percentile of the
+  // recent ones, never the best one. Unknown until the link was timed LINK_MIN_SAMPLES times.
   private linkSlowMs(p: Provider): number | undefined {
     const seen = this.linkSeen.get(p);
-    if (!seen?.length || this.linkMs.get(p) === undefined) return undefined;
+    const latest = this.linkMs.get(p);
+    if (!seen || seen.length < LINK_MIN_SAMPLES || latest === undefined) return undefined;
     const sorted = [...seen].sort((a, b) => a - b);
-    return sorted[Math.ceil(LINK_PERCENTILE * sorted.length) - 1];
+    return Math.max(latest, sorted[Math.ceil(LINK_PERCENTILE * sorted.length) - 1]!);
   }
   private async encoders(pair: Entry): Promise<{ l: number; r: number }> {
     const [l, r] = await this.timedRead(pair, ["left_deg", "right_deg"]);
@@ -647,17 +656,20 @@ class RuntimeImpl implements LocalRuntime {
       while (!settled()) {
         const asked = this.clock.now();
         started++;
+        let decided = true;
         try {
-          if ((await ev.poll()).met) met = true;
+          const r = await ev.poll();
+          if (r.met) met = true;
+          decided = !r.unreadable; // a poll without a value is no answer: whoever waits for a poll waits on
         } catch (err) {
           failed = true;
           error = err;
         }
-        done = started;
+        if (decided) done = started;
         if (stopped) break;
         if (met || failed) trip();
         wake();
-        if (settled() || wanted > done) continue;
+        if (settled() || (decided && wanted > done)) continue;
         const took = this.clock.now() - asked;
         nap = new AbortController();
         await this.clock.sleep(Math.max(UNTIL_POLL_MS, took) - took, nap.signal);
@@ -750,10 +762,17 @@ class RuntimeImpl implements LocalRuntime {
     // readings that travel with the operations show it when the link is fast again. Without one nothing else
     // would ever time the link, so one read does, on every call.
     const fresh = () => this.clock.now() - (this.linkAt.get(entry.provider) ?? -Infinity) <= LINK_FRESH_MS;
+    // A link timed fewer than LINK_MIN_SAMPLES times is timed here, with nothing moving, for as long as it
+    // answers fast: on a fast link that costs next to nothing and lets the first chunks coast; the first slow
+    // answer ends it, and that link brakes every operation.
+    const probe = entry.spec.channels.find((c) => c.type !== "image" && c.active !== false);
+    const timed = () => this.linkSeen.get(entry.provider) ?? [];
+    if (canCoast && probe)
+      while (timed().length < LINK_MIN_SAMPLES && timed().every((ms) => ms < aimMs / 4) && !signal.aborted)
+        await this.timedRead(entry, [probe.name]);
     let proven = !canCoast || (latency() !== undefined && (!coastOk() || fresh()));
     if (canCoast && !o.track) {
-      const ch = entry.spec.channels.find((c) => c.type !== "image" && c.active !== false);
-      if (ch) await this.timedRead(entry, [ch.name]);
+      if (probe) await this.timedRead(entry, [probe.name]);
       else {
         this.linkMs.delete(entry.provider); // nothing to time it with: never coast
         this.linkSeen.delete(entry.provider);
@@ -1458,9 +1477,13 @@ class RuntimeImpl implements LocalRuntime {
     };
     const test = async (cond: unknown, path: string, ev?: ReturnType<typeof makeEvaluator>) => {
       try {
-        return (
-          await (ev ?? makeEvaluator(compileCondition(cond, this.resolver, `program ${path}`), this.readFn)).poll()
-        ).met;
+        const e = ev ?? makeEvaluator(compileCondition(cond, this.resolver, `program ${path}`), this.readFn);
+        let r = await e.poll();
+        while (r.unreadable && !budget.signal.aborted) {
+          await this.clock.sleep(UNTIL_POLL_MS, budget.signal);
+          r = await e.poll();
+        }
+        return r.met;
       } catch (err) {
         throw new End(
           "failed",

@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { RuntimeError } from "../protocol/types";
 import type { DeviceSpec, Limits, Provider, RobotProfile, RobotTool, RuntimeResult } from "../protocol/types";
 import { FakeClock } from "./clock";
+import { UNREADABLE_POLLS } from "./conditions";
 import { MockProvider } from "./mock";
 import {
   createRuntime,
   LINK_FRESH_MS,
+  LINK_MIN_SAMPLES,
   LINK_WINDOW,
   MAX_CHUNK_MS,
   SCAN_RETRY_MAX_MS,
@@ -501,15 +503,18 @@ describe("conditions and wait_until", () => {
       "invalid_argument",
     );
   });
-  test("a channel that cannot be read ends wait_until with condition_unreadable, under any combinator", async () => {
+  test("a channel that stays without a value ends wait_until with condition_unreadable, under any combinator", async () => {
     const s = setup();
     s.mock.values.set("mock.gas.ppm", null);
     const leaf = { device: "mock.gas", channel: "ppm", op: "gt", value: 1 };
     const color = { device: "floor_color", channel: "color", op: "eq", value: 6 }; // true
     for (const condition of [leaf, { not: leaf }, { any: [color, leaf] }, { all: [{ not: color }, leaf] }]) {
-      const e = await fails(s.call("wait_until", { condition, timeout_ms: 50 }), "condition_unreadable");
+      const t0 = s.clock.now();
+      const e = await fails(s.call("wait_until", { condition, timeout_ms: 5000 }), "condition_unreadable");
       expect(e.message).toContain("mock.gas.ppm");
+      expect(e.message).toContain(`${UNREADABLE_POLLS} polls in a row`);
       expect(e.retryable).toBe(false);
+      expect(s.clock.now() - t0).toBe((UNREADABLE_POLLS - 1) * UNTIL_POLL_MS); // asked again at once, not at the timeout
     }
     // a sensor that fails while the wait runs ends it there, not at the timeout
     const t = setup();
@@ -520,6 +525,72 @@ describe("conditions and wait_until", () => {
       "condition_unreadable",
     );
     expect(t.clock.now() - t0).toBeLessThan(250);
+  });
+  test("polls without a value that do not repeat end nothing: the condition is not met for that poll", async () => {
+    // every other read of the sensor fails (a lost exchange with the brick), never UNREADABLE_POLLS in a row
+    const s = setup();
+    let reads = 0;
+    s.mock.values.set("mock.gas.ppm", () => (++reads % 2 === 0 ? null : s.mock.left >= 300 ? 900 : 400));
+    const until = { device: "mock.gas", channel: "ppm", op: "gt", value: 500 };
+    const d = await s.call("drive", { distance_cm: 60, until });
+    expect(d.reason).toBe("condition_met");
+    expect(s.mock.left).toBeGreaterThanOrEqual(300);
+    expect(reads).toBeGreaterThan(10);
+    // two in a row, then a value: still nothing ends
+    const w = setup();
+    let n = 0;
+    w.mock.values.set("mock.gas.ppm", () => (++n % 3 === 0 ? 400 : null));
+    const waited = await w.call("wait_until", { condition: until, timeout_ms: 200 });
+    expect(waited).toMatchObject({ met: false });
+    expect(waited.after_ms).toBeGreaterThanOrEqual(200);
+    // under `not`, a poll without a value is still "not met": it never makes a condition true
+    const x = setup();
+    let k = 0;
+    x.mock.values.set("mock.gas.ppm", () => (++k === 1 ? null : 900));
+    const neg = await x.call("wait_until", { condition: { not: until }, timeout_ms: 100 });
+    expect(neg.met).toBe(false);
+    // a program's condition asks again the same way
+    const p = setup();
+    let j = 0;
+    p.mock.values.set("mock.gas.ppm", () => (++j <= 2 ? null : 900));
+    const r = await p.call("run_program", {
+      body: { if: { cond: until, then: { succeed: "read at the third poll" }, else: { fail: "taken as not met" } } },
+    });
+    expect(r).toMatchObject({ outcome: "succeeded", reason: "read at the third poll" });
+  });
+  test("a channel whose null means nothing in view is not met while null, and can be waited on", async () => {
+    const BEACON: DeviceSpec = {
+      id: "mock.ir",
+      provider: "mock",
+      kind: "infrared",
+      roles: [],
+      channels: [
+        { name: "beacon_distance_pct", type: "number", null_when_absent: true, description: "Beacon closeness." },
+      ],
+      commands: [],
+      description: "An infrared sensor.",
+    };
+    const s = setup({ extra: [BEACON] });
+    const seen = { device: "mock.ir", channel: "beacon_distance_pct", op: "lt", value: 100 };
+    s.mock.values.set("mock.ir.beacon_distance_pct", null);
+    expect(await s.call("wait_until", { condition: seen, timeout_ms: 200 })).toMatchObject({ met: false });
+    expect((await s.call("wait_until", { condition: { not: seen }, timeout_ms: 200 })).met).toBe(true);
+    // the beacon comes into view while the robot turns
+    s.mock.values.set("mock.ir.beacon_distance_pct", () => (s.mock.right >= 100 ? 40 : null));
+    const t = await s.call("turn", { angle_deg: 180, until: seen });
+    expect(t.reason).toBe("condition_met");
+    expect(t.measured.angle_deg).toBeGreaterThan(0);
+    expect(t.measured.angle_deg).toBeLessThan(180);
+    // `changed` sees it appear
+    const c = setup({ extra: [BEACON] });
+    const c0 = c.clock.now();
+    c.mock.values.set("mock.ir.beacon_distance_pct", () => (c.clock.now() - c0 >= 100 ? 40 : null));
+    const appeared = await c.call("wait_until", {
+      condition: { device: "mock.ir", channel: "beacon_distance_pct", op: "changed" },
+      timeout_ms: 1000,
+    });
+    expect(appeared.met).toBe(true);
+    expect((await c.call("describe_device", { device: "mock.ir" })).channels[0].null_when_absent).toBe(true);
   });
   test("bad conditions fail before waiting", async () => {
     const s = setup();
@@ -643,7 +714,9 @@ describe("drivetrain", () => {
     const e = await fails(s.call("drive", { distance_cm: 60, until }), "condition_unreadable");
     expect(e.message).toContain("mock.gas.ppm");
     expect(e.retryable).toBe(false);
-    expect(s.clock.now() - t0).toBeLessThanOrEqual(AT + UNTIL_POLL_MS);
+    expect(e.message).toContain(`${UNREADABLE_POLLS} polls in a row`);
+    expect(s.clock.now() - t0).toBeGreaterThanOrEqual(AT + (UNREADABLE_POLLS - 1) * UNTIL_POLL_MS);
+    expect(s.clock.now() - t0).toBeLessThanOrEqual(AT + UNREADABLE_POLLS * UNTIL_POLL_MS);
     expect(pairLog(s.mock).at(-1)!.reason).toBe("preempted"); // the operation in flight was aborted
     expect(s.mock.log.at(-1)).toMatchObject({ device: "mock.pair", command: "brake" }); // it was coasting
     const at = s.mock.left;
@@ -666,7 +739,7 @@ describe("drivetrain", () => {
     m.mock.values.set("mock.gas.ppm", () => (m.clock.now() - m0 >= 33 ? null : 400));
     const arm = { device: "mock.arm", command: "run_to_position", args: { position_deg: 400, speed_pct: 20 }, until };
     const c = await fails(m.call("command_device", arm), "condition_unreadable");
-    expect(m.clock.now() - m0).toBeLessThanOrEqual(33 + UNTIL_POLL_MS);
+    expect(m.clock.now() - m0).toBeLessThanOrEqual(33 + UNREADABLE_POLLS * UNTIL_POLL_MS);
     expect(c.measured).toBeDefined();
     expect(m.mock.arm).toBeLessThan(400);
 
@@ -954,6 +1027,22 @@ describe("drivetrain", () => {
       expect(brakes.indexOf(false)).toBeGreaterThanOrEqual(LINK_WINDOW - 2); // not at the first fast answer
       expect(brakes.includes(false)).toBe(true);
       expect(pairReads() - reads0).toBeGreaterThanOrEqual(LINK_WINDOW - 1);
+    });
+    test("the first move on a link does not coast on one fast answer: fewer than LINK_MIN_SAMPLES round trips prove nothing", async () => {
+      const s = setup({ limits: { max_command_ms: 60000 } });
+      // the first answer of this link comes back at once, every later one takes 600 ms
+      Object.defineProperty(s.mock, "latency", { get: () => (s.mock.reads.length <= 1 ? 0 : 600) });
+      s.mock.coastDeg = 16;
+      const d = await s.call("drive", { distance_cm: 10, speed_pct: 25 });
+      expect(d.reason).toBe("completed");
+      expect(pairLog(s.mock).every((c) => c.args.brake === true)).toBe(true);
+      expect(s.mock.brakes).toEqual([]);
+      expect(s.mock.reads.slice(0, 2)).toEqual(["mock.pair", "mock.pair"]); // timed again with nothing moving
+      // a link that answers fast LINK_MIN_SAMPLES times coasts from its first chunk
+      const f = setup();
+      await f.call("drive", { distance_cm: 10, speed_pct: 25 });
+      expect(pairLog(f.mock)[0]!.args.brake).toBe(false);
+      expect(f.mock.reads.slice(0, LINK_MIN_SAMPLES).every((r) => r === "mock.pair")).toBe(true);
     });
     test("one fast round trip among slow ones never coasts: the slow end of the recent readings decides", async () => {
       const s = setup({ latency_ms: 600, limits: { max_command_ms: 60000 } });

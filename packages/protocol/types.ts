@@ -24,6 +24,9 @@ export interface ChannelSpec {
   range?: [number, number];
   length?: number; // for vector
   max_rate_hz?: number; // fastest meaningful sampling
+  // true = a null value is an answer, not a failure: the channel has nothing to report (no beacon in view).
+  // A condition takes such a null as "not met" and never as condition_unreadable (CONTRACT §2.2).
+  null_when_absent?: boolean;
   approx?: string; // honest note on accuracy, e.g. "IR proximity is ~0.7 cm per unit"
   description: string;
 }
