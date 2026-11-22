@@ -1,0 +1,96 @@
+name: probe
+# Temporary: runs the line `--print-add` prints in the three Windows shells, with Claude Code from npm.
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  register:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: my code/spinecord
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: my code/spinecord/package.json
+      - run: bun install --filter @spinecord/local --frozen-lockfile
+        working-directory: my code/spinecord
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: pwsh
+        shell: pwsh
+        working-directory: my code/spinecord
+        env:
+          PROBE: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $PSVersionTable.PSVersion.ToString()
+          Get-Command claude -All | Format-Table CommandType, Source
+          $line = (bun apps/local/main.ts --print-add --ev3 --twin 2>$null)
+          Write-Host "printed: $line"
+          $empty = Join-Path $env:RUNNER_TEMP "my robot $env:PROBE"
+          New-Item -ItemType Directory -Force $empty | Out-Null
+          foreach ($variant in @("bare", "quoted")) {
+            $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "cfg-$env:PROBE-$variant"
+            $cmd = if ($variant -eq "quoted") { $line.Replace(" -- ", ' "--" ') } else { $line }
+            Write-Host "== $variant : $cmd"
+            Invoke-Expression $cmd
+            Write-Host "add exit: $LASTEXITCODE"
+            Push-Location $empty
+            claude mcp list
+            claude mcp get spinecord
+            Pop-Location
+          }
+          exit 0
+      - name: powershell
+        shell: powershell
+        working-directory: my code/spinecord
+        env:
+          PROBE: powershell
+        run: |
+          $ErrorActionPreference = "Continue"
+          $PSVersionTable.PSVersion.ToString()
+          Get-Command claude -All | Format-Table CommandType, Source
+          $line = (bun apps/local/main.ts --print-add --ev3 --twin 2>$null)
+          Write-Host "printed: $line"
+          $empty = Join-Path $env:RUNNER_TEMP "my robot $env:PROBE"
+          New-Item -ItemType Directory -Force $empty | Out-Null
+          foreach ($variant in @("bare", "quoted")) {
+            $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "cfg-$env:PROBE-$variant"
+            $cmd = if ($variant -eq "quoted") { $line.Replace(" -- ", ' "--" ') } else { $line }
+            Write-Host "== $variant : $cmd"
+            Invoke-Expression $cmd
+            Write-Host "add exit: $LASTEXITCODE"
+            Push-Location $empty
+            claude mcp list
+            claude mcp get spinecord
+            Pop-Location
+          }
+          exit 0
+      - name: cmd
+        shell: cmd
+        working-directory: my code/spinecord
+        run: |
+          where claude
+          for /f "delims=" %%L in ('bun apps\local\main.ts --print-add --ev3 --twin 2^>nul') do set "LINE=%%L"
+          echo printed: %LINE%
+          mkdir "%RUNNER_TEMP%\my robot cmd"
+          set "CLAUDE_CONFIG_DIR=%RUNNER_TEMP%\cfg-cmd-bare"
+          echo == bare
+          call %LINE%
+          echo add exit: %ERRORLEVEL%
+          pushd "%RUNNER_TEMP%\my robot cmd"
+          call claude mcp list
+          call claude mcp get spinecord
+          popd
+          set "CLAUDE_CONFIG_DIR=%RUNNER_TEMP%\cfg-cmd-quoted"
+          set LINEQ=%LINE: -- = "--" %
+          echo == quoted : %LINEQ%
+          call %LINEQ%
+          echo add exit: %ERRORLEVEL%
+          pushd "%RUNNER_TEMP%\my robot cmd"
+          call claude mcp list
+          call claude mcp get spinecord
+          popd
+          exit /b 0
