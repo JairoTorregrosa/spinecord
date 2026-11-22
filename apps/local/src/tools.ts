@@ -179,7 +179,11 @@ export function summarize(tool: string, e: Envelope<unknown>): string {
         .join("") +
       LISTS.filter((k) => Array.isArray(d[k]))
         .map((k) => ` ${k}=${(d[k] as unknown[]).length}`)
-        .join("");
+        .join("") +
+      // a note changes what the reason means (e.g. a target below the smallest move: completed, nothing moved)
+      (typeof d.note === "string"
+        ? ` note: ${d.note.length > MAX_MESSAGE ? `${d.note.slice(0, MAX_MESSAGE)}…` : d.note}`
+        : "");
   }
   return `${tool} ${e.ok ? "ok" : "error"}${what}${robot}${after}`.replace(/\s+/g, " ");
 }
