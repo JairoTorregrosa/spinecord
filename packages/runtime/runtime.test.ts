@@ -2035,8 +2035,11 @@ describe("what a call tells the process's log", () => {
     expect((await raw(s, "run_program", { body })).moved).toBe(true);
     const tone = { device: "horn", command: "tone", args: { frequency_hz: 440, duration_ms: 10 } };
     expect((await raw(s, "command_device", tone)).moved).toBeUndefined();
-    // refused before anything was sent
-    expect((await fails(raw(s, "turn", { angle_deg: 0.3 }), "invalid_argument")).moved).not.toBe(true);
+    // under the smallest move: done, with nothing sent
+    expect((await raw(s, "turn", { angle_deg: 0.3 })).moved).toBe(false);
+    // refused with nothing sent
+    const until = { device: "no.such", channel: "x", op: "eq", value: 1 };
+    expect((await fails(raw(s, "turn", { angle_deg: 20, until }), "unknown_device")).moved).not.toBe(true);
   });
   test("an unexpected failure is internal, with a trace id in its message, its cause, and whether it had moved", async () => {
     const s = setup();
