@@ -1,14 +1,14 @@
 // The per-robot state machine, in-process: a mock provider whose stop can be made to fail, and a twin whose
 // simulated brick is read directly.
 import { describe, expect, test } from "bun:test";
-import { ACTIVITY_TRANSITIONS, type RobotProfile } from "../../../packages/protocol/types";
-import { LOCAL_TOOLS } from "../../../packages/protocol/tools";
+import { ACTIVITY_TRANSITIONS, RuntimeError, type RobotProfile } from "../../../packages/protocol/types";
+import { TOOLS } from "../../../packages/protocol/tools";
 import { realClock } from "../../../packages/runtime/clock";
 import { MockProvider } from "../../../packages/runtime/mock";
 import { createRuntime } from "../../../packages/runtime/runtime";
 import { EXAMPLE, loadConfig } from "../src/config";
 import { LocalRobot } from "../src/robot";
-import { buildFleet } from "../src/sources";
+import { buildFleet, keepAttached } from "../src/sources";
 import { NEXT_ERR, NEXT_OK, callTool } from "../src/tools";
 import { until } from "./client";
 
@@ -336,9 +336,111 @@ describe("shutdown", () => {
 
 describe("next", () => {
   test("every suggested tool is a served tool, and every served tool has suggestions", () => {
-    const served = new Set(LOCAL_TOOLS.map((t) => t.name));
+    const served = new Set(TOOLS.map((t) => t.name));
     expect(Object.keys(NEXT_OK).sort()).toEqual([...served].sort());
     for (const names of [...Object.values(NEXT_OK), ...Object.values(NEXT_ERR)])
       for (const name of names) expect(served.has(name)).toBe(true);
+  });
+});
+
+describe("a link that can close", () => {
+  test("a link that closes during the handshake leaves the robot offline, and the next link brings it online", async () => {
+    const robot = new LocalRobot({ id: "m1", connect: "check the link" });
+    const events: string[] = [];
+    let opened = 0;
+    const link = keepAttached(
+      robot,
+      () => {
+        const first = ++opened === 1;
+        const mock = new MockProvider({ clock: realClock });
+        let gone: (reason: string) => void = () => {};
+        if (first)
+          // the link dies while the handshake's stop is on its way: nothing can be verified through it
+          mock.stop = async () => {
+            gone("the peer went away");
+            return { motors_stopped: false };
+          };
+        return {
+          runtime: createRuntime({ profile: PROFILE, providers: [mock], clock: realClock }),
+          onClose: (cb) => void (gone = cb),
+          close: async () => {},
+        };
+      },
+      { log: (ev) => void events.push(ev), reconnectMs: 10 },
+    );
+    try {
+      await expect(link.connect()).rejects.toThrow("closed during the handshake");
+      expect(robot.listing()).toMatchObject({ link: "offline", connect: "check the link" });
+      await link.connect();
+      expect(robot.listing()).toMatchObject({ link: "online", connect: null });
+      expect(opened).toBe(2);
+    } finally {
+      link.end();
+    }
+  });
+
+  test("a link that closes later puts the robot offline until a new one holds", async () => {
+    const robot = new LocalRobot({ id: "m1", connect: "check the link" });
+    const events: string[] = [];
+    const closers: ((reason: string) => void)[] = [];
+    const link = keepAttached(
+      robot,
+      () => ({
+        runtime: createRuntime({
+          profile: PROFILE,
+          providers: [new MockProvider({ clock: realClock })],
+          clock: realClock,
+        }),
+        onClose: (cb) => void closers.push(cb),
+        close: async () => {},
+      }),
+      { log: (ev) => void events.push(ev), reconnectMs: 10 },
+    );
+    try {
+      await link.connect();
+      closers[0]!("the peer went away");
+      expect(robot.listing()).toMatchObject({ link: "offline", connect: "check the link" });
+      await until("the robot is online again", () => robot.listing().link === "online");
+      expect(events).toEqual(["gone", "ready"]);
+    } finally {
+      link.end();
+    }
+  });
+
+  test("why an attempt failed shows in list_robots until an attempt succeeds", async () => {
+    const robot = new LocalRobot({ id: "m1", connect: "check the link" });
+    const closers: ((reason: string) => void)[] = [];
+    let refuse = false;
+    const link = keepAttached(
+      robot,
+      () => {
+        const mock = new MockProvider({ clock: realClock });
+        if (refuse)
+          mock.devices = async () => {
+            throw new RuntimeError("misconfigured", "the bridge is version 2, this driver expects 3; reinstall it");
+          };
+        return {
+          runtime: createRuntime({ profile: PROFILE, providers: [mock], clock: realClock }),
+          onClose: (cb) => void closers.push(cb),
+          close: async () => {},
+        };
+      },
+      { log: () => {}, reconnectMs: 10 },
+    );
+    try {
+      await link.connect();
+      refuse = true;
+      closers[0]!("the peer went away");
+      await until("a failed attempt", () => (robot.listing().connect ?? "").includes("last attempt failed"));
+      expect(robot.listing()).toMatchObject({
+        link: "offline",
+        connect: "check the link The last attempt failed: the bridge is version 2, this driver expects 3; reinstall it",
+      });
+      refuse = false;
+      await until("the robot is online again", () => robot.listing().link === "online");
+      expect(robot.listing().connect).toBeNull();
+    } finally {
+      link.end();
+    }
   });
 });

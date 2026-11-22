@@ -1,4 +1,0 @@
-{
-  "description": "A pointer, not a world: this deployment uses a world that ships with sim-world. `world` is a path relative to this file; give the file it names to the twin runner (--world).",
-  "world": "../../packages/sim-world/examples/line-oval.json"
-}

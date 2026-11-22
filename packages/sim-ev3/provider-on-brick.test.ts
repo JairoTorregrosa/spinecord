@@ -284,7 +284,7 @@ describe("Ev3Provider on SimBrick", () => {
     const odo = (await sim.read("sim.world", ["odometer_cm"]))[0]!.value as number;
     expect(odo).toBeGreaterThanOrEqual(travelled - 0.1);
     expect(odo).toBeLessThan(travelled + 4);
-    // The twin runner's job, done by hand here: on sim's onDevicesChanged, re-read devices() of every provider.
+    // The runtime's job, done by hand here: on sim's onDevicesChanged, re-read devices() of every provider.
     // Ev3Provider.devices() re-detects the ports (99 05), so the new port map shows up with no special case.
     let kinds: Record<string, string> = {};
     const refreshed: Promise<void>[] = [];

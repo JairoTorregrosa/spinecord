@@ -1,8 +1,9 @@
-7a5f8264227765f72696cdeed0708581e74d1ab3:packages/relay/.dev.vars.example:generic-api-key:4
-7a5f8264227765f72696cdeed0708581e74d1ab3:packages/relay/.dev.vars.example:generic-api-key:4
-7a5f8264227765f72696cdeed0708581e74d1ab3:packages/relay/scripts/dev.md:curl-auth-header:52
-7a5f8264227765f72696cdeed0708581e74d1ab3:packages/relay/scripts/dev.md:curl-auth-header:67
-# hashes of the documented local example tokens (runtime, organ) in .dev.vars.example
-packages/server/.dev.vars.example:generic-api-key:6
-deployments/example/principals.json:generic-api-key:17
-deployments/example/principals.json:generic-api-key:23
+# Findings in the repository's git history: documented example values, public by design.
+# A scan of every commit reachable from a branch or a pull request head (`gitleaks git --log-opts=--all`)
+# reports nothing else.
+335ea3c055fcff989a618bae732308c95e1861cd:packages/server/scripts/dev.md:curl-auth-header:52
+335ea3c055fcff989a618bae732308c95e1861cd:packages/server/scripts/dev.md:curl-auth-header:68
+a22b472cd486796eed829e8fb08dd1a94321e3e6:deployments/example/principals.json:generic-api-key:17
+a22b472cd486796eed829e8fb08dd1a94321e3e6:deployments/example/principals.json:generic-api-key:23
+6278385e7a6a9d6e9b7bf5c857ff11f9c6343562:deployments/example/principals.json:generic-api-key:17
+6278385e7a6a9d6e9b7bf5c857ff11f9c6343562:deployments/example/principals.json:generic-api-key:23

@@ -6,8 +6,7 @@
 //   bun scripts/test-shards.ts --list           print the plan as JSON and run nothing
 // Shards balance recorded time, not file count: files are sorted longest first and each goes to the shard with
 // the least time so far. A file without a recorded time weighs the median of the recorded ones.
-// Each package's files run in one `bun test` process with the package as cwd, so its bunfig.toml applies
-// (the relay preloads one Worker + Miniflare for the whole process).
+// Each package's files run in one `bun test` process with the package as cwd, so its bunfig.toml applies.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,7 +40,7 @@ export function parseShard(spec: string): { index: number; total: number } {
   return { index, total };
 }
 
-/** Test files as posix paths relative to the repo root, e.g. packages/server/test/fsm.test.ts */
+/** Test files as posix paths relative to the repo root, e.g. packages/runtime/runtime.test.ts */
 function testFiles(packages: string[]): string[] {
   const out: string[] = [];
   for (const pkg of packages) {

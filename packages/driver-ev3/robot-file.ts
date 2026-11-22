@@ -1,6 +1,6 @@
 // The robot file of a deployment (deployments/<name>/robots/<robot>.json): what an EV3 provider needs beyond
 // the contract's profile. One shape and one validator for everything that builds an Ev3Provider from data
-// (the robot page, the twin runner). Pure: no I/O.
+// (a twin, a stock EV3 behind the bridge page). Pure: no I/O.
 import type { Limits, RobotProfile } from "../protocol/types";
 import type { OutputPort } from "./encode";
 import type { Ev3Hardware } from "./provider";

@@ -1,21 +1,22 @@
-// Latency benchmark of the whole physical-AI path: `bun run bench`.
+// Latency benchmark of the path from a tool call to the robot: `bun run bench`.
 //   bun run bench                          run everything (under 3 min), write bench/results/<git-sha>.json, print a table
 //   bun run bench --quick                  fewer samples, no result file (to try a change)
 //   bun run bench --out <file.json>        write the result somewhere else
 //   bun run bench --compare <a.json> <b.json>   before/after table with a speedup column (before / after)
 // What is real: Ev3Provider and Ev3Link on a SimBrick (byte-level EV3 on 2D physics, real clock at 1x), the runtime,
-// createRuntimeClient over a real WebSocket, the Worker in Miniflare with wrangler.jsonc's own timings, and an MCP
-// client over Streamable HTTP. Everything is on loopback on one machine: numbers are the software's own latency,
-// with link latency added only where a metric says so (see rig.ts, TapProvider).
+// and apps/local's robot state and tool dispatch around it, all in this process, where the bench can tap every
+// packet and read the world's ground truth. The stdio metrics start `bun apps/local/main.ts` as an MCP client does
+// and speak JSON-RPC over its pipes. Everything is on one machine: numbers are the software's own latency, with
+// link latency added only where a metric says so (see rig.ts, TapProvider).
 // Every sample asserts ok:true and the expected reason, so an error path is never timed by accident.
 // Not part of CI: wall-clock numbers on shared runners are noise. Compare runs taken on the same machine.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, platform, arch, release, totalmem } from "node:os";
 import { join } from "node:path";
 import { benchEv3dev } from "./ev3dev";
-import { ADMIN_TOKEN, ROOT, SERVER, startRelay, TOKEN, type Relay } from "./relay";
-import { buildTwin, connect, crossing, halted, isBrake, isMotion, mcpClient, now, place, sleep, watch } from "./rig";
-import type { Mcp, Twin } from "./rig";
+import { startServer } from "../apps/local/test/client";
+import { buildTwin, crossing, halted, isBrake, isMotion, localTools, now, place, ROOT, sleep, watch } from "./rig";
+import type { Tools, Twin } from "./rig";
 import {
   compareTable,
   derived,
@@ -64,109 +65,102 @@ const USB_PACKET_MS = 2;
 const THRESHOLD_CM = 30;
 const LINKS = [0, 30, 600] as const;
 const ROBOT = "bench";
-const COLD_ROBOTS = Array.from({ length: N.cold }, (_, i) => `bench-cold-${i + 1}`);
 
 const git = (...args: string[]) => {
   const r = Bun.spawnSync(["git", ...args], { cwd: ROOT });
   if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr.toString()}`);
   return r.stdout.toString().trim();
 };
-const rid = () => crypto.randomUUID();
 const started = now();
 const stage = (name: string) => console.error(`[${((now() - started) / 1000).toFixed(1).padStart(5)} s] ${name}`);
 const metrics: Record<string, Metric> = {};
 const breakdown: Record<string, unknown> = {};
 const p50 = (xs: number[]) => (xs.length ? round(percentile(xs, 50)) : null);
 
-/** A mutating call as a model would make it: a rate_limited or busy answer is waited out and retried, and counted. */
-async function act(mcp: Mcp, name: string, args: Record<string, unknown>) {
-  const attempts: { bytes: number; ms: number; code?: string }[] = [];
-  for (;;) {
-    const out = await mcp.call(name, { ...args, request_id: rid() }, true);
-    if (out.envelope.ok) {
-      attempts.push({ bytes: out.bytes, ms: out.ms });
-      return { out, attempts };
-    }
-    const e = out.envelope.error;
-    attempts.push({ bytes: out.bytes, ms: out.ms, code: e.code });
-    if ((e.code !== "rate_limited" && e.code !== "busy") || attempts.length > 20)
-      throw new Error(`${name} ${JSON.stringify(args)} failed: ${JSON.stringify(e)}`);
-    await sleep(e.retry_after_ms ?? 50);
-  }
-}
-
 // ------------------------------------------------------------------ scenarios
 
-async function coldStart(relay: Relay): Promise<Mcp> {
-  metrics.cold_server_start = metric("cold: Miniflare (workerd) start until the Worker accepts requests", [
-    relay.cold.start_ms,
-  ]);
-  metrics.cold_server_first_request = metric("cold: first request the Worker serves (GET /health)", [
-    relay.cold.first_request_ms,
-  ]);
-  breakdown.cold_worker_bundle_ms = round(relay.cold.bundle_ms);
-  const t0 = now();
-  const mcp = await mcpClient(relay.url);
-  await mcp.call("list_robots", {});
-  metrics.cold_server_first_mcp = metric("cold: MCP initialize + first tools/call (list_robots) on a new Worker", [
-    now() - t0,
-  ]);
-
+async function coldStart(): Promise<void> {
   const ready: number[] = [],
     online: number[] = [],
     first: number[] = [];
-  for (const id of COLD_ROBOTS) {
-    const twin = await buildTwin(id, SEED);
+  for (let i = 0; i < N.cold; i++) {
+    const twin = await buildTwin(`bench-cold-${i + 1}`, SEED);
     ready.push(twin.ready_ms);
-    const { client, online_ms } = await connect(twin, relay.url);
-    online.push(online_ms);
+    const tools = await localTools(twin);
+    online.push(tools.online_ms);
     const us = twin.runtime.devices().find((d) => d.kind === "ultrasonic")!.id;
-    first.push((await mcp.call("read_device", { robot_id: id, device: us })).ms);
-    client.close();
+    first.push((await tools.call("read_device", { robot_id: twin.id, device: us })).ms);
     twin.runtime.dispose();
   }
   metrics.cold_runtime_ready = metric("cold: createRuntime() until ready() (device scan over the brick)", ready);
-  metrics.cold_runtime_online = metric(
-    "cold: runtime client connect() until online (WebSocket + hello + welcome)",
-    online,
-  );
-  metrics.cold_first_read = metric("cold: first MCP read_device on a robot that just came online", first);
-  return mcp;
+  metrics.cold_robot_online = metric("cold: LocalRobot.attach() until online (device scan + verified stop)", online);
+  metrics.cold_first_read = metric("cold: first read_device on a robot that just came online", first);
 }
 
-async function reads(relay: Relay, mcp: Mcp, twin: Twin, us: string): Promise<void> {
+/** The server as an MCP client starts it: `bun apps/local/main.ts` with its default twin, JSON-RPC over stdio. */
+async function stdio(): Promise<void> {
+  const cold: number[] = [];
+  for (let i = 0; i < N.cold; i++) {
+    const t0 = now();
+    const s = await startServer();
+    await s.rpc("tools/call", { name: "list_robots", arguments: {} });
+    cold.push(now() - t0);
+    await s.closeStdin();
+  }
+  metrics.cold_stdio_first_call = metric(
+    "cold: process spawn until the first tools/call is answered (initialize, tools/list, list_robots)",
+    cold,
+  );
+  const s = await startServer();
+  try {
+    const robots = (await s.tool("list_robots")).envelope as { data: { id: string }[] };
+    const robot_id = robots.data[0]!.id;
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const res = await s.rpc("tools/call", { name, arguments: args });
+      if (res.error || res.result.isError) throw new Error(`stdio ${name} failed: ${JSON.stringify(res)}`);
+    };
+    const fns = [
+      () => call("read_device", { robot_id, device: "distance" }),
+      () => call("read_all", { robot_id }),
+      () => call("list_robots", {}),
+      () => s.rpc("tools/list"),
+    ];
+    const out: number[][] = fns.map(() => []);
+    for (let i = 0; i < N.warm + N.reads; i++)
+      for (const [k, fn] of fns.entries()) {
+        const t0 = now();
+        await fn();
+        if (i >= N.warm) out[k]!.push(now() - t0);
+      }
+    const [read, readAll, floor, list] = out as [number[], number[], number[], number[]];
+    metrics.stdio_read = metric(
+      "MCP over stdio, read_device(ultrasonic) end to end: client > pipe > apps/local > runtime > provider > brick > back",
+      read,
+    );
+    metrics.stdio_read_all = metric("MCP over stdio, read_all end to end", readAll);
+    metrics.stdio_floor = metric("MCP over stdio, list_robots: no runtime call (the pipe and JSON-RPC)", floor);
+    metrics.stdio_tools_list = metric("MCP over stdio, tools/list", list);
+    metrics.bytes_tools_list = metric(
+      "size of tools/list (the catalog every session loads)",
+      [Buffer.byteLength(JSON.stringify((await s.rpc("tools/list")).result), "utf8")],
+      "bytes",
+    );
+  } finally {
+    await s.closeStdin();
+  }
+}
+
+async function reads(tools: Tools, twin: Twin, us: string): Promise<void> {
   const idle = new AbortController().signal;
   const robot_id = twin.id;
   // one sample of each per round, so warm-up and drift land on every metric alike
   const fns = [
-    () => mcp.call("read_device", { robot_id, device: us }),
-    () => mcp.call("read_all", { robot_id }),
+    () => tools.call("read_device", { robot_id, device: us }),
+    () => tools.call("read_all", { robot_id }),
     () => twin.runtime.call("read_device", { device: us }, idle),
     () => twin.runtime.call("read_all", {}, idle),
     () => twin.ev3.read(us),
-    () => mcp.call("list_robots", {}),
-    async () => (await fetch(`${relay.url}/health`)).text(),
-    () => mcp.listTools(),
-    async () => {
-      // the same read as one raw JSON-RPC POST: no MCP client library on this side
-      const res = await fetch(`${relay.url}/mcp`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${TOKEN}`,
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: { name: "read_device", arguments: { robot_id, device: us } },
-        }),
-      });
-      const text = await res.text();
-      if (res.status !== 200 || !text.includes('\\"ok\\":true'))
-        throw new Error(`raw read_device answered ${res.status}: ${text.slice(0, 300)}`);
-    },
+    () => tools.call("list_robots", {}),
   ];
   const out: number[][] = fns.map(() => []);
   const inside: number[] = [];
@@ -190,10 +184,7 @@ async function reads(relay: Relay, mcp: Mcp, twin: Twin, us: string): Promise<vo
       }
     }
   }
-  const [mcpRead, mcpReadAll, rtRead, rtReadAll, provRead, floor, health, toolsList, rawRead] = out as [
-    number[],
-    number[],
-    number[],
+  const [toolRead, toolReadAll, rtRead, rtReadAll, provRead, floor] = out as [
     number[],
     number[],
     number[],
@@ -202,68 +193,43 @@ async function reads(relay: Relay, mcp: Mcp, twin: Twin, us: string): Promise<vo
     number[],
   ];
 
-  metrics.mcp_read = metric(
-    "MCP read_device(ultrasonic) end to end: MCP > server > runtime client > runtime > provider > brick > back",
-    mcpRead,
+  metrics.tool_read = metric(
+    "tool call read_device(ultrasonic), in process: apps/local dispatch > robot state > runtime > provider > brick > back",
+    toolRead,
   );
-  metrics.mcp_read_all = metric("MCP read_all end to end", mcpReadAll);
-  metrics.runtime_read = metric("runtime.call read_device(ultrasonic), no server", rtRead);
-  metrics.runtime_read_all = metric("runtime.call read_all, no server", rtReadAll);
+  metrics.tool_read_all = metric("tool call read_all, in process", toolReadAll);
+  metrics.runtime_read = metric("runtime.call read_device(ultrasonic)", rtRead);
+  metrics.runtime_read_all = metric("runtime.call read_all", rtReadAll);
   const diff = (a: number[], b: number[], p: number) => percentile(a, p) - percentile(b, p);
-  metrics.server_overhead = derived(
-    "mcp_read - runtime_read: what MCP, the Worker, the Durable Object and the WebSocket add to one read",
-    diff(mcpRead, rtRead, 50),
-    diff(mcpRead, rtRead, 95),
+  metrics.dispatch_overhead = derived(
+    "tool_read - runtime_read: what apps/local's input validation, robot state and envelope add to one read",
+    diff(toolRead, rtRead, 50),
+    diff(toolRead, rtRead, 95),
     N.reads,
   );
-  metrics.server_overhead_read_all = derived(
-    "mcp_read_all - runtime_read_all",
-    diff(mcpReadAll, rtReadAll, 50),
-    diff(mcpReadAll, rtReadAll, 95),
+  metrics.dispatch_overhead_read_all = derived(
+    "tool_read_all - runtime_read_all",
+    diff(toolReadAll, rtReadAll, 50),
+    diff(toolReadAll, rtReadAll, 95),
     N.reads,
   );
   metrics.provider_read = metric("Ev3Provider.read(ultrasonic) on the brick, no runtime", provRead);
-  metrics.mcp_floor = metric(
-    `MCP list_robots: no runtime round trip (Worker + a status RPC to each of the ${1 + COLD_ROBOTS.length} robots' Durable Objects)`,
-    floor,
-  );
-  metrics.http_floor = metric("GET /health: one HTTP round trip to the Worker", health);
-  metrics.mcp_tools_list = metric("MCP tools/list: auth + MCP server in the Worker, no Durable Object", toolsList);
-  metrics.raw_jsonrpc_read = metric(
-    "read_device as one raw JSON-RPC POST to /mcp (no MCP client library on the caller's side)",
-    rawRead,
-  );
+  metrics.tool_floor = metric("tool call list_robots, in process: no runtime call", floor);
 
-  const describe = await mcp.call("describe_robot", { robot_id });
-  const all = await mcp.call("read_all", { robot_id });
-  const one = await mcp.call("read_device", { robot_id, device: us });
+  const describe = await tools.call("describe_robot", { robot_id });
+  const all = await tools.call("read_all", { robot_id });
+  const one = await tools.call("read_device", { robot_id, device: us });
   metrics.bytes_read_device = metric("response size of read_device(ultrasonic)", [one.bytes], "bytes");
   metrics.bytes_read_all = metric("response size of read_all", [all.bytes], "bytes");
   metrics.bytes_describe_robot = metric("response size of describe_robot", [describe.bytes], "bytes");
-  metrics.bytes_tools_list = metric(
-    "size of tools/list (the catalog every session loads)",
-    [await mcp.toolsListBytes()],
-    "bytes",
-  );
 
-  // the relay's own clock for the same calls (calls.ms in D1): time inside the Durable Object, WebSocket trip included
-  const res = await fetch(`${relay.url}/api/calls?robot_id=${robot_id}&limit=1000`, {
-    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
-  });
-  if (!res.ok) throw new Error(`/api/calls answered ${res.status}: ${await res.text()}`);
-  const list = ((await res.json()) as { data: { tool: string; ms: number }[] }).data;
   breakdown.read_layers_p50_ms = {
     brick_packet: p50(twin.packets.map((p) => p.ms)),
     provider_read: metrics.provider_read.p50,
     runtime_read: metrics.runtime_read.p50,
-    runtime_inside_mcp_read: p50(inside),
-    relay_calls_ms_read_device: p50(list.filter((r) => r.tool === "read_device").map((r) => r.ms)),
-    relay_calls_ms_read_all: p50(list.filter((r) => r.tool === "read_all").map((r) => r.ms)),
-    http_floor: metrics.http_floor.p50,
-    mcp_floor: metrics.mcp_floor.p50,
-    mcp_tools_list: metrics.mcp_tools_list.p50,
-    raw_jsonrpc_read: metrics.raw_jsonrpc_read.p50,
-    mcp_read: metrics.mcp_read.p50,
+    runtime_inside_tool_read: p50(inside),
+    tool_floor: metrics.tool_floor.p50,
+    tool_read: metrics.tool_read.p50,
   };
   breakdown.read_all_per_call = perReadAll;
   metrics.packets_read_all = metric("packets one read_all sends to the stock EV3 brick", readAllPackets, "packets");
@@ -281,13 +247,13 @@ async function reads(relay: Relay, mcp: Mcp, twin: Twin, us: string): Promise<vo
     twin.usb.packet_ms = 0;
   }
   metrics.ev3_read_all_usb = metric(
-    `runtime read_all on the stock EV3 with ${USB_PACKET_MS} ms added to every packet (USB HID), no server`,
+    `runtime read_all on the stock EV3 with ${USB_PACKET_MS} ms added to every packet (USB HID)`,
     usb,
   );
 }
 
-/** first_motion and stop_latency share a run: drive, wait for motion, stop through MCP. */
-async function motionAndStop(mcp: Mcp, twin: Twin, rnd: () => number): Promise<void> {
+/** first_motion and stop_latency share a run: drive, wait for motion, stop. */
+async function motionAndStop(tools: Tools, twin: Twin, rnd: () => number): Promise<void> {
   const robot_id = twin.id;
   const first: number[] = [],
     firstRuntime: number[] = [],
@@ -302,7 +268,7 @@ async function motionAndStop(mcp: Mcp, twin: Twin, rnd: () => number): Promise<v
       c0 = twin.calls.length,
       o0 = twin.ops.length;
     const t0 = now();
-    const drive = mcp.call("drive", { robot_id, distance_cm: 80, speed_pct: SPEED_PCT, request_id: rid() }, true);
+    const drive = tools.call("drive", { robot_id, distance_cm: 80, speed_pct: SPEED_PCT }, true);
     let motion;
     while (!(motion = twin.packets.slice(k0).find(isMotion))) {
       if (now() - t0 > 5000) throw new Error("drive: no motion packet reached the brick within 5 s");
@@ -310,7 +276,7 @@ async function motionAndStop(mcp: Mcp, twin: Twin, rnd: () => number): Promise<v
     }
     await sleep(300 + rnd() * 200); // the stop lands at a different phase of the 200 ms chunks on every run
     const tStop = now();
-    const stop = await mcp.call("stop", { robot_id });
+    const stop = await tools.call("stop", { robot_id });
     if (stop.envelope.ok && stop.envelope.data.motors_stopped !== true)
       throw new Error(`stop was not verified: ${JSON.stringify(stop.envelope)}`);
     const driven = await drive;
@@ -330,14 +296,13 @@ async function motionAndStop(mcp: Mcp, twin: Twin, rnd: () => number): Promise<v
       stopBrake.push(brake.at - tStop);
       stopRuntime.push(stopOp.at - tStop);
     }
-    await sleep(220); // stay under the relay's 5 mutating calls per second
   }
-  metrics.first_motion = metric("MCP drive call sent until the first motor operation reaches the brick", first);
+  metrics.first_motion = metric("drive call sent until the first motor operation reaches the brick", first);
   metrics.stop_latency = metric(
-    "MCP stop call sent until it returns motors_stopped:true (verified), robot driving",
+    "stop call sent until it returns motors_stopped:true (verified), robot driving",
     stopCall,
   );
-  metrics.stop_to_halt = metric("MCP stop call sent until the robot stands still (world ground truth)", stopHalt);
+  metrics.stop_to_halt = metric("stop call sent until the robot stands still (world ground truth)", stopHalt);
   breakdown.first_motion_p50_ms = {
     call_reaches_runtime: p50(firstRuntime),
     first_motor_packet: p50(first),
@@ -346,12 +311,12 @@ async function motionAndStop(mcp: Mcp, twin: Twin, rnd: () => number): Promise<v
     stop_reaches_provider: p50(stopRuntime),
     brake_packet_at_brick: p50(stopBrake),
     robot_halted: p50(stopHalt),
-    mcp_stop_returns: p50(stopCall),
+    stop_returns: p50(stopCall),
   };
 }
 
 /** The safety metric: drive `until distance_cm < X`; from the true distance crossing X until the robot stands still. */
-async function reaction(mcp: Mcp, twin: Twin, us: string, rnd: () => number): Promise<void> {
+async function reaction(tools: Tools, twin: Twin, us: string, rnd: () => number): Promise<void> {
   const robot_id = twin.id;
   place(twin, 43, 25, 0);
   const x0 = 43,
@@ -368,12 +333,11 @@ async function reaction(mcp: Mcp, twin: Twin, us: string, rnd: () => number): Pr
     place(twin, x0 + d0 - (THRESHOLD_CM + lead), 25, 0);
     const k0 = twin.packets.length;
     const w = watch(twin);
-    const res = await mcp.call("drive", {
+    const res = await tools.call("drive", {
       robot_id,
       distance_cm: 60,
       speed_pct: SPEED_PCT,
       until: { device: us, channel: "distance_cm", op: "lt", value: THRESHOLD_CM },
-      request_id: rid(),
     });
     const returned = now();
     if (res.envelope.ok && res.envelope.data.reason !== "condition_met")
@@ -394,7 +358,6 @@ async function reaction(mcp: Mcp, twin: Twin, us: string, rnd: () => number): Pr
       const gaps = samples.slice(1).map((s, j) => s.t - samples[j]!.t);
       period.push(percentile(gaps, 50));
     }
-    await sleep(220);
   }
   metrics.reaction = metric(
     `drive until distance_cm < ${THRESHOLD_CM}: true distance crosses the threshold until the robot stands still (wall time)`,
@@ -406,21 +369,20 @@ async function reaction(mcp: Mcp, twin: Twin, us: string, rnd: () => number): Pr
     overshoot,
     "cm",
   );
-  metrics.reaction_reported = metric("threshold crossed until the MCP drive call returns condition_met", reported);
+  metrics.reaction_reported = metric("threshold crossed until the drive call returns condition_met", reported);
   breakdown.reaction_p50_ms = {
     brake_packet_at_brick: p50(brakeSent),
     robot_halted: p50(wall),
-    mcp_returns: p50(reported),
+    drive_returns: p50(reported),
     ground_truth_sampling_period: p50(period),
   };
 }
 
-/** 4 x (drive 15 cm + turn 90) through MCP, one call per move, with a link round trip added to every provider call. */
-async function square(mcp: Mcp, twin: Twin, link_ms: number, runs: number): Promise<void> {
+/** 4 x (drive 15 cm + turn 90), one tool call per move, with a link round trip added to every provider call. */
+async function square(tools: Tools, twin: Twin, link_ms: number, runs: number): Promise<void> {
   const robot_id = twin.id;
   const totals: number[] = [],
     packets: number[] = [],
-    counts: number[] = [],
     bytes: number[] = [],
     closure: number[] = [];
   const detail: unknown[] = [];
@@ -432,18 +394,16 @@ async function square(mcp: Mcp, twin: Twin, link_ms: number, runs: number): Prom
       const o0 = twin.ops.length,
         k0 = twin.packets.length;
       const moves: { tool: string; ms: number; chunks: number; inside_runtime_ms: number }[] = [];
-      let calls = 0;
       const t0 = now();
       for (let side = 0; side < 4; side++) {
         for (const [tool, args] of [
           ["drive", { distance_cm: 15 }],
           ["turn", { angle_deg: 90 }],
         ] as const) {
-          const { out, attempts } = await act(mcp, tool, { robot_id, speed_pct: SPEED_PCT, ...args });
+          const out = await tools.call(tool, { robot_id, speed_pct: SPEED_PCT, ...args });
           if (out.envelope.ok && out.envelope.data.reason !== "completed")
             throw new Error(`square (link ${link_ms} ms): ${tool} ended with ${JSON.stringify(out.envelope.data)}`);
-          calls += attempts.length;
-          for (const a of attempts) bytes.push(a.bytes);
+          bytes.push(out.bytes);
           const data = (out.envelope as { data: { chunks: number; ms: number } }).data;
           moves.push({ tool, ms: round(out.ms), chunks: data.chunks, inside_runtime_ms: data.ms });
         }
@@ -453,14 +413,13 @@ async function square(mcp: Mcp, twin: Twin, link_ms: number, runs: number): Prom
       twin.brick.tick();
       const end = twin.brick.world.pose;
       totals.push(total);
-      counts.push(calls);
       packets.push(twin.packets.length - k0);
       closure.push(Math.hypot(end.x - start.x, end.y - start.y));
       const ops = twin.ops.slice(o0);
       const sum = (xs: number[]) => round(xs.reduce((a, b) => a + b, 0));
       detail.push({
         total_ms: round(total),
-        mcp_calls: calls,
+        tool_calls: moves.length,
         provider_calls: ops.length,
         provider_commands: ops.filter((o) => o.op === "command").length,
         provider_reads: ops.filter((o) => o.op === "read").length,
@@ -471,22 +430,16 @@ async function square(mcp: Mcp, twin: Twin, link_ms: number, runs: number): Prom
         outside_runtime_ms: sum(moves.map((m) => m.ms - m.inside_runtime_ms)),
         moves,
       });
-      await sleep(220);
     }
   } finally {
     twin.link.round_trip_ms = 0;
   }
   const tag = `square_twin_${link_ms}ms`;
   metrics[tag] = metric(
-    `4 x (drive 15 cm + turn 90) on the twin through MCP, total wall time, ${link_ms} ms link round trip per provider call`,
+    `4 x (drive 15 cm + turn 90) on the twin, one tool call per move, total wall time, ${link_ms} ms link round trip per provider call`,
     totals,
   );
   if (link_ms === 0) {
-    metrics.calls_square = metric(
-      "MCP calls the square takes (retries after rate_limited or busy count)",
-      counts,
-      "calls",
-    );
     metrics.bytes_square_response = metric("response size of one drive or turn in the square", bytes, "bytes");
     metrics.bytes_square_total = metric(
       "response bytes of the whole square",
@@ -522,7 +475,6 @@ const results: Results = {
     // 1-minute load average when the run started: a busy machine shows here (always 0 on Windows)
     load_1m_start: Math.round(loadavg()[0]! * 100) / 100,
     bun: Bun.version,
-    miniflare: (JSON.parse(readFileSync(join(SERVER, "package.json"), "utf8")) as any).devDependencies.miniflare,
   },
   params: {
     quick: QUICK,
@@ -534,7 +486,7 @@ const results: Results = {
     world: "packages/sim-world/examples/line-oval.json, noise off",
     profile: "packages/sim-ev3/examples/twin.example.json (max_command_ms 60000)",
     sim_clock: "real time, 1x",
-    relay_timings: "packages/server/wrangler.jsonc vars, unchanged",
+    stdio_robot: "apps/local's default twin (deployments/example/robots/r1.json in apps/local/examples/room.json)",
     // the ideal: only the motion itself at the commanded speed on the simulated motor (1020 deg/s at 100 %)
     square_motion_only_ms: Math.round(
       (4 * ((15 * 360) / (Math.PI * 5.6) + (90 * 12) / 5.6) * 1000) / ((SPEED_PCT / 100) * 1020),
@@ -545,60 +497,58 @@ const results: Results = {
 };
 breakdown.square = {};
 
-stage("relay: bundling the Worker and starting Miniflare");
-const relay = await startRelay([ROBOT, ...COLD_ROBOTS]);
 let exit = 0;
 try {
   stage("cold start");
-  const mcp = await coldStart(relay);
+  await coldStart();
+  stage("MCP over stdio");
+  await stdio();
   const twin = await buildTwin(ROBOT, SEED);
-  const { client } = await connect(twin, relay.url);
+  const tools = await localTools(twin);
   const us = twin.runtime.devices().find((d) => d.kind === "ultrasonic")!.id;
   const rnd = prng(SEED);
 
   stage("reads");
-  await reads(relay, mcp, twin, us);
+  await reads(tools, twin, us);
   stage("first motion and stop");
-  await motionAndStop(mcp, twin, rnd);
+  await motionAndStop(tools, twin, rnd);
   stage("reaction (drive until)");
-  await reaction(mcp, twin, us, rnd);
+  await reaction(tools, twin, us, rnd);
   for (const link of [LINKS[0], LINKS[1]]) {
     stage(`square, link ${link} ms`);
-    await square(mcp, twin, link, link === 0 ? N.square : Math.min(2, N.square));
+    await square(tools, twin, link, link === 0 ? N.square : Math.min(2, N.square));
   }
   // the tunnel profile waits on injected sleeps, so the ev3dev part (another process, timed in Python) runs beside it
   stage(`square, link ${LINKS[2]} ms (one run) + ev3dev bridge`);
-  const [, ev3dev] = await Promise.all([square(mcp, twin, LINKS[2], 1), benchEv3dev(N.bridge, N.bridgeCold)]);
+  const [, ev3dev] = await Promise.all([square(tools, twin, LINKS[2], 1), benchEv3dev(N.bridge, N.bridgeCold)]);
   Object.assign(metrics, ev3dev);
 
   if (twin.brick.errors.length || twin.brick.overlaps || twin.brick.unboundedMoves)
     throw new Error(
       `the brick saw protocol problems: ${JSON.stringify({ errors: twin.brick.errors, overlaps: twin.brick.overlaps, unbounded: twin.brick.unboundedMoves })}`,
     );
-  client.close();
-  await mcp.close();
+  twin.runtime.dispose();
 } catch (e) {
   console.error(e);
   exit = 1;
-} finally {
-  await relay.dispose();
 }
 if (exit) process.exit(exit);
 
 results.wall_s = Math.round((now() - started) / 100) / 10;
-// the order of the brief: reads, split, reaction, stop, first motion, square, calls and bytes, bridge, cold start
+// reads, split, reaction, stop, first motion, square, packets and bytes, ev3dev bridge, cold start
 const ORDER = [
-  "mcp_read",
-  "mcp_read_all",
+  "stdio_read",
+  "stdio_read_all",
+  "stdio_floor",
+  "stdio_tools_list",
+  "tool_read",
+  "tool_read_all",
   "runtime_read",
   "runtime_read_all",
-  "server_overhead",
-  "server_overhead_read_all",
+  "dispatch_overhead",
+  "dispatch_overhead_read_all",
   "provider_read",
-  "mcp_floor",
-  "http_floor",
-  "mcp_tools_list",
-  "raw_jsonrpc_read",
+  "tool_floor",
   "reaction",
   "reaction_sim",
   "reaction_overshoot",
@@ -613,7 +563,6 @@ const ORDER = [
   "packets_square",
   "packets_read_all",
   "ev3_read_all_usb",
-  "calls_square",
   "bytes_square_response",
   "bytes_square_total",
   "bytes_read_device",

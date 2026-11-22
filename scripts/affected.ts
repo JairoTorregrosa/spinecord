@@ -12,7 +12,7 @@ export const root = join(import.meta.dir, "..");
 const UNIT_ROOTS = ["packages", "apps"] as const;
 const UNIT_PATH = /^(?:packages|apps)\/([^/]+)\//;
 const CODE = /\.(ts|tsx|js|mjs|cjs)$/;
-/** Root paths that no test can reach (deployments/ is not one: the robot page's build test reads it). Everything else at the root (config, scripts, lockfile, CI) reaches all. */
+/** Root paths that no test can reach (deployments/ is not one: the local server's tests read its robot file). Everything else at the root (config, scripts, lockfile, CI) reaches all. */
 const DOCS = [/^[^/]+\.md$/, /^docs\//, /^LICENSE$/, /^\.gitleaksignore$/, /^\.gitattributes$/, /^\.gitignore$/];
 
 export type Affected = { all: boolean; packages: string[]; reason: string; changed: string[] };
@@ -39,7 +39,7 @@ export const listPackages = (): string[] => Object.keys(unitDirs()).sort();
 
 function* walk(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name === ".wrangler" || name === "dist") continue;
+    if (name === "node_modules" || name === "dist") continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* walk(p);
     else if (CODE.test(name)) yield p;
@@ -91,7 +91,7 @@ export function affectedBy(changed: string[], graph: Record<string, string[]>): 
   for (const path of changed) {
     const m = path.match(UNIT_PATH);
     if (m) {
-      // a package that no longer exists (deleted or renamed): its dependents are unknown, so run all
+      // a path in a package the tree does not have (deleted or renamed): its dependents are unknown, so run all
       if (!packages.includes(m[1]!)) return everything(`${path} is in a package that is not in the tree`);
       direct.add(m[1]!);
     } else if (!DOCS.some((re) => re.test(path))) return everything(`${path} is root configuration`);

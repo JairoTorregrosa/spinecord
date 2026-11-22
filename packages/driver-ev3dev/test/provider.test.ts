@@ -577,6 +577,15 @@ describe("fake brick", () => {
     expect(await code(provider.stop())).toBe("robot_offline");
   });
 
+  brickTest("a closed provider opens no link again: every call answers robot_offline", async () => {
+    const { provider } = setup();
+    await provider.devices();
+    await provider.close();
+    expect(await code(provider.command("ev3.pair", "brake", {}, new AbortController().signal))).toBe("robot_offline");
+    expect(await code(provider.read("ev3.S4"))).toBe("robot_offline");
+    await expect(provider.devices()).rejects.toThrow("this link to the brick was closed");
+  });
+
   brickTest("a read-only transport refuses every command and stop before it is sent", async () => {
     const brick = new FakeBrick({
       motors: [{ port: "B" }],

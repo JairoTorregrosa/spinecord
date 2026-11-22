@@ -1,12 +1,11 @@
-# Default rules plus one exception: the SHA-256 hashes of the two documented local-development tokens
-# (packages/server/scripts/dev.md). They are public by design and only appear in example config
-# (packages/server/.dev.vars.example, deployments/example/principals.json). Nothing else is allowed.
+# Default rules plus one exception: two SHA-256 hashes of documented example values that the repository's git
+# history contains. They are public by design. Nothing else is allowed.
 [extend]
 useDefault = true
 
 # the single [allowlist] table: CI pins a gitleaks that predates [[allowlists]]
 [allowlist]
-description = "hashes of the documented local-only example tokens"
+description = "hashes of documented example values in the git history"
 regexTarget = "line"
 regexes = [
   '''cb8d4803297270b4a06fe132db781a0b67bef574b4daefeb93e58033ea097eaf''',

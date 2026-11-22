@@ -9,8 +9,7 @@ import { Ev3devProvider, EXAMPLE_EV3DEV_HARDWARE } from "../packages/driver-ev3d
 import { BRIDGE_FILE, installBridge, SshLineTransport } from "../packages/driver-ev3dev/src/ssh";
 import { FakeBrick, findPython } from "../packages/driver-ev3dev/test/fake-brick";
 import { createRuntime } from "../packages/runtime/runtime";
-import { ROOT } from "./relay";
-import { now, profileFor } from "./rig";
+import { now, profileFor, ROOT } from "./rig";
 import { metric, skipped, type Metric } from "./stats";
 
 const fakeBrick = () =>
@@ -91,11 +90,11 @@ export async function benchEv3dev(n: number, cold: number): Promise<Record<strin
         return samples;
       };
       out.ev3dev_runtime_read = metric(
-        "runtime read_device(ultrasonic) through Ev3devProvider and the local bridge (no server)",
+        "runtime read_device(ultrasonic) through Ev3devProvider and the local bridge",
         await time("read_device", { device: us }),
       );
       out.ev3dev_runtime_read_all = metric(
-        "runtime read_all through Ev3devProvider and the local bridge (no server)",
+        "runtime read_all through Ev3devProvider and the local bridge",
         await time("read_all", {}),
       );
       runtime.dispose();

@@ -1,6 +1,6 @@
-// The runtime executes every robot-local tool next to the hardware (CONTRACT.md §4). It knows devices only
+// The runtime executes every tool that addresses one robot, next to the hardware (CONTRACT.md §4). It knows devices only
 // through their manifests and the Provider interface; the only kinds it names are motor_pair (drivetrain)
-// and gyro (heading source). Limits come from the profile. The relay owns auth, FSMs and idempotency.
+// and gyro (heading source). Limits come from the profile. The process around it (apps/local) owns the link and activity state.
 import { RuntimeError } from "../protocol/types";
 import type {
   BackendKind,
@@ -38,14 +38,7 @@ export const UNTIL_POLL_MS = 10;
 // How old a timed round trip may be and still let the first chunk of a move coast: about what a move itself
 // relies on between two of its chunks. Older than this, the link is timed again before anything moves.
 export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
-const RETRYABLE: readonly ErrorCode[] = [
-  "robot_offline",
-  "busy",
-  "timeout",
-  "provider_stale",
-  "stale_image",
-  "rate_limited",
-];
+const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image"];
 const ROBOT_TOOLS: readonly RobotTool[] = [
   "describe_robot",
   "describe_device",
@@ -77,11 +70,6 @@ export interface LocalRuntime extends Runtime {
   readonly stop_worst_ms: number; // upper bound for stop(): slowest provider + runtime overhead
   ready(): Promise<void>; // first device scan done (throws if it failed)
   refresh(): Promise<void>; // re-scan every provider's devices
-  setRemoteProviders(providers: Provider[]): Promise<void>; // replace the set of organ providers
-  localDevices(): DeviceSpec[]; // devices of the local providers only
-  // Called after a local provider reported a device change (Provider.onDevicesChanged) and the registry was
-  // re-read. Returns the unsubscribe function.
-  onLocalDevicesChanged(cb: () => void): () => void;
   dispose(): void; // unsubscribe from every provider
 }
 export interface ProgramStep {
@@ -107,7 +95,6 @@ const moving = (run: Run): Run => Object.assign(run, { moves: true });
 interface Entry {
   spec: DeviceSpec;
   provider: Provider;
-  remote: boolean;
 }
 // A condition being watched while operations run. `first` is the outcome of the poll made before anything
 // moves; `state()` is what the watch knows now; `fresh()` waits for a poll that starts after the call.
@@ -143,7 +130,6 @@ export function createRuntime(opts: RuntimeOptions): LocalRuntime {
 class RuntimeImpl implements LocalRuntime {
   private readonly prof: RobotProfile;
   private readonly local: Provider[];
-  private remote: Provider[] = [];
   private readonly clock: Clock;
   private readonly chunkMs: number;
   private entries = new Map<string, Entry>();
@@ -180,31 +166,19 @@ class RuntimeImpl implements LocalRuntime {
     for (const p of built) {
       const off = p.onDevicesChanged?.(() => {
         // A failed re-read is not hidden: every call fails with it until a later scan succeeds.
-        void this.refresh().then(
-          () => {
-            for (const cb of [...this.listeners]) cb();
-          },
-          () => {},
-        );
+        void this.refresh().catch(() => {});
       });
       if (off) this.unsubscribe.push(off);
     }
   }
   get stop_worst_ms(): number {
-    return Math.max(...[...this.local, ...this.remote].map((p) => p.stop_worst_ms)) + STOP_OVERHEAD_MS;
+    return Math.max(...this.local.map((p) => p.stop_worst_ms)) + STOP_OVERHEAD_MS;
   }
   private acting = 0; // moving calls in flight; explicit mode-switching reads are refused meanwhile
-  private relayActivity: RobotActivity = "idle"; // activity of the call being planned, as the relay reported it
-  private providerErrors: { provider: string; error: string }[] = [];
-  private readonly listeners = new Set<() => void>();
+  private callerActivity: RobotActivity = "idle"; // activity of the call being planned, as its caller reported it
   private readonly unsubscribe: (() => void)[] = [];
-  onLocalDevicesChanged(cb: () => void): () => void {
-    this.listeners.add(cb);
-    return () => void this.listeners.delete(cb);
-  }
   dispose(): void {
     for (const off of this.unsubscribe.splice(0)) off();
-    this.listeners.clear();
   }
 
   // ---------- registry ----------
@@ -213,9 +187,6 @@ class RuntimeImpl implements LocalRuntime {
   }
   devices(): DeviceSpec[] {
     return [...this.entries.values()].map((e) => e.spec);
-  }
-  localDevices(): DeviceSpec[] {
-    return [...this.entries.values()].filter((e) => !e.remote).map((e) => e.spec);
   }
   ready(): Promise<void> {
     return this.scan;
@@ -226,60 +197,23 @@ class RuntimeImpl implements LocalRuntime {
     this.scan.catch(() => {});
     return this.scan;
   }
-  setRemoteProviders(providers: Provider[]): Promise<void> {
-    const localIds = new Set(this.local.map((p) => p.id));
-    const clash = providers.find((p) => localIds.has(p.id));
-    if (clash)
-      return Promise.reject(
-        rerr("invalid_argument", `remote provider id "${clash.id}" collides with a local provider`),
-      );
-    this.remote = providers;
-    // The registry keeps every organ that answered; one that could not list its devices is reported, not hidden.
-    return this.refresh().then(() => {
-      if (this.providerErrors.length)
-        throw rerr(
-          "provider_stale",
-          `Could not list the devices of: ${this.providerErrors.map((e) => `${e.provider} (${e.error})`).join("; ")}. Their devices are not available; the others are.`,
-        );
-    });
-  }
 
   private async rescan(): Promise<void> {
     const next = new Map<string, Entry>();
-    const errors: { provider: string; error: string }[] = [];
-    const add = async (p: Provider, remote: boolean) => {
+    for (const p of this.local)
       for (const d of await p.devices()) {
         // A pair that can coast between chunks must be brakeable on its own (never through provider.stop()).
-        if (d.kind === "motor_pair" && !d.commands.some((c) => c.name === "brake")) {
-          const why = `motor_pair ${d.id} has no brake{} command; the runtime needs it to end a move after coasting chunks`;
-          if (remote) {
-            errors.push({ provider: p.id, error: `${why}; this device was ignored` });
-            continue;
-          }
-          throw rerr("misconfigured", `${why} (provider ${p.id})`);
-        }
-        if (next.has(d.id)) {
-          if (remote) {
-            errors.push({ provider: p.id, error: `device id "${d.id}" is already taken; this device was ignored` });
-            continue;
-          }
-          throw rerr("misconfigured", `device id "${d.id}" is announced twice (provider ${p.id})`);
-        }
+        if (d.kind === "motor_pair" && !d.commands.some((c) => c.name === "brake"))
+          throw rerr(
+            "misconfigured",
+            `motor_pair ${d.id} has no brake{} command; the runtime needs it to end a move after coasting chunks (provider ${p.id})`,
+          );
+        if (next.has(d.id)) throw rerr("misconfigured", `device id "${d.id}" is announced twice (provider ${p.id})`);
         const roles = new Set(d.roles ?? []);
         for (const [role, id] of Object.entries(this.prof.roles)) if (id === d.id) roles.add(role);
-        next.set(d.id, { spec: { ...d, roles: [...roles] }, provider: p, remote });
+        next.set(d.id, { spec: { ...d, roles: [...roles] }, provider: p });
       }
-    };
-    for (const p of this.local) await add(p, false);
-    for (const p of this.remote) {
-      try {
-        await add(p, true);
-      } catch (err) {
-        errors.push({ provider: p.id, error: String((err as Error)?.message ?? err) });
-      }
-    }
     this.entries = next;
-    this.providerErrors = errors;
   }
 
   private roleMap(): Record<string, string> {
@@ -352,7 +286,7 @@ class RuntimeImpl implements LocalRuntime {
     // Only a channel named by the caller may switch a sensor mode, and only while nothing is moving.
     const switching =
       a.channels === undefined ? [] : names.filter((n) => e.spec.channels.find((c) => c.name === n)!.active === false);
-    const activity = this.relayActivity;
+    const activity = this.callerActivity;
     return async () => {
       if (switching.length && (this.acting > 0 || activity !== "idle"))
         throw rerr(
@@ -740,13 +674,9 @@ class RuntimeImpl implements LocalRuntime {
     const sliceMs = o.until ? Math.min(declaredMs ?? this.chunkMs, this.chunkMs) : (declaredMs ?? this.chunkMs);
     // Under `until` a degree target must not hide a long operation (a slow motor, a device with a long declared
     // bound): the runtime itself ends every operation at cutMs of motion by aborting it, which is a chunk end,
-    // not a preemption. Not armed when the device already cuts sooner, nor for ms targets (sliced above), nor
-    // for a remote organ: an abort does not reach it through the relay, so the next chunk would be sent on top
-    // of an operation still running. There the organ's own declared bound is the limit.
+    // not a preemption. Not armed when the device already cuts sooner, nor for ms targets (sliced above).
     const cutAt = Math.min(MAX_CHUNK_MS, 1.25 * sliceMs);
-    const abortable = entry.provider.backend !== "organ";
-    const cutMs =
-      o.until && !byTime && abortable && (declaredMs === undefined || declaredMs > cutAt) ? cutAt : undefined;
+    const cutMs = o.until && !byTime && (declaredMs === undefined || declaredMs > cutAt) ? cutAt : undefined;
     const aimMs = Math.min(
       declaredMs !== undefined && sliceMs === declaredMs ? 0.8 * declaredMs : sliceMs, // stay inside the device's own cut
       cutMs === undefined ? Infinity : 0.8 * cutMs, // and inside the runtime's
@@ -833,7 +763,7 @@ class RuntimeImpl implements LocalRuntime {
         }
       | undefined;
     // A reading that must be awaited before the first operation shares its wait with the condition's first poll.
-    let early = o.track && (!proven || !abortable) ? o.track.mark() : undefined;
+    let early = o.track && !proven ? o.track.mark() : undefined;
     early?.catch(() => {});
     try {
       if (mon && (await mon.first)) reason = "condition_met";
@@ -875,12 +805,11 @@ class RuntimeImpl implements LocalRuntime {
         }
         const size = () => Math.min(remaining, opCap, byTime ? sliceMs : sized() ? chunkLead : Infinity);
         // The reading this operation starts from travels with it. It is awaited first only when its answer is
-        // needed before sending: to prove the link fast enough to coast, or when the device is a remote organ
-        // (no order is promised through the relay).
+        // needed before sending: to prove the link fast enough to coast.
         const marked = early ?? o.track?.mark();
         early = undefined;
         marked?.catch(() => {}); // a failed reading surfaces at done(), after the operation it travelled with
-        const exact = marked !== undefined && (!proven || !abortable);
+        const exact = marked !== undefined && !proven;
         if (marked && exact) {
           f = Math.min(1, Math.max(0, await marked));
           proven = true;
@@ -923,9 +852,7 @@ class RuntimeImpl implements LocalRuntime {
           });
         let res: CommandResult;
         tripped = false;
-        // Not for a remote organ: the abort would not reach it, and the next chunk must not be sent on top of
-        // an operation still running. Its condition is read between operations, below.
-        if (abortable) flying = op;
+        flying = op;
         try {
           res = await entry.provider.command(entry.spec.id, cmd.name, args, op.signal);
         } finally {
@@ -999,9 +926,9 @@ class RuntimeImpl implements LocalRuntime {
             chunkLead = Math.max(floor, Math.min((movedLead / motionMs) * aimMs, chunkLead * 4));
           else if (motionMs < 10) chunkLead = Math.max(floor, chunkLead * 2); // too fast to time: probe bigger
         }
-        // A device that now stands still (the operation braked) or that an abort cannot reach waits for a
-        // reading taken after the operation; one that coasts gets its next operation at once, watched.
-        if (mon && (!coast || !abortable) && (await mon.fresh())) {
+        // A device that now stands still (the operation braked) waits for a reading taken after the operation;
+        // one that coasts gets its next operation at once, watched.
+        if (mon && !coast && (await mon.fresh())) {
           reason = "condition_met";
           break;
         }
@@ -1297,7 +1224,7 @@ class RuntimeImpl implements LocalRuntime {
     for (const c of this.inflight) c.abort();
     // Each provider gets its own announced worst case; one that takes longer counts as not stopped.
     const results = await Promise.all(
-      [...this.local, ...this.remote].map(async (p) => {
+      this.local.map(async (p) => {
         const late = new AbortController();
         const timeout = this.clock.sleep(p.stop_worst_ms, late.signal).then(() => false);
         try {
@@ -1567,7 +1494,6 @@ class RuntimeImpl implements LocalRuntime {
       drivetrain: this.prof.drivetrain ?? null,
       limits: this.prof.limits,
       notes: this.prof.notes,
-      ...(this.providerErrors.length ? { provider_errors: this.providerErrors } : {}),
     };
   }
 
@@ -1582,7 +1508,7 @@ class RuntimeImpl implements LocalRuntime {
     this.inflight.add(ctl);
     try {
       await this.scan;
-      this.relayActivity = ctx?.activity ?? "idle"; // plan() is synchronous, so this cannot interleave
+      this.callerActivity = ctx?.activity ?? "idle"; // plan() is synchronous, so this cannot interleave
       const run = this.plan(tool, args ?? {});
       if (!run.moves) return await run(ctl.signal);
       this.acting++;

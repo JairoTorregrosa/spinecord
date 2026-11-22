@@ -1,14 +1,9 @@
-// The one JSON Schema validator (hand-written subset, no dependency), shared by the relay and the runtime.
+// The one JSON Schema validator (hand-written subset, no dependency), shared by apps/local and the runtime.
 // Keywords: type, enum, const, minimum, maximum, exclusiveMinimum, exclusiveMaximum, minLength, maxLength, pattern,
 // items, minItems, maxItems, properties, required, additionalProperties.
-// Two modes:
-//   "full"   every keyword. The tool catalog (relay) and the arguments the runtime is about to execute, after clamping.
-//   "shape"  structure only: type, enum, const, pattern, required, additionalProperties, nested properties and items.
-//            Size limits (minimum, maximum, exclusive*, minLength, maxLength, minItems, maxItems) are skipped: the
-//            relay uses it on device command arguments, whose sizes the runtime clamps or chunks before checking them.
+// It checks tool inputs, tool results, and the arguments the runtime is about to execute, after clamping.
 // A key whose value is undefined counts as absent (callers validate in-process objects, not only parsed JSON).
 
-export type SchemaMode = "shape" | "full";
 export interface SchemaIssue {
   /** dotted path of the offending value, "" for the root */
   path: string;
@@ -69,13 +64,13 @@ function typeOf(v: unknown): string {
 }
 
 /** Every violation of `schema` by `value`, in document order. `path` names the root ("" = no prefix). */
-export function schemaIssues(schema: unknown, value: unknown, path = "", mode: SchemaMode = "full"): SchemaIssue[] {
+export function schemaIssues(schema: unknown, value: unknown, path = ""): SchemaIssue[] {
   const out: SchemaIssue[] = [];
-  walk(schema, value, path, mode === "full", out);
+  walk(schema, value, path, out);
   return out;
 }
 
-function walk(schema: unknown, v: unknown, path: string, sizes: boolean, out: SchemaIssue[]): void {
+function walk(schema: unknown, v: unknown, path: string, out: SchemaIssue[]): void {
   if (!isObj(schema)) return;
   const s = schema;
   const fail = (message: string, at = path) => void out.push({ path: at, message });
@@ -90,28 +85,26 @@ function walk(schema: unknown, v: unknown, path: string, sizes: boolean, out: Sc
   if ("const" in s && s.const !== v) fail(`must equal ${JSON.stringify(s.const)}`);
   if (typeof v === "number") {
     if (!Number.isFinite(v)) return fail("must be a finite number");
-    if (sizes) {
-      if (typeof s.minimum === "number" && v < s.minimum) fail(`must be >= ${s.minimum} (minimum), got ${v}`);
-      if (typeof s.maximum === "number" && v > s.maximum) fail(`must be <= ${s.maximum} (maximum), got ${v}`);
-      if (typeof s.exclusiveMinimum === "number" && v <= s.exclusiveMinimum)
-        fail(`must be > ${s.exclusiveMinimum} (exclusiveMinimum), got ${v}`);
-      if (typeof s.exclusiveMaximum === "number" && v >= s.exclusiveMaximum)
-        fail(`must be < ${s.exclusiveMaximum} (exclusiveMaximum), got ${v}`);
-    }
+    if (typeof s.minimum === "number" && v < s.minimum) fail(`must be >= ${s.minimum} (minimum), got ${v}`);
+    if (typeof s.maximum === "number" && v > s.maximum) fail(`must be <= ${s.maximum} (maximum), got ${v}`);
+    if (typeof s.exclusiveMinimum === "number" && v <= s.exclusiveMinimum)
+      fail(`must be > ${s.exclusiveMinimum} (exclusiveMinimum), got ${v}`);
+    if (typeof s.exclusiveMaximum === "number" && v >= s.exclusiveMaximum)
+      fail(`must be < ${s.exclusiveMaximum} (exclusiveMaximum), got ${v}`);
   }
   if (typeof v === "string") {
-    if (sizes && typeof s.minLength === "number" && v.length < s.minLength)
+    if (typeof s.minLength === "number" && v.length < s.minLength)
       fail(`must have at least ${s.minLength} characters (minLength)`);
-    if (sizes && typeof s.maxLength === "number" && v.length > s.maxLength)
+    if (typeof s.maxLength === "number" && v.length > s.maxLength)
       fail(`must have at most ${s.maxLength} characters (maxLength), got ${v.length}`);
     if (typeof s.pattern === "string" && !new RegExp(s.pattern).test(v)) fail(`must match pattern ${s.pattern}`);
   }
   if (Array.isArray(v)) {
-    if (sizes && typeof s.minItems === "number" && v.length < s.minItems)
+    if (typeof s.minItems === "number" && v.length < s.minItems)
       fail(`must have at least ${s.minItems} items (minItems)`);
-    if (sizes && typeof s.maxItems === "number" && v.length > s.maxItems)
+    if (typeof s.maxItems === "number" && v.length > s.maxItems)
       fail(`must have at most ${s.maxItems} items (maxItems)`);
-    if (s.items !== undefined) v.forEach((item, i) => walk(s.items, item, `${path}[${i}]`, sizes, out));
+    if (s.items !== undefined) v.forEach((item, i) => walk(s.items, item, `${path}[${i}]`, out));
   }
   if (isObj(v)) {
     const props = isObj(s.properties) ? s.properties : {};
@@ -119,24 +112,24 @@ function walk(schema: unknown, v: unknown, path: string, sizes: boolean, out: Sc
       for (const r of s.required as string[]) if (v[r] === undefined) fail("is required", child(r));
     for (const [k, val] of Object.entries(v)) {
       if (val === undefined) continue;
-      if (k in props) walk(props[k], val, child(k), sizes, out);
+      if (k in props) walk(props[k], val, child(k), out);
       else if (s.additionalProperties === false)
         fail(
           `unknown field (additionalProperties is false); allowed: ${Object.keys(props).join(", ") || "none"}`,
           child(k),
         );
-      else if (isObj(s.additionalProperties)) walk(s.additionalProperties, val, child(k), sizes, out);
+      else if (isObj(s.additionalProperties)) walk(s.additionalProperties, val, child(k), out);
     }
   }
 }
 
 /** Every violation as one sentence each: "<path> <rule>". */
-export function validateSchema(schema: unknown, value: unknown, path = "args", mode: SchemaMode = "full"): string[] {
-  return schemaIssues(schema, value, path, mode).map((i) => `${i.path} ${i.message}`);
+export function validateSchema(schema: unknown, value: unknown, path = "args"): string[] {
+  return schemaIssues(schema, value, path).map((i) => `${i.path} ${i.message}`);
 }
 
 /** The first violation as "<field>: <rule>" (what `invalid_argument` must name), or null when valid. */
-export function firstViolation(schema: unknown, value: unknown, path = "", mode: SchemaMode = "full"): string | null {
-  const first = schemaIssues(schema, value, path, mode)[0];
+export function firstViolation(schema: unknown, value: unknown, path = ""): string | null {
+  const first = schemaIssues(schema, value, path)[0];
   return first ? `${first.path || "(arguments)"}: ${first.message}` : null;
 }

@@ -1,4 +1,4 @@
-// One robot of this process and the only state it has (CONTRACT §11): a link (is there a runtime to talk to?)
+// One robot of this process and the only state it has (CONTRACT §1): a link (is there a runtime to talk to?)
 // and an activity. Both follow the transition tables of protocol/types.ts, asserted on every transition.
 //   link      offline → handshaking → online → offline
 //   activity  idle → acting | running_program → idle        one moving call at a time; a second one gets `busy`
@@ -10,7 +10,7 @@ import {
   LINK_TRANSITIONS,
   RuntimeError,
   type ErrorCode,
-  type LocalRobotStateView,
+  type RobotStateView,
   type RobotActivity,
   type RobotLink,
   type RobotTool,
@@ -70,7 +70,8 @@ export const shuttingDown = (): LocalError =>
 
 export class LocalRobot {
   readonly id: string;
-  private readonly connectHint: string | null;
+  private readonly connectBase: string | null;
+  private attachError: string | null = null; // why the last attempt to bring the robot online failed
   private link: RobotLink = "offline";
   private activity: RobotActivity = "idle";
   private life: Life = "serving";
@@ -85,7 +86,7 @@ export class LocalRobot {
 
   constructor(private readonly o: RobotOptions) {
     this.id = o.id;
-    this.connectHint = o.connect ?? null;
+    this.connectBase = o.connect ?? null;
   }
 
   // ---------- state ----------
@@ -116,8 +117,17 @@ export class LocalRobot {
     this.toActivity("fault", reason);
     this.faultReason = reason;
   }
-  view(): LocalRobotStateView {
+  view(): RobotStateView {
     return { id: this.id, backend: this.rt?.backend ?? null, link: this.link, activity: this.activity };
+  }
+  /** What a person must do to bring the robot online, with the reason the last attempt failed when one did. */
+  private get connectHint(): string | null {
+    if (this.attachError === null) return this.connectBase;
+    return `${this.connectBase ? `${this.connectBase} ` : ""}The last attempt failed: ${this.attachError}`;
+  }
+  /** A source tried to bring the robot online and could not; `list_robots` shows why until an attach succeeds. */
+  attachFailed(why: string): void {
+    this.attachError = why;
   }
   listing() {
     return {
@@ -147,6 +157,7 @@ export class LocalRobot {
       if (motors_stopped) {
         if (this.activity === "fault") this.toActivity("idle", "verified stop at attach");
       } else if (this.activity !== "fault") this.fault("the stop at connection could not be verified");
+      this.attachError = null;
       this.toLink("online", "devices scanned, stop checked");
     } catch (e) {
       rt.dispose();
@@ -293,11 +304,13 @@ export class LocalRobot {
       }
       if (first !== "late") return first;
       abort.abort();
+      // how the stop behind a move that timed out ended
+      let stop: "verified" | "unverified" | "not sent" = "not sent";
       if (moving) {
         // this call gives its own claim up: the stop verifies the motors and does not wait for a call that hangs
         if (this.move === claim) this.move = null;
         try {
-          await this.stop();
+          stop = (await this.stop()).motors_stopped ? "verified" : "unverified";
         } catch {
           // no link to stop through (the robot went offline meanwhile): the move is over all the same
           const state = this.activity as RobotActivity;
@@ -309,7 +322,15 @@ export class LocalRobot {
       }
       throw new LocalError(
         "timeout",
-        `${tool} did not end within ${deadline} ms; it was aborted${moving ? ` and the robot was stopped. ${MAY_HAVE_MOVED}` : "."}`,
+        `${tool} did not end within ${deadline} ms; it was aborted${
+          !moving
+            ? "."
+            : stop === "verified"
+              ? ` and the robot was stopped. ${MAY_HAVE_MOVED}`
+              : stop === "unverified"
+                ? `, and the stop could not be verified: the robot is in fault. ${MAY_HAVE_MOVED}`
+                : `, and the stop could not be sent: the robot is ${this.link}. ${MAY_HAVE_MOVED}`
+        }`,
         !moving,
         undefined,
         moving,

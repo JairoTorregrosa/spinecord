@@ -31,15 +31,15 @@ export type BoundKind = "degrees" | "ms" | "instant";
 export interface CommandSpec {
   name: string;
   description: string;
-  params: JsonSchema; // JSON Schema (object). Validated by the relay before dispatch.
-  // every listed param is capped at max; relay rejects manifests without a bound. A command with moves false and
-  // kind "ms" may block up to max (a speaker's speak): runtime and relay wait that long for its answer.
+  params: JsonSchema; // JSON Schema (object). The runtime validates args against it before anything is sent.
+  // every listed param is capped at max. A command with moves false and kind "ms" may block up to max
+  // (a speaker's speak): the runtime waits that long for its answer.
   bound: { kind: BoundKind; params?: string[]; max: number };
-  moves: boolean; // true → subject to activity FSM, control, stop, rate limit
+  moves: boolean; // true → one at a time per robot: it needs activity idle, and stop preempts it
 }
 export interface DeviceSpec {
   id: string; // "<provider>.<local>", e.g. "ev3.B", "ev3.S3", "cam1.frame"
-  provider: string; // "ev3", "sim", or an organ_id
+  provider: string; // the id of the provider that announced it: "ev3", "sim", ...
   kind: string; // open vocabulary; known kinds listed in CONTRACT.md §2.2
   roles: string[]; // aliases from the profile, e.g. ["left_wheel"]
   channels: ChannelSpec[];
@@ -53,7 +53,7 @@ export type JsonSchema = {
   additionalProperties?: boolean;
 };
 
-// ---------- Provider interface (implemented by packages/driver-ev3, packages/driver-ev3dev and packages/sim-world; organs speak it over the wire) ----------
+// ---------- Provider interface (implemented by packages/driver-ev3, packages/driver-ev3dev and packages/sim-world) ----------
 export type StopReason = "completed" | "condition_met" | "timeout" | "clamped" | "stalled" | "preempted";
 export interface CommandResult {
   requested: Record<string, Value>;
@@ -90,10 +90,10 @@ export interface Provider {
   stop(): Promise<{ motors_stopped: boolean }>; // brake every actuator; verified = every motor reads speed 0
   readonly stop_worst_ms: number; // honest upper bound for stop() to resolve on this hardware
   // Optional: providers whose device set can change (hot-plug, a loaded world with other ports) call cb;
-  // the runtime then re-reads devices() and announces {t:"devices"} to the relay.
+  // the runtime then re-reads devices().
   onDevicesChanged?(cb: () => void): () => void;
 }
-export type BackendKind = "ev3" | "sim" | "organ";
+export type BackendKind = "ev3" | "sim";
 
 // ---------- Robot profile (§3) ----------
 export interface Drivetrain {
@@ -122,40 +122,6 @@ export interface RobotProfile {
 // ---------- State machines (§1) ----------
 export type RobotLink = "offline" | "handshaking" | "online";
 export type RobotActivity = "idle" | "acting" | "stopping" | "running_program" | "fault";
-export type Control = "owner" | "admin"; // owner = the principal(s) the robot is assigned to
-export type CallState =
-  | "received"
-  | "rejected"
-  | "deduplicated"
-  | "queued"
-  | "dispatched"
-  | "completed"
-  | "failed"
-  | "timed_out"
-  | "preempted";
-export type EpisodeState = "none" | "running" | "ended";
-export type ProviderState = "announced" | "active" | "stale" | "gone";
-export type ProgramState = "draft" | "verified" | "needs_review" | "approved" | "retired";
-
-export const CALL_TERMINAL: readonly CallState[] = [
-  "rejected",
-  "deduplicated",
-  "completed",
-  "failed",
-  "timed_out",
-  "preempted",
-];
-export const CALL_TRANSITIONS: Record<CallState, readonly CallState[]> = {
-  received: ["rejected", "deduplicated", "queued", "dispatched"],
-  queued: ["dispatched", "preempted", "timed_out", "failed"],
-  dispatched: ["completed", "failed", "timed_out", "preempted"],
-  rejected: [],
-  deduplicated: [],
-  completed: [],
-  failed: [],
-  timed_out: [],
-  preempted: [],
-};
 export const LINK_TRANSITIONS: Record<RobotLink, readonly RobotLink[]> = {
   offline: ["handshaking"],
   handshaking: ["online", "offline"],
@@ -168,33 +134,11 @@ export const ACTIVITY_TRANSITIONS: Record<RobotActivity, readonly RobotActivity[
   stopping: ["idle", "fault"],
   fault: ["idle", "stopping"],
 };
-export const CONTROL_TRANSITIONS: Record<Control, readonly Control[]> = { owner: ["admin"], admin: ["owner"] };
-export const EPISODE_TRANSITIONS: Record<EpisodeState, readonly EpisodeState[]> = {
-  none: ["running"],
-  running: ["ended"],
-  ended: ["running"],
-};
-export const PROVIDER_TRANSITIONS: Record<ProviderState, readonly ProviderState[]> = {
-  announced: ["active", "gone"],
-  active: ["stale", "gone"],
-  stale: ["active", "gone"],
-  gone: [],
-};
-export const PROGRAM_TRANSITIONS: Record<ProgramState, readonly ProgramState[]> = {
-  draft: ["verified", "needs_review", "retired"],
-  needs_review: ["approved", "retired"],
-  verified: ["retired"],
-  approved: ["retired"],
-  retired: [],
-};
-
 export interface RobotStateView {
   id: string;
   backend: BackendKind | null;
   link: RobotLink;
   activity: RobotActivity;
-  control: Control;
-  episode: EpisodeState;
 }
 
 // ---------- Programs (§5) ----------
@@ -207,42 +151,10 @@ export type ProgramNode =
   | { wait_ms: number } // ≤ 10000
   | { fail: string }
   | { succeed: string };
-export interface Program {
-  name: string;
-  version: number;
-  description: string;
-  body: ProgramNode;
-  success?: Condition; // checked after body; absent → "completed" counts as success
-  requires: string[]; // device kinds or roles it touches (computed on save)
-  pass_rate: number; // default 0.8
-  state: ProgramState;
-  success_rate?: number;
-  verified_on?: { twin_id: string; profile_hash: string; at: number }; // hardware run requires robot.profile_hash === profile_hash
-  author: string; // principal_id
-}
-
-// ---------- Episodes (§6) ----------
-export interface EpisodeSummary {
-  id: string;
-  robot_id: string;
-  label: string;
-  tags: string[];
-  state: EpisodeState;
-  started_at: number;
-  ended_at?: number;
-  elapsed_ms: number;
-  calls: number;
-  moving_calls: number;
-  stops: number;
-  errors: number;
-  marks: { at: number; kind: string; note: string }[];
-  outcome?: string;
-  metrics?: Record<string, number>;
-}
 
 // ---------- Envelope (§7) ----------
+// The members are the `code` enum of every tool's output schema (tools.ts).
 export type ErrorCode =
-  | "unauthorized"
   | "unknown_robot"
   | "unknown_device"
   | "unknown_channel"
@@ -250,16 +162,12 @@ export type ErrorCode =
   | "unsupported"
   | "robot_offline"
   | "busy"
-  | "not_in_control"
   | "illegal_state"
   | "invalid_argument"
   | "fault"
   | "timeout"
   | "stop_unverified"
-  | "provider_stale"
   | "stale_image"
-  | "program_not_runnable"
-  | "rate_limited"
   | "internal"
   | "misconfigured";
 export interface ToolError {
@@ -272,15 +180,9 @@ export type Envelope<T> =
   | { ok: true; robot?: RobotStateView; data: T; next: string[] }
   | { ok: false; robot?: RobotStateView; error: ToolError; next: string[] };
 
-// Local mode (§11): one process, no relay. Control and episodes do not exist there, so the state has no such fields.
-export type LocalRobotStateView = Pick<RobotStateView, "id" | "backend" | "link" | "activity">;
-export type LocalEnvelope<T> =
-  | { ok: true; robot?: LocalRobotStateView; data: T; next: string[] }
-  | { ok: false; robot?: LocalRobotStateView; error: ToolError; next: string[] };
-
-// ---------- Runtime (§4): runs next to the hardware (robot page or headless runner) ----------
-// The runtime executes robot-local tools so that `until` conditions and programs react in milliseconds,
-// not relay round trips. The relay owns auth, FSMs, idempotency, episodes and the program library.
+// ---------- Runtime (§4): runs in the process that holds the providers ----------
+// The runtime executes the tools that address one robot, so `until` conditions and programs react in
+// milliseconds. The process around it (apps/local) owns the link and activity state of the robot.
 export type RobotTool =
   | "describe_robot"
   | "describe_device"
@@ -323,85 +225,3 @@ export interface Runtime {
   ): Promise<RuntimeResult>;
   stop(): Promise<{ motors_stopped: boolean }>;
 }
-
-// ---------- Wire protocol (§8) ----------
-// Robot runtime <-> relay at /ws/robot
-export type RuntimeToRelay =
-  | {
-      t: "hello";
-      v: 2;
-      robot_id: string;
-      token: string;
-      backend: BackendKind;
-      profile: RobotProfile;
-      profile_hash: string;
-      devices: DeviceSpec[];
-      stop_worst_ms: number;
-      fw?: string;
-    }
-  | { t: "result"; call_id: string; ok: true; data: unknown; image?: ImagePayload }
-  | { t: "result"; call_id: string; ok: false; error: { code: ErrorCode; message: string; retryable?: boolean } }
-  | { t: "devices"; devices: DeviceSpec[] }
-  // organ_res.data by op: read → Reading[], command → CommandResult, stop → { motors_stopped: boolean }
-  | {
-      t: "organ_req";
-      req_id: string;
-      organ_id: string;
-      op: "read" | "command" | "stop";
-      device?: string;
-      channels?: string[];
-      allow_mode_switch?: boolean;
-      command?: string;
-      args?: Record<string, Value>;
-    }
-  | { t: "stopped"; stop_id: string; motors_stopped: boolean } // reply to {t:"stop", stop_id}
-  // battery_low = any device of kind battery reports low=true. echo = the `ts` of the last relay heartbeat and how
-  // long the runtime held it before this frame: the relay measures the round trip as now - echo.ts - echo.held_ms.
-  | { t: "hb"; ts: number; battery_low?: boolean; fault?: string; echo?: { ts: number; held_ms: number } };
-export type RelayToRuntime =
-  | { t: "welcome"; session_id: string }
-  // deadline_ms is a duration and a backstop, never the limit: it is the tool's own budget (max_command_ms,
-  // max_program_ms, timeout_ms, duration_ms) plus a margin for the round trip and a verified stop, so the runtime's
-  // own limit ends the call first and answers with data (reason "timeout", met:false, the samples).
-  // activity = relay-owned state when dispatched; the runtime allows mode-switching reads only when "idle".
-  | {
-      t: "call";
-      call_id: string;
-      tool: RobotTool;
-      args: Record<string, unknown>;
-      deadline_ms: number;
-      activity: RobotActivity;
-    }
-  | { t: "abort"; call_id: string }
-  | { t: "stop"; stop_id: string }
-  | { t: "organs"; organs: { organ_id: string; state: ProviderState; devices: DeviceSpec[] }[] }
-  | {
-      t: "organ_res";
-      req_id: string;
-      ok: boolean;
-      data?: unknown;
-      image?: ImagePayload;
-      error?: { code: ErrorCode; message: string };
-    }
-  | { t: "hb"; ts: number };
-// Organ = any external device provider (phone page, microcontroller, webcam) <-> relay at /ws/organ
-export type OrganToRelay =
-  | { t: "hello"; v: 2; robot_id: string; token: string; organ_id: string; devices: DeviceSpec[] }
-  | { t: "devices"; devices: DeviceSpec[] }
-  | { t: "res"; req_id: string; ok: true; data: unknown; image?: ImagePayload }
-  | { t: "res"; req_id: string; ok: false; error: { code: ErrorCode; message: string } }
-  | { t: "hb"; ts: number };
-export type RelayToOrgan =
-  | { t: "welcome"; session_id: string }
-  | {
-      t: "req";
-      req_id: string;
-      op: "read" | "command" | "stop";
-      device?: string;
-      channels?: string[];
-      allow_mode_switch?: boolean;
-      command?: string;
-      args?: Record<string, Value>;
-    }
-  | { t: "stop" }
-  | { t: "hb"; ts: number };

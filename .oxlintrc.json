@@ -17,5 +17,5 @@
     "no-new": "off"
   },
   "env": { "builtin": true, "es2024": true },
-  "ignorePatterns": ["**/worker-configuration.d.ts", "**/fixtures/**", "**/dist/**", "**/.wrangler/**"]
+  "ignorePatterns": ["**/fixtures/**", "**/dist/**"]
 }

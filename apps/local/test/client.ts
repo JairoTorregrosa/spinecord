@@ -3,7 +3,7 @@
 // line, and checks each tool result against the outputSchema the server itself listed.
 import { join } from "node:path";
 import { firstViolation } from "../../../packages/protocol/schema";
-import type { LocalEnvelope } from "../../../packages/protocol/types";
+import type { Envelope } from "../../../packages/protocol/types";
 
 export const MAIN = join(import.meta.dir, "..", "main.ts");
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -17,7 +17,7 @@ export async function until(what: string, cond: () => boolean | Promise<boolean>
 
 type Rpc = { jsonrpc: "2.0"; id?: number; method?: string; result?: any; error?: any };
 export interface ToolOut {
-  envelope: LocalEnvelope<any>;
+  envelope: Envelope<any>;
   isError: boolean;
   content: any[];
 }
@@ -87,7 +87,7 @@ export async function startServer(args: string[] = []) {
   async function tool(name: string, args: Record<string, unknown> = {}): Promise<ToolOut> {
     const res = await rpc("tools/call", { name, arguments: args });
     if (res.error) throw new Error(`${name}: JSON-RPC error ${JSON.stringify(res.error)}`);
-    const envelope = res.result.structuredContent as LocalEnvelope<any>;
+    const envelope = res.result.structuredContent as Envelope<any>;
     const text = (res.result.content[0].text as string).split("\n");
     if (text.length !== 2 || JSON.stringify(JSON.parse(text[1]!)) !== JSON.stringify(envelope))
       throw new Error(`${name}: the text block must be a summary line plus the envelope JSON`);
