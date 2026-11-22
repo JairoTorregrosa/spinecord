@@ -1957,6 +1957,20 @@ describe("a condition is checked before anything is sent", () => {
     });
     expect(w).toMatchObject({ met: true, ms: 100 });
   });
+  test("two outliers with an undecided poll between them are not two polls in a row", async () => {
+    const s = setup({ extra: [NOISY] });
+    // far out on every odd poll, back at the first value on every even one, where the other channel has no value
+    let polls = 0; // the condition's first comparison is read first in every poll
+    s.mock.values.set("mock.sonar.cm", () => (polls++ % 2 ? 90 : 40));
+    s.mock.values.set("mock.gas.ppm", () => ((polls - 1) % 2 === 0 && polls > 1 ? null : 412));
+    const condition = {
+      all: [
+        { device: "mock.sonar", channel: "cm", op: "changed" },
+        { device: "mock.gas", channel: "ppm", op: "gt", value: 0 },
+      ],
+    };
+    expect(await s.call("wait_until", { condition, timeout_ms: 400, poll_hz: 20 })).toMatchObject({ met: false });
+  });
 });
 
 describe("the smallest move of a drivetrain", () => {

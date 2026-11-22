@@ -227,7 +227,9 @@ export function makeEvaluator(
           );
       }
       // A poll with a comparison that could not be read decides nothing: not met, and `changed` keeps its baseline.
+      // It also ends a run of polls that differed: the polls that confirm a change are polls that decided.
       if (unreadable) {
+        apart.fill(0);
         if (++undecided >= UNDECIDED_POLLS) {
           const blind = c.leaves.flatMap((l, i) => (blindPolls[i]! > 0 ? [`${l.device}.${l.channel}`] : []));
           throw new RuntimeError(
