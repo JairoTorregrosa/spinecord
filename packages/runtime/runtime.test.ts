@@ -838,6 +838,13 @@ describe("drivetrain", () => {
       expect(Math.abs(s.mock.left - 30 * DEG_PER_CM)).toBeLessThan(2); // within 0.1 cm, not one roll (8 degrees) past
       expect(d.measured.left_deg).toBeCloseTo(s.mock.left, 0); // and the report is a reading, not a sum
     });
+    test("a move is not done because the wheels were expected to roll the rest: the reading decides", async () => {
+      const s = setup({ latency_ms: 30 }); // fast enough to coast; the mock does not roll on by itself
+      const d = await s.call("drive", { distance_cm: 1.4 }); // 28.6 degrees: the 20 degree probe and a rest
+      expect(d.reason).toBe("completed");
+      expect(s.mock.left).toBeCloseTo(1.4 * DEG_PER_CM, 0);
+      expect(d.measured.distance_cm).toBeCloseTo(1.4, 1);
+    });
     test("a reading that fails mid-move ends the move with an error and leaves nothing rolling", async () => {
       const s = setup();
       s.mock.values.set("mock.pair.left_deg", () => {

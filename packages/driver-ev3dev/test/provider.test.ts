@@ -624,6 +624,17 @@ describe("fake brick", () => {
     return { brick, provider, sent, got };
   }
 
+  brickTest("a read made right before a command reaches the bridge before it", async () => {
+    const { provider, sent } = tapped();
+    const pair = (await provider.devices()).find((d) => d.kind === "motor_pair")!;
+    await provider.read(pair.id);
+    sent.length = 0;
+    const read = provider.read(pair.id);
+    const op = provider.command(pair.id, "brake", {}, new AbortController().signal);
+    await Promise.all([read, op]);
+    expect(sent.map((m) => m.op)).toEqual(["read", "command"]);
+  });
+
   brickTest("a read of every device is one request line, answered as the same reads one by one", async () => {
     const { provider, brick, sent } = tapped();
     const specs = await provider.devices();

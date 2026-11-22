@@ -1100,6 +1100,7 @@ export class Ev3devProvider implements Provider {
   private flushReads(): void {
     const batch = this.readQueue;
     this.readQueue = [];
+    if (!batch.length) return; // already sent ahead of a command
     const body =
       batch.length === 1
         ? { op: "read", device: batch[0]!.device, channels: batch[0]!.channels, allow_mode_switch: false }
@@ -1158,6 +1159,9 @@ export class Ev3devProvider implements Provider {
       if (args[k] === undefined) throw err("invalid_argument", `${spec.id}.${command}: missing argument "${k}"`);
     }
     if (signal.aborted) return { requested: args, measured: {}, clamped: false, reason: "preempted", ms: 0 };
+    // Calls are served in the order they were made (CONTRACT §4): reads waiting to be sent together go out
+    // before this command, so they show the device before it starts.
+    this.flushReads();
     const { id, reply } = this.request(
       { op: "command", device: local, command, args },
       // speak answers when the speech ends, so its reply may take the whole declared bound

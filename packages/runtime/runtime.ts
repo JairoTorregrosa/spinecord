@@ -840,8 +840,13 @@ class RuntimeImpl implements LocalRuntime {
       while (!reason) {
         let remaining = (1 - f) * lead - drift;
         if (remaining < tol) {
-          // What the operations reported says the target is reached: a reading with nothing running decides.
-          if (o.track && !checked && !coasting) {
+          // What the operations reported, or what the device is expected to roll by itself, says the target is
+          // reached: a reading with nothing running decides, so a device still coasting is braked first.
+          if (o.track && !checked) {
+            if (coasting) {
+              await entry.provider.command(entry.spec.id, "brake", {}, new AbortController().signal);
+              coasting = false;
+            }
             const read = await o.track.settle();
             drift = 0;
             checked = true;
