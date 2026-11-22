@@ -14,6 +14,12 @@
         "typescript": "7.0.2",
       },
     },
+    "apps/local": {
+      "name": "@spinecord/local",
+      "dependencies": {
+        "@modelcontextprotocol/server": "2.4.0",
+      },
+    },
     "packages/driver-ev3": {
       "name": "@spinecord/ev3",
     },
@@ -269,6 +275,8 @@
     "@spinecord/driver-ev3dev": ["@spinecord/driver-ev3dev@workspace:packages/driver-ev3dev"],
 
     "@spinecord/ev3": ["@spinecord/ev3@workspace:packages/driver-ev3"],
+
+    "@spinecord/local": ["@spinecord/local@workspace:apps/local"],
 
     "@spinecord/relay": ["@spinecord/relay@workspace:packages/server"],
 

@@ -1,0 +1,75 @@
+{
+  "schema": "spinecord/hidden-page@1",
+  "at": "2026-11-22T03:06:06.070Z",
+  "browser": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "os": "darwin arm64",
+  "note": "simulated EV3 behind a fake WebHID in the page; the runtime and Ev3Provider run in this process",
+  "results": [
+    {
+      "window": "visible",
+      "page_visibility": "visible",
+      "page_timer_10ms": {
+        "fired_per_s": 100,
+        "gap_ms_p50": 10
+      },
+      "packet_round_trip_ms": {
+        "n": 580,
+        "p50": 0.38,
+        "p95": 1.53,
+        "max": 5.18
+      },
+      "until_turn": {
+        "trials": 15,
+        "overshoot_deg_p50": 2,
+        "overshoot_deg_max": 2,
+        "overshoot_as_ms_p50": 14,
+        "overshoot_as_ms_max": 14,
+        "call_ms_p50": 227.18
+      }
+    },
+    {
+      "window": "hidden behind another tab",
+      "page_visibility": "hidden",
+      "page_timer_10ms": {
+        "fired_per_s": 1,
+        "gap_ms_p50": 999.6999999880791
+      },
+      "packet_round_trip_ms": {
+        "n": 585,
+        "p50": 0.24,
+        "p95": 0.63,
+        "max": 1.55
+      },
+      "until_turn": {
+        "trials": 15,
+        "overshoot_deg_p50": 1,
+        "overshoot_deg_max": 2,
+        "overshoot_as_ms_p50": 7,
+        "overshoot_as_ms_max": 14,
+        "call_ms_p50": 220.44
+      }
+    },
+    {
+      "window": "minimized",
+      "page_visibility": "hidden",
+      "page_timer_10ms": {
+        "fired_per_s": 1,
+        "gap_ms_p50": 1000.2000000178814
+      },
+      "packet_round_trip_ms": {
+        "n": 587,
+        "p50": 0.26,
+        "p95": 0.55,
+        "max": 1.16
+      },
+      "until_turn": {
+        "trials": 15,
+        "overshoot_deg_p50": 1,
+        "overshoot_deg_max": 2,
+        "overshoot_as_ms_p50": 7,
+        "overshoot_as_ms_max": 14,
+        "call_ms_p50": 219.94
+      }
+    }
+  ]
+}

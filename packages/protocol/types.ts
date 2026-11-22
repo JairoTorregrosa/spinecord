@@ -272,6 +272,12 @@ export type Envelope<T> =
   | { ok: true; robot?: RobotStateView; data: T; next: string[] }
   | { ok: false; robot?: RobotStateView; error: ToolError; next: string[] };
 
+// Local mode (§11): one process, no relay. Control and episodes do not exist there, so the state has no such fields.
+export type LocalRobotStateView = Pick<RobotStateView, "id" | "backend" | "link" | "activity">;
+export type LocalEnvelope<T> =
+  | { ok: true; robot?: LocalRobotStateView; data: T; next: string[] }
+  | { ok: false; robot?: LocalRobotStateView; error: ToolError; next: string[] };
+
 // ---------- Runtime (§4): runs next to the hardware (robot page or headless runner) ----------
 // The runtime executes robot-local tools so that `until` conditions and programs react in milliseconds,
 // not relay round trips. The relay owns auth, FSMs, idempotency, episodes and the program library.

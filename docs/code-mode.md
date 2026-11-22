@@ -39,6 +39,12 @@ Confirm "Yes, turn on Code Mode" on first use. The session shows `Code Mode (exp
 claude mcp add --transport http spinecord https://<worker>.workers.dev/mcp --header "Authorization: Bearer <token>"
 ```
 
+Or the local server, with the robots in a process on this computer (README, "Use it from Claude Code, on your computer"):
+
+```bash
+claude mcp add spinecord -- bun <repo>/apps/local/main.ts
+```
+
 Check with `/mcp` inside Claude Code: `spinecord` is connected and lists its tools. Then ask for `list_robots`.
 
 ## 3. What the server gives a script
@@ -50,7 +56,7 @@ Check with `/mcp` inside Claude Code: `spinecord` is connected and lists its too
 | The text block is `summary line` + `\n` + the same envelope as one-line JSON | Fallback when the client hands the script text: `JSON.parse(text.split("\n").at(-1))` |
 | `isError` is true exactly when `ok` is false | An error is never disguised as data |
 | `until` on `drive` / `turn` / `arc` / `command_device` | The runtime watches the condition next to the hardware every max(10 ms, one read) while the motion runs and aborts it when met; no model or relay round trip per check, unlike a polling loop in a script |
-| `request_id` on moving tools | Same id + same arguments = the stored result, the robot does not act twice |
+| `request_id` on moving tools | Relay: same id + same arguments = the stored result, the robot does not act twice. Local server: an optional label, nothing is stored |
 
 ## 4. Example: drive until something is closer than 15 cm, then turn
 
