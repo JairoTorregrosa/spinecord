@@ -71,6 +71,8 @@ describe("MCP surface", () => {
       const where = `${t.name}.output`;
       assertSupported(t.output, where); // only keywords the relay validator enforces, so the harness check is complete
       expect(t.output.type).toBe("object");
+      // a client keeps its compiled validator by $id: one per tool, changing whenever the schema does
+      expect(t.output.$id).toMatch(new RegExp(`^urn:spinecord:output:${t.name}:[0-9a-f]{8}$`));
       for (const k of ["anyOf", "oneOf", "allOf", "$ref"]) expect(t.output).not.toHaveProperty(k);
       expect(Object.keys(t.output.properties).sort()).toEqual(["data", "error", "next", "ok", "robot"]);
       expect(t.output.required).toEqual(["ok", "next"]);
