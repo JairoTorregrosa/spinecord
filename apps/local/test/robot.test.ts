@@ -262,8 +262,6 @@ describe("a twin in this process", () => {
     const fleet = await buildFleet(loadConfig([]), { log: () => {} });
     const robot = fleet.robots[0]!;
     const brick = fleet.bricks.get(robot.id)!;
-    const before = await callTool(fleet.robots, "read_device", { robot_id: robot.id, device: "distance" });
-    expect(before.envelope).toMatchObject({ ok: true, data: [{ channel: "distance_cm" }] });
     const move = callTool(fleet.robots, "drive", {
       robot_id: robot.id,
       distance_cm: 40,

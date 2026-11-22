@@ -346,19 +346,20 @@ describe("device re-scan", () => {
     s.mock.failScans = 1;
     s.mock.values.set("mock.touch.pressed", true);
     s.mock.plug(TOUCH); // tells the runtime to scan again; that scan fails
+    const value = async (device: string) =>
+      (await s.call("read_all")).readings.find((r: any) => r.device === device)?.value;
     // every kind of call keeps working on the registry of the last scan that succeeded
     const d = await s.call("describe_robot");
     expect(d.devices.map((x: any) => x.id)).not.toContain("mock.touch");
     expect(d.scan_error).toContain("the brick did not answer the device scan");
-    expect((await s.call("read_device", { device: "mock.gas" }))[0].value).toBe(412);
-    expect((await s.call("read_all")).readings.length).toBeGreaterThan(0);
+    expect(await value("mock.gas")).toBe(412);
     expect((await s.call("drive", { distance_cm: 5 })).reason).toBe("completed");
     // the retry comes by itself, SCAN_RETRY_MS after the failure
     await s.clock.sleep(SCAN_RETRY_MS + 1);
     const after = await s.call("describe_robot");
     expect(after.scan_error).toBeNull();
     expect(after.devices.map((x: any) => x.id)).toContain("mock.touch");
-    expect((await s.call("read_device", { device: "mock.touch" }))[0].value).toBe(true);
+    expect(await value("mock.touch")).toBe(true);
     expect(s.mock.scans).toBe(3); // the first scan, the one that failed, one retry
     expect(s.clock.now() - t0).toBeGreaterThanOrEqual(SCAN_RETRY_MS);
     s.rt.dispose();
@@ -374,7 +375,7 @@ describe("device re-scan", () => {
       const n = s.mock.scans;
       await s.clock.sleep(10);
       if (s.mock.scans > n) seen.push(Math.round((s.clock.now() - t0) / 10) * 10);
-      expect((await s.call("read_device", { device: "mock.gas" }))[0].value).toBe(412);
+      expect((await s.call("read_all")).readings.find((r: any) => r.device === "mock.gas").value).toBe(412);
     }
     // waits of 250, 500 and 1000 ms after the first failure
     expect(seen).toEqual([SCAN_RETRY_MS, 3 * SCAN_RETRY_MS, 7 * SCAN_RETRY_MS]);
@@ -1039,7 +1040,8 @@ describe("drivetrain", () => {
       const op = pairLog(s.mock).at(-1)!;
       expect(op.reason).toBe("preempted"); // aborted in flight
       expect(s.mock.left).toBeLessThanOrEqual(100 * 1.0 + 0.01); // 100 deg/s for at most the budget
-      expect(s.clock.now() - t0).toBeLessThan(1000 + 3 * 600 + 1); // the budget, the abort's way, the closing read
+      // the budget, then the abort's way to the device and back (it travels behind the request) and the closing read
+      expect(s.clock.now() - t0).toBeLessThanOrEqual(1000 + 2 * 600);
       expect(d.measured.distance_cm).toBeGreaterThan(0);
 
       // a time target is sized to what the budget still holds

@@ -883,9 +883,9 @@ class RuntimeImpl implements LocalRuntime {
           break;
         }
         // A time target never asks for more than the call's budget still holds.
-        const budgetMs = o.t0 + this.prof.limits.max_command_ms - this.clock.now();
+        const budgetMs = () => o.t0 + this.prof.limits.max_command_ms - this.clock.now();
         const size = () =>
-          Math.min(remaining, opCap, byTime ? Math.min(sliceMs, budgetMs) : sized() ? chunkLead : Infinity);
+          Math.min(remaining, opCap, byTime ? Math.min(sliceMs, budgetMs()) : sized() ? chunkLead : Infinity);
         // The reading this operation starts from travels with it. It is awaited first only when its answer is
         // needed before sending: to prove the link fast enough to coast.
         const marked = early ?? o.track?.mark();
@@ -936,7 +936,7 @@ class RuntimeImpl implements LocalRuntime {
         // The call's budget (max_command_ms) is watched while the operation runs, like the deadline above: an
         // operation still running when it is spent is aborted there, whatever bound the device declares.
         let spent = false;
-        void this.clock.sleep(budgetMs, settled.signal).then(async () => {
+        void this.clock.sleep(budgetMs(), settled.signal).then(async () => {
           await this.clock.sleep(0, settled.signal);
           if (settled.signal.aborted || op.signal.aborted) return;
           spent = true;
