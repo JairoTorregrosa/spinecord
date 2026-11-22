@@ -177,7 +177,7 @@ describe("backstop", () => {
 });
 
 describe("backstop without a link", () => {
-  test("a hung move whose robot went offline ends as timeout and leaves the robot idle", async () => {
+  test("a hung move whose robot went offline ends as timeout; the robot attaches again and moves", async () => {
     const mock = new MockProvider({ clock: realClock });
     let taken = false;
     mock.command = () => {
@@ -190,8 +190,18 @@ describe("backstop without a link", () => {
     const move = callTool([robot], "drive", { robot_id: "m1", distance_cm: 5 });
     await until("the driver to take the command", () => taken);
     robot.detach("the cable was pulled");
+    // the link comes back while the hung call is still in flight: attach waits for that call's claim to end
+    const back = robot.attach(
+      createRuntime({ profile: PROFILE, providers: [new MockProvider({ clock: realClock })], clock: realClock }),
+    );
     expect((await move).envelope).toMatchObject({ ok: false, error: { code: "timeout" } });
-    expect(robot.view()).toMatchObject({ link: "offline", activity: "idle" });
+    await back;
+    expect(robot.view()).toMatchObject({ link: "online", activity: "idle" });
+    expect(
+      (await callTool([robot], "drive", { robot_id: "m1", distance_cm: 2, speed_pct: 80 })).envelope,
+    ).toMatchObject({
+      ok: true,
+    });
   });
 });
 

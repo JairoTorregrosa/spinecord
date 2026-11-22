@@ -3,7 +3,7 @@
 // the socket and WebHID; the runtime and the real Ev3Provider run in this process, so nothing on the path of an
 // `until` watch depends on a browser timer.
 // Bound to 127.0.0.1 by name: nothing listens on the network (and Windows shows no firewall prompt).
-import { CLOSE_TAKEN } from "../../robot-page/src/bridge";
+import { ACCEPTED, CLOSE_TAKEN } from "../../robot-page/src/bridge";
 import { TransportError, type Transport } from "../../../packages/driver-ev3/transport";
 
 export interface BridgePageFiles {
@@ -126,6 +126,8 @@ export function serveBridge(page: BridgePageFiles, port: number, events: BridgeE
           // refused after the upgrade, so the page receives the code and the reason
           if (current) return ws.close(CLOSE_TAKEN, "another tab already holds the robot");
           current = { socket: ws, transport: null };
+          // from here on this page holds the robot: it brakes the motors if this socket ever closes
+          ws.send(ACCEPTED);
         },
         message(ws, data) {
           if (current?.socket !== ws) return;

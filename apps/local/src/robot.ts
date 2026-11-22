@@ -304,6 +304,8 @@ export class LocalRobot {
           if (state === "acting" || state === "running_program")
             this.toActivity("idle", `${tool} timed out, robot offline`);
         }
+        // the stop has run: the claim is over although its runtime call never ended, so a new link can attach
+        claim.end();
       }
       throw new LocalError(
         "timeout",

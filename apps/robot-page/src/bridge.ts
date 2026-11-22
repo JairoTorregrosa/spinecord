@@ -2,11 +2,13 @@
 // by moving bytes and nothing else. WebHID output reports ⇄ one WebSocket on 127.0.0.1:
 //   socket → page   binary: one framed direct command; the page pads it to the report size and sends it
 //   page → socket   binary: one input report, cut to its length field
+//   socket → page   text:   {"t":"accepted"} once, when the process takes this socket as the robot's
 //   page → socket   text:   {"t":"device","report_bytes":n,"name":s} when an EV3 is open, {"t":"gone","why":s} when it is not
 // No runtime, no polling and no timer on the path of a command: a browser slows the timers of a hidden or covered
 // window down to one per second, but it delivers socket messages and HID reports at once. The runtime, with its
 // 10 ms `until` watch, runs in the process at the other end of the socket.
-// If the socket closes (the process ended or was killed) the page brakes every motor by itself.
+// If a socket the process had accepted closes (the process ended or was killed) the page brakes every motor by
+// itself. A tab the process refuses (another tab holds the robot) was never accepted and sends the brick nothing.
 import { ALL_OUTPUTS, USB_PID, USB_VID, frame, outputStop } from "../../../packages/driver-ev3/encode";
 import { outputReportSize, type HidDeviceLike, type HidLike } from "../../../packages/driver-ev3/transport";
 
@@ -31,6 +33,8 @@ export const SOCKET_TRANSITIONS: Record<SocketState, readonly SocketState[]> = {
   open: ["closed"],
   closed: ["connecting"],
 };
+/** The one text frame the process sends: this socket is the robot's. */
+export const ACCEPTED = JSON.stringify({ t: "accepted" });
 /** Close code of a socket the process refuses because another page already lends an EV3 to it. */
 export const CLOSE_TAKEN = 4009;
 export interface BridgeStatus {
@@ -74,6 +78,7 @@ export function startBridge(env: BridgeEnv): Bridge {
   let detail = env.hid ? "" : "WebHID is not available: use Chrome or Edge on a desktop";
   let packets = 0;
   let taken = false;
+  let accepted = false; // the process said this socket is the robot's
   let disposed = false;
   let retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -183,6 +188,7 @@ export function startBridge(env: BridgeEnv): Bridge {
       if (socket !== s) return;
       if (ev.data instanceof ArrayBuffer) void forward(new Uint8Array(ev.data));
       else if (ev.data instanceof Uint8Array) void forward(ev.data);
+      else if (typeof ev.data === "string" && ev.data === ACCEPTED) accepted = true;
     };
     s.onclose = (ev) => {
       if (socket !== s) return;
@@ -191,9 +197,11 @@ export function startBridge(env: BridgeEnv): Bridge {
       toSocket("closed");
       taken = ev.code === CLOSE_TAKEN;
       if (ev.reason) detail = ev.reason;
-      // nobody is at the other end any more: whatever was moving stops here. A refused tab never held the robot:
-      // the tab that does is still lending it, so this one sends nothing
-      if (wasOpen && !taken && deviceState === "ready" && device) {
+      // nobody is at the other end any more: whatever was moving stops here. Only the tab whose socket the process
+      // accepted held the robot; any other tab sends nothing
+      const held = accepted;
+      accepted = false;
+      if (wasOpen && held && deviceState === "ready" && device) {
         const report = new Uint8Array(reportBytes);
         report.set(BRAKE_ALL);
         void device.sendReport(0, report).catch(() => {});
