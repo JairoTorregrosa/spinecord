@@ -528,6 +528,8 @@ const CATALOG: Omit<ToolDef, "output">[] = [
 
 type Schema = Record<string, unknown>;
 export type OutputSchema = {
+  /** Names this exact schema (tool + content hash), so a client compiles its validator once, not after every tools/list. */
+  $id: string;
   type: "object";
   properties: Record<string, Schema>;
   required: string[];
@@ -614,7 +616,7 @@ const toolError = obj(
 );
 
 /** The envelope around one tool's data (CONTRACT §7). One schema covers success and failure: check `ok`. */
-const envelope = (data: Schema): OutputSchema => ({
+const envelope = (data: Schema): Omit<OutputSchema, "$id"> => ({
   type: "object",
   properties: {
     ok: { type: "boolean", description: "true → data is present; false → error is present." },
@@ -815,8 +817,20 @@ const DATA: Record<string, Schema> = {
   ),
 };
 
+/** FNV-1a (32 bit) of a string, as 8 hex characters. Names a schema by its content; not a security hash. */
+function contentHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+// Why `$id`: MCP clients compile a validator per outputSchema and keep it by `$id` when there is one. Without it
+// they compile all of them again after every tools/list (about 35 ms for this catalog with Ajv), and the first
+// tool call after each listing pays for it. The hash changes with the schema, so a client never keeps a stale one.
 export const TOOLS: ToolDef[] = CATALOG.map((t) => {
   const data = DATA[t.name];
   if (!data) throw new Error(`tools.ts: ${t.name} has no output schema`);
-  return { ...t, output: envelope(data) };
+  const schema = envelope(data);
+  const $id = `urn:${SERVER_NAME}:output:${t.name}:${contentHash(JSON.stringify(schema))}`;
+  return { ...t, output: { $id, ...schema } };
 });

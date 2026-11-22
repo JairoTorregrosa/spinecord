@@ -3,7 +3,7 @@
 
 import { PROGRAM_TRANSITIONS } from "../../protocol/types.ts";
 import { type Config, type ToolPrincipal, ownersOf } from "./config.ts";
-import { callTool, listRobots } from "./dispatch.ts";
+import { callLogFlushed, callTool, listRobots } from "./dispatch.ts";
 import { ToolFail } from "./envelope.ts";
 import { log } from "./log.ts";
 import * as store from "./store.ts";
@@ -31,11 +31,12 @@ export async function serveApi(
   cfg: Config,
   who: ToolPrincipal,
   trace_id: string,
+  ctx: ExecutionContext,
 ): Promise<Response> {
   const path = url.pathname.split("/").filter(Boolean).slice(1).map(decodeURIComponent); // after "api"
   const route = `${request.method} ${path.map((p, i) => ((path[0] === "robots" && i === 1) || (path[0] === "programs" && (i === 1 || i === 2)) ? ":" : p)).join("/")}`;
   const tool = async (name: string, args: Record<string, unknown>) => {
-    const { envelope } = await callTool(env, cfg, who, name, args, trace_id);
+    const { envelope } = await callTool(env, cfg, who, name, args, trace_id, ctx);
     return json(envelope, envelope.ok ? 200 : (STATUS[envelope.error.code] ?? 409));
   };
   try {
@@ -64,6 +65,8 @@ export async function serveApi(
           return httpError(400, "invalid_argument", "since: must be a timestamp in ms since the epoch");
         if (!Number.isInteger(limit) || limit < 1 || limit > 1000)
           return httpError(400, "invalid_argument", "limit: must be an integer 1..1000");
+        // the log is written after each answer: wait for the rows of the calls already answered
+        await callLogFlushed(env, cfg, url.searchParams.get("robot_id") ?? undefined);
         return json({
           ok: true,
           data: await store.listCalls(env.DB, {
@@ -74,6 +77,8 @@ export async function serveApi(
         });
       }
       case "GET episodes":
+        // an episode's counters come from the call log
+        await callLogFlushed(env, cfg, url.searchParams.get("robot_id") ?? undefined);
         return json({
           ok: true,
           data: await store.listEpisodes(env.DB, url.searchParams.get("robot_id") ?? undefined),

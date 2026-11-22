@@ -105,7 +105,7 @@ function socket(
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const trace_id = crypto.randomUUID().slice(0, 13);
 
@@ -145,11 +145,11 @@ export default {
     }
     if (api) {
       if (who.role !== "admin") return httpError(403, "unauthorized", "the HTTP API is for admins");
-      return serveApi(request, url, env, cfg, who, trace_id);
+      return serveApi(request, url, env, cfg, who, trace_id, ctx);
     }
     // the token goes no further than this function
     const headers = new Headers(request.headers);
     headers.delete("Authorization");
-    return serveMcp(new Request(request, { headers }), env, cfg, who, trace_id);
+    return serveMcp(new Request(request, { headers }), env, cfg, who, trace_id, ctx);
   },
 } satisfies ExportedHandler<Env>;

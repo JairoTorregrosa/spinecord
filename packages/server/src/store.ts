@@ -19,11 +19,11 @@ export interface CallRow {
   trace_id: string;
 }
 
-export async function insertCall(db: D1Database, c: CallRow): Promise<void> {
-  await db
-    .prepare(
-      "INSERT INTO calls (id, robot_id, tool, request_id, state, code, ms, episode_id, created_at, principal, moving, trace_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-    )
+const CALL_INSERT =
+  "INSERT INTO calls (id, robot_id, tool, request_id, state, code, ms, episode_id, created_at, principal, moving, trace_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)";
+const callInsert = (db: D1Database, c: CallRow) =>
+  db
+    .prepare(CALL_INSERT)
     .bind(
       c.id,
       c.robot_id,
@@ -37,8 +37,62 @@ export async function insertCall(db: D1Database, c: CallRow): Promise<void> {
       c.principal,
       c.moving ? 1 : 0,
       c.trace_id,
-    )
-    .run();
+    );
+
+/** How long an answered call's row may wait in memory for others to share its D1 round trip. */
+export const CALL_LOG_FLUSH_MS = 50;
+/** Rows per D1 batch (one transaction). */
+const CALL_LOG_BATCH = 50;
+
+/**
+ * The call log of one Durable Object, written off the response path: a call answers without waiting for D1.
+ * `write` queues the row and returns; the queue goes to D1 as one batch, in the order written, at most
+ * CALL_LOG_FLUSH_MS later (the pending timer keeps the object in memory until then). Whoever reads `calls` waits
+ * on `flushed()` first, so a reader never misses a call that was already answered.
+ */
+export class CallLog {
+  private readonly queue: CallRow[] = [];
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private writing: Promise<void> | null = null;
+
+  constructor(
+    private readonly db: () => D1Database,
+    private readonly failed: (row: CallRow, message: string) => void,
+  ) {}
+
+  write(row: CallRow): void {
+    this.queue.push(row);
+    this.timer ??= setTimeout(() => void this.flushed(), CALL_LOG_FLUSH_MS);
+  }
+
+  /** Resolves when every row written so far is in D1 (or its failure is logged). Never rejects. */
+  async flushed(): Promise<void> {
+    while (this.writing || this.queue.length > 0) {
+      this.writing ??= this.writeQueue().finally(() => {
+        this.writing = null;
+      });
+      await this.writing;
+    }
+  }
+
+  private async writeQueue(): Promise<void> {
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+    const rows = this.queue.splice(0, CALL_LOG_BATCH);
+    const db = this.db();
+    try {
+      await db.batch(rows.map((row) => callInsert(db, row)));
+    } catch {
+      // a batch is one transaction: write the rows one by one, so only a row that cannot be written is lost
+      for (const row of rows) {
+        try {
+          await callInsert(db, row).run();
+        } catch (e) {
+          this.failed(row, e instanceof Error ? e.message : String(e));
+        }
+      }
+    }
+  }
 }
 
 export async function listCalls(

@@ -14,6 +14,7 @@ import {
   rid,
   sleep,
   sql,
+  sqlRaw,
   tool,
   until,
   resetRelay,
@@ -84,6 +85,22 @@ describe("dispatch", () => {
     });
     expect(await calls("a11")).toMatchObject([{ state: "failed", code: "unsupported" }]);
     rt.close();
+  });
+
+  it("the call log reaches D1 on its own, with no reader waiting for it", async () => {
+    // one call answered by a robot's object (the robot is offline) and one answered by the Worker alone
+    const offline = await tool(TOKENS.a, "read_all", { robot_id: "a11" });
+    expect(offline.envelope).toMatchObject({ ok: false, error: { code: "robot_offline" } });
+    expect((await tool(TOKENS.b, "list_robots")).envelope.ok).toBe(true);
+    // sqlRaw does not flush: only the log's own timer (store.CALL_LOG_FLUSH_MS) can have written these rows
+    const tools = async () =>
+      (
+        await sqlRaw<{ tool: string }>(
+          "SELECT DISTINCT tool FROM calls WHERE (tool='read_all' AND robot_id='a11') OR (tool='list_robots' AND robot_id IS NULL AND principal='user-b') ORDER BY tool",
+        )
+      ).map((r) => r.tool);
+    await until("both rows are in D1", async () => (await tools()).length === 2, 2000);
+    expect(await tools()).toEqual(["list_robots", "read_all"]);
   });
 });
 

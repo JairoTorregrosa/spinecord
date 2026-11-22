@@ -185,6 +185,11 @@ export class RobotDO extends DurableObject<Env> {
   private dropped = new WeakSet<WebSocket>();
   private pending = new Map<string, PendingCall>();
   private inflight = new Map<string, { sig: string; promise: Promise<Out> }>();
+  /** call-log rows on their way to D1 (written after the answer, see store.CallLog) */
+  private callLog = new store.CallLog(
+    () => this.env.DB,
+    (row, message) => log("calls_write_error", { robot_id: row.robot_id, trace_id: row.trace_id, message }),
+  );
   private actTail: Promise<unknown> = Promise.resolve();
   /** bumped by every stop: queued calls and trial loops from an older generation are preempted */
   private stopGen = 0;
@@ -664,6 +669,16 @@ export class RobotDO extends DurableObject<Env> {
     };
   }
 
+  // ---------------------------------------------------------------- RPC: the call log
+  /** Resolves when every call this object has answered or been handed is in D1. Readers of `calls` wait on it. */
+  async callsFlushed(): Promise<void> {
+    await this.callLog.flushed();
+  }
+  /** A call the Worker answered by itself (no robot): its row joins this object's log (the LIBRARY instance). */
+  logCall(row: store.CallRow): void {
+    this.callLog.write(row);
+  }
+
   // ---------------------------------------------------------------- RPC: one tool call (Call FSM)
   async invoke(r: InvokeReq): Promise<Out> {
     const t0 = Date.now();
@@ -676,7 +691,7 @@ export class RobotDO extends DurableObject<Env> {
     const request_id = typeof r.args.request_id === "string" ? r.args.request_id : null;
     const view = () => (library ? undefined : this.view());
 
-    const finish = async (out: Out): Promise<Out> => {
+    const finish = (out: Out): Out => {
       const code = out.envelope.ok ? null : out.envelope.error.code;
       const ms = Date.now() - t0;
       log("call", {
@@ -690,28 +705,20 @@ export class RobotDO extends DurableObject<Env> {
         request_id,
         ok: out.envelope.ok,
       });
-      try {
-        await store.insertCall(this.env.DB, {
-          id: call.id,
-          robot_id: library ? null : r.robot_id,
-          tool: r.tool,
-          request_id,
-          state: call.state,
-          code,
-          ms,
-          episode_id,
-          created_at: t0,
-          principal: r.caller.id,
-          moving: call.moving,
-          trace_id: r.trace_id,
-        });
-      } catch (e) {
-        log("calls_write_error", {
-          robot_id: r.robot_id,
-          trace_id: r.trace_id,
-          message: e instanceof Error ? e.message : String(e),
-        });
-      }
+      this.callLog.write({
+        id: call.id,
+        robot_id: library ? null : r.robot_id,
+        tool: r.tool,
+        request_id,
+        state: call.state,
+        code,
+        ms,
+        episode_id,
+        created_at: t0,
+        principal: r.caller.id,
+        moving: call.moving,
+        trace_id: r.trace_id,
+      });
       return out;
     };
 
@@ -794,7 +801,7 @@ export class RobotDO extends DurableObject<Env> {
       // with the same request_id. The image is never stored.
       if (call.dispatched)
         await this.ctx.storage.put(key, { out: { envelope: out.envelope }, exp: Date.now() + IDEMPOTENCY_MS, sig });
-      return await finish(out);
+      return finish(out);
     } finally {
       this.inflight.delete(key);
     }
@@ -1266,7 +1273,7 @@ export class RobotDO extends DurableObject<Env> {
         note: typeof r.args.note === "string" ? r.args.note : "",
         at: now,
       });
-      return store.episodeSummary(db, ep.id);
+      return this.episodeSummary(ep.id);
     }
     assertTransition("episode", EPISODE_TRANSITIONS, ep.state, "ended");
     await store.endEpisode(
@@ -1278,7 +1285,13 @@ export class RobotDO extends DurableObject<Env> {
     );
     this.s.episode = { id: ep.id, state: "ended" };
     this.save();
-    return store.episodeSummary(db, ep.id);
+    return this.episodeSummary(ep.id);
+  }
+
+  /** The summary counts this robot's calls: the ones still on their way to D1 land first. */
+  private async episodeSummary(id: string): ReturnType<typeof store.episodeSummary> {
+    await this.callLog.flushed();
+    return store.episodeSummary(this.env.DB, id);
   }
 
   // ---------------------------------------------------------------- program library (runs in the LIBRARY instance)

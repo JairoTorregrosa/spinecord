@@ -71,9 +71,12 @@ async function testHook<T>(name: string, body: unknown): Promise<T> {
   if (!res.ok) throw new Error(`/__test/${name} answered ${res.status}: ${await res.text()}`);
   return (await res.json()) as T;
 }
-/** Rows from the worker's D1 database. */
+/** Rows from the worker's D1 database, once every call already answered is in the call log. */
 export const sql = <T = Record<string, unknown>>(query: string, ...params: unknown[]): Promise<T[]> =>
   testHook<T[]>("sql", { sql: query, params });
+/** Rows from D1 as it is right now, without waiting for call-log rows still held in memory. */
+export const sqlRaw = <T = Record<string, unknown>>(query: string, ...params: unknown[]): Promise<T[]> =>
+  testHook<T[]>("sql", { sql: query, params, raw: true });
 /** The Miniflare instance is shared by the whole process: each test file starts from no Durable Objects and an empty database. */
 export const resetRelay = async (): Promise<void> => void (await testHook("reset", { migrations: relay.migrations }));
 /** Evicts a robot's Durable Object from memory; its WebSockets hibernate. */
