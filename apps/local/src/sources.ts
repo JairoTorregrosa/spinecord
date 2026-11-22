@@ -4,6 +4,7 @@
 //   ev3      the real Ev3Provider over the bridge page's socket, built each time the page opens an EV3
 import { Ev3Provider } from "../../../packages/driver-ev3/provider";
 import type { Transport } from "../../../packages/driver-ev3/transport";
+import { RuntimeError } from "../../../packages/protocol/types";
 import { Ev3devProvider } from "../../../packages/driver-ev3dev/src/provider";
 import { SshLineTransport, installBridge } from "../../../packages/driver-ev3dev/src/ssh";
 import { createRuntime, type LocalRuntime } from "../../../packages/runtime/runtime";
@@ -91,7 +92,8 @@ export function keepAttached(
       connect().then(
         () => o.log("ready"),
         (e: unknown) => {
-          robot.attachFailed((e as Error).message);
+          // a configuration the attempts cannot change by themselves (a bridge of another version on the brick)
+          robot.attachFailed((e as Error).message, e instanceof RuntimeError && e.code === "misconfigured");
           o.log("attach_failed", { error: (e as Error).message });
           again();
         },

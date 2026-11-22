@@ -38,6 +38,15 @@ export const UNTIL_POLL_MS = 10;
 // How old a timed round trip may be and still let the first chunk of a move coast: about what a move itself
 // relies on between two of its chunks. Older than this, the link is timed again before anything moves.
 export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
+// Coasting is decided on the slow end of the link: the 90th percentile (nearest rank) of the latest
+// LINK_WINDOW timed round trips of a provider. One fast answer on a slow link proves nothing.
+export const LINK_WINDOW = 10;
+export const LINK_PERCENTILE = 0.9;
+// Fewer timed round trips than this say nothing about a link: no coasting on them.
+export const LINK_MIN_SAMPLES = 3;
+// A device re-scan that failed is tried again after this long, doubling after every failure up to the max.
+export const SCAN_RETRY_MS = 250;
+export const SCAN_RETRY_MAX_MS = 5000;
 const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image"];
 const ROBOT_TOOLS: readonly RobotTool[] = [
   "describe_robot",
@@ -69,7 +78,9 @@ export interface LocalRuntime extends Runtime {
   readonly backend: BackendKind;
   readonly stop_worst_ms: number; // upper bound for stop(): slowest provider + runtime overhead
   ready(): Promise<void>; // first device scan done (throws if it failed)
-  refresh(): Promise<void>; // re-scan every provider's devices
+  // Re-scans every provider's devices; rejects when the scan failed. The registry of the last scan that
+  // succeeded stays in use meanwhile, calls keep working on it, and the scan is tried again by itself.
+  refresh(): Promise<void>;
   dispose(): void; // unsubscribe from every provider
 }
 export interface ProgramStep {
@@ -98,7 +109,8 @@ interface Entry {
 }
 // A condition being watched while operations run. `first` is the outcome of the poll made before anything
 // moves; `state()` is what the watch knows now; `fresh()` waits for a poll that starts after the call.
-// state() and fresh() throw what a poll threw (a channel that needs a mode switch, an unknown device).
+// state() and fresh() throw what a poll threw (a channel that could not be read or needs a mode switch, an
+// unknown device).
 interface Monitor {
   readonly first: Promise<boolean>;
   state(): boolean;
@@ -133,11 +145,19 @@ class RuntimeImpl implements LocalRuntime {
   private readonly clock: Clock;
   private readonly chunkMs: number;
   private entries = new Map<string, Entry>();
-  // Round trip of the latest timed read of each provider: the evidence for coasting between chunks.
+  // Round trip of the latest timed read of each provider (what the link costs right now), and the latest
+  // LINK_WINDOW of them, oldest first: the evidence for coasting between chunks.
   private readonly linkMs = new WeakMap<Provider, number>();
+  private readonly linkSeen = new WeakMap<Provider, number[]>();
   private readonly linkAt = new WeakMap<Provider, number>(); // when that read came back
   private readonly inflight = new Set<AbortController>();
+  // What every call waits for: the latest scan. It rejects only while no scan has ever succeeded.
   private scan: Promise<void>;
+  private scanned = false; // `entries` comes from a scan that succeeded
+  // A re-scan failed and `entries` is the registry of the last scan that succeeded; shown by describe_robot.
+  private scanFailure: { message: string; attempts: number } | undefined;
+  private retry: AbortController | undefined; // the wait before the next attempt
+  private disposed = false;
   readonly backend: BackendKind;
 
   constructor(o: RuntimeOptions) {
@@ -165,7 +185,7 @@ class RuntimeImpl implements LocalRuntime {
     this.scan.catch(() => {}); // surfaced by ready() and by every call()
     for (const p of built) {
       const off = p.onDevicesChanged?.(() => {
-        // A failed re-read is not hidden: every call fails with it until a later scan succeeds.
+        // A failed re-read is not hidden: describe_robot reports it until a later scan succeeds.
         void this.refresh().catch(() => {});
       });
       if (off) this.unsubscribe.push(off);
@@ -178,6 +198,8 @@ class RuntimeImpl implements LocalRuntime {
   private callerActivity: RobotActivity = "idle"; // activity of the call being planned, as its caller reported it
   private readonly unsubscribe: (() => void)[] = [];
   dispose(): void {
+    this.disposed = true;
+    this.retry?.abort();
     for (const off of this.unsubscribe.splice(0)) off();
   }
 
@@ -192,10 +214,29 @@ class RuntimeImpl implements LocalRuntime {
     return this.scan;
   }
   refresh(): Promise<void> {
+    this.retry?.abort(); // this attempt is the retry
+    this.retry = undefined;
     // one scan at a time, in the order requested
-    this.scan = this.scan.catch(() => {}).then(() => this.rescan());
+    const attempt = this.scan.catch(() => {}).then(() => this.rescan());
+    // Calls wait for the attempt. One that fails leaves the last good registry in place and is tried again;
+    // with no registry at all (no scan ever succeeded) calls fail with it.
+    this.scan = attempt.catch((err) => {
+      this.scanFailed(err);
+      if (!this.scanned) throw err;
+    });
     this.scan.catch(() => {});
-    return this.scan;
+    attempt.catch(() => {});
+    return attempt;
+  }
+  private scanFailed(err: unknown): void {
+    const attempts = (this.scanFailure?.attempts ?? 0) + 1;
+    this.scanFailure = { message: String((err as Error)?.message ?? err), attempts };
+    if (this.disposed) return;
+    const wait = new AbortController();
+    this.retry = wait;
+    void this.clock.sleep(Math.min(SCAN_RETRY_MS * 2 ** (attempts - 1), SCAN_RETRY_MAX_MS), wait.signal).then(() => {
+      if (!wait.signal.aborted) void this.refresh().catch(() => {});
+    });
   }
 
   private async rescan(): Promise<void> {
@@ -214,6 +255,8 @@ class RuntimeImpl implements LocalRuntime {
         next.set(d.id, { spec: { ...d, roles: [...roles] }, provider: p });
       }
     this.entries = next;
+    this.scanned = true;
+    this.scanFailure = undefined;
   }
 
   private roleMap(): Record<string, string> {
@@ -405,7 +448,8 @@ class RuntimeImpl implements LocalRuntime {
         if (r.met) return { data: { met: true, after_ms, readings: r.readings } };
         if (signal.aborted) return { data: { met: false, after_ms, readings: r.readings, reason: "preempted" } };
         if (after_ms >= timeout) return { data: { met: false, after_ms, readings: r.readings } };
-        await this.clock.sleep(Math.min(period, timeout - after_ms), signal);
+        // A poll without a value is asked again soon: it is an answer only when it repeats (conditions.ts).
+        await this.clock.sleep(Math.min(r.unreadable ? UNTIL_POLL_MS : period, timeout - after_ms), signal);
       }
     };
   }
@@ -540,9 +584,23 @@ class RuntimeImpl implements LocalRuntime {
   private async timedRead(e: Entry, channels: string[]): Promise<Reading[]> {
     const asked = this.clock.now();
     const got = await this.readEntry(e, channels);
-    this.linkMs.set(e.provider, this.clock.now() - asked);
+    const took = this.clock.now() - asked;
+    this.linkMs.set(e.provider, took);
     this.linkAt.set(e.provider, this.clock.now());
+    const seen = this.linkSeen.get(e.provider) ?? [];
+    seen.push(took);
+    if (seen.length > LINK_WINDOW) seen.shift();
+    this.linkSeen.set(e.provider, seen);
     return got;
+  }
+  // The round trip the link is good for: the larger of its latest timed read and a high percentile of the
+  // recent ones, never the best one. Unknown until the link was timed LINK_MIN_SAMPLES times.
+  private linkSlowMs(p: Provider): number | undefined {
+    const seen = this.linkSeen.get(p);
+    const latest = this.linkMs.get(p);
+    if (!seen || seen.length < LINK_MIN_SAMPLES || latest === undefined) return undefined;
+    const sorted = [...seen].sort((a, b) => a - b);
+    return Math.max(latest, sorted[Math.ceil(LINK_PERCENTILE * sorted.length) - 1]!);
   }
   private async encoders(pair: Entry): Promise<{ l: number; r: number }> {
     const [l, r] = await this.timedRead(pair, ["left_deg", "right_deg"]);
@@ -567,7 +625,7 @@ class RuntimeImpl implements LocalRuntime {
   // every max(UNTIL_POLL_MS, the round trip of one such read) and calls `trip` the
   // moment it is met or cannot be evaluated, so the caller aborts the operation in flight instead of waiting
   // for it to end. One poll at a time; reads here never switch a sensor mode.
-  private monitor(cond: CompiledCondition, trip: () => void): Monitor {
+  private monitor(cond: CompiledCondition, trip: () => void, signal: AbortSignal): Monitor {
     const ev = makeEvaluator(cond, this.readFn);
     let met = false,
       failed = false,
@@ -586,25 +644,30 @@ class RuntimeImpl implements LocalRuntime {
       if (failed) throw error;
       return met;
     };
+    // Whoever waits for a poll also stops waiting when the call is aborted: the answer is then what is known.
     const until = async (n: number) => {
-      while (done < n && !settled()) await new Promise<void>((r) => waiters.push(r));
+      while (done < n && !settled() && !signal.aborted) await new Promise<void>((r) => waiters.push(r));
       return result();
     };
+    signal.addEventListener("abort", wake, { once: true });
     void (async () => {
       while (!settled()) {
         const asked = this.clock.now();
         started++;
+        let decided = true;
         try {
-          if ((await ev.poll()).met) met = true;
+          const r = await ev.poll();
+          if (r.met) met = true;
+          decided = !r.unreadable; // a poll without a value is no answer: whoever waits for a poll waits on
         } catch (err) {
           failed = true;
           error = err;
         }
-        done = started;
+        if (decided) done = started;
         if (stopped) break;
         if (met || failed) trip();
         wake();
-        if (settled() || wanted > done) continue;
+        if (settled() || (decided && wanted > done)) continue;
         const took = this.clock.now() - asked;
         nap = new AbortController();
         await this.clock.sleep(Math.max(UNTIL_POLL_MS, took) - took, nap.signal);
@@ -624,6 +687,7 @@ class RuntimeImpl implements LocalRuntime {
       },
       stop: () => {
         stopped = true;
+        signal.removeEventListener("abort", wake);
         nap?.abort();
         wake();
       },
@@ -653,6 +717,9 @@ class RuntimeImpl implements LocalRuntime {
     measured: Record<string, Value>;
     braked: boolean;
     problem?: string;
+    // The watch of `until` could not evaluate the condition: the move ended there, braked like any early end.
+    // The caller reads what was done and throws the error with it.
+    failure?: { error: unknown };
   }> {
     const { entry, cmd, signal } = o;
     const keys = Object.keys(o.targets);
@@ -685,19 +752,30 @@ class RuntimeImpl implements LocalRuntime {
     // every operation travels with one, so a link that gets slower mid-move shows before the next is sent.
     const latency = () => this.linkMs.get(entry.provider);
     // Coast between chunks only on a link whose round trip is small next to the chunk: on a slow link the
-    // device would roll uncontrolled between operations, so there every operation brakes.
-    const coastOk = () => canCoast && (latency() ?? Infinity) < aimMs / 4;
+    // device would roll uncontrolled between operations, so there every operation brakes. "Small" is judged
+    // on the slow end of the recent round trips (linkSlowMs), so one fast answer among slow ones never coasts.
+    const coastOk = () => canCoast && (this.linkSlowMs(entry.provider) ?? Infinity) < aimMs / 4;
     // Coasting needs a round trip measured just now: in this call before anything moves, or no longer ago
     // than LINK_FRESH_MS (moves sent back to back, as a program or a script does). What an older call saw may
     // be long gone. With a track, a link last seen slow needs none: every operation brakes there, and the
     // readings that travel with the operations show it when the link is fast again. Without one nothing else
     // would ever time the link, so one read does, on every call.
     const fresh = () => this.clock.now() - (this.linkAt.get(entry.provider) ?? -Infinity) <= LINK_FRESH_MS;
+    // A link timed fewer than LINK_MIN_SAMPLES times is timed here, with nothing moving, for as long as it
+    // answers fast: on a fast link that costs next to nothing and lets the first chunks coast; the first slow
+    // answer ends it, and that link brakes every operation.
+    const probe = entry.spec.channels.find((c) => c.type !== "image" && c.active !== false);
+    const timed = () => this.linkSeen.get(entry.provider) ?? [];
+    if (canCoast && probe)
+      while (timed().length < LINK_MIN_SAMPLES && timed().every((ms) => ms < aimMs / 4) && !signal.aborted)
+        await this.timedRead(entry, [probe.name]);
     let proven = !canCoast || (latency() !== undefined && (!coastOk() || fresh()));
     if (canCoast && !o.track) {
-      const ch = entry.spec.channels.find((c) => c.type !== "image" && c.active !== false);
-      if (ch) await this.timedRead(entry, [ch.name]);
-      else this.linkMs.delete(entry.provider); // nothing to time it with: never coast
+      if (probe) await this.timedRead(entry, [probe.name]);
+      else {
+        this.linkMs.delete(entry.provider); // nothing to time it with: never coast
+        this.linkSeen.delete(entry.provider);
+      }
       proven = true;
     }
     // Degree targets on a fast link, or under `until`: a small probe first, then chunks sized from the speed
@@ -724,11 +802,34 @@ class RuntimeImpl implements LocalRuntime {
     let tripped = false;
     const mon =
       o.until &&
-      this.monitor(o.until, () => {
-        if (!flying) return;
-        tripped = true;
-        flying.abort();
-      });
+      this.monitor(
+        o.until,
+        () => {
+          if (!flying) return;
+          tripped = true;
+          flying.abort();
+        },
+        signal,
+      );
+    // A watch that could not evaluate the condition ends the move: nothing more is sent, and what follows the
+    // loop brakes a device that still rolls.
+    let failure: { error: unknown } | undefined;
+    const met = (): boolean => {
+      try {
+        return mon?.state() ?? false;
+      } catch (error) {
+        failure = { error };
+        return false;
+      }
+    };
+    const metAt = async (poll: Promise<boolean>): Promise<boolean> => {
+      try {
+        return await poll;
+      } catch (error) {
+        failure = { error };
+        return false;
+      }
+    };
     // Reversal and stall detection (CONTRACT §0.8), on what one operation really moved along the commanded
     // direction. Both end the move by setting `reason`.
     const reversed = (moved: number, step: number, n: number, asked: Value | undefined): boolean => {
@@ -766,8 +867,8 @@ class RuntimeImpl implements LocalRuntime {
     let early = o.track && !proven ? o.track.mark() : undefined;
     early?.catch(() => {});
     try {
-      if (mon && (await mon.first)) reason = "condition_met";
-      while (!reason) {
+      if (mon && (await metAt(mon.first))) reason = "condition_met";
+      while (!reason && !failure) {
         let remaining = (1 - f) * lead - drift;
         if (remaining < tol) {
           // What the operations reported, or what the device is expected to roll by itself, says the target is
@@ -803,7 +904,10 @@ class RuntimeImpl implements LocalRuntime {
           reason = "timeout";
           break;
         }
-        const size = () => Math.min(remaining, opCap, byTime ? sliceMs : sized() ? chunkLead : Infinity);
+        // A time target never asks for more than the call's budget still holds.
+        const budgetMs = () => o.t0 + this.prof.limits.max_command_ms - this.clock.now();
+        const size = () =>
+          Math.min(remaining, opCap, byTime ? Math.min(sliceMs, budgetMs()) : sized() ? chunkLead : Infinity);
         // The reading this operation starts from travels with it. It is awaited first only when its answer is
         // needed before sending: to prove the link fast enough to coast.
         const marked = early ?? o.track?.mark();
@@ -818,10 +922,11 @@ class RuntimeImpl implements LocalRuntime {
           if (remaining < tol) continue; // decided at the top, with the device braked
           if (signal.aborted) continue;
         }
-        if (mon?.state()) {
+        if (met()) {
           reason = "condition_met"; // met while a reading was awaited: nothing more is sent
           break;
         }
+        if (failure) break;
         const step = size();
         const last = step >= remaining - 1e-9;
         const args: Record<string, Value> = { ...o.base };
@@ -850,6 +955,15 @@ class RuntimeImpl implements LocalRuntime {
             cut = true;
             op.abort();
           });
+        // The call's budget (max_command_ms) is watched while the operation runs, like the deadline above: an
+        // operation still running when it is spent is aborted there, whatever bound the device declares.
+        let spent = false;
+        void this.clock.sleep(budgetMs(), settled.signal).then(async () => {
+          await this.clock.sleep(0, settled.signal);
+          if (settled.signal.aborted || op.signal.aborted) return;
+          spent = true;
+          op.abort();
+        });
         let res: CommandResult;
         tripped = false;
         flying = op;
@@ -860,7 +974,7 @@ class RuntimeImpl implements LocalRuntime {
           settled.abort(); // the deadline timer goes away with its operation
           signal.removeEventListener("abort", preempt);
         }
-        const ended = cut || tripped; // the runtime ended this operation itself
+        const ended = cut || tripped || spent; // the runtime ended this operation itself
         const wall = this.clock.now() - sent;
         checked = false;
         chunks++;
@@ -909,15 +1023,20 @@ class RuntimeImpl implements LocalRuntime {
           reason = "preempted";
           break;
         }
+        if (spent) {
+          reason = "timeout";
+          break;
+        }
         if (reversed(judged, step, chunks, args[leadKey])) break;
         if (res.reason === "stalled") {
           reason = "stalled";
           break;
         }
-        if (mon?.state()) {
+        if (met()) {
           reason = "condition_met";
           break;
         }
+        if (failure) break;
         if (stuck(judged, step, cut)) break;
         if (!byTime) {
           const motionMs = wall - (latency() ?? 0);
@@ -928,7 +1047,7 @@ class RuntimeImpl implements LocalRuntime {
         }
         // A device that now stands still (the operation braked) waits for a reading taken after the operation;
         // one that coasts gets its next operation at once, watched.
-        if (mon && !coast && (await mon.fresh())) {
+        if (mon && !coast && (await metAt(mon.fresh()))) {
           reason = "condition_met";
           break;
         }
@@ -944,7 +1063,26 @@ class RuntimeImpl implements LocalRuntime {
         await (reason === "preempted" ? brake.catch(() => {}) : brake);
       }
     }
-    return { reason: reason!, chunks, clamped, measured, braked, ...(problem ? { problem } : {}) };
+    return {
+      reason: reason ?? "preempted",
+      chunks,
+      clamped,
+      measured,
+      braked,
+      ...(problem ? { problem } : {}),
+      ...(failure ? { failure } : {}),
+    };
+  }
+
+  // The error of a watch that ended a move, with what the move had done by then.
+  private endedMove(error: unknown, measured: Record<string, Value>): unknown {
+    if (!(error instanceof RuntimeError)) return error;
+    return new RuntimeError(
+      error.code,
+      `${error.message} The move was ended and the device braked. Measured so far: ${JSON.stringify(measured)}.`,
+      error.retryable,
+      measured,
+    );
   }
 
   // Executes wheel targets (degrees, forward_sign already applied). Progress comes from the wheel encoders,
@@ -1020,7 +1158,10 @@ class RuntimeImpl implements LocalRuntime {
     let reason = run.reason;
     if (reason === "completed" && (clamped || run.clamped)) reason = "clamped";
     // An early end, or the brake{} after a coasting chunk, moved the wheels since the last reading.
-    if (!after || run.braked) await track.settle();
+    if (!after || run.braked)
+      await track.settle().catch((err) => {
+        throw run.failure ? run.failure.error : err; // the wheels cannot be read either: the watch's error stands
+      });
     const [, g0] = await before!;
     const { enc, g: g1 } = after!;
     const start = enc0!;
@@ -1035,11 +1176,14 @@ class RuntimeImpl implements LocalRuntime {
       tool === "turn"
         ? { angle_deg: round1(heading), source }
         : { distance_cm: round1(((dl + dr) / 2) * cmPerDeg), heading_change_deg: round1(heading), source };
+    measured.left_deg = round1(enc.l - start.l);
+    measured.right_deg = round1(enc.r - start.r);
+    if (run.failure) throw this.endedMove(run.failure.error, measured);
     return {
       data: {
         requested,
         applied,
-        measured: { ...measured, left_deg: round1(enc.l - start.l), right_deg: round1(enc.r - start.r) },
+        measured,
         clamped: clamped || run.clamped,
         reason,
         ...(run.problem ? { problem: run.problem } : {}),
@@ -1122,6 +1266,7 @@ class RuntimeImpl implements LocalRuntime {
           signal,
           t0,
         });
+        if (run.failure) throw this.endedMove(run.failure.error, run.measured);
         const anyClamp = clamped || run.clamped;
         return {
           data: {
@@ -1152,11 +1297,15 @@ class RuntimeImpl implements LocalRuntime {
       let why: "condition_met" | "timeout" | undefined;
       const mon =
         until &&
-        this.monitor(until, () => {
-          if (!flying) return;
-          why = "condition_met";
-          flying.abort();
-        });
+        this.monitor(
+          until,
+          () => {
+            if (!flying) return;
+            why = "condition_met";
+            flying.abort();
+          },
+          signal,
+        );
       const total: Record<string, Value> = {};
       const done = (reason: StopReason, anyClamp: boolean, ops: number): RuntimeResult => ({
         data: {
@@ -1169,8 +1318,16 @@ class RuntimeImpl implements LocalRuntime {
           ms: Math.round(this.clock.now() - t0),
         },
       });
+      // A watch that cannot evaluate the condition ends the command with its error and what was measured.
+      const watched = async (poll: Promise<boolean> | undefined): Promise<boolean> => {
+        try {
+          return (await poll) ?? false;
+        } catch (err) {
+          throw this.endedMove(err, total);
+        }
+      };
       try {
-        if (mon && (await mon.first)) return done("condition_met", clamped, 0);
+        if (await watched(mon?.first)) return done("condition_met", clamped, 0);
         let args = { ...applied };
         let anyClamp = clamped;
         for (let ops = 1; ; ops++) {
@@ -1193,7 +1350,6 @@ class RuntimeImpl implements LocalRuntime {
             flying = undefined;
             limit.abort();
           }
-          mon?.state(); // a condition that could not be read is an error, not a result
           anyClamp ||= res.clamped;
           const m = res.measured ?? {};
           for (const [k, v] of Object.entries(m))
@@ -1201,12 +1357,17 @@ class RuntimeImpl implements LocalRuntime {
               typeof v === "number" && typeof (total[k] ?? 0) === "number"
                 ? ((total[k] as number | undefined) ?? 0) + v
                 : v;
+          try {
+            mon?.state(); // a condition that could not be read is an error, not a result
+          } catch (err) {
+            throw this.endedMove(err, total);
+          }
           if (signal.aborted) return done("preempted", anyClamp, ops);
           if (why && res.reason === "preempted") return done(why, anyClamp, ops);
           if (!(cmd.moves && res.reason === "timeout" && m.time_limited === true))
             return done(res.reason, anyClamp, ops);
           if (this.clock.now() - t0 >= lim.max_command_ms) return done("timeout", anyClamp, ops);
-          if (mon && (await mon.fresh())) return done("condition_met", anyClamp, ops);
+          if (await watched(mon?.fresh())) return done("condition_met", anyClamp, ops);
           const rest = { ...args };
           for (const [k, v] of Object.entries(args))
             if (typeof v === "number" && typeof m[k] === "number") rest[k] = v - (m[k] as number);
@@ -1323,10 +1484,18 @@ class RuntimeImpl implements LocalRuntime {
     };
     const test = async (cond: unknown, path: string, ev?: ReturnType<typeof makeEvaluator>) => {
       try {
-        return (
-          await (ev ?? makeEvaluator(compileCondition(cond, this.resolver, `program ${path}`), this.readFn)).poll()
-        ).met;
+        const e = ev ?? makeEvaluator(compileCondition(cond, this.resolver, `program ${path}`), this.readFn);
+        // One answer is needed: a poll without a value is asked again until the evaluator answers or gives up.
+        // A program interrupted while it waits (its budget spent, the call aborted) ends as interrupted.
+        let r = await e.poll();
+        while (r.unreadable) {
+          await this.clock.sleep(UNTIL_POLL_MS, budget.signal);
+          check();
+          r = await e.poll();
+        }
+        return r.met;
       } catch (err) {
+        if (err instanceof End) throw err;
         throw new End(
           "failed",
           `${path}: ${err instanceof RuntimeError ? `${err.code}: ${err.message}` : String(err)}`,
@@ -1494,6 +1663,9 @@ class RuntimeImpl implements LocalRuntime {
       drivetrain: this.prof.drivetrain ?? null,
       limits: this.prof.limits,
       notes: this.prof.notes,
+      scan_error: this.scanFailure
+        ? `device scan failed (${this.scanFailure.attempts} in a row): ${this.scanFailure.message}. The device list and each channel's active flag are those of the last scan that succeeded and may be out of date; the scan is tried again by itself.`
+        : null,
     };
   }
 

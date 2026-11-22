@@ -331,6 +331,7 @@ const ERROR_CODES = every<ErrorCode>()([
   "timeout",
   "stop_unverified",
   "stale_image",
+  "condition_unreadable",
   "internal",
   "misconfigured",
 ]);
@@ -374,7 +375,16 @@ const robotState = obj(
   "Robot state after the call. Absent for tools that address no robot.",
 );
 const toolError = obj(
-  { code: oneOf(ERROR_CODES), message: str, retryable: bool, retry_after_ms: num },
+  {
+    code: oneOf(ERROR_CODES),
+    message: str,
+    retryable: bool,
+    retry_after_ms: num,
+    measured: {
+      type: "object",
+      description: "What a move had done when the error ended it; the robot was stopped there.",
+    },
+  },
   ["code", "message", "retryable"],
   "Present when ok is false.",
 );
@@ -403,6 +413,11 @@ const reading = obj(
     unit: str,
     ts: { type: "number", description: "Capture time, ms." },
     error: str,
+    absent: {
+      type: "boolean",
+      description:
+        "true → value is null because the device answered that it has nothing to report (no beacon in view), not because the read failed.",
+    },
   },
   [],
   "One channel value.",
@@ -431,6 +446,11 @@ const channelSpec = obj({
   approx: str,
   mode_group: str,
   active: { type: "boolean", description: "false → reading it needs a mode switch: name it in channels." },
+  null_when_absent: {
+    type: "boolean",
+    description:
+      "true → the channel may read null with absent:true (nothing in view): an answer, not a failure. A condition on it is then not met, never condition_unreadable.",
+  },
   description: str,
 });
 const commandSpec = obj({
@@ -469,6 +489,10 @@ const DATA: Record<string, Schema> = {
       max_program_ms: num,
     }),
     notes: strings,
+    scan_error: nullable("string", {
+      description:
+        "null when the device list is current. Else why the latest device scan failed; the list is then the one of the last scan that succeeded.",
+    }),
   }),
   describe_device: obj({ ...deviceFields, channels: list(channelSpec), commands: list(commandSpec) }),
   read_device: readings,

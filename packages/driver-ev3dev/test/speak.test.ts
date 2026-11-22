@@ -1,6 +1,7 @@
 // speaker.speak on the fake brick: the real bridge with a stub `espeak` and a stub `aplay` on its PATH.
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RuntimeError } from "../../protocol/types";
 import type { DeviceSpec } from "../../protocol/types";
@@ -56,6 +57,19 @@ function setup(speech: { voices: string[] } | "none" = { voices: VOICES }) {
 const speaker = (specs: DeviceSpec[]) => specs.find((s) => s.id === "ev3.speaker")!;
 
 describe("speaker.speak", () => {
+  speechTest("the voice list is looked up once per bridge process, not at every hello", async () => {
+    const { provider, brick } = setup();
+    const first = speaker(await provider.devices());
+    // what the stub espeak would list from here on
+    writeFileSync(
+      join(brick.root, "bin", "voices.txt"),
+      "Pty Language Age/Gender VoiceName File Other Languages\n 5  xx  M  voice-xx  lang/xx\n",
+    );
+    const again = speaker(await provider.devices()); // a second hello on the same bridge
+    expect(again.commands[2]!.params).toEqual(first.commands[2]!.params);
+    expect(JSON.stringify(again.commands[2]!.params)).toContain('"es-la"');
+  });
+
   speechTest("is declared only when the brick has espeak and aplay, with the brick's voices as an enum", async () => {
     const spec = speaker(await setup().provider.devices());
     expect(spec.commands.map((c) => c.name)).toEqual(["tone", "beep", "speak"]);

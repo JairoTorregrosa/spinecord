@@ -24,6 +24,10 @@ export interface ChannelSpec {
   range?: [number, number];
   length?: number; // for vector
   max_rate_hz?: number; // fastest meaningful sampling
+  // true = this channel may answer "nothing to report" (no beacon in view): a reading with value null and
+  // `absent: true`. A condition takes that reading as "not met" and never as condition_unreadable; a null
+  // without `absent` is a failed read on this channel too (CONTRACT §2.2).
+  null_when_absent?: boolean;
   approx?: string; // honest note on accuracy, e.g. "IR proximity is ~0.7 cm per unit"
   description: string;
 }
@@ -71,6 +75,9 @@ export interface Reading {
   unit?: string;
   ts: number;
   error?: string;
+  // The device answered, and its answer is "nothing to report" (value null, on a null_when_absent channel).
+  // Absent on a null that comes from a failed read.
+  absent?: true;
 }
 /** Serves calls in the order they were made (CONTRACT §4): a read issued just before a command observes the device before that command starts. */
 export interface Provider {
@@ -168,6 +175,7 @@ export type ErrorCode =
   | "timeout"
   | "stop_unverified"
   | "stale_image"
+  | "condition_unreadable"
   | "internal"
   | "misconfigured";
 export interface ToolError {
@@ -175,6 +183,8 @@ export interface ToolError {
   message: string;
   retryable: boolean;
   retry_after_ms?: number;
+  /** What a move had done when the error ended it; the robot was stopped there. */
+  measured?: Record<string, Value>;
 }
 export type Envelope<T> =
   | { ok: true; robot?: RobotStateView; data: T; next: string[] }
@@ -210,6 +220,8 @@ export class RuntimeError extends Error {
     public code: ErrorCode,
     message: string,
     public retryable = false,
+    /** What a move had done when this error ended it (the robot was stopped there). */
+    public measured?: Record<string, Value>,
   ) {
     super(message);
   }

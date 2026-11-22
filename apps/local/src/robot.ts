@@ -27,8 +27,9 @@ export class LocalError extends RuntimeError {
     readonly retry_after_ms?: number,
     /** The call had started to move the robot: it may have partly happened, so the next step is a read. */
     readonly afterMove = false,
+    measured?: RuntimeError["measured"],
   ) {
-    super(code, message, retryable);
+    super(code, message, retryable, measured);
   }
 }
 
@@ -72,6 +73,7 @@ export class LocalRobot {
   readonly id: string;
   private readonly connectBase: string | null;
   private attachError: string | null = null; // why the last attempt to bring the robot online failed
+  private attachNeedsPerson = false; // that failure repeats until a person changes something (a bridge to reinstall)
   private link: RobotLink = "offline";
   private activity: RobotActivity = "idle";
   private life: Life = "serving";
@@ -123,11 +125,14 @@ export class LocalRobot {
   /** What a person must do to bring the robot online, with the reason the last attempt failed when one did. */
   private get connectHint(): string | null {
     if (this.attachError === null) return this.connectBase;
+    if (this.attachNeedsPerson)
+      return `This robot does not come online by itself: every attempt fails until this is fixed. ${this.attachError}`;
     return `${this.connectBase ? `${this.connectBase} ` : ""}The last attempt failed: ${this.attachError}`;
   }
   /** A source tried to bring the robot online and could not; `list_robots` shows why until an attach succeeds. */
-  attachFailed(why: string): void {
+  attachFailed(why: string, needsPerson = false): void {
     this.attachError = why;
+    this.attachNeedsPerson = needsPerson;
   }
   listing() {
     return {
@@ -252,7 +257,7 @@ export class LocalRobot {
     } catch (e) {
       // a move that failed on the way (the link dropped) is never "send it again": the robot may be somewhere else
       if (e instanceof RuntimeError && e.retryable && !(e instanceof LocalError && e.afterMove))
-        throw new LocalError(e.code, `${e.message} ${MAY_HAVE_MOVED}`, false, undefined, true);
+        throw new LocalError(e.code, `${e.message} ${MAY_HAVE_MOVED}`, false, undefined, true, e.measured);
       throw e;
     } finally {
       // a stop or a fault that came meanwhile owns the state; only an undisturbed move goes back to idle

@@ -94,6 +94,8 @@ interface Sensor {
   kind: SensorKindName;
   type: number;
   mode: number;
+  /** The sensor is still plugged in (type and mode answer) and returns no value: NaN, as the firmware does. */
+  silent?: boolean;
 }
 
 export interface SimBrickOptions {
@@ -232,6 +234,21 @@ export class SimBrick implements Transport, WorldHost {
     this.bumps = 0;
     this.touchWas = this.hasTouch && this.world.senseTouch() === 1;
     this.world.resetGyro();
+  }
+
+  /** The sensor on an input port stops returning values (NaN) while it stays plugged in, or returns them again. */
+  silenceSensor(port: 1 | 2 | 3 | 4, silent = true): void {
+    this.tick();
+    const s = this.sensors[port - 1];
+    if (!s) throw new Error(`no sensor on input port ${port}`);
+    s.silent = silent;
+  }
+
+  /** Pulls the sensor out of an input port: the port then reads as empty (type none, NaN values), as on the firmware. */
+  unplugSensor(port: 1 | 2 | 3 | 4): void {
+    this.tick();
+    this.sensors[port - 1] = null;
+    this.hasTouch = this.sensors.some((s) => s?.kind === "touch");
   }
 
   // ------------------------------------------------------------- inspection (tests, viewer)
@@ -684,7 +701,7 @@ export class SimBrick implements Transport, WorldHost {
             for (let i = 0; i < count; i++) {
               const o = out(4);
               // An empty port answers NaN (SI) / 0 (raw), as the firmware does.
-              if (sub === SUB.INPUT_READY_SI) view.setFloat32(o, s ? (values[i] ?? 0) : NaN, true);
+              if (sub === SUB.INPUT_READY_SI) view.setFloat32(o, s && !s.silent ? (values[i] ?? 0) : NaN, true);
               else view.setInt32(o, s ? Math.round(values[i] ?? 0) : 0, true);
             }
             break;

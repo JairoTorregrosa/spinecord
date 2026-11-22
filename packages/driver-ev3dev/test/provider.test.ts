@@ -213,6 +213,12 @@ describe("fake brick", () => {
       "beacon_distance_pct:S4:false",
       "remote_buttons:S4:false",
     ]);
+    // the beacon channels read null with no beacon in view: their manifest says that null is an answer
+    expect(
+      byId(specs, "ev3.S4")
+        .channels.filter((c) => c.null_when_absent)
+        .map((c) => c.name),
+    ).toEqual(["beacon_heading", "beacon_distance_pct"]);
     expect(byId(specs, "ev3.S1").description).toContain("lego-nxt-sound");
     expect(byId(specs, "ev3.S1").channels).toEqual([]);
     for (const s of specs)
@@ -251,6 +257,30 @@ describe("fake brick", () => {
     brick.setSensor(0, "value0", -15);
     expect((await provider.read("ev3.S2", ["angle_deg"]))[0]!.value).toBe(15);
   });
+
+  brickTest(
+    "beacon_heading is counter-clockwise-positive: the native value, negative to the left, is negated",
+    async () => {
+      const { provider, brick } = setup();
+      const heading = async () =>
+        (await provider.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"], { allow_mode_switch: true })).map(
+          (r) => r.value,
+        );
+      brick.setSensor(2, "value0", -7);
+      brick.setSensor(2, "value1", 33);
+      expect(await heading()).toEqual([7, 33]);
+      expect(brick.sensor(2, "mode")).toBe("IR-SEEK");
+      brick.setSensor(2, "value0", 12);
+      expect(await heading()).toEqual([-12, 33]);
+      brick.setSensor(2, "value0", 0);
+      expect(Object.is((await heading())[0], 0)).toBe(true);
+      brick.setSensor(2, "value1", -128);
+      expect(await heading()).toEqual([null, null]);
+      const none = await provider.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"]);
+      expect(none.map((r) => r.absent)).toEqual([true, true]); // the sensor's answer, not a failed read
+      expect((await provider.read("ev3.S4", ["proximity_pct"]))[0]!.absent).toBeUndefined(); // mode_switch_required
+    },
+  );
 
   brickTest("a read never switches a sensor mode unless the channel is named with allow_mode_switch", async () => {
     const { provider, brick } = setup();
@@ -569,6 +599,116 @@ describe("fake brick", () => {
     expect(await until(() => lines.some((l) => l.ev === "watchdog"), 1000)).toBe(true);
   });
 
+  brickTest("guard: a bridge killed outright mid-move leaves no motor pushing", async () => {
+    // No motor is played: the wheel never arrives, as against a wall. Only a write of stop ends the kernel's move.
+    const brick = new FakeBrick({ motors: [{ port: "B" }, { port: "C" }], sensors: [] });
+    open.push({ brick });
+    const bridge = spawn(python!, ["-u", BRIDGE_FILE, "--root", brick.root], {
+      env: { ...process.env, ...brick.env() },
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const exited = new Promise<void>((resolve) => bridge.on("exit", () => resolve()));
+    try {
+      const lines: Record<string, unknown>[] = [];
+      let buf = "";
+      bridge.stdout.on("data", (d: Buffer) => {
+        buf += d.toString("utf8");
+        for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (line) lines.push(JSON.parse(line) as Record<string, unknown>);
+        }
+      });
+      const bounds = {
+        max_speed_pct: 60,
+        max_op_ms: PATIENT_OP_MS,
+        low_battery_v: 6.5,
+        max_tone_ms: 1000,
+        speech_volume_pct: 100,
+      };
+      const send = (msg: Record<string, unknown>) => bridge.stdin.write(`${JSON.stringify(msg)}\n`);
+      send({ op: "hello", id: 1, config: { bounds, pair: { left: "B", right: "C" } } });
+      expect(await until(() => lines.some((l) => l.id === 1), 5000)).toBe(true);
+      expect(lines.find((l) => l.id === 1)).toMatchObject({ ok: true, guard: true, no_guard: null });
+      const args = { left_deg: 720, right_deg: 720, speed_pct: 30, brake: false };
+      send({ op: "command", id: 2, device: "pair", command: "run_pair", args });
+      expect(await until(() => brick.motor(1, "command") === "run-to-abs-pos", 900)).toBe(true);
+      expect([brick.motor(0, "command"), brick.motor(0, "stop_action")]).toEqual(["run-to-abs-pos", "coast"]);
+      bridge.kill("SIGKILL"); // no handler runs: the bridge's own watchdog and time cap die with it
+      await exited;
+      expect(lines.some((l) => l.id === 2)).toBe(false); // the operation was still in flight
+      expect(
+        await until(() => brick.motor(0, "command") === "stop" && brick.motor(1, "command") === "stop", 5000),
+      ).toBe(true);
+      expect([brick.motor(0, "stop_action"), brick.motor(1, "stop_action")]).toEqual(["brake", "brake"]);
+    } finally {
+      bridge.kill("SIGKILL");
+      await exited;
+    }
+  });
+
+  brickTest(
+    "guard lost: when the guard dies and the bridge lives, the bridge brakes every motor and ends",
+    async () => {
+      const brick = new FakeBrick({ motors: [{ port: "B" }, { port: "C" }], sensors: [] });
+      open.push({ brick });
+      const bridge = spawn(python!, ["-u", BRIDGE_FILE, "--root", brick.root], {
+        env: { ...process.env, ...brick.env() },
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      let gone = false;
+      const exited = new Promise<void>((resolve) =>
+        bridge.on("exit", () => {
+          gone = true;
+          resolve();
+        }),
+      );
+      const beat = setInterval(() => !gone && bridge.stdin.write('{"op":"hb"}\n'), 200); // the watchdog stays quiet
+      try {
+        const lines: Record<string, unknown>[] = [];
+        let buf = "";
+        let stderr = "";
+        bridge.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+        bridge.stdout.on("data", (d: Buffer) => {
+          buf += d.toString("utf8");
+          for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (line) lines.push(JSON.parse(line) as Record<string, unknown>);
+          }
+        });
+        const bounds = {
+          max_speed_pct: 60,
+          max_op_ms: PATIENT_OP_MS,
+          low_battery_v: 6.5,
+          max_tone_ms: 1000,
+          speech_volume_pct: 100,
+        };
+        const send = (msg: Record<string, unknown>) => bridge.stdin.write(`${JSON.stringify(msg)}\n`);
+        send({ op: "hello", id: 1, config: { bounds, pair: { left: "B", right: "C" } } });
+        expect(await until(() => lines.some((l) => l.id === 1), 5000)).toBe(true);
+        const hello = lines.find((l) => l.id === 1)!;
+        expect(hello).toMatchObject({ ok: true, guard: true });
+        expect(typeof hello.guard_pid).toBe("number");
+        const args = { left_deg: 720, right_deg: 720, speed_pct: 30, brake: false };
+        send({ op: "command", id: 2, device: "pair", command: "run_pair", args });
+        expect(await until(() => brick.motor(1, "command") === "run-to-abs-pos", 900)).toBe(true);
+        process.kill(hello.guard_pid as number, "SIGKILL"); // the guard writes nothing when it is killed
+        expect(await until(() => gone, 3000)).toBe(true);
+        expect([brick.motor(0, "command"), brick.motor(1, "command")]).toEqual(["stop", "stop"]);
+        expect([brick.motor(0, "stop_action"), brick.motor(1, "stop_action")]).toEqual(["brake", "brake"]);
+        expect(lines.some((l) => l.ev === "guard_lost")).toBe(true);
+        expect(stderr).toContain("the guard process ended");
+      } finally {
+        clearInterval(beat);
+        bridge.kill("SIGKILL");
+        await exited;
+      }
+    },
+  );
+
   brickTest("closing the link brakes every motor", async () => {
     const { provider, brick } = setup();
     await provider.devices();
@@ -834,6 +974,8 @@ describe("bridge version", () => {
     expect(e).toBeInstanceOf(RuntimeError);
     expect((e as RuntimeError).code).toBe("misconfigured");
     expect((e as RuntimeError).message).toContain("installBridge");
+    expect((e as RuntimeError).message).toContain("--install-bridge");
+    expect((e as RuntimeError).message).toContain('"install_bridge": true');
     expect(sent.filter((op) => op !== "hb")).toEqual(["hello"]);
     await provider.close();
   });
