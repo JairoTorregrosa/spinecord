@@ -1413,11 +1413,23 @@ export class Ev3Provider implements Provider {
           reason = "completed"; // nothing to do: a zero-degree target
         }
         if (reason === null) {
-          // One packet: where the motors are, then the time-bounded start.
-          const g = await this.link.command([...countsBc, ...op.start], n * 4, { droppable: true });
+          // One packet: where the motors are, then the time-bounded start. The packet may wait in the
+          // queue: what it carries is decided when it is built. Aborted by then, it carries the read
+          // alone, so a preempted motion never begins; once it is on the wire, the brake path below stands.
+          let launched = false;
+          const g = await this.link.command(
+            () => {
+              if (preempted) return countsBc;
+              launched = true;
+              return [...countsBc, ...op.start];
+            },
+            n * 4,
+            { droppable: true },
+          );
           start = op.ports.map((_, i) => readI32(g, i * 4));
           at = start.slice();
-          sent = true;
+          sent = launched;
+          if (!launched) reason = "preempted";
           const started = this.o.now();
           // The brick ends the operation by itself at opMs; past this, something is wrong with the brick.
           const giveUp = started + op.opMs + 2 * this.o.timeoutMs + 100;

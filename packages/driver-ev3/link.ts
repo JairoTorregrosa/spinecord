@@ -32,6 +32,11 @@ export type ReadBuilder = (base: number) => number[];
 
 interface Job {
   bytecodes: number[];
+  /**
+   * Decides the bytecodes at the moment the packet is built, not when it was queued: a start whose
+   * operation was aborted while it waited leaves its motion opcodes out (a preempted motion never begins).
+   */
+  late?: () => number[];
   /** Set on a read: it may share a packet with other reads (see read()). */
   build?: ReadBuilder;
   /** A read that already failed inside a shared packet: it goes alone, so only the one at fault fails. */
@@ -71,11 +76,15 @@ export class Ev3Link {
     if (!(this.timeoutMs > 0)) throw new Ev3Error("bad_param", "timeoutMs must be > 0");
   }
 
-  /** Queue a direct command; resolves with exactly `globals` reply bytes. */
-  command(bytecodes: number[], globals = 0, opts: CommandOptions = {}): Promise<Uint8Array> {
+  /**
+   * Queue a direct command; resolves with exactly `globals` reply bytes. Bytecodes given as a function are
+   * asked for when the packet is built, right before it goes on the wire (same `globals` either way).
+   */
+  command(bytecodes: number[] | (() => number[]), globals = 0, opts: CommandOptions = {}): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
       const job: Job = {
-        bytecodes,
+        bytecodes: typeof bytecodes === "function" ? [] : bytecodes,
+        ...(typeof bytecodes === "function" ? { late: bytecodes } : {}),
         globals,
         droppable: !!opts.droppable,
         timeoutMs: opts.timeoutMs ?? this.timeoutMs,
@@ -207,7 +216,7 @@ export class Ev3Link {
   private async exchange(job: Job): Promise<Uint8Array> {
     this.counter = (this.counter % 0xffff) + 1; // 1..65535, never 0
     const counter = this.counter;
-    const packet = frame(job.bytecodes, { counter, globals: job.globals, reply: true });
+    const packet = frame(job.late ? job.late() : job.bytecodes, { counter, globals: job.globals, reply: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(

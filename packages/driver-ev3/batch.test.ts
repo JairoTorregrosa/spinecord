@@ -311,6 +311,58 @@ describe("how often a running operation is asked about", () => {
     expect(r.measured.degrees as number).toBeLessThanOrEqual(60 + 30);
   });
 
+  test("a preempted motion never begins: aborted while its start waits in the queue, the packet carries the read alone", async () => {
+    for (const [device, command, args] of [
+      ["ev3.pair", "run_pair", { left_deg: 90, right_deg: 90, speed_pct: 30 }],
+      ["ev3.B", "run_time", { ms: 200, speed_pct: 40 }],
+      ["ev3.B", "run_degrees", { degrees: 90, speed_pct: 40 }],
+    ] as const) {
+      const fake = new FakeEV3({ degPerSecAt100: RATE });
+      const ev3 = new Ev3Provider(fake, CONFIG);
+      await ev3.devices();
+      fake.replyDelayMs = 30; // the packet ahead stays in flight this long
+      const from = fake.sent.length;
+      const ahead = ev3.link.command(E.uiBatteryPct(0), 1); // on the wire at once
+      const ac = new AbortController();
+      const run = ev3.command(device, command, args, ac.signal);
+      await new Promise((r) => setTimeout(r, 5));
+      expect(packets(fake, from)).toEqual([[E.OP.UI_READ]]); // only the read ahead is on the wire; the start is queued
+      ac.abort();
+      const r = await run;
+      await ahead;
+      expect(r.reason).toBe("preempted");
+      expect(r.measured).toEqual({});
+      const sent = packets(fake, from);
+      // what went out for the operation: the tacho read, and no output opcode at all (no start, no stop)
+      expect(sent.slice(1)).toEqual([device === "ev3.pair" ? [B3, B3] : [B3]]);
+      for (const p of sent) for (const o of p) expect(o >= 0xa3 && o <= 0xb2).toBe(false);
+      expect(fake.busy()).toBe(false);
+      expect([fake.tacho("B"), fake.tacho("C")]).toEqual([0, 0]);
+      expect(fake.unboundedMoves).toBe(0);
+      // the ports are free again
+      fake.replyDelayMs = 0;
+      expect((await ev3.command("ev3.B", "run_time", { ms: 20, speed_pct: 40 }, never())).reason).toBe("completed");
+    }
+  });
+
+  test("an abort after the start is on the wire takes the brake path", async () => {
+    const fake = new FakeEV3({ degPerSecAt100: RATE });
+    const ev3 = new Ev3Provider(fake, CONFIG);
+    await ev3.devices();
+    fake.replyDelayMs = 20;
+    const from = fake.sent.length;
+    const ac = new AbortController();
+    const run = ev3.command("ev3.B", "run_time", { ms: 250, speed_pct: 40 }, ac.signal);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(packets(fake, from)).toEqual([[B3, E.OP.OUTPUT_TIME_SPEED]]); // already sent, reply still on its way
+    ac.abort();
+    const r = await run;
+    expect(r.reason).toBe("preempted");
+    expect(packets(fake, from).some((p) => p[0] === E.OP.OUTPUT_STOP)).toBe(true);
+    expect(fake.busy()).toBe(false);
+    expect(r.measured.degrees as number).toBeLessThan(40); // 250 ms unwatched would be 100 degrees
+  });
+
   test("an abort does not wait for the next question", async () => {
     const fake = new FakeEV3({ degPerSecAt100: RATE });
     const ev3 = new Ev3Provider(fake, { ...CONFIG, pollMs: 10 });
