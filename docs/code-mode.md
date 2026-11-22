@@ -49,7 +49,7 @@ Check with `/mcp` inside Claude Code: `spinecord` is connected and lists its too
 | Every tool has an `outputSchema` with its own `data` shape | The fields are known before the first call |
 | The text block is `summary line` + `\n` + the same envelope as one-line JSON | Fallback when the client hands the script text: `JSON.parse(text.split("\n").at(-1))` |
 | `isError` is true exactly when `ok` is false | An error is never disguised as data |
-| `until` on `drive` / `turn` / `arc` / `command_device` | The runtime checks the condition next to the hardware, between motion chunks of at most 250 ms; no round trip per check, unlike a polling loop in a script |
+| `until` on `drive` / `turn` / `arc` / `command_device` | The runtime watches the condition next to the hardware every max(10 ms, one read) while the motion runs and aborts it when met; no model or relay round trip per check, unlike a polling loop in a script |
 | `request_id` on moving tools | Same id + same arguments = the stored result, the robot does not act twice |
 
 ## 4. Example: drive until something is closer than 15 cm, then turn

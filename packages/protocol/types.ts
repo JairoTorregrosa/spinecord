@@ -72,6 +72,7 @@ export interface Reading {
   ts: number;
   error?: string;
 }
+/** Serves calls in the order they were made (CONTRACT §4): a read issued just before a command observes the device before that command starts. */
 export interface Provider {
   readonly id: string;
   readonly backend: BackendKind;
