@@ -13,6 +13,7 @@
     "packages/driver-ev3/provider.test.ts": 8871,
     "packages/driver-ev3dev/test/provider.test.ts": 9229,
     "packages/driver-ev3dev/test/speak.test.ts": 5530,
+    "packages/protocol/loop.test.ts": 40,
     "packages/protocol/schema.test.ts": 1,
     "packages/protocol/tools.test.ts": 1,
     "packages/protocol/validate.test.ts": 0,

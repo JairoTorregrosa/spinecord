@@ -1,0 +1,3386 @@
+{
+  "note": "Golden vectors of the loop law (CONTRACT §5a). Every implementation of the law runs every case: plan `spec` against `ctx`, then step tick by tick. A tick's `inputs` are the readings by signal name (null = no value), `dt` is the time since the previous tick in ms, `set` ({params, ramp_ms?}) changes params ahead of the tick. `expect.outputs` has one value per output, equal within 1e-9; `guard` and `end` are present exactly on the tick that ends the loop.",
+  "cases": [
+    {
+      "name": "term of value with a setpoint",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "setpoint": 10,
+                "gain": 2
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 12
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [4]
+          }
+        },
+        {
+          "inputs": {
+            "x": 7
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-6]
+          }
+        },
+        {
+          "inputs": {
+            "x": 10
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        }
+      ]
+    },
+    {
+      "name": "term of derivative: the setpoint is a rate, the first tick has none, dt is the measured one",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "of": "derivative",
+                "setpoint": 5,
+                "gain": 0.5
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-2.5]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [7.5]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2
+          },
+          "dt": 200,
+          "expect": {
+            "outputs": [-2.5]
+          }
+        },
+        {
+          "inputs": {
+            "x": 1
+          },
+          "dt": 50,
+          "expect": {
+            "outputs": [-12.5]
+          }
+        }
+      ]
+    },
+    {
+      "name": "term of integral with a clamp, and a gain that is a param",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "params": {
+          "ki": 10
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "of": "integral",
+                "setpoint": 1,
+                "gain": "ki",
+                "clamp": 0.5
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 3
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 3
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [2]
+          }
+        },
+        {
+          "inputs": {
+            "x": 3
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [4]
+          }
+        },
+        {
+          "inputs": {
+            "x": 3
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [5]
+          }
+        },
+        {
+          "inputs": {
+            "x": -9
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-5]
+          }
+        },
+        {
+          "inputs": {
+            "x": -9
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-5]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-4]
+          }
+        }
+      ]
+    },
+    {
+      "name": "term of integral without a clamp keeps growing while the output is cut",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "of": "integral",
+                "gain": 100
+              }
+            ],
+            "limit": [-30, 30]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [20]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [30]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [30]
+          }
+        },
+        {
+          "inputs": {
+            "x": -4
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [20]
+          }
+        }
+      ]
+    },
+    {
+      "name": "feed terms, params, and params set with and without a ramp",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "params": {
+          "speed": 20,
+          "k": 2
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "feed": "speed"
+              },
+              {
+                "feed": 3,
+                "gain": "k"
+              },
+              {
+                "feed": "speed",
+                "gain": -0.5
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [16]
+          }
+        },
+        {
+          "set": {
+            "params": {
+              "speed": 40
+            },
+            "ramp_ms": 200
+          },
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [21]
+          }
+        },
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [26]
+          }
+        },
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [26]
+          }
+        },
+        {
+          "set": {
+            "params": {
+              "k": 0
+            }
+          },
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [20]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a setpoint that is a param follows its ramp",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "params": {
+          "target": 0
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "setpoint": "target",
+                "gain": -1
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "set": {
+            "params": {
+              "target": 40
+            },
+            "ramp_ms": 400
+          },
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [10]
+          }
+        },
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [20]
+          }
+        },
+        {
+          "inputs": {
+            "x": 5
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [25]
+          }
+        },
+        {
+          "inputs": {
+            "x": 5
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [35]
+          }
+        },
+        {
+          "inputs": {
+            "x": 5
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [35]
+          }
+        }
+      ]
+    },
+    {
+      "name": "zero start subtracts the first reading",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c",
+            "zero": "start"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 500
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 510
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [10]
+          }
+        },
+        {
+          "inputs": {
+            "x": 495
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-5]
+          }
+        }
+      ]
+    },
+    {
+      "name": "zero mean: outputs are 0 while it measures, the law starts on the tick after, zero start took the first reading",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c",
+            "zero": {
+              "mean_ms": 300
+            }
+          },
+          "enc": {
+            "device": "m",
+            "channel": "position_deg",
+            "zero": "start"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 2
+              },
+              {
+                "feed": 1
+              },
+              {
+                "signal": "enc",
+                "gain": 1
+              },
+              {
+                "signal": "x",
+                "of": "integral",
+                "gain": 10
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number",
+            "noise": 1
+          },
+          "enc": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 1,
+            "enc": 100
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2,
+            "enc": 100
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 3,
+            "enc": 102
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 5,
+            "enc": 104
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [11]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2,
+            "enc": 104
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [5]
+          }
+        },
+        {
+          "inputs": {
+            "x": 4,
+            "enc": 103
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [10]
+          }
+        }
+      ]
+    },
+    {
+      "name": "zero mean that saw motion ends the loop with not_still",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c",
+            "zero": {
+              "mean_ms": 200
+            }
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number",
+            "noise": 0.5
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 3
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 1
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0],
+            "end": {
+              "reason": "not_still"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "detrend subtracts a running mean that starts at the first reading",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c",
+            "detrend_s": 0.9
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 10
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 20
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [9]
+          }
+        },
+        {
+          "inputs": {
+            "x": 20
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [8.1]
+          }
+        }
+      ]
+    },
+    {
+      "name": "smooth is a first-order low-pass that starts at the first reading; the derivative is of the smoothed value",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c",
+            "smooth_ms": 300
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 2
+              }
+            ]
+          },
+          {
+            "device": "n",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "of": "derivative",
+                "gain": 0.1
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          },
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 8
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [4, 2]
+          }
+        },
+        {
+          "inputs": {
+            "x": 8
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [7, 1.5]
+          }
+        }
+      ]
+    },
+    {
+      "name": "an output is cut to its limit and to the range of the argument it drives",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "limit": [-5, 30],
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          },
+          {
+            "device": "n",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-10, 20]
+          },
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-10, 20]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 50
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [20, 20]
+          }
+        },
+        {
+          "inputs": {
+            "x": -50
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-5, -10]
+          }
+        },
+        {
+          "inputs": {
+            "x": 3
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [3, 3]
+          }
+        }
+      ]
+    },
+    {
+      "name": "guard gt ends the loop on the tick it holds, with outputs at 0",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          }
+        ],
+        "guards": [
+          {
+            "name": "high",
+            "signal": "x",
+            "op": "gt",
+            "value": 10
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 10
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [10]
+          }
+        },
+        {
+          "inputs": {
+            "x": 11
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0],
+            "guard": "high",
+            "end": {
+              "reason": "guard",
+              "guard": "high"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "guard lt with for_ms holds in a row, then ends the loop",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          }
+        ],
+        "guards": [
+          {
+            "name": "low",
+            "signal": "x",
+            "op": "lt",
+            "value": 0,
+            "for_ms": 200
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": -1
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-1]
+          }
+        },
+        {
+          "inputs": {
+            "x": -1
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-1]
+          }
+        },
+        {
+          "inputs": {
+            "x": 1
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [1]
+          }
+        },
+        {
+          "inputs": {
+            "x": -1
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-1]
+          }
+        },
+        {
+          "inputs": {
+            "x": -1
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-1]
+          }
+        },
+        {
+          "inputs": {
+            "x": -1
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0],
+            "guard": "low",
+            "end": {
+              "reason": "guard",
+              "guard": "low"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "guard abs_gt on the integral of a signal",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          }
+        ],
+        "guards": [
+          {
+            "name": "tilt",
+            "signal": "x",
+            "of": "integral",
+            "op": "abs_gt",
+            "value": 0.5
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": -2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-2]
+          }
+        },
+        {
+          "inputs": {
+            "x": -2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-2]
+          }
+        },
+        {
+          "inputs": {
+            "x": -2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [-2]
+          }
+        },
+        {
+          "inputs": {
+            "x": -2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0],
+            "guard": "tilt",
+            "end": {
+              "reason": "guard",
+              "guard": "tilt"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "guard on a derivative; the first guard of the list that holds gives the name",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 1
+              }
+            ]
+          }
+        ],
+        "guards": [
+          {
+            "name": "fast",
+            "signal": "x",
+            "of": "derivative",
+            "op": "gt",
+            "value": 50
+          },
+          {
+            "name": "high",
+            "signal": "x",
+            "op": "gt",
+            "value": 9
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 0
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 2
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [2]
+          }
+        },
+        {
+          "inputs": {
+            "x": 10
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0],
+            "guard": "fast",
+            "end": {
+              "reason": "guard",
+              "guard": "fast"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a tick without a value holds the signal; the derivative spans the gap; the third in a row ends the loop with input_lost",
+      "spec": {
+        "rate_hz": 10,
+        "duration_ms": 5000,
+        "signals": {
+          "x": {
+            "device": "s",
+            "channel": "c"
+          }
+        },
+        "outputs": [
+          {
+            "device": "m",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "gain": 2
+              }
+            ]
+          },
+          {
+            "device": "n",
+            "command": "power",
+            "terms": [
+              {
+                "signal": "x",
+                "of": "derivative",
+                "gain": 1
+              }
+            ]
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "x": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          },
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "x": 5
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [10, 0]
+          }
+        },
+        {
+          "inputs": {
+            "x": null
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [10, 0]
+          }
+        },
+        {
+          "inputs": {
+            "x": 7
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [14, 10]
+          }
+        },
+        {
+          "inputs": {
+            "x": null
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [14, 10]
+          }
+        },
+        {
+          "inputs": {
+            "x": null
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [14, 10]
+          }
+        },
+        {
+          "inputs": {
+            "x": null
+          },
+          "dt": 100,
+          "expect": {
+            "outputs": [0, 0],
+            "end": {
+              "reason": "input_lost"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "example: balancing on two wheels",
+      "note": "expectations computed by packages/protocol/loop.ts",
+      "spec": {
+        "rate_hz": 100,
+        "duration_ms": 60000,
+        "attention_ms": 10000,
+        "signals": {
+          "pitch_rate": {
+            "device": "gyro",
+            "channel": "rate_deg_s",
+            "zero": {
+              "mean_ms": 1000
+            },
+            "detrend_s": 20
+          },
+          "left": {
+            "device": "ev3.B",
+            "channel": "position_deg",
+            "zero": "start",
+            "smooth_ms": 20
+          },
+          "right": {
+            "device": "ev3.C",
+            "channel": "position_deg",
+            "zero": "start",
+            "smooth_ms": 20
+          }
+        },
+        "params": {
+          "travel": 0,
+          "steer": 0
+        },
+        "outputs": [
+          {
+            "device": "ev3.B",
+            "command": "power",
+            "limit": [-100, 100],
+            "terms": [
+              {
+                "signal": "pitch_rate",
+                "gain": 0.8
+              },
+              {
+                "signal": "pitch_rate",
+                "of": "integral",
+                "gain": 15
+              },
+              {
+                "signal": "left",
+                "setpoint": "travel",
+                "gain": 0.06
+              },
+              {
+                "signal": "right",
+                "setpoint": "travel",
+                "gain": 0.06
+              },
+              {
+                "signal": "left",
+                "of": "derivative",
+                "gain": 0.04
+              },
+              {
+                "signal": "right",
+                "of": "derivative",
+                "gain": 0.04
+              },
+              {
+                "feed": "steer",
+                "gain": 1
+              }
+            ]
+          },
+          {
+            "device": "ev3.C",
+            "command": "power",
+            "limit": [-100, 100],
+            "terms": [
+              {
+                "signal": "pitch_rate",
+                "gain": 0.8
+              },
+              {
+                "signal": "pitch_rate",
+                "of": "integral",
+                "gain": 15
+              },
+              {
+                "signal": "left",
+                "setpoint": "travel",
+                "gain": 0.06
+              },
+              {
+                "signal": "right",
+                "setpoint": "travel",
+                "gain": 0.06
+              },
+              {
+                "signal": "left",
+                "of": "derivative",
+                "gain": 0.04
+              },
+              {
+                "signal": "right",
+                "of": "derivative",
+                "gain": 0.04
+              },
+              {
+                "feed": "steer",
+                "gain": -1
+              }
+            ]
+          }
+        ],
+        "guards": [
+          {
+            "name": "fallen",
+            "signal": "pitch_rate",
+            "of": "integral",
+            "op": "abs_gt",
+            "value": 45
+          },
+          {
+            "name": "runaway",
+            "signal": "left",
+            "of": "derivative",
+            "op": "abs_gt",
+            "value": 900,
+            "for_ms": 500
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 100,
+        "max_loop_ms": 60000,
+        "signals": {
+          "pitch_rate": {
+            "type": "number",
+            "noise": 1
+          },
+          "left": {
+            "type": "number"
+          },
+          "right": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          },
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.75,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [0, 0]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 1.5,
+            "left": 500,
+            "right": -40
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [-0.23738130934532736, -0.23738130934532736]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 2.25,
+            "left": 502,
+            "right": -37
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [7.002938526078232, 7.002938526078232]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 3,
+            "left": 504,
+            "right": -34
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [12.470467808303116, 12.470467808303116]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 3.75,
+            "left": 506,
+            "right": -31
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [16.58983256943775, 16.58983256943775]
+          }
+        },
+        {
+          "set": {
+            "params": {
+              "travel": 90,
+              "steer": 8
+            },
+            "ramp_ms": 50
+          },
+          "inputs": {
+            "pitch_rate": 4.5,
+            "left": 508,
+            "right": -28
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [19.287715163468924, 16.08771516346892]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 5.25,
+            "left": 510,
+            "right": -25
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [21.44855185528321, 15.048551855283211]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 6,
+            "left": 512,
+            "right": -22
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [23.288614859681328, 13.688614859681326]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 6.75,
+            "left": 514,
+            "right": -19
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [24.952067034049605, 12.152067034049603]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 7.5,
+            "left": 516,
+            "right": -16
+          },
+          "dt": 11,
+          "expect": {
+            "outputs": [26.01979132860845, 10.019791328608449]
+          }
+        },
+        {
+          "inputs": {
+            "pitch_rate": 8.25,
+            "left": 518,
+            "right": -13
+          },
+          "dt": 10,
+          "expect": {
+            "outputs": [28.346531808031436, 12.346531808031436]
+          }
+        }
+      ]
+    },
+    {
+      "name": "example: line following",
+      "note": "expectations computed by packages/protocol/loop.ts",
+      "spec": {
+        "rate_hz": 50,
+        "duration_ms": 30000,
+        "signals": {
+          "light": {
+            "device": "color",
+            "channel": "reflected_pct"
+          },
+          "bumper": {
+            "device": "touch",
+            "channel": "pressed"
+          }
+        },
+        "params": {
+          "edge": 35,
+          "speed": 20,
+          "k_left": 0.5,
+          "k_right": -0.5
+        },
+        "outputs": [
+          {
+            "device": "left_wheel",
+            "command": "run_time",
+            "limit": [-40, 40],
+            "terms": [
+              {
+                "feed": "speed"
+              },
+              {
+                "signal": "light",
+                "setpoint": "edge",
+                "gain": "k_left"
+              },
+              {
+                "signal": "light",
+                "of": "derivative",
+                "gain": 0.02
+              }
+            ]
+          },
+          {
+            "device": "right_wheel",
+            "command": "run_time",
+            "limit": [-40, 40],
+            "terms": [
+              {
+                "feed": "speed"
+              },
+              {
+                "signal": "light",
+                "setpoint": "edge",
+                "gain": "k_right"
+              },
+              {
+                "signal": "light",
+                "of": "derivative",
+                "gain": -0.02
+              }
+            ]
+          }
+        ],
+        "guards": [
+          {
+            "name": "line_lost",
+            "signal": "light",
+            "op": "gt",
+            "value": 85,
+            "for_ms": 1500
+          },
+          {
+            "name": "bumper",
+            "signal": "bumper",
+            "op": "gt",
+            "value": 0.5
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 50,
+        "max_loop_ms": 60000,
+        "signals": {
+          "light": {
+            "type": "number"
+          },
+          "bumper": {
+            "type": "boolean"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "speed_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          },
+          {
+            "drives": {
+              "arg": "speed_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "light": 35,
+            "bumper": 0
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [20, 20]
+          }
+        },
+        {
+          "inputs": {
+            "light": 41,
+            "bumper": 0
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [29, 11]
+          }
+        },
+        {
+          "inputs": {
+            "light": 52,
+            "bumper": 0
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [39.5, 0.5]
+          }
+        },
+        {
+          "inputs": {
+            "light": 30,
+            "bumper": 0
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [-4.5, 40]
+          }
+        },
+        {
+          "inputs": {
+            "light": 12,
+            "bumper": 0
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [-9.5, 40]
+          }
+        },
+        {
+          "inputs": {
+            "light": 35,
+            "bumper": 0
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [40, -3]
+          }
+        },
+        {
+          "inputs": {
+            "light": 90,
+            "bumper": 0
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [40, -40]
+          }
+        },
+        {
+          "inputs": {
+            "light": 60,
+            "bumper": 1
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [0, 0],
+            "guard": "bumper",
+            "end": {
+              "reason": "guard",
+              "guard": "bumper"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "example: holding an arm at an angle",
+      "note": "expectations computed by packages/protocol/loop.ts",
+      "spec": {
+        "rate_hz": 50,
+        "duration_ms": 60000,
+        "signals": {
+          "angle": {
+            "device": "ev3.A",
+            "channel": "position_deg",
+            "smooth_ms": 20
+          }
+        },
+        "params": {
+          "target": 45
+        },
+        "outputs": [
+          {
+            "device": "ev3.A",
+            "command": "power",
+            "limit": [-60, 60],
+            "terms": [
+              {
+                "signal": "angle",
+                "setpoint": "target",
+                "gain": -2
+              },
+              {
+                "signal": "angle",
+                "of": "integral",
+                "setpoint": "target",
+                "gain": -4,
+                "clamp": 10
+              },
+              {
+                "signal": "angle",
+                "of": "derivative",
+                "gain": -0.05
+              }
+            ]
+          }
+        ],
+        "guards": [
+          {
+            "name": "out_of_range",
+            "signal": "angle",
+            "op": "abs_gt",
+            "value": 200
+          }
+        ]
+      },
+      "ctx": {
+        "max_rate_hz": 50,
+        "max_loop_ms": 60000,
+        "signals": {
+          "angle": {
+            "type": "number"
+          }
+        },
+        "outputs": [
+          {
+            "drives": {
+              "arg": "power_pct",
+              "max_hold_ms": 250
+            },
+            "range": [-100, 100]
+          }
+        ]
+      },
+      "ticks": [
+        {
+          "inputs": {
+            "angle": 0
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [60]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 3
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [60]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 9
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [60]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 18
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [60]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 26
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [45.83125]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 33
+          },
+          "dt": 23,
+          "expect": {
+            "outputs": [33.836674418604645]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 39
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [22.97033720930234]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 43
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [16.117168604651162]
+          }
+        },
+        {
+          "set": {
+            "params": {
+              "target": 90
+            },
+            "ramp_ms": 100
+          },
+          "inputs": {
+            "angle": 45
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [31.9105843023256]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 46
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [50.09729215116279]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 45
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [60]
+          }
+        },
+        {
+          "inputs": {
+            "angle": 300
+          },
+          "dt": 20,
+          "expect": {
+            "outputs": [-60]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -17,7 +17,7 @@ spinecord runs on one computer: one bun process (`apps/local`) that serves MCP o
 7. **Fast loops live next to the hardware.** The runtime (§4) executes `until` conditions and programs in the process that holds the providers: no model turn per check.
 8. **Safety, honestly stated.** `stop` preempts everything. When the client goes away or the process is signalled, the process stops every robot before it exits (§6). If the process dies outright, the guarantee depends on the driver: stock EV3 firmware has no watchdog, so every motion operation is limited by **time on the brick** (≤ 250 ms, time-based opcodes, never degree-based), the robot overruns at most one chunk even against a blocked wheel, and the bridge page brakes every motor when its socket closes. An ev3dev brick's motors are run by its kernel, which ends a timed run by itself but has no time limit for a move to a position: there the limits are the bridge's (it brakes at the operation's time bound, and after 1 s of silence from the computer) and, when the bridge process itself is killed, a guard process on the brick that brakes every motor as soon as the bridge is gone. The two watch each other: a bridge whose guard is gone brakes every motor and ends, which closes the link, and the link that is opened next starts a bridge with a guard (§1), so no robot is driven without one. A bridge that hangs without ending, or a brick whose kernel fails, is covered by nothing. A provider whose device has such a watchdog may declare a longer per-operation time bound; the runtime chunks to each command's declared bound, using short chunks only while an `until` condition must be checked; then it reads the condition while every operation runs and aborts the operation the moment it is met, and it also ends every operation itself at ≤ 250 ms of motion by aborting it, so neither a chunk in flight, a slow motor nor a long declared bound delays the reaction.
 9. **Reads have no side effects.** A read never changes a device. Channels needing a sensor mode switch are read only when named explicitly while idle (§2.2).
-10. **One owner per rule.** Motion limits: the profile only (`profile.limits` for every robot, `profile.drivetrain` for the distance and the angle of a drivetrain move). Chunking: the runtime only. Program and condition validation: `packages/protocol/validate.ts` only. JSON Schema validation: `packages/protocol/schema.ts` only. Time limits of a call: the runtime only; the process's backstop stands behind them (§1). Link and activity of a robot: `apps/local` only.
+10. **One owner per rule.** Motion limits: the profile only (`profile.limits` for every robot, `profile.drivetrain` for the distance and the angle of a drivetrain move). Chunking: the runtime only. Program, condition and loop validation: `packages/protocol/validate.ts` only. The law of a loop: `packages/protocol/loop.ts` only (§5a). JSON Schema validation: `packages/protocol/schema.ts` only. Time limits of a call: the runtime only; the process's backstop stands behind them (§1). Link and activity of a robot: `apps/local` only.
 
 ## 1. State machines
 
@@ -99,6 +99,85 @@ Twin: `<profile.id>-sim` is a runtime whose EV3 provider talks to a **simulated 
 ## 5. Programs
 
 JSON tree (`ProgramNode` in types.ts), no code. Caps: 500 nodes, `repeat.times ≤ 50`, `while.max_iterations ≤ 200`, `wait_ms ≤ 10000`, total ≤ `limits.max_program_ms`. `run_program` takes the program inline (`body`, optional `success` condition checked at the end). The runtime validates it (`validate.ts`), executes it node by node and returns per-step results: `steps: [{path, tool, ok, reason | error, measured?, clamped?, note?, ms}]`, one per call the program made (and per `wait_ms`). A step carries the `reason` and the `measured` of the same call made outside a program, and `clamped: true` when that call cut an argument, so the result says what each step did without a read after it. A step that failed has `error: {code, message}` and, when the error ended a move, the `measured` of that move.
+
+## 5a. Loops
+
+A loop is a control law that runs at a fixed rate next to the hardware: every tick it reads its input signals, computes each output, and refreshes each output device. It is given as data, like a program, and is bounded by construction. This section is the law and its data: `LoopSpec` and the types beside it in types.ts, `validateLoop` in `validate.ts`, and `planLoop`, `stepLoop` and `setParams` in `packages/protocol/loop.ts`, which are pure (no I/O, no clock). No use is named anywhere in it: balancing, following a line or a wall, and holding an arm at an angle are each one `LoopSpec` (`docs/loops.md`).
+
+**Shape** (`LoopSpec` in types.ts):
+
+```
+{
+  rate_hz,                       // ticks per second
+  duration_ms,                   // the loop ends by itself at this age; cut to the robot's limit on a loop's life (reported)
+  attention_ms?,                 // default 15000: how long a loop may run unsupervised
+  signals: { <name>: { device, channel, index?, zero?, detrend_s?, smooth_ms? } },
+  params?: { <name>: number },   // named numbers the law refers to; the only thing that changes while a loop runs
+  outputs: [ { device, command, args?, terms: [Term, ...], limit?: [lo, hi] } ],
+  guards?: [ { name, signal, of?, op, value, for_ms? } ],
+  trace_hz?                      // default 10, at most 20
+}
+Term = { signal, of?, setpoint?, gain, clamp? }  // feedback on one part of one signal; of: value (default) | integral | derivative
+     | { feed, gain? }                          // feedforward: gain × the value of param `feed`; gain defaults to 1
+```
+
+A `setpoint`, a `gain` and a `feed` are each a number or the name of a param. Caps: 8 signals, 4 outputs, 16 terms per output, 8 guards, 16 params.
+
+**Loop inputs and outputs.** A signal reads a channel of type `number` or `boolean` (false = 0, true = 1), or one component of a numeric `vector` channel (`index`). A loop never switches a sensor mode: a channel that is not `active` is refused when the loop is planned, with `next` starting at `read_device` (the rule of conditions, §4). An output refreshes one command every tick with a new value of one numeric argument. Only a command with `drives: {arg, max_hold_ms}` (`LoopDrives`) can be an output; a plan is handed it per output (Planning, below). `arg` is that argument, and `max_hold_ms` is the longest the device lets one refresh last (0 for a command with no lasting motion). A loop holds each refresh for `hold_ms` = 3 periods, at least 30 ms, at most `max_hold_ms`. `args` holds the command's other arguments, the same on every refresh.
+
+**Ticks.** dt is the measured time between two ticks, in milliseconds; the law reads no clock. The first tick has no dt: on it every derivative is 0 and every integral is 0. A tick on which a channel returns no value keeps that signal's value and derivative; the next reading's derivative and filters span the whole gap. Three ticks in a row without a value end the loop with reason `input_lost`. On the tick that ends a loop, whatever the reason, every output is 0.
+
+**Signals.** Each tick a signal has a `value`: the channel's reading after `zero`, `detrend_s` and `smooth_ms`, in that order.
+- `zero: "start"` subtracts the first reading the loop takes of the channel (an encoder, a cumulative angle). `zero: {mean_ms}` holds every output at 0 for `mean_ms` from the signal's first reading, subtracts the mean of the readings it took in that time, and ends the loop with reason `not_still` when those readings spread more than 4 × the channel's `noise` (the offset of a rate gyro). Absent: the reading as it is. While any signal measures its mean the law has not started: filters, derivatives, integrals and guards begin on the first tick after, which is the law's first tick.
+- `detrend_s` subtracts a running mean with that time constant (slow drift of a rate sensor): each tick the mean moves toward the reading by dt / (`detrend_s` + dt) of their difference. The mean starts at the signal's reading on the law's first tick.
+- `smooth_ms` is a first-order low-pass with that time constant: each tick the value moves toward its input by dt / (`smooth_ms` + dt) of their difference. It starts at its input on the law's first tick.
+- The derivative of a signal is the change of its `value` over dt.
+
+**Law.** For every output, every tick, `u` is the sum of its terms:
+
+| term | contributes |
+|---|---|
+| `of: value` | gain × (value − setpoint) |
+| `of: derivative` | gain × (d(value)/dt − setpoint); the setpoint is a rate, per second |
+| `of: integral` | gain × I, where I is the term's own accumulator: I grows by (value − setpoint) × dt each tick and starts at 0. With `clamp`, I is held within ±`clamp` (in the signal's unit × seconds) |
+| `feed` | gain × the param |
+
+A setpoint is 0 when absent. Then `u` is cut to `limit` and to the `minimum` and `maximum` of the command's `drives.arg` in its `params` schema, and the command is refreshed with it. An accumulator is a state of the law like any other: it follows its signal whatever the output does, and only its own `clamp` bounds it. A PID on one signal is three terms on it (value, integral with a `clamp`, derivative). State feedback is one term per state, with the integral and the derivative giving the states a sensor does not report (the angle of a rate gyro, the speed of an encoder). A positive gain raises the output when the signal is above its setpoint: an actuator that raises the signal it is regulated on takes negative gains.
+
+**Params.** `setParams` changes named numbers between two ticks, all of them on the same tick; with `ramp_ms` each moves to its new value linearly over that much loop time. Integrals and filters keep their state. Signals, terms, guards, limits and the rate are fixed for the life of a loop: a different law is a new loop.
+
+**Guards.** `{name, signal, of: value | integral | derivative (default value), op: gt | lt | abs_gt, value, for_ms?}`. A guard's `integral` is the sum of value × dt since the law's first tick, with no setpoint. A guard that holds on a tick (on every tick of `for_ms` in a row when given) ends the loop on that tick, where the loop runs, with reason `guard` and the guard's `name`; of two guards that hold on the same tick the first of the list gives the name. A guard is how a loop says "fallen", "line lost", "bumper pressed" or "arrived": the caller decides what the name means.
+
+**Validation.** `validateLoop` checks a spec without a robot, and every failure is `invalid_argument` with the path of the field (`loop.outputs[1].terms[0].gain`): the caps above; unknown keys; `rate_hz` above 0; `duration_ms` and `attention_ms` integers of at least 1; `trace_hz` above 0 and at most 20; at least one signal and one output; names of signals and params made of letters, digits and `_` and not starting with a digit, a signal never named `t_ms` or `out<i>` (keys of the trace); `index` an integer of at least 0; `zero` either `"start"` or `{mean_ms}` with `mean_ms` an integer from 1 to under `duration_ms`; `detrend_s` and `smooth_ms` above 0; one output per device; `limit` two numbers with lo ≤ hi; a term either feedback or feed, never both; `clamp` above 0 and only on a term of integral; a guard's `name` unique, its `op` one of the three, its `for_ms` an integer of at least 1; every signal a term or a guard names exists; every `setpoint`, `gain` and `feed` a finite number or the name of an existing param.
+
+**Planning.** `planLoop` checks a spec against the robot and returns a `LoopPlan`: every default filled in, signals and outputs in the spec's order, each output with its `hold_ms` and its bounds (`limit` cut to the range of `drives.arg`). What it needs from the robot comes as data (`LoopContext`): per signal the channel's manifest entry, per output the command's `drives` and the range of its argument, `max_rate_hz` and `max_loop_ms`. It refuses a spec `validateLoop` refuses, and it refuses, and nothing is slowed, switched or dropped silently:
+
+| refused | code |
+|---|---|
+| `rate_hz` above `max_rate_hz`, the fastest rate where the loop runs; the message names the maximum | `invalid_argument` |
+| a channel that is not `active`; `next` starts with `read_device` | `invalid_argument` |
+| a channel of type `string` or `image`; a `vector` channel without `index` or with one outside its length; an `index` on a channel that is no vector | `invalid_argument` |
+| `args` that hold the argument the loop computes | `invalid_argument` |
+| a command without `drives`, or whose `drives.arg` has no `minimum` and `maximum` | `unsupported` |
+
+`duration_ms` above `max_loop_ms`, the robot's limit on a loop's life, is cut to it and reported in the plan's `clamps` (§0.2). A signal whose channel declares `max_rate_hz` under the loop's rate is sampled at the loop's rate and holds its value between the sensor's own updates; the plan names it in `notes`.
+
+**What a loop reports** (`LoopReport`): `{state, reason?, guard?, runs_on, rate_hz, age_ms, remaining_ms, ticks, overruns, period_ms: {p50, p95, max}, signals: {<name>: {last, min, max, mean, integral, derivative}}, outputs: [{device, command, last, min, max, mean_abs, saturated_pct}], params, trace: {t_ms: [...], <signal name>: [...], out<i>: [...]}, notes?}`. The statistics cover the ticks since the previous report; `integral` and `derivative` are the signal's latest; `saturated_pct` is the share of ticks on which the output was cut. The trace is sampled at `trace_hz` and holds at most 200 points, the latest ones. Ticks earlier than the law's first are in neither.
+
+**Why a loop ends** (`LoopEndReason`). The law itself ends a loop with `guard`, `input_lost` or `not_still`; the others belong to whoever runs it.
+
+| reason | meaning |
+|---|---|
+| `completed` | `duration_ms` passed |
+| `guard` | a guard held; `guard` is its name |
+| `preempted` | it was stopped from outside |
+| `unattended` | `attention_ms` passed with nobody supervising it |
+| `overrun` | `rate_hz` could not be held |
+| `input_lost` | a signal's channel returned no value on 3 ticks in a row |
+| `not_still` | a `zero: {mean_ms}` measurement saw motion |
+| `timeout` | a backstop behind the loop ended it |
+
+**One law.** `packages/protocol/loop.ts` is the law. `packages/protocol/loop-golden.json` holds cases of `{spec, ctx, ticks: [{inputs, dt, expect}]}` that cover every term kind, zero mode, filter, guard and limit; an implementation of the law in another language computes the same outputs from the same inputs, tick for tick, and is tested with the same file. The law therefore uses only + − × ÷, in a fixed order.
 
 ## 6. The process
 
