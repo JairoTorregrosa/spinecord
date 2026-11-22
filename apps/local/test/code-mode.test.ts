@@ -117,6 +117,26 @@ test("the square example leaves at the first error and brakes", async () => {
   expect(calls).toEqual(["drive", "turn", "drive", "stop"]);
 }, 120_000);
 
+test("the square example stays in its loop when every move has its speed cut to the limit", async () => {
+  await home();
+  calls.length = 0;
+  const call = helper(tools());
+  const clamped: boolean[] = [];
+  // the same script, asked for a speed over the robot's max_speed_pct: every result says clamped: true
+  const fast: Call = async (tool, args) => {
+    const e = await call(tool, tool === "drive" || tool === "turn" ? { ...args, speed_pct: 100 } : args);
+    if (e.ok && typeof e.data.clamped === "boolean") clamped.push(e.data.clamped);
+    return e;
+  };
+  const out = await square()(fast, R);
+  expect(out.ended).toBeUndefined();
+  expect(out.failed).toBeUndefined();
+  expect(out.legs.map((l) => l.leg)).toEqual([1, 2, 3, 4]);
+  expect(clamped).toEqual(Array.from({ length: 8 }, () => true));
+  for (const l of out.legs) expect(Math.abs(l.turned_deg - 90)).toBeLessThan(6);
+  expect(calls).toEqual(Array.from({ length: 4 }, () => ["drive", "turn"]).flat());
+}, 120_000);
+
 test("the shapes the document tabulates are the shapes the server sends", async () => {
   const data = async (tool: string, args: Record<string, unknown> = {}) => {
     const e = (await s.tool(tool, { robot_id: R, ...args })).envelope;

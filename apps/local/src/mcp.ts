@@ -7,7 +7,7 @@ import { firstViolation } from "../../../packages/protocol/schema";
 import { newTraceId, stackOf, type Envelope, type InternalFailure } from "../../../packages/protocol/types";
 import type { LocalRobot } from "./robot";
 import { log } from "./stderr";
-import { TOOL, callTool, summarize } from "./tools";
+import { TOOL, callTool, summarize, type Out } from "./tools";
 
 export const LISTED_TOOLS = TOOLS.map((t) => ({
   name: t.name,
@@ -70,15 +70,32 @@ export function callLine(
     moved,
   };
 }
-const logInternal = (tool: unknown, args: unknown, f: InternalFailure): void =>
-  log("internal", {
-    ts: new Date().toISOString(),
-    trace_id: f.trace_id,
-    tool: short(tool, LOG_NAME_MAX),
-    robot_id: robotOf(args),
-    message: short(f.message, LOG_STACK_MAX),
-    stack: short(f.stack ?? "", LOG_STACK_MAX),
-  });
+/**
+ * Writes what one answered call leaves in the log: an `internal` line per unexpected failure behind it, with
+ * the stack, then its `call` line. `broken` is a failure of this layer (the result did not match its schema):
+ * the call is then logged as the internal error the client gets.
+ */
+export function logCall(
+  tool: unknown,
+  args: unknown,
+  out: Pick<Out, "envelope" | "moved" | "internal">,
+  ms: number,
+  broken?: InternalFailure,
+  write: typeof log = log,
+): void {
+  const failures = broken ? [...out.internal, broken] : out.internal;
+  for (const f of failures)
+    write("internal", {
+      ts: new Date().toISOString(),
+      trace_id: f.trace_id,
+      tool: short(tool, LOG_NAME_MAX),
+      robot_id: robotOf(args),
+      message: short(f.message, LOG_STACK_MAX),
+      stack: short(f.stack ?? "", LOG_STACK_MAX),
+    });
+  const line = callLine(tool, args, out.envelope, ms, out.moved, failures.at(-1)?.trace_id ?? null);
+  write("call", { ...(broken ? { ...line, ok: false, code: "internal", reason: null } : line) });
+}
 
 export function buildServer(robots: readonly LocalRobot[]): Server {
   const server = new Server(
@@ -93,22 +110,16 @@ export function buildServer(robots: readonly LocalRobot[]): Server {
     // the client's notifications/cancelled aborts this signal: a moving call is then stopped, any other aborted
     const out = await callTool(robots, name, args, ctx.mcpReq.signal);
     const ms = performance.now() - t0;
-    for (const f of out.internal) logInternal(name, args, f);
     const output = TOOL.get(name)?.output;
     // what leaves this process matches what tools/list advertised, or the call fails here, loudly
     const mismatch = output ? firstViolation(output, out.envelope) : null;
     if (mismatch) {
       const trace_id = newTraceId();
       const e = new Error(`${name}: the result does not match its outputSchema: ${mismatch} (trace_id ${trace_id})`);
-      logInternal(name, args, { trace_id, message: e.message, stack: stackOf(e) });
-      log("call", {
-        ...callLine(name, args, out.envelope, ms, out.moved, trace_id),
-        ok: false,
-        code: "internal",
-      });
+      logCall(name, args, out, ms, { trace_id, message: e.message, stack: stackOf(e) });
       throw e;
     }
-    log("call", { ...callLine(name, args, out.envelope, ms, out.moved, out.internal[0]?.trace_id ?? null) });
+    logCall(name, args, out, ms);
     const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [
       { type: "text", text: `${summarize(name, out.envelope)}\n${JSON.stringify(out.envelope)}` },
     ];

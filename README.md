@@ -102,6 +102,34 @@ bun run bench   # latency of the path from a tool call to the robot, on the twin
 
 `bun install` also installs the git hooks (lefthook: format, lint and gitleaks on staged files).
 
+## Troubleshooting
+
+The server writes one JSON object per line on stderr (`claude --debug` shows it; to keep it, start the server with stderr sent to a file). Every tool call leaves one line when it is answered:
+
+```json
+{"ev":"call","ts":"2026-11-22T08:19:28.089Z","tool":"drive","robot_id":"r1-sim","ok":true,"code":null,"reason":"completed","ms":350,"trace_id":null,"moved":true}
+```
+
+| Field | Meaning |
+|---|---|
+| `tool`, `robot_id` | what was called, on which robot (cut at 64 characters) |
+| `ok`, `code` | the outcome; `code` is the error code when `ok` is false |
+| `reason` | why a move or a wait ended (`completed`, `condition_met`, `clamped`, `stalled`, `preempted`, `timeout`); the `outcome` of `run_program` |
+| `ms` | how long the call took |
+| `moved` | whether a moving operation was sent to the robot |
+| `trace_id` | set when an `internal` error is behind the answer |
+
+Arguments, results and images are never logged.
+
+| Question | Look for |
+|---|---|
+| What did the model call, and what failed? | `grep '"ev":"call"' server.log`, then `grep '"ok":false'` |
+| An error message says `(trace_id ab12cd34)` | `grep ab12cd34 server.log`: the `"ev":"internal"` line has the stack |
+| Did the robot move during a call that failed? | `"moved":true` on its line; read the robot (`read_all`) before moving again |
+| Why is a robot offline or in fault? | the `"ev":"link"` and `"ev":"activity"` lines carry `from`, `to` and `why` |
+
+The format is part of the contract: [`CONTRACT.md`](CONTRACT.md) §6, "Call log".
+
 ## Guarantees
 
 - Every command is bounded on the device (time, degrees, or instant) and clamped to the robot profile.

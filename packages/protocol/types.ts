@@ -270,14 +270,14 @@ export class RuntimeError extends Error {
 }
 /** A short random id for one unexpected failure. Not a secret: it joins a message to a log line. */
 export const newTraceId = (): string => Math.random().toString(36).slice(2, 10).padEnd(8, "0");
-/** The stack of an error and of what caused it, for the log. */
+/** The stack of an error for the log, starting at what first went wrong: its cause comes before the error built from it. */
 export function stackOf(e: unknown): string {
   const parts: string[] = [];
   for (let at = e, depth = 0; at !== undefined && at !== null && depth < 4; depth++) {
-    parts.push(at instanceof Error ? (at.stack ?? `${at.name}: ${at.message}`) : String(at));
+    parts.unshift(at instanceof Error ? (at.stack ?? `${at.name}: ${at.message}`) : String(at));
     at = at instanceof Error ? at.cause : undefined;
   }
-  return parts.join("\ncaused by: ");
+  return parts.join("\nreported as: ");
 }
 export interface Runtime {
   profile(): RobotProfile;

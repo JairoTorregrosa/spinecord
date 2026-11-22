@@ -9,6 +9,7 @@ import { createRuntime } from "../../../packages/runtime/runtime";
 import { EXAMPLE, loadConfig } from "../src/config";
 import { LocalRobot } from "../src/robot";
 import { buildFleet, keepAttached } from "../src/sources";
+import { logCall } from "../src/mcp";
 import { NEXT_ERR, NEXT_OK, callTool } from "../src/tools";
 import { until } from "./client";
 
@@ -405,6 +406,171 @@ describe("next", () => {
       error: { code: "illegal_state" },
       next: ["read_all"],
     });
+  });
+  test("a condition on a channel that is not active names the tool that fixes it first, then the same tool", async () => {
+    const { mock, tool } = await mockRobot();
+    const until = { device: "mock.color", channel: "ambient_pct", op: "lt", value: 5 };
+    const refused = await tool("drive", { distance_cm: 10, until });
+    expect(refused).toMatchObject({ ok: false, error: { code: "invalid_argument" }, robot: { activity: "idle" } });
+    expect(refused.next.slice(0, 2)).toEqual(["read_device", "drive"]);
+    expect(!refused.ok && refused.error.message).toContain("nothing was sent and nothing moved");
+    expect(mock.log.length).toBe(0);
+  });
+});
+
+describe("a brick that loses a reply", () => {
+  const lost = () => new RuntimeError("timeout", "ev3 no_reply: the brick did not reply within 300 ms", true);
+  test("mid-move: the answer is not retryable and starts with a read, so a script that retries never repeats the move", async () => {
+    const { mock, robot } = await mockRobot();
+    const command = mock.command.bind(mock);
+    let ops = 0;
+    mock.command = async (device, name, args, signal) => {
+      if (name === "run_pair" && ++ops === 2) throw lost();
+      return command(device, name, args, signal);
+    };
+    const out = await callTool([robot], "drive", { robot_id: "m1", distance_cm: 40, speed_pct: 30 });
+    expect(out.envelope).toMatchObject({
+      ok: false,
+      error: { code: "timeout", retryable: false },
+      robot: { link: "online", activity: "idle" },
+    });
+    expect(out.envelope.next[0]).toBe("read_all");
+    expect(out.envelope.next).not.toContain("drive");
+    expect(!out.envelope.ok && out.envelope.error.message).toContain("may have partly happened");
+    expect(out.moved).toBe(true);
+    expect(mock.left).toBeGreaterThan(0); // the first operation did run
+  });
+  test("on a read: retryable, and the same read is the next step", async () => {
+    const { mock, robot } = await mockRobot();
+    mock.read = async () => {
+      throw lost();
+    };
+    const out = await callTool([robot], "read_device", { robot_id: "m1", device: "mock.color" });
+    expect(out.envelope).toMatchObject({ ok: false, error: { code: "timeout", retryable: true } });
+    expect(out.envelope.next[0]).toBe("read_device");
+    expect(out.moved).toBe(false);
+  });
+});
+
+describe("the call log", () => {
+  type Line = Record<string, unknown>;
+  const collect = () => {
+    const lines: { ev: string; fields: Line }[] = [];
+    return { lines, write: (ev: string, fields: Line = {}) => void lines.push({ ev, fields }) };
+  };
+  const FIELDS = ["ts", "tool", "robot_id", "ok", "code", "reason", "ms", "trace_id", "moved"];
+  const logged = async (
+    robot: LocalRobot,
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ out: Awaited<ReturnType<typeof callTool>>; lines: { ev: string; fields: Line }[] }> => {
+    const { lines, write } = collect();
+    const out = await callTool([robot], name, args);
+    logCall(name, args, out, 12.4, undefined, write);
+    return { out, lines };
+  };
+
+  test("one line per call with the same fields, whatever the outcome; never arguments, data or an image", async () => {
+    const { robot } = await mockRobot();
+    const moved = await logged(robot, "drive", { robot_id: "m1", distance_cm: 5, request_id: "label-7" });
+    expect(moved.lines).toEqual([
+      {
+        ev: "call",
+        fields: {
+          ts: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/),
+          tool: "drive",
+          robot_id: "m1",
+          ok: true,
+          code: null,
+          reason: "completed",
+          ms: 12,
+          trace_id: null,
+          moved: true,
+        },
+      },
+    ]);
+    expect(Object.keys(moved.lines[0]!.fields)).toEqual(FIELDS);
+    expect(JSON.stringify(moved.lines)).not.toContain("label-7");
+    const read = await logged(robot, "read_all", { robot_id: "m1" });
+    expect(read.lines[0]!.fields).toMatchObject({ tool: "read_all", ok: true, reason: null, moved: false });
+    const frame = await logged(robot, "read_device", { robot_id: "m1", device: "mock.camera", channels: ["frame"] });
+    expect(frame.out.image).toBeDefined();
+    expect(JSON.stringify(frame.lines).length).toBeLessThan(300);
+    const program = await logged(robot, "run_program", { robot_id: "m1", body: { wait_ms: 5 } });
+    expect(program.lines[0]!.fields).toMatchObject({ reason: "succeeded", moved: false });
+    const refused = await logged(robot, "turn", { robot_id: "m1", angle_deg: 0.3 });
+    expect(refused.lines[0]!.fields).toMatchObject({ ok: false, code: "invalid_argument", reason: null, moved: false });
+    const nobody = await logged(robot, "read_all", { robot_id: "x".repeat(500) });
+    expect(nobody.lines[0]!.fields).toMatchObject({ ok: false, code: "unknown_robot", robot_id: `${"x".repeat(64)}…` });
+    const unknown = await logged(robot, "y".repeat(500), {});
+    expect(unknown.lines[0]!.fields).toMatchObject({ tool: `${"y".repeat(64)}…`, robot_id: null, moved: false });
+    for (const l of [read, frame, program, refused, nobody, unknown])
+      expect(Object.keys(l.lines[0]!.fields)).toEqual(FIELDS);
+  });
+
+  test("an internal error: the id in the message the caller reads is the id of the logged stack", async () => {
+    const { mock, robot } = await mockRobot();
+    const command = mock.command.bind(mock);
+    let ops = 0;
+    mock.command = async (device, name, args, signal) => {
+      if (name === "run_pair" && ++ops === 2) throw new TypeError("boom in the driver");
+      return command(device, name, args, signal);
+    };
+    const { out, lines } = await logged(robot, "drive", { robot_id: "m1", distance_cm: 40, speed_pct: 30 });
+    expect(out.envelope).toMatchObject({ ok: false, error: { code: "internal", retryable: false } });
+    const message = !out.envelope.ok ? out.envelope.error.message : "";
+    const trace_id = /\(trace_id ([a-z0-9]{8})\)/.exec(message)?.[1];
+    expect(trace_id).toBeDefined();
+    expect(lines.map((l) => l.ev)).toEqual(["internal", "call"]);
+    expect(lines[0]!.fields).toMatchObject({ trace_id, tool: "drive", robot_id: "m1", message });
+    // the stack starts where it went wrong, then the error it was reported as
+    expect(lines[0]!.fields.stack).toMatch(
+      /^TypeError: boom in the driver\n[\s\S]*chunked[\s\S]*reported as: Error: drive failed unexpectedly/,
+    );
+    expect(lines[1]!.fields).toMatchObject({ ok: false, code: "internal", trace_id, moved: true });
+  });
+
+  test("an internal error a driver typed itself gets a trace id too", async () => {
+    const { mock, robot } = await mockRobot();
+    mock.read = async () => {
+      throw new RuntimeError("internal", "ev3 bad_reply: wrong counter");
+    };
+    const { out, lines } = await logged(robot, "read_device", { robot_id: "m1", device: "mock.color" });
+    const message = !out.envelope.ok ? out.envelope.error.message : "";
+    const trace_id = /^ev3 bad_reply: wrong counter \(trace_id ([a-z0-9]{8})\)$/.exec(message)?.[1];
+    expect(trace_id).toBeDefined();
+    expect(lines[0]).toMatchObject({ ev: "internal", fields: { trace_id } });
+    expect(lines[1]).toMatchObject({ ev: "call", fields: { code: "internal", trace_id, moved: false } });
+  });
+
+  test("a program step that failed unexpectedly: the program answers with data and the log has the stack", async () => {
+    const { mock, robot } = await mockRobot();
+    mock.command = async () => {
+      throw new TypeError("boom in a step");
+    };
+    const body = { call: { tool: "drive", args: { distance_cm: 5 } } };
+    const { out, lines } = await logged(robot, "run_program", { robot_id: "m1", body });
+    expect(out.envelope).toMatchObject({ ok: true, data: { outcome: "failed" } });
+    const step = (out.envelope as { data: { steps: { error: { trace_id: string } }[] } }).data.steps[0]!;
+    expect(lines.map((l) => l.ev)).toEqual(["internal", "call"]);
+    expect(lines[0]!.fields).toMatchObject({ trace_id: step.error.trace_id });
+    expect(lines[0]!.fields.stack).toContain("boom in a step");
+    expect(lines[1]!.fields).toMatchObject({ ok: true, reason: "failed", trace_id: step.error.trace_id });
+  });
+
+  test("a result that breaks its outputSchema is logged as the internal error the client gets", () => {
+    const { lines, write } = collect();
+    const broken = { trace_id: "abcd1234", message: "drive: the result does not match", stack: "Error: …" };
+    logCall(
+      "drive",
+      { robot_id: "m1" },
+      { envelope: { ok: true, data: { reason: "completed" }, next: [] }, moved: true, internal: [] },
+      3,
+      broken,
+      write,
+    );
+    expect(lines[0]).toMatchObject({ ev: "internal", fields: { trace_id: "abcd1234" } });
+    expect(lines[1]!.fields).toMatchObject({ ok: false, code: "internal", reason: null, trace_id: "abcd1234" });
   });
 });
 

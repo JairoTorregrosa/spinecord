@@ -1205,7 +1205,7 @@ describe("drivetrain", () => {
     });
     test("a chunk that moves the wrong way ends the move at once, naming the reversal", async () => {
       const s = setup({ latency_ms: 600, limits: { max_command_ms: 20000 } });
-      s.mock.reverseFromOp = 2; // the driver bug seen on the robot: the second operation ran backwards
+      s.mock.reverseFromOp = 2; // the second operation runs backwards
       const d = await s.call("drive", { distance_cm: 20, speed_pct: 25 });
       expect(d.reason).toBe("stalled");
       expect(d.problem).toContain("reversed");
@@ -1766,5 +1766,302 @@ describe("errors", () => {
     ).toThrow(/max_drive_cm/);
     const twins: Provider[] = [new MockProvider({ clock, id: "a" }), new MockProvider({ clock, id: "a" })];
     expect(() => createRuntime({ profile: base, providers: twins, clock })).toThrow(/duplicate provider/);
+  });
+});
+
+describe("what a result says about clamping", () => {
+  test("a cut speed leaves the reason completed: clamped is true and clamps names the argument", async () => {
+    const s = setup();
+    const d = await s.call("drive", { distance_cm: 10, speed_pct: 100 });
+    expect(d).toMatchObject({
+      applied: { distance_cm: 10, speed_pct: 80 },
+      clamped: true,
+      clamps: [{ arg: "speed_pct", requested: 100, applied: 80, target: false }],
+      reason: "completed",
+    });
+    expect(d.measured.distance_cm).toBeCloseTo(10, 0);
+    for (const [tool, args] of [
+      ["turn", { angle_deg: 45, speed_pct: 100 }],
+      ["arc", { radius_cm: 20, angle_deg: 30, speed_pct: 100 }],
+    ] as const)
+      expect(await s.call(tool, args)).toMatchObject({ clamped: true, reason: "completed" });
+    const arm = await s.call("command_device", {
+      device: "mock.arm",
+      command: "run_degrees",
+      args: { degrees: 90, speed_pct: 100 },
+    });
+    expect(arm).toMatchObject({
+      clamped: true,
+      clamps: [{ arg: "speed_pct", target: false }],
+      reason: "completed",
+      measured: { degrees: 90 },
+    });
+  });
+  test("a cut target that was reached ends with reason clamped, and clamps marks it as the target", async () => {
+    const s = setup();
+    const d = await s.call("drive", { distance_cm: 500, speed_pct: 100 });
+    expect(d.reason).toBe("clamped");
+    expect(d.clamps).toEqual([
+      { arg: "distance_cm", requested: 500, applied: 100, target: true },
+      { arg: "speed_pct", requested: 100, applied: 80, target: false },
+    ]);
+    expect(await s.call("turn", { angle_deg: 720 })).toMatchObject({
+      reason: "clamped",
+      clamps: [{ arg: "angle_deg", requested: 720, applied: 360, target: true }],
+    });
+  });
+  test("a move nothing was cut in has no clamps", async () => {
+    const d = await setup().call("drive", { distance_cm: 10 });
+    expect(d).toMatchObject({ clamped: false, reason: "completed" });
+    expect(d.clamps).toBeUndefined();
+  });
+  test("a device that cut a value of its own is a completed command with clamped true", async () => {
+    const s = setup();
+    s.mock.command = async (_device, _command, args) => ({
+      requested: args,
+      measured: { frequency_hz: 10000 },
+      clamped: true,
+      reason: "clamped",
+      ms: 1,
+    });
+    const tone = await s.call("command_device", {
+      device: "horn",
+      command: "tone",
+      args: { frequency_hz: 10000, duration_ms: 100 },
+    });
+    expect(tone).toMatchObject({ clamped: true, reason: "completed", measured: { frequency_hz: 10000 } });
+    expect(tone.clamps).toBeUndefined();
+  });
+});
+
+describe("a condition is checked before anything is sent", () => {
+  const NOISY: DeviceSpec = {
+    id: "mock.sonar",
+    provider: "mock",
+    kind: "ultrasonic",
+    roles: [],
+    description: "A distance sensor whose readings jitter.",
+    commands: [],
+    channels: [
+      { name: "cm", type: "number", unit: "cm", range: [3, 255], noise: 2, description: "Distance." },
+      { name: "echo", type: "vector", length: 2, noise: 5, description: "Two raw echoes." },
+    ],
+  };
+  test("a channel that is not active: nothing moves, the message says why, and the fix leads next", async () => {
+    const s = setup();
+    const cond = { device: "mock.color", channel: "ambient_pct", op: "lt", value: 5 };
+    for (const call of [
+      s.call("drive", { distance_cm: 10, until: cond }),
+      s.call("wait_until", { condition: cond, timeout_ms: 100 }),
+      s.call("run_program", { body: { call: { tool: "turn", args: { angle_deg: 10, until: cond } } } }),
+    ]) {
+      const e = await fails(call, "invalid_argument");
+      expect(e.message).toContain("nothing was sent and nothing moved");
+      expect(e.message).toContain("mock.color.ambient_pct is not active");
+      expect(e.message).toContain('mode group "light" (active: reflected_pct)');
+      expect(e.message).toContain('read_device with device "mock.color" and channels ["ambient_pct"]');
+      expect(e.message).not.toContain("braked");
+      expect(e.next).toEqual(["read_device"]);
+      expect(e.measured).toBeUndefined();
+    }
+    expect(s.mock.log.length).toBe(0);
+    expect(s.mock.switchReads).toBe(0);
+  });
+  test("a channel the device reports inactive at the first poll: the move sends nothing and says so", async () => {
+    const s = setup();
+    const read = s.mock.read.bind(s.mock);
+    s.mock.read = async (device, channels, opts) =>
+      device === "mock.gas"
+        ? [{ device, channel: "ppm", value: null, ts: s.clock.now(), error: "mode_switch_required" }]
+        : read(device, channels, opts);
+    const e = await fails(
+      s.call("drive", { distance_cm: 10, until: { device: "mock.gas", channel: "ppm", op: "gt", value: 1000 } }),
+      "invalid_argument",
+    );
+    expect(e.message).toContain("nothing was sent and nothing moved");
+    expect(e.message).not.toContain("braked");
+    expect(e.next).toEqual(["read_device"]);
+    expect(e.moved).toBe(false);
+    expect(s.mock.log.length).toBe(0);
+  });
+  test("a comparison the channel's range can never make true is refused, naming the range", async () => {
+    const s = setup({ extra: [NOISY] });
+    const leaf = (op: string, value: number) => ({ device: "mock.sonar", channel: "cm", op, value });
+    for (const never of [
+      leaf("lt", 2),
+      leaf("lt", 3),
+      leaf("lte", 2.9),
+      leaf("gt", 255),
+      leaf("gte", 256),
+      leaf("eq", 1),
+    ]) {
+      const e = await fails(s.call("drive", { distance_cm: 10, until: never }), "invalid_argument");
+      expect(e.message).toContain("can never be true");
+      expect(e.message).toContain("[3, 255] cm");
+      expect(e.message).toContain("nothing moved");
+    }
+    await fails(s.call("wait_until", { condition: leaf("lt", 2), timeout_ms: 100 }), "invalid_argument");
+    await fails(s.call("turn", { angle_deg: 10, until: { not: leaf("lt", 2) } }), "invalid_argument");
+    const body = { while: { cond: leaf("gt", 300), max_iterations: 3, body: { wait_ms: 1 } } };
+    await fails(s.call("run_program", { body }), "invalid_argument");
+    expect(s.mock.log.length).toBe(0);
+    // the ends of the range can be reached
+    s.mock.values.set("mock.sonar.cm", 40);
+    for (const can of [leaf("lte", 3), leaf("gte", 255), leaf("eq", 255), leaf("lt", 3.1), leaf("neq", 999)])
+      expect((await s.call("wait_until", { condition: can, timeout_ms: 50 })).reason).toMatch(/condition_met|timeout/);
+  });
+  test("changed on a channel with noise: jitter and one outlier are no change, a lasting difference is", async () => {
+    const s = setup({ extra: [NOISY] });
+    const changed = { device: "mock.sonar", channel: "cm", op: "changed" };
+    let n = 0;
+    s.mock.values.set("mock.sonar.cm", () => 40 + (n++ % 2 ? 1.9 : -0.1)); // inside the noise of 2 around the first value
+    expect(await s.call("wait_until", { condition: changed, timeout_ms: 1000 })).toMatchObject({ met: false });
+    // every third reading is far out, never two in a row
+    n = 0;
+    s.mock.values.set("mock.sonar.cm", () => (n++ % 3 === 2 ? 90 : 40));
+    expect(await s.call("wait_until", { condition: changed, timeout_ms: 1000 })).toMatchObject({ met: false });
+    // a wall 10 cm closer from 200 ms on: met at the second poll that shows it
+    const t0 = s.clock.now();
+    s.mock.values.set("mock.sonar.cm", () => (s.clock.now() - t0 >= 200 ? 30 : 40));
+    expect(await s.call("wait_until", { condition: changed, timeout_ms: 1000, poll_hz: 20 })).toMatchObject({
+      met: true,
+      ms: 250,
+    });
+    // each component of a numeric vector has the channel's noise
+    const echo = { device: "mock.sonar", channel: "echo", op: "changed" };
+    n = 0;
+    s.mock.values.set("mock.sonar.echo", () => [100 + (n++ % 2 ? 4 : 0), 200]);
+    expect((await s.call("wait_until", { condition: echo, timeout_ms: 500 })).met).toBe(false);
+    const t1 = s.clock.now();
+    s.mock.values.set("mock.sonar.echo", () => [100, s.clock.now() - t1 >= 100 ? 220 : 200]);
+    expect((await s.call("wait_until", { condition: echo, timeout_ms: 500 })).met).toBe(true);
+  });
+  test("changed on a channel without noise holds at the first difference", async () => {
+    const s = setup();
+    const t0 = s.clock.now();
+    s.mock.values.set("mock.gas.ppm", () => (s.clock.now() - t0 >= 100 ? 413 : 412));
+    const w = await s.call("wait_until", {
+      condition: { device: "mock.gas", channel: "ppm", op: "changed" },
+      timeout_ms: 1000,
+    });
+    expect(w).toMatchObject({ met: true, ms: 100 });
+  });
+});
+
+describe("the smallest move of a drivetrain", () => {
+  test("a target under one wheel degree is refused with the minimum in the tool's unit; nothing is sent", async () => {
+    const s = setup();
+    const turn = await fails(s.call("turn", { angle_deg: 0.3 }), "invalid_argument");
+    expect(turn.message).toContain("angle_deg 0.3 is below the smallest move of this drivetrain, 0.47 deg");
+    expect(turn.message).toContain("nothing was sent and nothing moved");
+    await fails(s.call("turn", { angle_deg: -0.3 }), "invalid_argument");
+    const drive = await fails(s.call("drive", { distance_cm: 0.04 }), "invalid_argument");
+    expect(drive.message).toContain("0.05 cm");
+    const arc = await fails(s.call("arc", { radius_cm: 20, angle_deg: 0.1 }), "invalid_argument");
+    expect(arc.message).toContain("0.11 deg");
+    await fails(
+      s.call("run_program", { body: { call: { tool: "turn", args: { angle_deg: 0.3 } } } }),
+      "invalid_argument",
+    );
+    expect(s.mock.log.length).toBe(0);
+  });
+  test("the minimum itself moves, and a target of 0 is no motion", async () => {
+    const s = setup();
+    expect(await s.call("turn", { angle_deg: 0.47 })).toMatchObject({ reason: "completed" });
+    expect(pairLog(s.mock).length).toBeGreaterThan(0);
+    s.mock.log.length = 0;
+    expect(await s.call("drive", { distance_cm: 0 })).toMatchObject({
+      reason: "completed",
+      chunks: 0,
+      measured: { distance_cm: 0 },
+    });
+    expect(s.mock.log.length).toBe(0);
+  });
+});
+
+describe("what a call tells the process's log", () => {
+  const raw = (s: ReturnType<typeof setup>, tool: RobotTool, args: Record<string, unknown>) =>
+    s.rt.call(tool, args, new AbortController().signal);
+  test("moved is true only when a moving operation was sent", async () => {
+    const s = setup();
+    expect((await raw(s, "drive", { distance_cm: 5 })).moved).toBe(true);
+    expect((await raw(s, "drive", { distance_cm: 0 })).moved).toBe(false);
+    expect((await raw(s, "read_all", {})).moved).toBeUndefined();
+    expect((await raw(s, "run_program", { body: { wait_ms: 5 } })).moved).toBe(false);
+    const body = { call: { tool: "drive", args: { distance_cm: 5 } } };
+    expect((await raw(s, "run_program", { body })).moved).toBe(true);
+    const tone = { device: "horn", command: "tone", args: { frequency_hz: 440, duration_ms: 10 } };
+    expect((await raw(s, "command_device", tone)).moved).toBeUndefined();
+    // refused before anything was sent
+    expect((await fails(raw(s, "turn", { angle_deg: 0.3 }), "invalid_argument")).moved).not.toBe(true);
+  });
+  test("an unexpected failure is internal, with a trace id in its message, its cause, and whether it had moved", async () => {
+    const s = setup();
+    const command = s.mock.command.bind(s.mock);
+    let ops = 0;
+    s.mock.command = async (device, name, args, signal) => {
+      if (name === "run_pair" && ++ops === 2) throw new TypeError("boom in the driver");
+      return command(device, name, args, signal);
+    };
+    const e = await fails(raw(s, "drive", { distance_cm: 30 }), "internal");
+    expect(e.trace_id).toMatch(/^[a-z0-9]{8}$/);
+    expect(e.message).toContain(`(trace_id ${e.trace_id})`);
+    expect(e.message).toContain("boom in the driver");
+    expect((e.cause as Error).stack).toContain("boom in the driver");
+    expect(e.moved).toBe(true);
+  });
+  test("a program step that failed unexpectedly carries the trace id, and the result hands the failure to the log", async () => {
+    const s = setup();
+    s.mock.command = async () => {
+      throw new TypeError("boom in a step");
+    };
+    const r = await raw(s, "run_program", { body: { call: { tool: "drive", args: { distance_cm: 5 } } } });
+    const step = (r.data as { steps: { ok: boolean; error: { code: string; message: string; trace_id: string } }[] })
+      .steps[0]!;
+    expect(step).toMatchObject({ ok: false, error: { code: "internal" } });
+    expect(step.error.message).toContain(`(trace_id ${step.error.trace_id})`);
+    expect(r.internal).toMatchObject([{ trace_id: step.error.trace_id }]);
+    expect(r.internal![0]!.stack).toContain("boom in a step");
+  });
+});
+
+describe("a program's steps say what each call did", () => {
+  test("a step carries the reason and the measured values of its call, and clamped when an argument was cut", async () => {
+    const s = setup();
+    const r = await s.call("run_program", {
+      body: {
+        seq: [
+          { call: { tool: "drive", args: { distance_cm: 10, speed_pct: 100 } } },
+          { call: { tool: "turn", args: { angle_deg: 90 } } },
+          { wait_ms: 5 },
+          {
+            call: {
+              tool: "command_device",
+              args: { device: "mock.arm", command: "run_degrees", args: { degrees: 45, speed_pct: 20 } },
+            },
+          },
+        ],
+      },
+    });
+    expect(r.outcome).toBe("succeeded");
+    expect(r.steps[0]).toMatchObject({ tool: "drive", ok: true, reason: "completed", clamped: true });
+    expect(r.steps[0].measured.distance_cm).toBeCloseTo(10, 0);
+    expect(Object.keys(r.steps[0].measured)).toEqual([
+      "distance_cm",
+      "heading_change_deg",
+      "source",
+      "left_deg",
+      "right_deg",
+    ]);
+    expect(r.steps[1].measured.heading_change_deg).toBeCloseTo(90, 0);
+    expect(r.steps[1].clamped).toBeUndefined();
+    expect(r.steps[2]).toEqual({ path: "body.seq[2]", tool: "wait_ms", ok: true, reason: "completed", ms: 5 });
+    expect(r.steps[3]).toMatchObject({ tool: "command_device", reason: "completed", measured: { degrees: 45 } });
+  });
+  test("a step that ended early carries how far it got", async () => {
+    const s = setup();
+    s.mock.stalled = true;
+    const r = await s.call("run_program", { body: { call: { tool: "drive", args: { distance_cm: 5 } } } });
+    expect(r.steps[0]).toMatchObject({ ok: false, reason: "stalled", measured: { distance_cm: 0 } });
   });
 });

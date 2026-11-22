@@ -50,6 +50,9 @@ export const LINK_MIN_SAMPLES = 3;
 // A device re-scan that failed is tried again after this long, doubling after every failure up to the max.
 export const SCAN_RETRY_MS = 250;
 export const SCAN_RETRY_MAX_MS = 5000;
+// CONTRACT §4: drive, turn and arc refuse a target under this much rotation of the leading wheel. Wheel
+// encoders count whole degrees, so a smaller move can be neither commanded nor measured.
+export const MIN_WHEEL_DEG = 1;
 const ROBOT_TOOLS: readonly RobotTool[] = [
   "describe_robot",
   "describe_device",
@@ -532,36 +535,33 @@ class RuntimeImpl implements LocalRuntime {
     return { asked, speed, clamps: cut("speed_pct", asked, speed, false) };
   }
 
-  // The smallest move a drivetrain makes (CONTRACT §4): its pair is commanded in steps of wheel rotation (whole
-  // degrees when the command's parameters are integers), and a target under one step would be sent as nothing
-  // or as a whole step. A target of exactly 0 asks for no motion and is answered as done.
+  // The smallest move of a drivetrain (CONTRACT §4): MIN_WHEEL_DEG of rotation of its leading wheel. A smaller
+  // target is refused, not rounded up to a step or answered as done. A target of exactly 0 asks for no motion
+  // and is answered as done.
   private smallestStep(
     tool: string,
     field: string,
     asked: number,
     unit: string,
-    cmd: CommandSpec,
     leadDeg: number,
     perDeg: number, // units of `field` per degree of the leading wheel
   ): void {
-    const props = cmd.params.properties as Record<string, { type?: string } | undefined>;
-    const step = ["left_deg", "right_deg"].some((k) => props[k]?.type === "integer") ? 1 : 0.5;
-    if (leadDeg === 0 || Math.abs(leadDeg) >= step) return;
-    const min = Math.ceil(step * perDeg * 100) / 100;
+    if (leadDeg === 0 || Math.abs(leadDeg) >= MIN_WHEEL_DEG) return;
+    const min = Math.ceil(MIN_WHEEL_DEG * perDeg * 100) / 100;
     throw rerr(
       "invalid_argument",
-      `${tool}: ${field} ${asked} is below the smallest move this drivetrain makes, ${min} ${unit} (its wheels are commanded in steps of ${step} deg of rotation), so nothing was sent and nothing moved. Ask for at least ${min} ${unit}, or 0 for no motion; moves this small overshoot by a few wheel degrees, so read measured.`,
+      `${tool}: ${field} ${asked} is below the smallest move of this drivetrain, ${min} ${unit} (${MIN_WHEEL_DEG} degree of wheel rotation, the step its wheels are measured in), so nothing was sent and nothing moved. Ask for at least ${min} ${unit}, or 0 for no motion. A move this small overshoots by a few wheel degrees: read measured.`,
     );
   }
 
   private planDrive(a: Args): Run {
-    const { dt, cmd } = this.drivetrain("drive");
+    const { dt } = this.drivetrain("drive");
     const lim = this.prof.limits;
     const asked = a.distance_cm as number;
     const dist = Math.sign(asked) * Math.min(Math.abs(asked), lim.max_drive_cm);
     const sp = this.speed(a);
     const wheel = (dt.forward_sign * 360 * dist) / (Math.PI * dt.wheel_diameter_cm);
-    this.smallestStep("drive", "distance_cm", asked, "cm", cmd, wheel, (Math.PI * dt.wheel_diameter_cm) / 360);
+    this.smallestStep("drive", "distance_cm", asked, "cm", wheel, (Math.PI * dt.wheel_diameter_cm) / 360);
     const until = a.until === undefined ? undefined : compileCondition(a.until, this.resolver, "until");
     return moving((signal) =>
       this.move(
@@ -579,12 +579,12 @@ class RuntimeImpl implements LocalRuntime {
   }
 
   private planTurn(a: Args): Run {
-    const { dt, cmd } = this.drivetrain("turn");
+    const { dt } = this.drivetrain("turn");
     const asked = a.angle_deg as number;
     const angle = Math.sign(asked) * Math.min(Math.abs(asked), this.prof.limits.max_turn_deg);
     const sp = this.speed(a);
     const w = (dt.forward_sign * angle * dt.axle_track_cm) / dt.wheel_diameter_cm; // positive angle = counter-clockwise: right wheel forward
-    this.smallestStep("turn", "angle_deg", asked, "deg", cmd, w, dt.wheel_diameter_cm / dt.axle_track_cm);
+    this.smallestStep("turn", "angle_deg", asked, "deg", w, dt.wheel_diameter_cm / dt.axle_track_cm);
     const until = a.until === undefined ? undefined : compileCondition(a.until, this.resolver, "until");
     return moving((signal) =>
       this.move(
@@ -604,7 +604,7 @@ class RuntimeImpl implements LocalRuntime {
   // radius_cm > 0 to the robot's center; angle_deg = heading change (positive = curve left); direction = which
   // way the robot travels. Wheel paths: center path ± heading change × half the axle track.
   private planArc(a: Args): Run {
-    const { dt, cmd } = this.drivetrain("arc");
+    const { dt } = this.drivetrain("arc");
     const lim = this.prof.limits;
     const radius = a.radius_cm as number;
     const asked = a.angle_deg as number;
@@ -625,7 +625,6 @@ class RuntimeImpl implements LocalRuntime {
       "angle_deg",
       asked,
       "deg",
-      cmd,
       lead,
       (dt.wheel_diameter_cm * 180) / (360 * (radius + dt.axle_track_cm / 2)),
     );
