@@ -28,6 +28,8 @@ A condition (\`until\`, wait_until, a program's while, if or success) never take
 A condition is checked before anything is sent, and a call it fails moved nothing (invalid_argument):
 - A channel that is not active (active:false in describe_device: its sensor is in another mode) cannot be compared, since a condition never switches a sensor mode. \`next\` then starts with read_device: read that channel by name while the robot is idle, then send the call again.
 - A comparison the channel's range can never make true is refused, e.g. distance_cm lt 2 on a sensor whose range is [3, 255]. The message names the range.
+
+What a condition compares:
 - A gyro's angle_deg is cumulative since its last reset, not relative to where this move starts: on a robot that has already turned, \`until\` angle_deg lt -45 can be met at once. To turn by an angle, use turn with angle_deg (it measures the change itself); to compare the gyro's angle, send the gyro's reset command first.
 - op changed compares with the first value the call read. On a number channel that declares noise in describe_device it needs a difference larger than that noise in 2 polls in a row, so a still sensor does not trip it; on any other channel every difference counts.
 

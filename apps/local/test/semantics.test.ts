@@ -2,7 +2,7 @@
 // smallest move, `changed` on sensors with noise, program steps, the instructions about a twin, and the call log.
 // Every envelope here passed the outputSchema the server listed (client.ts checks each one).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { startServer, wheelSpeeds, type TestServer } from "./client";
+import { startServer, until, wheelSpeeds, type TestServer } from "./client";
 
 const R = "r1-sim";
 let s: TestServer;
@@ -25,7 +25,6 @@ const wheels = async (): Promise<number[]> => {
   if (!pair.ok) throw new Error(pair.error.message);
   return pair.data.readings.map((r: { value: number }) => r.value);
 };
-const callLines = () => s.events("call");
 
 describe("reasons and clamps", () => {
   test("a drive at a speed over the limit drives the whole distance: reason completed, clamped true", async () => {
@@ -192,12 +191,17 @@ describe("the instructions about a twin", () => {
 
 describe("the call log on stderr", () => {
   test("every call leaves one line: tool, robot, outcome, time, whether it moved, and none of its arguments", async () => {
-    const from = callLines().length;
-    await call("drive", { distance_cm: 3, request_id: "a-label-not-for-the-log" });
-    await call("read_device", { device: "sim.camera", channels: ["frame"] });
-    await call("turn", { angle_deg: 0.3 });
-    await s.tool("read_all", { robot_id: "nobody" });
-    const lines = callLines().slice(from);
+    // a server of its own: its stderr holds these four calls and no other
+    const own = await startServer();
+    await own.tool("drive", { robot_id: R, distance_cm: 3, request_id: "a-label-not-for-the-log" });
+    await own.tool("read_device", { robot_id: R, device: "sim.camera", channels: ["frame"] });
+    await own.tool("turn", { robot_id: R, angle_deg: 0.3 });
+    await own.tool("read_all", { robot_id: "nobody" });
+    // stderr and stdout are two pipes: an answer can be read before the line about it
+    await until("four call lines", () => own.events("call").length === 4);
+    expect(await own.closeStdin()).toBe(0);
+    const lines = own.events("call");
+    expect(own.stderr.join("\n")).not.toContain("a-label-not-for-the-log");
     expect(lines.map((l) => [l.tool, l.robot_id, l.ok, l.code, l.reason, l.moved])).toEqual([
       ["drive", R, true, null, "completed", true],
       ["read_device", R, true, null, null, false],
@@ -221,6 +225,5 @@ describe("the call log on stderr", () => {
       expect(typeof l.ms).toBe("number");
       expect(JSON.stringify(l).length).toBeLessThan(300); // no arguments, no data, no image
     }
-    expect(s.stderr.join("\n")).not.toContain("a-label-not-for-the-log");
   });
 });

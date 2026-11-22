@@ -2,6 +2,7 @@
 // simulated brick is read directly.
 import { describe, expect, test } from "bun:test";
 import { ACTIVITY_TRANSITIONS, RuntimeError, type RobotProfile } from "../../../packages/protocol/types";
+import { firstViolation } from "../../../packages/protocol/schema";
 import { TOOLS } from "../../../packages/protocol/tools";
 import { realClock } from "../../../packages/runtime/clock";
 import { MockProvider } from "../../../packages/runtime/mock";
@@ -10,7 +11,7 @@ import { EXAMPLE, loadConfig } from "../src/config";
 import { LocalRobot } from "../src/robot";
 import { buildFleet, keepAttached } from "../src/sources";
 import { logCall } from "../src/mcp";
-import { NEXT_ERR, NEXT_OK, callTool } from "../src/tools";
+import { NEXT_ERR, NEXT_OK, TOOL, callTool } from "../src/tools";
 import { until } from "./client";
 
 const PROFILE: RobotProfile = {
@@ -466,6 +467,9 @@ describe("the call log", () => {
   ): Promise<{ out: Awaited<ReturnType<typeof callTool>>; lines: { ev: string; fields: Line }[] }> => {
     const { lines, write } = collect();
     const out = await callTool([robot], name, args);
+    // what the log is about is an answer a client accepts: it matches the outputSchema the tool lists
+    const schema = TOOL.get(name)?.output;
+    if (schema) expect(firstViolation(schema, out.envelope)).toBeNull();
     logCall(name, args, out, 12.4, undefined, write);
     return { out, lines };
   };

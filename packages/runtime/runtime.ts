@@ -71,6 +71,8 @@ const ROBOT_TOOLS: readonly RobotTool[] = [
 export function rerr(code: ErrorCode, message: string): RuntimeError {
   return new RuntimeError(code, message, RETRYABLE.includes(code));
 }
+/** An error whose fix is another tool: the envelope's `next` starts with those tools (CONTRACT §7). */
+const fixedBy = (next: string[], e: RuntimeError): RuntimeError => Object.assign(e, { next });
 
 export interface RuntimeOptions {
   profile: RobotProfile;
@@ -439,9 +441,12 @@ class RuntimeImpl implements LocalRuntime {
       for (let i = 0; !signal.aborted; i++) {
         const [r] = await this.readEntry(e, [name!]);
         if (r!.error === "mode_switch_required")
-          throw rerr(
-            "invalid_argument",
-            `Channel ${e.spec.id}.${name} is not active: sampling never switches a sensor mode. While the robot is idle, call read_device naming that channel, then retry.`,
+          throw fixedBy(
+            ["read_device"],
+            rerr(
+              "invalid_argument",
+              `Channel ${e.spec.id}.${name} is not active: its sensor is in another mode, and sampling never switches a sensor mode. While the robot is idle, call read_device with device "${e.spec.id}" and channels ["${name}"] to switch the mode, then send this call again.`,
+            ),
           );
         samples.push([Math.round(this.clock.now() - t0), typeof r!.value === "number" ? r!.value : null]);
         const nextAt = (i + 1) * period;

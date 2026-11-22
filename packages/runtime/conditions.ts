@@ -42,10 +42,18 @@ export const UNDECIDED_POLLS = 10;
 export const CHANGED_POLLS = 2;
 const bad = (msg: string) => new RuntimeError("invalid_argument", msg);
 // A condition never switches a sensor mode, so a channel whose mode group is not active cannot be compared.
-// The fix is a read_device that names the channel, and `next` starts with it.
-function inactive(where: string, device: string, channel: string, group?: string, active: string[] = []): RuntimeError {
+// The fix is a read_device that names the channel, and `next` starts with it. `where` is the condition's path
+// when it is refused as it is compiled, before anything is sent; a poll that finds it says nothing about what
+// was sent, and whoever watched a move adds that.
+function inactive(
+  where: string | null,
+  device: string,
+  channel: string,
+  group?: string,
+  active: string[] = [],
+): RuntimeError {
   const e = bad(
-    `${where}: nothing was sent and nothing moved. Channel ${device}.${channel} is not active: its sensor is in another mode${
+    `${where === null ? "" : `${where}: nothing was sent and nothing moved. `}Channel ${device}.${channel} is not active: its sensor is in another mode${
       group ? ` of mode group "${group}"` : ""
     }${active.length ? ` (active: ${active.join(", ")})` : ""}, and a condition never switches a sensor mode. While the robot is idle, call read_device with device "${device}" and channels ["${channel}"] to switch the mode (describe_device tells the side effects: switching a gyro resets its angle), then send this call again.`,
   );
@@ -200,7 +208,7 @@ export function makeEvaluator(
       const readings = groups.flat();
       const needsSwitch = readings.find((r) => r.error === "mode_switch_required");
       // the registry said active and the device says otherwise (a mode switched since the last scan)
-      if (needsSwitch) throw inactive("condition", needsSwitch.device, needsSwitch.channel);
+      if (needsSwitch) throw inactive(null, needsSwitch.device, needsSwitch.channel);
       const got = c.leaves.map((l) => readings.find((r) => r.device === l.device && r.channel === l.channel));
       const value = (i: number): Value | null => got[i]?.value ?? null;
       let unreadable = false;

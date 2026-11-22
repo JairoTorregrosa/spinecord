@@ -1878,11 +1878,22 @@ describe("a condition is checked before anything is sent", () => {
       s.call("drive", { distance_cm: 10, until: { device: "mock.gas", channel: "ppm", op: "gt", value: 1000 } }),
       "invalid_argument",
     );
-    expect(e.message).toContain("nothing was sent and nothing moved");
+    expect(e.message).toContain("mock.gas.ppm is not active");
+    expect(e.message).toContain("Nothing was sent: the robot did not move.");
     expect(e.message).not.toContain("braked");
     expect(e.next).toEqual(["read_device"]);
     expect(e.moved).toBe(false);
     expect(s.mock.log.length).toBe(0);
+  });
+  test("sampling a channel that is not active names read_device as the fix", async () => {
+    const s = setup();
+    const e = await fails(
+      s.call("sample_device", { device: "mock.color", channel: "ambient_pct", duration_ms: 100 }),
+      "invalid_argument",
+    );
+    expect(e.message).toContain('read_device with device "mock.color" and channels ["ambient_pct"]');
+    expect(e.next).toEqual(["read_device"]);
+    expect(s.mock.switchReads).toBe(0);
   });
   test("a comparison the channel's range can never make true is refused, naming the range", async () => {
     const s = setup({ extra: [NOISY] });
