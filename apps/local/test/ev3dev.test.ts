@@ -77,7 +77,7 @@ describe("an ev3dev brick over ssh", () => {
         robot: { link: "online" },
       });
       const read = await tool("read_device", { device: "distance" });
-      expect(read).toMatchObject({ ok: true, data: [{ channel: "distance_cm", value: 42 }] });
+      expect(read).toMatchObject({ ok: true, data: { readings: [{ channel: "distance_cm", value: 42 }] } });
       const drive = await tool("drive", { distance_cm: 3, speed_pct: 40 });
       expect(drive.ok).toBe(true);
       expect(await tool("stop")).toMatchObject({ ok: true, data: { motors_stopped: true, activity: "idle" } });
@@ -115,8 +115,11 @@ describe("an ev3dev brick over ssh", () => {
       const tool = async (name: string, args: Record<string, unknown> = {}) =>
         (await callTool(fleet.robots, name, { robot_id: "dev", ...args })).envelope;
       const listed = async () =>
-        ((await callTool(fleet.robots, "list_robots", {})).envelope as { data: { link: string; connect: string }[] })
-          .data[0]!;
+        (
+          (await callTool(fleet.robots, "list_robots", {})).envelope as {
+            data: { robots: { link: string; connect: string }[] };
+          }
+        ).data.robots[0]!;
       expect(await listed()).toMatchObject({ link: "online", connect: null });
 
       writeFileSync(down, "");
@@ -138,7 +141,7 @@ describe("an ev3dev brick over ssh", () => {
       expect(await listed()).toMatchObject({ activity: "idle", connect: null });
       expect(await tool("read_device", { device: "distance" })).toMatchObject({
         ok: true,
-        data: [{ channel: "distance_cm", value: 42 }],
+        data: { readings: [{ channel: "distance_cm", value: 42 }] },
       });
       expect(events).toEqual(expect.arrayContaining(["ev3dev_gone", "ev3dev_ready"]));
     } finally {
@@ -192,7 +195,8 @@ describe("an ev3dev brick over ssh", () => {
         const tool = async (name: string, args: Record<string, unknown> = {}) =>
           (await callTool(fleet.robots, name, { robot_id: "dev", ...args })).envelope;
         const link = async () =>
-          ((await callTool(fleet.robots, "list_robots", {})).envelope as { data: { link: string }[] }).data[0]!.link;
+          ((await callTool(fleet.robots, "list_robots", {})).envelope as { data: { robots: { link: string }[] } }).data
+            .robots[0]!.link;
         expect(alive().length).toBe(1);
         // under `until` the move is made of short chunks, and on this fast link they coast
         const drive = tool("drive", {

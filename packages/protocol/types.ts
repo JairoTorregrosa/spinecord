@@ -40,7 +40,7 @@ export interface CommandSpec {
 export interface DeviceSpec {
   id: string; // "<provider>.<local>", e.g. "ev3.B", "ev3.S3", "cam1.frame"
   provider: string; // the id of the provider that announced it: "ev3", "sim", ...
-  kind: string; // open vocabulary; known kinds listed in CONTRACT.md §2.2
+  kind: string; // open vocabulary; known kinds listed in CONTRACT.md §2.3
   roles: string[]; // aliases from the profile, e.g. ["left_wheel"]
   channels: ChannelSpec[];
   commands: CommandSpec[];

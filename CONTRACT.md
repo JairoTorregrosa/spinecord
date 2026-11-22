@@ -101,7 +101,20 @@ An MCP client starts it (`claude mcp add spinecord -- bun <repo>/apps/local/main
 
 ## 7. Envelope and error codes
 
-`Envelope<T>` in types.ts: `{ok, robot?, data | error, next}`; `robot` is `{id, backend, link, activity}`. `isError: true` when `ok:false`. Every result (success and error) carries the envelope as `structuredContent`, and every tool advertises its `outputSchema` (`ToolDef.output` in tools.ts: the envelope with that tool's `data` shape; object root, open objects, minimal `required`, so one schema accepts both outcomes). Every result validates against it; a result that does not is a JSON-RPC error, never sent as data. For clients without structured output, one `text` block repeats it: line 1 is a one-line summary, the last line is the envelope as single-line JSON. Plus one `image` block when an image channel was read. Clients that write code against the tools: `docs/code-mode.md`.
+`Envelope<T>` in types.ts: `{ok, robot?, data | error, next}`; `robot` is `{id, backend, link, activity}`, with `backend` null while the robot is offline. `isError: true` when `ok:false`. Every result (success and error) carries the envelope as `structuredContent`, and every tool advertises its `outputSchema` (`ToolDef.output` in tools.ts: the envelope with that tool's `data` shape; object root, open objects, minimal `required`, so one schema accepts both outcomes). Every result validates against it; a result that does not is a JSON-RPC error, never sent as data. For clients without structured output, one `text` block repeats it: line 1 is a one-line summary, the last line is the envelope as single-line JSON. Plus one `image` block when an image channel was read. Clients that write code against the tools: `docs/code-mode.md`.
+
+**One shape per kind of answer.** `data` is an object in every tool, never a bare array, and a thing has one name wherever it appears:
+
+| what | field | tools |
+|---|---|---|
+| channel values | `readings: [{device, channel, value, unit?, ts, error?}]`, one per channel; an image channel's reading is `{device, channel, value: null, image: true, mime, age_ms, ts}` | `read_device` `read_all` `wait_until` |
+| the robots | `robots: [{id, backend, link, activity, fault_reason, connect}]` | `list_robots` |
+| a command's result | `{requested, applied, measured, clamped, reason, ms}` | `drive` `turn` `arc` `command_device` |
+| what a drivetrain move measured | `measured: {distance_cm, heading_change_deg, source, left_deg, right_deg}` | `drive` `turn` `arc` |
+| how long the call took | `ms` | `read_all` `wait_until` `drive` `turn` `arc` `command_device` `run_program` |
+| why a call ended | `reason` | `wait_until` (`condition_met`, `timeout`, `preempted`) and every command result (`StopReason`) |
+
+**`next` after an error.** A retryable error and `invalid_argument` name the same tool first. `busy` then names `read_all` and `stop`: the call in flight ends by itself, and `stop` ends it early. `illegal_state` names `read_all`: the robot is not in `fault` and takes every other tool. A moving call that failed after it started names `read_all` first (§1).
 
 | code | retryable | meaning |
 |---|---|---|
@@ -130,7 +143,9 @@ An MCP client starts it (`claude mcp add spinecord -- bun <repo>/apps/local/main
 | act | `drive` `turn` `arc` `command_device` `stop` `reset_fault` |
 | programs | `run_program` |
 
-- `list_robots` returns the robots of the process: `{id, backend, link, activity, fault_reason, connect}`; `connect` tells what a person must do to bring an offline robot online. It is the one tool that addresses no robot, so its envelope has no `robot`.
+- `list_robots` returns the robots of the process: `{robots: [{id, backend, link, activity, fault_reason, connect}]}`; `connect` tells what a person must do to bring an offline robot online. It is the one tool that addresses no robot, so its envelope has no `robot`.
 - Every other tool takes `robot_id` and runs under the state of §1; the runtime executes it (§4).
 - `request_id` is optional on the tools that take it and is a label (§0.5).
 - A tool that moves the robot is annotated `idempotentHint: false`.
+- Defaults are stated in the description of their argument: `speed_pct` 30, `rate_hz` 10 (`sample_device`), `poll_hz` 20 (`wait_until`), `direction` forward (`arc`).
+- `read_device` without `channels` reads the device's active non-image channels; an image channel or one that needs a mode switch is read only when named (§2.2).

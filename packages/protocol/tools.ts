@@ -9,24 +9,31 @@
 import { ACTIVITY_TRANSITIONS, type BackendKind, type ErrorCode, LINK_TRANSITIONS, type StopReason } from "./types";
 
 export const SERVER_NAME = "spinecord";
-export const SERVER_VERSION = "2.0.0";
+export const SERVER_VERSION = "2.1.0";
 
 export const SERVER_INSTRUCTIONS = `Controls the robots this process runs on this computer: physical robots (for example LEGO EV3 bricks) and simulated twins. The tool set is fixed and generic: a robot is a set of devices; each device describes its readable channels and its bounded commands.
 
 How to work:
-1. list_robots, then describe_robot to learn devices, roles, drivetrain, limits and notes. describe_device gives one device's full channel and command schemas. A robot whose link is offline says in \`connect\` what a person must do to bring it online.
+1. list_robots, then describe_robot to learn devices, roles, drivetrain, limits and notes. Every tool but list_robots takes robot_id, the id list_robots gives. describe_device gives one device's full channel and command schemas. A robot whose link is offline says in \`connect\` what a person must do to bring it online.
 2. Prefer the drivetrain tools (drive, turn, arc) for motion. Use command_device for any other actuator. Every command is bounded (degrees, milliseconds or instant) and clamped to the robot's limits; nothing runs open-ended.
 3. Close the loop: after acting, read_device / read_all / sample_device, or look through a camera device (read_device on an image channel). Compare requested vs measured in every result; physical robots slip.
 4. To react to the world inside one action, pass an \`until\` condition; to wait without moving, use wait_until. run_program runs a whole behavior, given inline as data, next to the hardware.
 5. Test on a twin first when there is one: a robot with backend sim has the same devices as the hardware robot plus a "sim.world" device.
 6. One moving call at a time per robot: a second one fails with busy, it is not queued. Call stop the moment something looks wrong. stop never waits behind another call.
 
-Every result is JSON: {ok, robot:{id, backend, link, activity}, data | error:{code, message, retryable, retry_after_ms?}, next:[suggested tools]}. Errors are never disguised as data; a missing value is null with an error string. Nothing is stored between calls: a moving call sent twice moves twice, so after a failed or unanswered moving call read the robot (read_all) before moving again. Units: cm, degrees (positive = counter-clockwise), speed in percent of max, time in ms.
+Every result is JSON: {ok, robot:{id, backend, link, activity}, data | error:{code, message, retryable, retry_after_ms?}, next:[suggested tools]}. ok true → data is present; ok false → error is present and data is absent. Errors are never disguised as data; a missing value is null with an error string. Nothing is stored between calls: a moving call sent twice moves twice, so after a failed or unanswered moving call read the robot (read_all) before moving again. Units: cm, degrees (positive = counter-clockwise), speed in percent of max, time in ms.
 
 Result format: structuredContent is the envelope and matches the tool's outputSchema. The text block repeats it for clients without structured output: line 1 is a one-line summary, the last line is the envelope as single-line JSON.
 
+Shapes of \`data\` (always an object, never a bare array):
+- list_robots: {robots:[{id, backend, link, activity, fault_reason, connect}]}.
+- read_device, read_all, wait_until: {readings:[{device, channel, value, unit?, ts, error?}]}, one reading per channel: readings.find(r => r.channel === "distance_cm").value. read_all and wait_until add ms; wait_until adds met and reason.
+- drive, turn, arc, command_device: {requested, applied, measured, clamped, reason, ms}. measured of drive, turn and arc has the same fields: distance_cm, heading_change_deg, source, left_deg, right_deg.
+- sample_device: {samples:[[t_ms, value]], min, max, mean, last, rate_hz}. stop: {motors_stopped, activity}. run_program: {outcome, reason, steps, ms}.
+
 If you write code that calls these tools (several calls in one script):
-- Compose the whole sense → act loop in one script and return only what you need; do not spend a model turn per call.
+- What a call hands the script depends on the client that runs it: the envelope as an object, or the envelope as JSON text, and a result with ok:false may be thrown (the thrown message is the text block, so its last line is the envelope JSON). Define one helper that returns the envelope in every case and make every call through it: const call = async (tool, args) => { let r; try { r = await TOOL(tool, args); } catch (e) { try { return JSON.parse(String(e.message).split("\\n").at(-1)); } catch { throw e; } } return typeof r === "string" ? JSON.parse(r) : (r.structuredContent ?? r); }; where TOOL is how the client exposes these tools. An error the helper throws again never reached the server (an argument the tool does not declare): read its message.
+- Compose the whole sense → act loop in one script and return only what you need; do not spend a model turn per call. A move's result carries what it measured (data.measured): read only what the move does not report.
 - Check \`ok\` after every call. On ok:false leave the loop at once and return the error; never continue on stale data.
 - Await each moving call before the next one on the same robot; reads may run in parallel with a move.
 - A script that moves the robot wraps the motion in try/finally and calls stop in the finally whenever it did not finish cleanly.
@@ -73,7 +80,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "List robots",
     annotations: ro,
     description:
-      "Lists the robots this process runs, with their state. Returns [{id, backend (ev3|sim), link (offline|handshaking|online), activity (idle|acting|stopping|running_program|fault), fault_reason (why it is in fault, else null), connect (what a person must do to bring an offline robot online, else null)}]. Start here.",
+      "Lists the robots this process runs, with their state. Returns {robots:[{id, backend (ev3 = a physical EV3 brick, on stock firmware or on ev3dev | sim = a simulated twin | null while the robot is offline), link (offline|handshaking|online), activity (idle|acting|stopping|running_program|fault), fault_reason (why it is in fault, else null), connect (what a person must do to bring an offline robot online, else null)}]}. Start here.",
     input: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -81,7 +88,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Describe robot",
     annotations: ro,
     description:
-      "Returns everything needed to use one robot: devices (id, kind, roles, channel names, command names), roles (role → device id), drivetrain (wheel geometry, or null if the robot cannot drive), limits (max speed, max command ms, max drive cm, max turn deg, max program ms), notes (facts about how it is built) and current state. Call before acting and again after an error mentioning unknown_device, since attached devices can come and go.",
+      "Returns everything needed to use one robot: {id, backend, devices:[{id, kind, roles, channels (names), commands (names), description}], roles (role → device id), drivetrain (wheel geometry, or null if the robot cannot drive), limits:{max_speed_pct, max_command_ms, max_drive_cm, max_turn_deg, max_program_ms}, notes (facts about how it is built)}. Call before acting and again after an error mentioning unknown_device, since attached devices can come and go.",
     input: { type: "object", properties: { robot_id: robotId }, required: ["robot_id"], additionalProperties: false },
   },
   {
@@ -107,7 +114,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Read device",
     annotations: ro,
     description:
-      "Reads current values of one device's channels. Returns [{device, channel, value, unit, ts, error?}]. Reading never changes the device: omit channels to read its active channels; channels that need a sensor mode switch (active:false in describe_device) come back null with error mode_switch_required. Name such a channel explicitly in `channels` to switch the mode (only while the robot is idle; side effects are described per channel, e.g. switching the EV3 gyro resets its angle). Requesting an image channel (e.g. a camera's \"frame\") returns the picture as an image content block plus {age_ms}; frames older than 1500 ms fail with stale_image. Works in any activity state while the robot is online.",
+      "Reads current values of one device's channels. Returns {readings:[{device, channel, value, unit?, ts, error?}]}, one reading per channel, the shape read_all returns. Reading never changes the device: without `channels` it reads the device's active non-image channels and leaves out the ones that need a sensor mode switch (active:false in describe_device). Name such a channel in `channels` to switch the mode and read it (only while the robot is idle, else busy; side effects are described per channel, e.g. switching the EV3 gyro resets its angle). A channel that could not be read has value null and an error string. Naming an image channel (e.g. a camera's \"frame\", one per call) returns the picture as an image content block, and its reading is {device, channel, value: null, image: true, mime, age_ms, ts}; a frame older than 1500 ms fails with stale_image. Works in any activity state while the robot is online.",
     input: {
       type: "object",
       properties: {
@@ -116,7 +123,8 @@ const CATALOG: Omit<ToolDef, "output">[] = [
         channels: {
           type: "array",
           items: { type: "string" },
-          description: "Channel names. Omit for all non-image channels.",
+          description:
+            "Channel names from describe_device. Omit to read every active non-image channel; an image channel or one with active:false is read only when named here.",
         },
       },
       required: ["robot_id", "device"],
@@ -136,15 +144,20 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Sample channel over time",
     annotations: ro,
     description:
-      "Samples one numeric channel repeatedly and returns {samples:[[t_ms, value]...], min, max, mean, last}. rate_hz is capped by the channel's max_rate_hz and 50; duration_ms ≤ 5000. Use it to see trends (is the distance shrinking? is the color stable?) rather than calling read_device in a loop.",
+      "Samples one numeric channel repeatedly and returns {samples:[[t_ms, value]...], min, max, mean, last, rate_hz (the rate used), unit?}. rate_hz defaults to 10 and is capped by the channel's max_rate_hz and 50; duration_ms ≤ 5000. Use it to see trends (is the distance shrinking? is the color stable?) rather than calling read_device in a loop.",
     input: {
       type: "object",
       properties: {
         robot_id: robotId,
-        device: { type: "string" },
-        channel: { type: "string" },
-        rate_hz: { type: "number", minimum: 1, maximum: 50 },
-        duration_ms: { type: "integer", minimum: 100, maximum: 5000 },
+        device: { type: "string", description: "Device id or role." },
+        channel: { type: "string", description: "One active channel of type number." },
+        rate_hz: {
+          type: "number",
+          minimum: 1,
+          maximum: 50,
+          description: "Samples per second. Default 10. Capped by the channel's max_rate_hz.",
+        },
+        duration_ms: { type: "integer", minimum: 100, maximum: 5000, description: "How long to sample, ms." },
       },
       required: ["robot_id", "device", "channel", "duration_ms"],
       additionalProperties: false,
@@ -155,14 +168,19 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Wait for condition",
     annotations: ro,
     description:
-      "Waits without moving until a condition over device channels becomes true or timeout_ms passes (≤ 10000). Returns {met: boolean, after_ms, readings (values that decided it)}. Not an error when the timeout passes: check met. Use for waiting on a button, a person, a light change.",
+      "Waits without moving until a condition over device channels becomes true or timeout_ms passes (≤ 10000). Returns {met: boolean, reason (condition_met | timeout | preempted), ms (how long it waited), readings (the values that decided it, the shape read_all returns)}. Not an error when the timeout passes: check met. The condition is read poll_hz times per second (default 20). Use for waiting on a button, a person, a light change.",
     input: {
       type: "object",
       properties: {
         robot_id: robotId,
         condition,
-        timeout_ms: { type: "integer", minimum: 50, maximum: 10000 },
-        poll_hz: { type: "number", minimum: 1, maximum: 50 },
+        timeout_ms: { type: "integer", minimum: 50, maximum: 10000, description: "Longest wait, ms." },
+        poll_hz: {
+          type: "number",
+          minimum: 1,
+          maximum: 50,
+          description: "How often the condition is read, per second. Default 20.",
+        },
       },
       required: ["robot_id", "condition", "timeout_ms"],
       additionalProperties: false,
@@ -175,7 +193,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Drive straight",
     annotations: act,
     description:
-      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, measured:{distance_cm, heading_change_deg}, clamped, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
+      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
     input: {
       type: "object",
       properties: {
@@ -194,7 +212,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Turn in place",
     annotations: act,
     description:
-      "Rotates in place by angle_deg (positive = counter-clockwise/left, negative = right), then brakes. Returns {requested:{angle_deg}, measured:{angle_deg (gyro if present, else encoders), source}, clamped, reason, ms}. Supports `until` like drive. Requires a drivetrain. Clamped to max_turn_deg.",
+      "Rotates in place by angle_deg (positive = counter-clockwise/left, negative = right), then brakes. Returns the shape drive returns: {requested:{angle_deg, speed_pct}, applied, measured:{distance_cm, heading_change_deg (the angle turned), source (gyro if present, else encoders), left_deg, right_deg}, clamped, reason, ms}. Supports `until` like drive. Requires a drivetrain. Clamped to max_turn_deg.",
     input: {
       type: "object",
       properties: {
@@ -220,7 +238,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
         robot_id: robotId,
         radius_cm: { type: "number", exclusiveMinimum: 0 },
         angle_deg: { type: "number" },
-        direction: { type: "string", enum: ["forward", "backward"] },
+        direction: { type: "string", enum: ["forward", "backward"], description: "Default forward." },
         speed_pct: speed,
         until: condition,
         request_id: requestId,
@@ -364,7 +382,7 @@ const freeform = (description: string): Schema => ({ type: "object", description
 const activity = oneOf(keys(ACTIVITY_TRANSITIONS));
 const stateFields = {
   id: str,
-  backend: { type: ["string", "null"], enum: [...BACKENDS, null], description: "null until the first connection" },
+  backend: { type: ["string", "null"], enum: [...BACKENDS, null], description: "null while the robot is offline" },
   link: oneOf(keys(LINK_TRANSITIONS)),
   activity,
 };
@@ -402,7 +420,10 @@ const reading = obj(
     },
     unit: str,
     ts: { type: "number", description: "Capture time, ms." },
-    error: str,
+    error: { type: "string", description: "Present when the channel could not be read; value is then null." },
+    image: { type: "boolean", description: "true on an image channel: the picture is the result's image block." },
+    mime: str,
+    age_ms: { type: "number", description: "Age of an image channel's frame, ms." },
   },
   [],
   "One channel value.",
@@ -412,7 +433,7 @@ const commandResult = obj({
   requested: freeform("What was asked."),
   applied: freeform("What was sent after clamping to the limits."),
   measured: freeform(
-    "What happened, from encoders and gyro: drive and arc give distance_cm and heading_change_deg, turn gives angle_deg and source.",
+    "What happened. drive, turn and arc give the same fields: distance_cm, heading_change_deg, source (gyro | encoders: where the heading comes from), left_deg and right_deg (wheel rotation). command_device gives what the command's device reports.",
   ),
   clamped: bool,
   reason: named(STOP_REASONS, "Anything but completed or condition_met means the request was not fully done."),
@@ -441,17 +462,22 @@ const commandSpec = obj({
   moves: bool,
 });
 const DATA: Record<string, Schema> = {
-  list_robots: list(
-    obj(
-      {
-        ...stateFields,
-        fault_reason: nullable("string"),
-        connect: nullable("string", {
-          description: "What a person must do to bring an offline robot online, e.g. the page to open.",
-        }),
-      },
-      Object.keys(stateFields),
-    ),
+  list_robots: obj(
+    {
+      robots: list(
+        obj(
+          {
+            ...stateFields,
+            fault_reason: nullable("string"),
+            connect: nullable("string", {
+              description: "What a person must do to bring an offline robot online, e.g. the page to open.",
+            }),
+          },
+          Object.keys(stateFields),
+        ),
+      ),
+    },
+    ["robots"],
   ),
   describe_robot: obj({
     id: str,
@@ -471,7 +497,7 @@ const DATA: Record<string, Schema> = {
     notes: strings,
   }),
   describe_device: obj({ ...deviceFields, channels: list(channelSpec), commands: list(commandSpec) }),
-  read_device: readings,
+  read_device: obj({ readings }),
   read_all: obj({ readings, ms: num }),
   sample_device: obj({
     samples: list({ type: "array" }, "[t_ms, value] pairs."),
@@ -483,7 +509,7 @@ const DATA: Record<string, Schema> = {
     unit: str,
     reason: { type: "string", description: '"preempted" when a stop cut the sampling short.' },
   }),
-  wait_until: obj({ met: bool, after_ms: num, readings, reason: str }),
+  wait_until: obj({ met: bool, reason: named(["condition_met", "timeout", "preempted"]), ms: num, readings }),
   drive: commandResult,
   turn: commandResult,
   arc: commandResult,

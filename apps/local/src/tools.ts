@@ -39,8 +39,10 @@ export const NEXT_ERR: Partial<Record<ErrorCode, string[]>> = {
   unknown_command: ["describe_device"],
   unsupported: ["describe_robot"],
   robot_offline: ["list_robots"],
-  busy: ["stop"],
-  illegal_state: ["list_robots"],
+  // the call in flight ends by itself: look first, and stop only to end it early
+  busy: ["read_all", "stop"],
+  // reset_fault outside fault: the robot needs no reset, it takes every other tool
+  illegal_state: ["read_all"],
   fault: ["read_all", "reset_fault"],
   timeout: ["read_all", "stop"],
   stop_unverified: ["read_all", "reset_fault"],
@@ -87,7 +89,8 @@ export async function callTool(
     const e = shuttingDown();
     return fail(name, { code: e.code, message: e.message, retryable: false });
   }
-  if (name === "list_robots") return { envelope: { ok: true, data: robots.map((r) => r.listing()), next: next(name) } };
+  if (name === "list_robots")
+    return { envelope: { ok: true, data: { robots: robots.map((r) => r.listing()) }, next: next(name) } };
   const robot = robots.find((r) => r.id === input.robot_id);
   if (!robot)
     return fail(name, {
@@ -122,6 +125,7 @@ export async function callTool(
 }
 
 const FACTS = ["reason", "outcome", "met", "motors_stopped", "activity"];
+const LISTS = ["robots", "readings", "samples", "steps"];
 const MAX_MESSAGE = 200;
 /** Line 1 of the text block: what happened, for a reader that does not parse the JSON below it. Never a newline. */
 export function summarize(tool: string, e: Envelope<unknown>): string {
@@ -131,12 +135,15 @@ export function summarize(tool: string, e: Envelope<unknown>): string {
   if (!e.ok) {
     const m = e.error.message;
     what = ` ${e.error.code}${e.error.retryable ? " (retryable)" : ""}: ${m.length > MAX_MESSAGE ? `${m.slice(0, MAX_MESSAGE)}…` : m}`;
-  } else if (Array.isArray(e.data)) what = ` ${e.data.length} item(s)`;
-  else if (typeof e.data === "object" && e.data !== null) {
+  } else if (typeof e.data === "object" && e.data !== null) {
     const d = e.data as Record<string, unknown>;
-    what = FACTS.filter((k) => ["string", "number", "boolean"].includes(typeof d[k]))
-      .map((k) => ` ${k}=${String(d[k])}`)
-      .join("");
+    what =
+      FACTS.filter((k) => ["string", "number", "boolean"].includes(typeof d[k]))
+        .map((k) => ` ${k}=${String(d[k])}`)
+        .join("") +
+      LISTS.filter((k) => Array.isArray(d[k]))
+        .map((k) => ` ${k}=${(d[k] as unknown[]).length}`)
+        .join("");
   }
   return `${tool} ${e.ok ? "ok" : "error"}${what}${robot}${after}`.replace(/\s+/g, " ");
 }

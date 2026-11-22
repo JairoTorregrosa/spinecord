@@ -142,7 +142,7 @@ describe("hot-plug", () => {
     s.mock.values.set("mock.tof.distance_cm", 33);
     s.mock.plug(TOF);
     await s.clock.sleep(0);
-    expect((await s.call("read_device", { device: "mock.tof" }))[0]).toMatchObject({ value: 33, unit: "cm" });
+    expect((await s.call("read_device", { device: "mock.tof" })).readings[0]).toMatchObject({ value: 33, unit: "cm" });
     s.mock.unplug("mock.color");
     await s.clock.sleep(0);
     expect((await fails(s.call("read_device", { device: "floor_color" }), "unknown_device")).message).toContain(
@@ -169,14 +169,16 @@ describe("hot-plug", () => {
 describe("reads have no side effects", () => {
   test("default reads cover active channels only; a mode switch needs the channel named, while idle", async () => {
     const s = setup();
-    expect((await s.call("read_device", { device: "mock.color" })).map((r: any) => r.channel)).toEqual([
+    expect((await s.call("read_device", { device: "mock.color" })).readings.map((r: any) => r.channel)).toEqual([
       "reflected_pct",
       "color",
       "rgb",
     ]);
     expect((await s.call("read_all")).readings.map((r: any) => r.channel)).not.toContain("ambient_pct");
     expect(s.mock.switchReads).toBe(0);
-    expect((await s.call("read_device", { device: "mock.color", channels: ["ambient_pct"] }))[0]).toMatchObject({
+    expect(
+      (await s.call("read_device", { device: "mock.color", channels: ["ambient_pct"] })).readings[0],
+    ).toMatchObject({
       channel: "ambient_pct",
       value: 12,
     });
@@ -191,7 +193,7 @@ describe("reads have no side effects", () => {
     const e = await fails(s.call("read_device", { device: "mock.color", channels: ["ambient_pct"] }), "busy");
     expect(e.retryable).toBe(true);
     expect(e.message).toContain("mock.color.ambient_pct");
-    expect((await s.call("read_device", { device: "mock.color" })).length).toBe(3); // active channels still readable
+    expect((await s.call("read_device", { device: "mock.color" })).readings.length).toBe(3); // active channels still readable
     await driving;
     await fails(
       s.rt.call("read_device", { device: "mock.color", channels: ["ambient_pct"] }, new AbortController().signal, {
@@ -223,7 +225,7 @@ describe("reads have no side effects", () => {
 
 describe("sensing", () => {
   test("read_device: all non-image channels, role resolves to the canonical id", async () => {
-    const r = await setup().call("read_device", { device: "floor_color" });
+    const { readings: r } = await setup().call("read_device", { device: "floor_color" });
     expect(r.map((x: any) => [x.device, x.channel, x.value, x.unit])).toEqual([
       ["mock.color", "reflected_pct", 50, "pct"],
       ["mock.color", "color", 6, undefined],
@@ -232,9 +234,9 @@ describe("sensing", () => {
     expect(typeof r[0].ts).toBe("number");
   });
   test("a device of an unknown kind is readable with no code for it", async () => {
-    expect(await setup().call("read_device", { device: "mock.gas", channels: ["ppm"] })).toMatchObject([
-      { device: "mock.gas", channel: "ppm", value: 412, unit: "ppm" },
-    ]);
+    expect(await setup().call("read_device", { device: "mock.gas", channels: ["ppm"] })).toEqual({
+      readings: [expect.objectContaining({ device: "mock.gas", channel: "ppm", value: 412, unit: "ppm" })],
+    });
   });
   test("unknown channel lists valid channels", async () => {
     expect(
@@ -245,7 +247,10 @@ describe("sensing", () => {
   test("a missing value is null with an error string", async () => {
     const s = setup();
     s.mock.values.set("mock.gas.ppm", null);
-    expect((await s.call("read_device", { device: "mock.gas" }))[0]).toMatchObject({ value: null, error: "no value" });
+    expect((await s.call("read_device", { device: "mock.gas" })).readings[0]).toMatchObject({
+      value: null,
+      error: "no value",
+    });
   });
   test("image channel returns an ImagePayload with age_ms", async () => {
     const s = setup();
@@ -257,10 +262,12 @@ describe("sensing", () => {
       new AbortController().signal,
     );
     expect(r.image).toEqual({ mime: "image/jpeg", b64: "/9j/AAAA", age_ms: 400 });
-    expect(r.data).toMatchObject([
-      { channel: "frame", image: true, age_ms: 400 },
-      { channel: "fps", value: 15 },
-    ]);
+    expect(r.data).toMatchObject({
+      readings: [
+        { channel: "frame", image: true, age_ms: 400 },
+        { channel: "fps", value: 15 },
+      ],
+    });
     // without channels, the image is not read
     expect(
       (await s.rt.call("read_device", { device: "mock.camera" }, new AbortController().signal)).image,
@@ -331,13 +338,13 @@ describe("conditions and wait_until", () => {
       timeout_ms: 2000,
     });
     expect(a.met).toBe(true);
-    expect(a.after_ms).toBe(300);
+    expect(a).toMatchObject({ reason: "condition_met", ms: 300 });
     expect(a.readings[0]).toMatchObject({ device: "mock.gas", channel: "ppm", value: 900 });
     const b = await s.call("wait_until", {
       condition: { device: "mock.gas", channel: "ppm", op: "lt", value: 100 },
       timeout_ms: 500,
     });
-    expect(b).toMatchObject({ met: false, after_ms: 500 });
+    expect(b).toMatchObject({ met: false, reason: "timeout", ms: 500 });
   });
   test("every operator, any/all/not, roles", async () => {
     const s = setup();
@@ -363,7 +370,7 @@ describe("conditions and wait_until", () => {
     s.mock.values.set("mock.color.rgb", () => (s.clock.now() - t0 >= 100 ? [1, 2, 3] : [10, 20, 30]));
     expect(
       await s.call("wait_until", { condition: leaf("changed", undefined, "rgb"), timeout_ms: 1000 }),
-    ).toMatchObject({ met: true, after_ms: 100 });
+    ).toMatchObject({ met: true, ms: 100 });
   });
   test("contains: a vector channel includes the value", async () => {
     const buttons: DeviceSpec = {
@@ -381,7 +388,7 @@ describe("conditions and wait_until", () => {
     const cond = (value: unknown) => ({ device: "mock.buttons", channel: "pressed", op: "contains", value });
     expect(await s.call("wait_until", { condition: cond("enter"), timeout_ms: 1000 })).toMatchObject({
       met: true,
-      after_ms: 200,
+      ms: 200,
     });
     expect((await s.call("wait_until", { condition: { not: cond("back") }, timeout_ms: 50 })).met).toBe(true);
     expect(
@@ -467,7 +474,7 @@ describe("drivetrain", () => {
     expect((await b.call("drive", { distance_cm: 10 })).measured.distance_cm).toBeCloseTo(10, 0);
     expect(b.mock.left).toBeCloseTo(-10 * DEG_PER_CM, 0);
     const t = await b.call("turn", { angle_deg: 90 });
-    expect(t.measured.angle_deg).toBeCloseTo(90, 0);
+    expect(t.measured.heading_change_deg).toBeCloseTo(90, 0);
   });
   test("measured values are not the request when wheels slip", async () => {
     const s = setup();
@@ -567,15 +574,16 @@ describe("drivetrain", () => {
     const d = await s.call("turn", { angle_deg: 90 });
     expect(d.requested.angle_deg).toBe(90);
     expect(d.measured).toMatchObject({ source: "encoders" });
-    expect(d.measured.angle_deg).toBeCloseTo(90, 0);
+    expect(d.measured.heading_change_deg).toBeCloseTo(90, 0);
+    expect(Object.keys(d.measured)).toEqual(Object.keys((await setup().call("drive", { distance_cm: 5 })).measured));
     expect(s.mock.left).toBeLessThan(0);
     expect(s.mock.right).toBeCloseTo((90 * 12) / 5.6, 0);
     const g = setup({ gyro: true });
     const dg = await g.call("turn", { angle_deg: -45 });
     expect(dg.measured.source).toBe("gyro");
-    expect(dg.measured.angle_deg).toBeCloseTo(-45, 0);
+    expect(dg.measured.heading_change_deg).toBeCloseTo(-45, 0);
     const odd = setup({ gyro: true, gyro_sign: -1 }); // the gyro is trusted as reported: providers normalize the sign
-    expect((await odd.call("turn", { angle_deg: 90 })).measured.angle_deg).toBeCloseTo(-90, 0);
+    expect((await odd.call("turn", { angle_deg: 90 })).measured.heading_change_deg).toBeCloseTo(-90, 0);
     const big = await setup({ limits: { max_turn_deg: 180 } }).call("turn", { angle_deg: 720 });
     expect(big).toMatchObject({ clamped: true, reason: "clamped", applied: { angle_deg: 180 } });
   });
@@ -1303,7 +1311,7 @@ describe("programs", () => {
     const success = { device: "mock.gas", channel: "ppm", op: "gt", value: 1000 };
     expect((await s.call("run_program", { body: drive(2), success })).outcome).toBe("failed");
     s.mock.values.set("mock.gas.ppm", 2000);
-    expect((await s.call("run_program", { program: { body: drive(2), success } })).outcome).toBe("succeeded");
+    expect((await s.call("run_program", { body: drive(2), success })).outcome).toBe("succeeded");
   });
   test("a failing step ends the program with the step's error", async () => {
     const s = setup();
