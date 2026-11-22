@@ -1,7 +1,7 @@
 // Condition compiler and evaluator. Shape rules live in packages/protocol/validate.ts (single owner); this
 // file adds what needs real devices: names resolve (id or role), channels exist, value types fit the channel.
-// A reading without a value is never silently "not met". On a channel whose manifest says null_when_absent
-// (nothing in view) null is a value: its comparisons are false. On any other channel one poll without a value
+// A reading without a value is never silently "not met". On a channel whose manifest says null_when_absent,
+// a null the device itself reports (Reading.absent: nothing in view) is a value: its comparisons are false. On any other channel one poll without a value
 // leaves the condition not met for that poll, and UNREADABLE_POLLS of them in a row on the same comparison end
 // the evaluation with condition_unreadable, so whoever watches it (a move's `until`, wait_until, a program)
 // stops and says so. Reads here never switch a sensor mode.
@@ -152,7 +152,8 @@ export function makeEvaluator(
       let unreadable = false;
       for (let i = 0; i < c.leaves.length; i++) {
         const l = c.leaves[i]!;
-        if (value(i) !== null || l.absent) {
+        // null is an answer only when the device said so itself; a failed read of such a channel is a failed read
+        if (value(i) !== null || (l.absent && got[i]?.absent === true)) {
           blindPolls[i] = 0;
           continue;
         }

@@ -35,6 +35,8 @@ export const MAX_SAMPLE_HZ = 50;
 // one read takes when the link is slower. A channel's max_rate_hz does not slow it down: reading a sensor
 // faster than it refreshes costs nothing (reads have no side effects) and shortens the wait for its next value.
 export const UNTIL_POLL_MS = 10;
+// How many polls one evaluation of a program's condition (while, if, success) may take to get an answer.
+export const PROGRAM_CONDITION_POLLS = 10;
 // How old a timed round trip may be and still let the first chunk of a move coast: about what a move itself
 // relies on between two of its chunks. Older than this, the link is timed again before anything moves.
 export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
@@ -443,17 +445,13 @@ class RuntimeImpl implements LocalRuntime {
       const t0 = this.clock.now();
       const ev = makeEvaluator(cond, this.readFn);
       for (;;) {
-        let r = await ev.poll();
-        // A poll without a value is asked again at once: it is an answer only when it repeats (conditions.ts).
-        while (r.unreadable && !signal.aborted) {
-          await this.clock.sleep(UNTIL_POLL_MS, signal);
-          r = await ev.poll();
-        }
+        const r = await ev.poll();
         const after_ms = Math.round(this.clock.now() - t0);
         if (r.met) return { data: { met: true, after_ms, readings: r.readings } };
         if (signal.aborted) return { data: { met: false, after_ms, readings: r.readings, reason: "preempted" } };
         if (after_ms >= timeout) return { data: { met: false, after_ms, readings: r.readings } };
-        await this.clock.sleep(Math.min(period, timeout - after_ms), signal);
+        // A poll without a value is asked again soon: it is an answer only when it repeats (conditions.ts).
+        await this.clock.sleep(Math.min(r.unreadable ? UNTIL_POLL_MS : period, timeout - after_ms), signal);
       }
     };
   }
@@ -1478,8 +1476,10 @@ class RuntimeImpl implements LocalRuntime {
     const test = async (cond: unknown, path: string, ev?: ReturnType<typeof makeEvaluator>) => {
       try {
         const e = ev ?? makeEvaluator(compileCondition(cond, this.resolver, `program ${path}`), this.readFn);
+        // One answer is needed. A poll without a value is asked again; polls that never settle (channels that
+        // fail in turn) are not met after PROGRAM_CONDITION_POLLS of them.
         let r = await e.poll();
-        while (r.unreadable && !budget.signal.aborted) {
+        for (let n = 1; r.unreadable && n < PROGRAM_CONDITION_POLLS && !budget.signal.aborted; n++) {
           await this.clock.sleep(UNTIL_POLL_MS, budget.signal);
           r = await e.poll();
         }

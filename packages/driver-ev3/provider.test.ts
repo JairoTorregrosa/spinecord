@@ -502,6 +502,17 @@ describe("read(): no side effects", () => {
     const r = await ev3.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"]);
     expect(r.map((x) => x.value)).toEqual([null, null]);
     expect(r[0].error).toContain("no beacon");
+    expect(r.map((x) => x.absent)).toEqual([true, true]); // the sensor's answer, not a failed read
+    fake.unplugSensor(4);
+    const dead = await ev3.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"]);
+    expect(dead.map((x) => [x.value, x.absent])).toEqual([
+      [null, undefined],
+      [null, undefined],
+    ]);
+    fake.setSensor(4, 33, 48);
+    fake.setSensor(4, 33, [0, -128], 1);
+    fake.setSensor(4, 33, 3, 2);
+    await ev3.devices();
     expect((await ev3.read("ev3.S4", ["remote_buttons"], { allow_mode_switch: true }))[0].value).toBe(3);
   });
 

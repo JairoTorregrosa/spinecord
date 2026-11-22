@@ -413,6 +413,11 @@ const reading = obj(
     unit: str,
     ts: { type: "number", description: "Capture time, ms." },
     error: str,
+    absent: {
+      type: "boolean",
+      description:
+        "true → value is null because the device answered that it has nothing to report (no beacon in view), not because the read failed.",
+    },
   },
   [],
   "One channel value.",
@@ -444,7 +449,7 @@ const channelSpec = obj({
   null_when_absent: {
     type: "boolean",
     description:
-      "true → null is an answer (nothing in view), not a failure: a condition on this channel is then not met, never condition_unreadable.",
+      "true → the channel may read null with absent:true (nothing in view): an answer, not a failure. A condition on it is then not met, never condition_unreadable.",
   },
   description: str,
 });

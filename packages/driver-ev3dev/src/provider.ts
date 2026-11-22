@@ -361,7 +361,7 @@ interface Lookup {
 }
 /** What the bridge answers to one read, alone or inside read_many. */
 interface ReadReply {
-  readings?: { channel: string; value: Value | null; error?: string }[];
+  readings?: { channel: string; value: Value | null; error?: string; absent?: boolean }[];
   mode?: unknown;
 }
 /** A read waiting to leave with the others of the same turn. */
@@ -1103,6 +1103,7 @@ export class Ev3devProvider implements Provider {
       const unit = spec.channels.find((c) => c.name === n)!.unit;
       if (unit) reading.unit = unit;
       if (reading.value === null) reading.error = r?.error ?? "the bridge returned no value for this channel";
+      if (reading.value === null && r?.absent === true) reading.absent = true;
       return reading;
     });
     this.noteMode(local, res.mode);

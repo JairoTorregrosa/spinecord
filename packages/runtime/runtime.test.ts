@@ -543,6 +543,19 @@ describe("conditions and wait_until", () => {
     const waited = await w.call("wait_until", { condition: until, timeout_ms: 200 });
     expect(waited).toMatchObject({ met: false });
     expect(waited.after_ms).toBeGreaterThanOrEqual(200);
+    // two channels that fail in turn: no comparison fails three times in a row, and timeout_ms still ends the wait
+    const alt = setup();
+    let turn = 0;
+    alt.mock.values.set("mock.gas.ppm", () => (turn % 2 === 0 ? null : 400));
+    alt.mock.values.set("mock.color.reflected_pct", () => (turn++ % 2 === 0 ? 50 : null));
+    const a0 = alt.clock.now();
+    const both = await alt.call("wait_until", {
+      condition: { any: [until, { device: "floor_color", channel: "reflected_pct", op: "lt", value: 20 }] },
+      timeout_ms: 50,
+    });
+    expect(both).toMatchObject({ met: false });
+    expect(both.reason).toBeUndefined();
+    expect(alt.clock.now() - a0).toBe(50);
     // under `not`, a poll without a value is still "not met": it never makes a condition true
     const x = setup();
     let k = 0;
@@ -581,6 +594,15 @@ describe("conditions and wait_until", () => {
     expect(t.reason).toBe("condition_met");
     expect(t.measured.angle_deg).toBeGreaterThan(0);
     expect(t.measured.angle_deg).toBeLessThan(180);
+    // a read of that channel that fails is a failed read: it never passes for "nothing in view"
+    const b = setup({ extra: [BEACON] });
+    b.mock.readErrors.set("mock.ir.beacon_distance_pct", "sensor on input port 4 returned no value (unplugged?)");
+    for (const condition of [seen, { not: seen }]) {
+      const e = await fails(b.call("wait_until", { condition, timeout_ms: 5000 }), "condition_unreadable");
+      expect(e.message).toContain("unplugged?");
+    }
+    await fails(b.call("turn", { angle_deg: 180, until: { not: seen } }), "condition_unreadable");
+    expect(b.mock.log.length).toBe(0);
     // `changed` sees it appear
     const c = setup({ extra: [BEACON] });
     const c0 = c.clock.now();

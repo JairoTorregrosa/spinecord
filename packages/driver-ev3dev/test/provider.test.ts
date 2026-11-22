@@ -276,6 +276,9 @@ describe("fake brick", () => {
       expect(Object.is((await heading())[0], 0)).toBe(true);
       brick.setSensor(2, "value1", -128);
       expect(await heading()).toEqual([null, null]);
+      const none = await provider.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"]);
+      expect(none.map((r) => r.absent)).toEqual([true, true]); // the sensor's answer, not a failed read
+      expect((await provider.read("ev3.S4", ["proximity_pct"]))[0]!.absent).toBeUndefined(); // mode_switch_required
     },
   );
 

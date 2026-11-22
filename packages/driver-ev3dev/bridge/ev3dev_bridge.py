@@ -77,6 +77,9 @@ except ImportError:  # Windows (tests against a fake tree)
     fcntl = None
 
 VERSION = "4"            # 4: beacon_heading counter-clockwise-positive, guard process
+# What a beacon channel answers while the sensor sees no beacon. A reading with this error is sent with
+# "absent": true: the sensor answered, the read did not fail.
+NO_BEACON = "no beacon in view on channel 1"
 # The guard process (see the safety rules above): waits for its stdin to close, then brakes every motor.
 GUARD_SOURCE = """
 import glob, os, sys
@@ -696,6 +699,8 @@ class Bridge(object):
             item = {"channel": n, "value": value}
             if value is None:
                 item["error"] = error or "no value"
+                if error == NO_BEACON:
+                    item["absent"] = True
             out.append(item)
         reply = {"readings": out}
         if extra:
@@ -736,7 +741,7 @@ class Bridge(object):
             return (tidy(vals[0]), None)
         if channel in ("beacon_heading", "beacon_distance_pct"):
             if vals[1] < 0 or vals[1] > 100:
-                return (None, "no beacon in view on channel 1")
+                return (None, NO_BEACON)
             if channel == "beacon_distance_pct":
                 return (int(round(vals[1])), None)
             h = int(round(vals[0]))
