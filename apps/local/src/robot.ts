@@ -69,6 +69,9 @@ const MAY_HAVE_MOVED =
 export const shuttingDown = (): LocalError =>
   new LocalError("robot_offline", "The server is shutting down: its robots are being stopped and it takes no calls.");
 
+/** Verified stops tried at connection before a robot comes online in fault. */
+export const ATTACH_STOPS = 3;
+
 export class LocalRobot {
   readonly id: string;
   private readonly connectBase: string | null;
@@ -156,7 +159,12 @@ export class LocalRobot {
     try {
       await this.move?.ended; // a call of the previous link is still unwinding
       await rt.ready();
-      const { motors_stopped } = await rt.stop();
+      // A bridge that has just started on a busy EV3 can miss the stop's bound (measured: the first one or two
+      // stops after its hello); up to ATTACH_STOPS verified stops decide. Nothing moves on this link until one
+      // stop is verified or reset_fault runs.
+      let motors_stopped = false;
+      for (let i = 0; i < ATTACH_STOPS && !motors_stopped && this.link === "handshaking"; i++)
+        ({ motors_stopped } = await rt.stop());
       if (this.link !== "handshaking") throw new Error("the link went away during the handshake");
       this.rt = rt;
       if (motors_stopped) {

@@ -1411,15 +1411,22 @@ def leave(code):
     os._exit(code)
 
 
-if __name__ == "__main__":
+def run(argv):
+    """The process: main, then leave with its code. The driver starts it as `import ev3dev_bridge;
+    ev3dev_bridge.run([...])`, so Python keeps this file's compiled bytecode in __pycache__ and a start
+    skips compiling it: on an EV3 that is several seconds of the hello."""
     try:
-        CODE = main(sys.argv)
+        code = main(argv)
     except SystemExit as e:
-        CODE = e.code if isinstance(e.code, int) else EXIT_OK
+        code = e.code if isinstance(e.code, int) else EXIT_OK
     except BaseException as e:   # a bug: one line, then out
         try:
             sys.stderr.write("ev3dev_bridge: ended on an unexpected error: %r\n" % (e,))
         except Exception:
             pass
-        CODE = EXIT_CRASH
-    leave(CODE)
+        code = EXIT_CRASH
+    leave(code)
+
+
+if __name__ == "__main__":
+    run(sys.argv)

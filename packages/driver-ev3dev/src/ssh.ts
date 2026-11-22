@@ -204,14 +204,26 @@ export function checkRemotePath(path: string): string {
   return path;
 }
 
+/**
+ * The remote command that starts the bridge. A file named like a Python module is imported, so Python keeps its
+ * bytecode in `__pycache__` next to it and a start skips compiling 60 KB of source (seconds on an EV3); any
+ * other name is run as a script.
+ */
+export function bridgeCommand(remotePath: string): string {
+  const path = checkRemotePath(remotePath);
+  const name = posix.basename(path);
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)\.py$/.exec(name);
+  if (!m) return `python3 -u ${path}`;
+  const mod = m[1]!;
+  return `python3 -u -c "import os, sys; sys.path.insert(0, os.path.expanduser('${posix.dirname(path)}')); import ${mod}; ${mod}.run(['${name}'])"`;
+}
+
 /** Runs the installed bridge on the brick with `python3 -u` over ssh. */
 export class SshLineTransport extends ProcessLineTransport {
   constructor(o: SshOptions & { remotePath?: string }) {
-    super(
-      o.sshCommand ?? "ssh",
-      [...sshArgs(o), `python3 -u ${checkRemotePath(o.remotePath ?? DEFAULT_REMOTE_PATH)}`],
-      { label: `ssh ${o.user}@${o.host}` },
-    );
+    super(o.sshCommand ?? "ssh", [...sshArgs(o), bridgeCommand(o.remotePath ?? DEFAULT_REMOTE_PATH)], {
+      label: `ssh ${o.user}@${o.host}`,
+    });
   }
 }
 

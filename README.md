@@ -160,7 +160,7 @@ Keep a hand near the robot on a first run. These paths are tested against the tw
 | Path | On a real brick |
 |---|---|
 | Stock EV3 over USB through the bridge page (`--ev3`) | not run |
-| EV3 on ev3dev with bridge version 4, the one in this repository (`--ev3dev`) | not run |
+| EV3 on ev3dev with bridge version 4, the one in this repository (`--ev3dev`) | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard |
 | EV3 on ev3dev with a bridge before version 4 | run on 2026-11-21 |
 
 The dated log and the checklist of what to run: [`docs/hardware-log.md`](docs/hardware-log.md).

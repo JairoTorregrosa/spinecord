@@ -46,6 +46,42 @@ async function mockRobot() {
   return { mock, robot, tool, transitions };
 }
 
+describe("attach", () => {
+  const attachWith = async (stops: boolean[]) => {
+    const mock = new MockProvider({ clock: realClock });
+    const orig = mock.stop.bind(mock);
+    let n = 0;
+    mock.stop = async () => {
+      mock.stopVerified = stops[Math.min(n++, stops.length - 1)]!;
+      return orig();
+    };
+    const robot = new LocalRobot({ id: "m1" });
+    await robot.attach(createRuntime({ profile: PROFILE, providers: [mock], clock: realClock }));
+    return { robot, stops: () => n };
+  };
+  test("a bridge that misses its first stop is online and idle when a second stop is verified", async () => {
+    const { robot, stops } = await attachWith([false, true]);
+    expect(robot.listing()).toMatchObject({ link: "online", activity: "idle", fault_reason: null });
+    expect(stops()).toBe(2);
+  });
+  test("a bridge that misses two stops is online and idle when the third is verified", async () => {
+    const { robot, stops } = await attachWith([false, false, true]);
+    expect(robot.listing()).toMatchObject({ link: "online", activity: "idle" });
+    expect(stops()).toBe(3);
+  });
+  test("a robot whose three stops at connection are unverified is online in fault", async () => {
+    const { robot, stops } = await attachWith([false]);
+    expect(robot.listing()).toMatchObject({ link: "online", activity: "fault" });
+    expect(robot.listing().fault_reason).toContain("could not be verified");
+    expect(stops()).toBe(3);
+  });
+  test("a verified first stop is the only one", async () => {
+    const { robot, stops } = await attachWith([true]);
+    expect(robot.listing()).toMatchObject({ link: "online", activity: "idle" });
+    expect(stops()).toBe(1);
+  });
+});
+
 describe("activity", () => {
   test("a move goes idle → acting → idle; a program idle → running_program → idle", async () => {
     const { tool, transitions } = await mockRobot();

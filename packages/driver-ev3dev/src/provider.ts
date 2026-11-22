@@ -94,7 +94,8 @@ export interface Ev3devProviderOptions {
   maxOpMs?: number;
   /** Heartbeat period, ms. Default 300; must stay well under BRICK_WATCHDOG_MS. */
   heartbeatMs?: number;
-  /** Time allowed for opening the transport plus the bridge's hello (ssh handshake, Python start), ms. Default 20000. */
+  /** Time allowed for opening the transport plus the bridge's hello (ssh handshake, Python start), ms. Default 60000: a busy EV3 needs
+   * 20 s and more to start Python and the bridge. */
   helloTimeoutMs?: number;
   /** Reply timeout of a read or an instant command, ms. Default 2000. */
   requestTimeoutMs?: number;
@@ -449,7 +450,7 @@ export class Ev3devProvider implements Provider {
         speech_volume_pct: opts.hardware.speech_volume_pct,
       },
       heartbeatMs: opts.heartbeatMs ?? 300,
-      helloTimeoutMs: opts.helloTimeoutMs ?? 20000,
+      helloTimeoutMs: opts.helloTimeoutMs ?? 60000,
       requestTimeoutMs: opts.requestTimeoutMs ?? 2000,
       linkSilenceMs: opts.linkSilenceMs ?? 3000,
     };
