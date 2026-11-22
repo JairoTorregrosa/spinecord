@@ -12,7 +12,7 @@ protocol ← driver-ev3dev
 protocol ← runtime        (talks to drivers only through the Provider interface)
 protocol ← server         (never imports runtime, drivers or sims)
 runtime, server ← e2e     (tests only; nothing imports it)
-protocol, runtime, driver-ev3, driver-ev3dev, sim-ev3, sim-world ← apps/local   (never server)
+protocol, runtime, driver-ev3, driver-ev3dev, sim-ev3, sim-world ← apps/local   (never server; it also builds and serves apps/robot-page's bridge page)
 ```
 
 `protocol` imports nothing. Apps import packages; no package imports an app. `scripts/check-boundaries.ts` enforces this graph, including that `apps/local` never imports `packages/server`.

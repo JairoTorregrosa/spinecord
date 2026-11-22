@@ -40,6 +40,8 @@ export interface RobotOptions {
   /** What a person must do to bring this robot online while it is offline (the page to open); null when nothing. */
   connect?: string | null;
   onTransition?: (fsm: "link" | "activity", from: string, to: string, why: string) => void;
+  /** Default DEADLINE_MARGIN_MS. */
+  deadlineMarginMs?: number;
 }
 
 export class LocalRobot {
@@ -216,7 +218,8 @@ export class LocalRobot {
     moving: boolean,
   ): Promise<RuntimeResult> {
     const abort = new AbortController();
-    const deadline = this.budgetMs(rt, tool, args, moving) + DEADLINE_MARGIN_MS + rt.stop_worst_ms;
+    const deadline =
+      this.budgetMs(rt, tool, args, moving) + (this.o.deadlineMarginMs ?? DEADLINE_MARGIN_MS) + rt.stop_worst_ms;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<"late">((resolve) => {
       timer = setTimeout(() => resolve("late"), deadline);
@@ -227,7 +230,11 @@ export class LocalRobot {
       const first = await Promise.race([work, late]);
       if (first !== "late") return first;
       abort.abort();
-      if (moving) await this.stop().catch(() => {});
+      if (moving) {
+        // this call gives its claim up: the stop verifies the motors and does not wait for a call that hangs
+        this.move = null;
+        await this.stop().catch(() => {});
+      }
       throw new LocalError(
         "timeout",
         `${tool} did not end within ${deadline} ms; it was aborted${moving ? " and the robot was stopped. It may have moved: read the robot (read_all) before moving again" : ""}.`,

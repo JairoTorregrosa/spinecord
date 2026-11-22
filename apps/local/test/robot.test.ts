@@ -124,6 +124,22 @@ describe("activity", () => {
   });
 });
 
+describe("backstop", () => {
+  test("a move whose driver never answers ends as timeout, with the robot stopped and idle", async () => {
+    const mock = new MockProvider({ clock: realClock });
+    // a driver that takes the command and never resolves, not even when aborted
+    mock.command = () => new Promise(() => {});
+    const robot = new LocalRobot({ id: "m1", deadlineMarginMs: 50 });
+    const limits = { ...PROFILE.limits, max_command_ms: 100 };
+    await robot.attach(createRuntime({ profile: { ...PROFILE, limits }, providers: [mock], clock: realClock }));
+    const stops = mock.stops;
+    const e = (await callTool([robot], "drive", { robot_id: "m1", distance_cm: 5 })).envelope;
+    expect(e).toMatchObject({ ok: false, error: { code: "timeout", retryable: false }, robot: { activity: "idle" } });
+    expect(!e.ok && e.error.message).toContain("read the robot");
+    expect(mock.stops).toBe(stops + 1);
+  });
+});
+
 describe("link", () => {
   test("a robot without a runtime is offline: calls answer robot_offline with what to do", async () => {
     const robot = new LocalRobot({ id: "m1", connect: "Open the page." });
