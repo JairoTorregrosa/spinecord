@@ -1974,32 +1974,50 @@ describe("a condition is checked before anything is sent", () => {
 });
 
 describe("the smallest move of a drivetrain", () => {
-  test("a target under one wheel degree is refused with the minimum in the tool's unit; nothing is sent", async () => {
+  test("a nonzero target under one wheel degree is done with nothing sent, and a note names the minimum", async () => {
     const s = setup();
-    const turn = await fails(s.call("turn", { angle_deg: 0.3 }), "invalid_argument");
-    expect(turn.message).toContain("angle_deg 0.3 is below the smallest move of this drivetrain, 0.47 deg");
-    expect(turn.message).toContain("nothing was sent and nothing moved");
-    await fails(s.call("turn", { angle_deg: -0.3 }), "invalid_argument");
-    const drive = await fails(s.call("drive", { distance_cm: 0.04 }), "invalid_argument");
-    expect(drive.message).toContain("0.05 cm");
-    const arc = await fails(s.call("arc", { radius_cm: 20, angle_deg: 0.1 }), "invalid_argument");
-    expect(arc.message).toContain("0.11 deg");
-    await fails(
-      s.call("run_program", { body: { call: { tool: "turn", args: { angle_deg: 0.3 } } } }),
-      "invalid_argument",
-    );
-    expect(s.mock.log.length).toBe(0);
+    const turn = (await s.call("turn", { angle_deg: 0.3 })) as { note: string };
+    expect(turn).toMatchObject({
+      requested: { angle_deg: 0.3 },
+      applied: { angle_deg: 0 },
+      measured: { distance_cm: 0, heading_change_deg: 0 },
+      clamped: false,
+      reason: "completed",
+      chunks: 0,
+    });
+    expect(turn.note).toContain("angle_deg 0.3 is below the smallest move of this drivetrain, 0.47 deg");
+    expect(turn.note).toContain("nothing was sent and nothing moved");
+    expect(await s.call("turn", { angle_deg: -0.3 })).toMatchObject({ reason: "completed", chunks: 0 });
+    const drive = (await s.call("drive", { distance_cm: 0.04 })) as { note: string };
+    expect(drive).toMatchObject({ reason: "completed", applied: { distance_cm: 0 }, chunks: 0 });
+    expect(drive.note).toContain("0.05 cm");
+    const arc = (await s.call("arc", { radius_cm: 20, angle_deg: 0.1 })) as { note: string };
+    expect(arc).toMatchObject({ reason: "completed", applied: { angle_deg: 0 }, chunks: 0 });
+    expect(arc.note).toContain("0.11 deg");
+    const program = (await s.call("run_program", {
+      body: { seq: [{ call: { tool: "turn", args: { angle_deg: 0.3 } } }, { succeed: "went on" }] },
+    })) as { steps: { note?: string }[] };
+    expect(program).toMatchObject({
+      outcome: "succeeded",
+      steps: [{ tool: "turn", ok: true, reason: "completed", measured: { heading_change_deg: 0 } }],
+    });
+    expect(program.steps[0]!.note).toContain("0.47 deg");
+    expect(pairLog(s.mock).length).toBe(0);
+  });
+  test("a target under the smallest move still has its until checked, and nothing is sent", async () => {
+    const s = setup();
+    const until = { device: "no.such", channel: "x", op: "eq", value: 1 };
+    await fails(s.call("turn", { angle_deg: 0.3, until }), "unknown_device");
+    expect(pairLog(s.mock).length).toBe(0);
   });
   test("the minimum itself moves, and a target of 0 is no motion", async () => {
     const s = setup();
     expect(await s.call("turn", { angle_deg: 0.47 })).toMatchObject({ reason: "completed" });
     expect(pairLog(s.mock).length).toBeGreaterThan(0);
     s.mock.log.length = 0;
-    expect(await s.call("drive", { distance_cm: 0 })).toMatchObject({
-      reason: "completed",
-      chunks: 0,
-      measured: { distance_cm: 0 },
-    });
+    const still = await s.call("drive", { distance_cm: 0 });
+    expect(still).toMatchObject({ reason: "completed", chunks: 0, measured: { distance_cm: 0 } });
+    expect(still).not.toHaveProperty("note");
     expect(s.mock.log.length).toBe(0);
   });
 });

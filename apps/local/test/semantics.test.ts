@@ -118,15 +118,25 @@ describe("a condition that cannot work is refused before the robot moves", () =>
     expect(await wheels()).toEqual(before);
     expect(await wheelSpeeds(s, R)).toEqual([0, 0, 0]);
   });
-  test("a turn under the drivetrain's smallest move is refused with the minimum; nothing moves", async () => {
+  test("a target under the drivetrain's smallest move is done with a note that names the minimum; nothing moves", async () => {
     const before = await wheels();
-    for (const angle_deg of [0.3, -0.3]) {
+    for (const angle_deg of [0.2, -0.2]) {
       const t = await call("turn", { angle_deg });
-      expect(t).toMatchObject({ ok: false, error: { code: "invalid_argument" }, next: ["turn"] });
-      expect(!t.ok && t.error.message).toContain("0.47 deg");
+      expect(t).toMatchObject({
+        ok: true,
+        data: { reason: "completed", applied: { angle_deg: 0 }, measured: { heading_change_deg: 0 }, chunks: 0 },
+      });
+      expect(t.ok && t.data.note).toContain("0.47 deg");
     }
     const d = await call("drive", { distance_cm: 0.02 });
-    expect(!d.ok && d.error.message).toContain("0.05 cm");
+    expect(d).toMatchObject({ ok: true, data: { reason: "completed", measured: { distance_cm: 0 } } });
+    expect(d.ok && d.data.note).toContain("0.05 cm");
+    const a = await call("arc", { radius_cm: 20, angle_deg: 0.05 });
+    expect(a.ok && a.data.note).toContain("below the smallest move");
+    const body = { call: { tool: "turn", args: { angle_deg: 0.2 } } };
+    const p = await call("run_program", { body });
+    expect(p).toMatchObject({ ok: true, data: { outcome: "succeeded", steps: [{ ok: true, reason: "completed" }] } });
+    expect(p.ok && p.data.steps[0].note).toContain("0.47 deg");
     expect(await wheels()).toEqual(before);
     expect(await call("turn", { angle_deg: 0 })).toMatchObject({ ok: true, data: { reason: "completed", chunks: 0 } });
     expect(await wheels()).toEqual(before);
@@ -191,21 +201,24 @@ describe("the instructions about a twin", () => {
 
 describe("the call log on stderr", () => {
   test("every call leaves one line: tool, robot, outcome, time, whether it moved, and none of its arguments", async () => {
-    // a server of its own: its stderr holds these four calls and no other
+    // a server of its own: its stderr holds these five calls and no other
     const own = await startServer();
     await own.tool("drive", { robot_id: R, distance_cm: 3, request_id: "a-label-not-for-the-log" });
     await own.tool("read_device", { robot_id: R, device: "sim.camera", channels: ["frame"] });
     await own.tool("turn", { robot_id: R, angle_deg: 0.3 });
+    const never = { device: "distance", channel: "distance_cm", op: "lt", value: 2 };
+    await own.tool("drive", { robot_id: R, distance_cm: 5, until: never });
     await own.tool("read_all", { robot_id: "nobody" });
     // stderr and stdout are two pipes: an answer can be read before the line about it
-    await until("four call lines", () => own.events("call").length === 4);
+    await until("five call lines", () => own.events("call").length === 5);
     expect(await own.closeStdin()).toBe(0);
     const lines = own.events("call");
     expect(own.stderr.join("\n")).not.toContain("a-label-not-for-the-log");
     expect(lines.map((l) => [l.tool, l.robot_id, l.ok, l.code, l.reason, l.moved])).toEqual([
       ["drive", R, true, null, "completed", true],
       ["read_device", R, true, null, null, false],
-      ["turn", R, false, "invalid_argument", null, false],
+      ["turn", R, true, null, "completed", false],
+      ["drive", R, false, "invalid_argument", null, false],
       ["read_all", "nobody", false, "unknown_robot", null, false],
     ]);
     for (const l of lines) {
