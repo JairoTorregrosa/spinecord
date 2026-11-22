@@ -331,6 +331,7 @@ const ERROR_CODES = every<ErrorCode>()([
   "timeout",
   "stop_unverified",
   "stale_image",
+  "condition_unreadable",
   "internal",
   "misconfigured",
 ]);
@@ -374,7 +375,16 @@ const robotState = obj(
   "Robot state after the call. Absent for tools that address no robot.",
 );
 const toolError = obj(
-  { code: oneOf(ERROR_CODES), message: str, retryable: bool, retry_after_ms: num },
+  {
+    code: oneOf(ERROR_CODES),
+    message: str,
+    retryable: bool,
+    retry_after_ms: num,
+    measured: {
+      type: "object",
+      description: "What a move had done when the error ended it; the robot was stopped there.",
+    },
+  },
   ["code", "message", "retryable"],
   "Present when ok is false.",
 );

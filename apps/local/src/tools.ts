@@ -45,6 +45,7 @@ export const NEXT_ERR: Partial<Record<ErrorCode, string[]>> = {
   timeout: ["read_all", "stop"],
   stop_unverified: ["read_all", "reset_fault"],
   stale_image: ["describe_robot"],
+  condition_unreadable: ["read_all", "describe_device"],
   internal: ["list_robots"],
 };
 function next(tool: string, error?: ToolError, afterMove = false): string[] {
@@ -110,6 +111,7 @@ export async function callTool(
             message: e.message,
             retryable: e.retryable,
             ...(e instanceof LocalError && e.retry_after_ms !== undefined ? { retry_after_ms: e.retry_after_ms } : {}),
+            ...(e.measured ? { measured: e.measured } : {}),
           }
         : // not a contract error: a bug here. The message carries it; nothing is hidden behind a default.
           {

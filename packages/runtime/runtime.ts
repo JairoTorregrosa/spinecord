@@ -98,7 +98,8 @@ interface Entry {
 }
 // A condition being watched while operations run. `first` is the outcome of the poll made before anything
 // moves; `state()` is what the watch knows now; `fresh()` waits for a poll that starts after the call.
-// state() and fresh() throw what a poll threw (a channel that needs a mode switch, an unknown device).
+// state() and fresh() throw what a poll threw (a channel that could not be read or needs a mode switch, an
+// unknown device).
 interface Monitor {
   readonly first: Promise<boolean>;
   state(): boolean;
@@ -653,6 +654,9 @@ class RuntimeImpl implements LocalRuntime {
     measured: Record<string, Value>;
     braked: boolean;
     problem?: string;
+    // The watch of `until` could not evaluate the condition: the move ended there, braked like any early end.
+    // The caller reads what was done and throws the error with it.
+    failure?: { error: unknown };
   }> {
     const { entry, cmd, signal } = o;
     const keys = Object.keys(o.targets);
@@ -729,6 +733,25 @@ class RuntimeImpl implements LocalRuntime {
         tripped = true;
         flying.abort();
       });
+    // A watch that could not evaluate the condition ends the move: nothing more is sent, and what follows the
+    // loop brakes a device that still rolls.
+    let failure: { error: unknown } | undefined;
+    const met = (): boolean => {
+      try {
+        return mon?.state() ?? false;
+      } catch (error) {
+        failure = { error };
+        return false;
+      }
+    };
+    const metAt = async (poll: Promise<boolean>): Promise<boolean> => {
+      try {
+        return await poll;
+      } catch (error) {
+        failure = { error };
+        return false;
+      }
+    };
     // Reversal and stall detection (CONTRACT §0.8), on what one operation really moved along the commanded
     // direction. Both end the move by setting `reason`.
     const reversed = (moved: number, step: number, n: number, asked: Value | undefined): boolean => {
@@ -766,8 +789,8 @@ class RuntimeImpl implements LocalRuntime {
     let early = o.track && !proven ? o.track.mark() : undefined;
     early?.catch(() => {});
     try {
-      if (mon && (await mon.first)) reason = "condition_met";
-      while (!reason) {
+      if (mon && (await metAt(mon.first))) reason = "condition_met";
+      while (!reason && !failure) {
         let remaining = (1 - f) * lead - drift;
         if (remaining < tol) {
           // What the operations reported, or what the device is expected to roll by itself, says the target is
@@ -818,10 +841,11 @@ class RuntimeImpl implements LocalRuntime {
           if (remaining < tol) continue; // decided at the top, with the device braked
           if (signal.aborted) continue;
         }
-        if (mon?.state()) {
+        if (met()) {
           reason = "condition_met"; // met while a reading was awaited: nothing more is sent
           break;
         }
+        if (failure) break;
         const step = size();
         const last = step >= remaining - 1e-9;
         const args: Record<string, Value> = { ...o.base };
@@ -914,10 +938,11 @@ class RuntimeImpl implements LocalRuntime {
           reason = "stalled";
           break;
         }
-        if (mon?.state()) {
+        if (met()) {
           reason = "condition_met";
           break;
         }
+        if (failure) break;
         if (stuck(judged, step, cut)) break;
         if (!byTime) {
           const motionMs = wall - (latency() ?? 0);
@@ -928,7 +953,7 @@ class RuntimeImpl implements LocalRuntime {
         }
         // A device that now stands still (the operation braked) waits for a reading taken after the operation;
         // one that coasts gets its next operation at once, watched.
-        if (mon && !coast && (await mon.fresh())) {
+        if (mon && !coast && (await metAt(mon.fresh()))) {
           reason = "condition_met";
           break;
         }
@@ -944,7 +969,26 @@ class RuntimeImpl implements LocalRuntime {
         await (reason === "preempted" ? brake.catch(() => {}) : brake);
       }
     }
-    return { reason: reason!, chunks, clamped, measured, braked, ...(problem ? { problem } : {}) };
+    return {
+      reason: reason ?? "preempted",
+      chunks,
+      clamped,
+      measured,
+      braked,
+      ...(problem ? { problem } : {}),
+      ...(failure ? { failure } : {}),
+    };
+  }
+
+  // The error of a watch that ended a move, with what the move had done by then.
+  private endedMove(error: unknown, measured: Record<string, Value>): unknown {
+    if (!(error instanceof RuntimeError)) return error;
+    return new RuntimeError(
+      error.code,
+      `${error.message} The move was ended and the device braked. Measured so far: ${JSON.stringify(measured)}.`,
+      error.retryable,
+      measured,
+    );
   }
 
   // Executes wheel targets (degrees, forward_sign already applied). Progress comes from the wheel encoders,
@@ -1020,7 +1064,10 @@ class RuntimeImpl implements LocalRuntime {
     let reason = run.reason;
     if (reason === "completed" && (clamped || run.clamped)) reason = "clamped";
     // An early end, or the brake{} after a coasting chunk, moved the wheels since the last reading.
-    if (!after || run.braked) await track.settle();
+    if (!after || run.braked)
+      await track.settle().catch((err) => {
+        throw run.failure ? run.failure.error : err; // the wheels cannot be read either: the watch's error stands
+      });
     const [, g0] = await before!;
     const { enc, g: g1 } = after!;
     const start = enc0!;
@@ -1035,11 +1082,14 @@ class RuntimeImpl implements LocalRuntime {
       tool === "turn"
         ? { angle_deg: round1(heading), source }
         : { distance_cm: round1(((dl + dr) / 2) * cmPerDeg), heading_change_deg: round1(heading), source };
+    measured.left_deg = round1(enc.l - start.l);
+    measured.right_deg = round1(enc.r - start.r);
+    if (run.failure) throw this.endedMove(run.failure.error, measured);
     return {
       data: {
         requested,
         applied,
-        measured: { ...measured, left_deg: round1(enc.l - start.l), right_deg: round1(enc.r - start.r) },
+        measured,
         clamped: clamped || run.clamped,
         reason,
         ...(run.problem ? { problem: run.problem } : {}),
@@ -1122,6 +1172,7 @@ class RuntimeImpl implements LocalRuntime {
           signal,
           t0,
         });
+        if (run.failure) throw this.endedMove(run.failure.error, run.measured);
         const anyClamp = clamped || run.clamped;
         return {
           data: {
@@ -1169,8 +1220,16 @@ class RuntimeImpl implements LocalRuntime {
           ms: Math.round(this.clock.now() - t0),
         },
       });
+      // A watch that cannot evaluate the condition ends the command with its error and what was measured.
+      const watched = async (poll: Promise<boolean> | undefined): Promise<boolean> => {
+        try {
+          return (await poll) ?? false;
+        } catch (err) {
+          throw this.endedMove(err, total);
+        }
+      };
       try {
-        if (mon && (await mon.first)) return done("condition_met", clamped, 0);
+        if (await watched(mon?.first)) return done("condition_met", clamped, 0);
         let args = { ...applied };
         let anyClamp = clamped;
         for (let ops = 1; ; ops++) {
@@ -1193,7 +1252,6 @@ class RuntimeImpl implements LocalRuntime {
             flying = undefined;
             limit.abort();
           }
-          mon?.state(); // a condition that could not be read is an error, not a result
           anyClamp ||= res.clamped;
           const m = res.measured ?? {};
           for (const [k, v] of Object.entries(m))
@@ -1201,12 +1259,17 @@ class RuntimeImpl implements LocalRuntime {
               typeof v === "number" && typeof (total[k] ?? 0) === "number"
                 ? ((total[k] as number | undefined) ?? 0) + v
                 : v;
+          try {
+            mon?.state(); // a condition that could not be read is an error, not a result
+          } catch (err) {
+            throw this.endedMove(err, total);
+          }
           if (signal.aborted) return done("preempted", anyClamp, ops);
           if (why && res.reason === "preempted") return done(why, anyClamp, ops);
           if (!(cmd.moves && res.reason === "timeout" && m.time_limited === true))
             return done(res.reason, anyClamp, ops);
           if (this.clock.now() - t0 >= lim.max_command_ms) return done("timeout", anyClamp, ops);
-          if (mon && (await mon.fresh())) return done("condition_met", anyClamp, ops);
+          if (await watched(mon?.fresh())) return done("condition_met", anyClamp, ops);
           const rest = { ...args };
           for (const [k, v] of Object.entries(args))
             if (typeof v === "number" && typeof m[k] === "number") rest[k] = v - (m[k] as number);

@@ -258,6 +258,49 @@ describe("a twin in this process", () => {
     await move;
   });
 
+  test("a distance sensor unplugged mid-drive ends `until` with condition_unreadable, wheels stopped, measured so far", async () => {
+    const fleet = await buildFleet(loadConfig([]), { log: () => {} });
+    const robot = fleet.robots[0]!;
+    const brick = fleet.bricks.get(robot.id)!;
+    const before = await callTool(fleet.robots, "read_device", { robot_id: robot.id, device: "distance" });
+    expect(before.envelope).toMatchObject({ ok: true, data: [{ channel: "distance_cm" }] });
+    const move = callTool(fleet.robots, "drive", {
+      robot_id: robot.id,
+      distance_cm: 40,
+      speed_pct: 20,
+      until: { device: "distance", channel: "distance_cm", op: "lt", value: 10 },
+    });
+    await until("the simulated wheels to turn", () => {
+      brick.tick();
+      return brick.tacho("B") > 20;
+    });
+    brick.unplugSensor(4);
+    const { envelope } = await move;
+    expect(envelope.ok).toBe(false);
+    if (envelope.ok) throw new Error("unreachable");
+    expect(envelope.error.code).toBe("condition_unreadable");
+    expect(envelope.error.retryable).toBe(false);
+    expect(envelope.error.message).toContain("ev3.S4.distance_cm");
+    expect(envelope.next[0]).toBe("read_all");
+    expect(envelope.robot).toMatchObject({ link: "online", activity: "idle" });
+    const measured = envelope.error.measured!;
+    expect(measured.distance_cm as number).toBeGreaterThan(0);
+    expect(measured.distance_cm as number).toBeLessThan(20); // 40 cm were asked
+    brick.tick();
+    expect(brick.busy()).toBe(false);
+    const at = brick.tacho("B");
+    expect(measured.left_deg).toBe(at);
+    await new Promise((r) => setTimeout(r, 150));
+    brick.tick();
+    expect(brick.tacho("B")).toBe(at); // nothing turns after the error
+    // the robot keeps working: the port is gone from the registry, everything else answers
+    const all = await callTool(fleet.robots, "read_all", { robot_id: robot.id });
+    expect(all.envelope.ok).toBe(true);
+    const again = await callTool(fleet.robots, "drive", { robot_id: robot.id, distance_cm: 2 });
+    expect(again.envelope).toMatchObject({ ok: true, data: { reason: "completed" } });
+    await fleet.shutdown();
+  });
+
   test("the example files exist where a bare start looks for them", async () => {
     expect(await Bun.file(EXAMPLE.robot).exists()).toBe(true);
     expect(await Bun.file(EXAMPLE.world).exists()).toBe(true);

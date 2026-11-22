@@ -1,7 +1,8 @@
 // Condition compiler and evaluator. Shape rules live in packages/protocol/validate.ts (single owner); this
 // file adds what needs real devices: names resolve (id or role), channels exist, value types fit the channel.
-// Evaluation is three-valued: a channel that could not be read makes its leaf unknown, and an unknown
-// condition is never "met". Reads here never switch a sensor mode.
+// A condition is evaluated only when every channel it names was read: a channel without a value ends the
+// evaluation with condition_unreadable, so whoever watches it (a move's `until`, wait_until, a program) stops
+// and says so. A sensor that cannot be read is never "not met". Reads here never switch a sensor mode.
 import { RuntimeError } from "../protocol/types";
 import type { ChannelSpec, CompareOp, DeviceSpec, Reading, Value } from "../protocol/types";
 import { validateCondition } from "../protocol/validate";
@@ -84,8 +85,7 @@ export function makeEvaluator(
     if (!list.includes(l.channel)) list.push(l.channel);
     byDevice.set(l.device, list);
   }
-  const leafValue = (i: number, v: Value | null): boolean | undefined => {
-    if (v === null || v === undefined) return undefined;
+  const leafValue = (i: number, v: Value): boolean => {
     const l = c.leaves[i]!;
     if (l.op === "changed") {
       if (baseline[i] === undefined) {
@@ -97,7 +97,7 @@ export function makeEvaluator(
     const w = l.value!;
     switch (l.op) {
       case "contains":
-        return Array.isArray(v) ? (v as (number | string)[]).includes(w as number | string) : undefined;
+        return Array.isArray(v) && (v as (number | string)[]).includes(w as number | string);
       case "eq":
         return v === w;
       case "neq":
@@ -112,15 +112,10 @@ export function makeEvaluator(
         return (v as number) >= (w as number);
     }
   };
-  const evalNode = (n: Node, vals: (boolean | undefined)[]): boolean | undefined => {
-    if ("leaf" in n) return vals[n.leaf];
-    if ("not" in n) {
-      const x = evalNode(n.not, vals);
-      return x === undefined ? undefined : !x;
-    }
-    const xs = ("any" in n ? n.any : n.all).map((k) => evalNode(k, vals));
-    if ("any" in n) return xs.includes(true) ? true : xs.includes(undefined) ? undefined : false;
-    return xs.includes(false) ? false : xs.includes(undefined) ? undefined : true;
+  const evalNode = (n: Node, vals: boolean[]): boolean => {
+    if ("leaf" in n) return vals[n.leaf]!;
+    if ("not" in n) return !evalNode(n.not, vals);
+    return "any" in n ? n.any.some((k) => evalNode(k, vals)) : n.all.every((k) => evalNode(k, vals));
   };
   return {
     async poll() {
@@ -131,10 +126,24 @@ export function makeEvaluator(
         throw bad(
           `Channel ${needsSwitch.device}.${needsSwitch.channel} is not active: reading it needs a sensor mode switch, which a condition never does. While the robot is idle, call read_device naming that channel to switch the mode, then retry.`,
         );
-      const vals = c.leaves.map((l, i) =>
-        leafValue(i, readings.find((r) => r.device === l.device && r.channel === l.channel)?.value ?? null),
+      const got = c.leaves.map((l) => readings.find((r) => r.device === l.device && r.channel === l.channel));
+      const blind = c.leaves.flatMap((l, i) =>
+        got[i]?.value === null || got[i]?.value === undefined
+          ? [`${l.device}.${l.channel} (${got[i]?.error ?? "no value"})`]
+          : [],
       );
-      return { met: evalNode(c.tree, vals) === true, readings };
+      if (blind.length)
+        throw new RuntimeError(
+          "condition_unreadable",
+          `The condition cannot be evaluated: ${[...new Set(blind)].join("; ")} returned no value. A channel that cannot be read is never taken as "not met". Check the sensor and its cable (read_all), then decide again.`,
+        );
+      return {
+        met: evalNode(
+          c.tree,
+          c.leaves.map((_, i) => leafValue(i, got[i]!.value as Value)),
+        ),
+        readings,
+      };
     },
   };
 }

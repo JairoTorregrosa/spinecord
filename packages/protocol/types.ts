@@ -168,6 +168,7 @@ export type ErrorCode =
   | "timeout"
   | "stop_unverified"
   | "stale_image"
+  | "condition_unreadable"
   | "internal"
   | "misconfigured";
 export interface ToolError {
@@ -175,6 +176,8 @@ export interface ToolError {
   message: string;
   retryable: boolean;
   retry_after_ms?: number;
+  /** What a move had done when the error ended it; the robot was stopped there. */
+  measured?: Record<string, Value>;
 }
 export type Envelope<T> =
   | { ok: true; robot?: RobotStateView; data: T; next: string[] }
@@ -210,6 +213,8 @@ export class RuntimeError extends Error {
     public code: ErrorCode,
     message: string,
     public retryable = false,
+    /** What a move had done when this error ended it (the robot was stopped there). */
+    public measured?: Record<string, Value>,
   ) {
     super(message);
   }

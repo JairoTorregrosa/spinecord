@@ -416,17 +416,25 @@ describe("conditions and wait_until", () => {
       "invalid_argument",
     );
   });
-  test("an unreadable channel never satisfies a condition, even under not", async () => {
+  test("a channel that cannot be read ends wait_until with condition_unreadable, under any combinator", async () => {
     const s = setup();
     s.mock.values.set("mock.gas.ppm", null);
-    expect(
-      (
-        await s.call("wait_until", {
-          condition: { not: { device: "mock.gas", channel: "ppm", op: "gt", value: 1 } },
-          timeout_ms: 50,
-        })
-      ).met,
-    ).toBe(false);
+    const leaf = { device: "mock.gas", channel: "ppm", op: "gt", value: 1 };
+    const color = { device: "floor_color", channel: "color", op: "eq", value: 6 }; // true
+    for (const condition of [leaf, { not: leaf }, { any: [color, leaf] }, { all: [{ not: color }, leaf] }]) {
+      const e = await fails(s.call("wait_until", { condition, timeout_ms: 50 }), "condition_unreadable");
+      expect(e.message).toContain("mock.gas.ppm");
+      expect(e.retryable).toBe(false);
+    }
+    // a sensor that fails while the wait runs ends it there, not at the timeout
+    const t = setup();
+    const t0 = t.clock.now();
+    t.mock.values.set("mock.gas.ppm", () => (t.clock.now() - t0 >= 120 ? null : 400));
+    await fails(
+      t.call("wait_until", { condition: { ...leaf, value: 500 }, timeout_ms: 5000, poll_hz: 20 }),
+      "condition_unreadable",
+    );
+    expect(t.clock.now() - t0).toBeLessThan(250);
   });
   test("bad conditions fail before waiting", async () => {
     const s = setup();
@@ -540,6 +548,61 @@ describe("drivetrain", () => {
     const polls = s.mock.reads.filter((r) => r === "mock.color").length;
     expect(polls).toBeLessThanOrEqual(Math.ceil(d.ms / 100) + 1); // back to back, never piled up
     expect(pairLog(s.mock).every((c) => c.args.brake === true)).toBe(true); // 100 ms is too slow to coast
+  });
+  test("until on a sensor that stops answering mid-move ends the move with condition_unreadable, braked, with measured", async () => {
+    const s = setup();
+    const t0 = s.clock.now();
+    const AT = 137; // inside the second operation
+    s.mock.values.set("mock.gas.ppm", () => (s.clock.now() - t0 >= AT ? null : 400));
+    const until = { device: "mock.gas", channel: "ppm", op: "gt", value: 500 };
+    const e = await fails(s.call("drive", { distance_cm: 60, until }), "condition_unreadable");
+    expect(e.message).toContain("mock.gas.ppm");
+    expect(e.retryable).toBe(false);
+    expect(s.clock.now() - t0).toBeLessThanOrEqual(AT + UNTIL_POLL_MS);
+    expect(pairLog(s.mock).at(-1)!.reason).toBe("preempted"); // the operation in flight was aborted
+    expect(s.mock.log.at(-1)).toMatchObject({ device: "mock.pair", command: "brake" }); // it was coasting
+    const at = s.mock.left;
+    expect(at).toBeGreaterThan(0);
+    expect(at).toBeLessThan(60 * DEG_PER_CM * 0.1);
+    expect(e.measured).toMatchObject({ left_deg: at, right_deg: at, source: "encoders" });
+    expect(e.measured!.distance_cm as number).toBeCloseTo(at / DEG_PER_CM, 1);
+    expect(e.message).toContain(JSON.stringify(e.measured));
+
+    // unreadable before anything moves: nothing is sent
+    const n = setup();
+    n.mock.values.set("mock.gas.ppm", null);
+    const none = await fails(n.call("drive", { distance_cm: 60, until }), "condition_unreadable");
+    expect(n.mock.log.length).toBe(0);
+    expect(none.measured).toMatchObject({ distance_cm: 0 });
+
+    // a single device command is ended the same way
+    const m = setup();
+    const m0 = m.clock.now();
+    m.mock.values.set("mock.gas.ppm", () => (m.clock.now() - m0 >= 33 ? null : 400));
+    const arm = { device: "mock.arm", command: "run_to_position", args: { position_deg: 400, speed_pct: 20 }, until };
+    const c = await fails(m.call("command_device", arm), "condition_unreadable");
+    expect(m.clock.now() - m0).toBeLessThanOrEqual(33 + UNTIL_POLL_MS);
+    expect(c.measured).toBeDefined();
+    expect(m.mock.arm).toBeLessThan(400);
+
+    // inside a program the step fails with the same code and the program ends
+    const p = setup();
+    const p0 = p.clock.now();
+    p.mock.values.set("mock.gas.ppm", () => (p.clock.now() - p0 >= AT ? null : 400));
+    const r = await p.call("run_program", {
+      body: { seq: [{ call: { tool: "drive", args: { distance_cm: 60, until } } }, { fail: "not reached" }] },
+    });
+    expect(r.outcome).toBe("failed");
+    expect(r.steps[0].error.code).toBe("condition_unreadable");
+    expect(p.mock.left).toBeLessThan(60 * DEG_PER_CM * 0.1);
+    // and so does a program's own condition
+    const w = setup();
+    w.mock.values.set("mock.gas.ppm", null);
+    const loop = await w.call("run_program", {
+      body: { while: { cond: until, max_iterations: 3, body: { wait_ms: 10 } } },
+    });
+    expect(loop).toMatchObject({ outcome: "failed" });
+    expect(loop.reason).toContain("condition_unreadable");
   });
   test("until that is already true moves nothing", async () => {
     const s = setup();

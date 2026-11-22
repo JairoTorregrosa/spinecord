@@ -234,6 +234,13 @@ export class SimBrick implements Transport, WorldHost {
     this.world.resetGyro();
   }
 
+  /** Pulls the sensor out of an input port: the port then reads as empty (type none, NaN values), as on the firmware. */
+  unplugSensor(port: 1 | 2 | 3 | 4): void {
+    this.tick();
+    this.sensors[port - 1] = null;
+    this.hasTouch = this.sensors.some((s) => s?.kind === "touch");
+  }
+
   // ------------------------------------------------------------- inspection (tests, viewer)
   tacho(port: MotorPort): number {
     this.tick();

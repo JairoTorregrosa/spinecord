@@ -27,8 +27,9 @@ export class LocalError extends RuntimeError {
     readonly retry_after_ms?: number,
     /** The call had started to move the robot: it may have partly happened, so the next step is a read. */
     readonly afterMove = false,
+    measured?: RuntimeError["measured"],
   ) {
-    super(code, message, retryable);
+    super(code, message, retryable, measured);
   }
 }
 
@@ -252,7 +253,7 @@ export class LocalRobot {
     } catch (e) {
       // a move that failed on the way (the link dropped) is never "send it again": the robot may be somewhere else
       if (e instanceof RuntimeError && e.retryable && !(e instanceof LocalError && e.afterMove))
-        throw new LocalError(e.code, `${e.message} ${MAY_HAVE_MOVED}`, false, undefined, true);
+        throw new LocalError(e.code, `${e.message} ${MAY_HAVE_MOVED}`, false, undefined, true, e.measured);
       throw e;
     } finally {
       // a stop or a fault that came meanwhile owns the state; only an undisturbed move goes back to idle
