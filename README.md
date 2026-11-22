@@ -113,7 +113,7 @@ bun apps/local/main.ts --print-add --ev3 --twin
 
 and run the line it prints.
 
-`--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](CONTRACT.md). The server logs on stderr (`claude --debug` shows it).
+`--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](CONTRACT.md). The server logs on stderr (`claude --debug` shows it); `--log-file <path>` keeps the log in a file ([Troubleshooting](#troubleshooting)).
 
 ### An EV3 on ev3dev: the ssh key first
 
@@ -194,7 +194,23 @@ bun run bench   # latency of the path from a tool call to the robot, on the twin
 
 ## Troubleshooting
 
-The server writes one JSON object per line on stderr (`claude --debug` shows it; to keep it, start the server with stderr sent to a file). Every tool call leaves one line when it is answered:
+The server writes one JSON object per line on stderr (`claude --debug` shows it). To keep those lines, register the server with `--log-file <path>`: it appends every one of them to that file as well, across restarts. In the `spinecord` folder, on macOS, Linux and Windows (PowerShell) alike:
+
+```sh
+claude mcp remove -s user spinecord
+bun apps/local/main.ts --print-add --log-file ~/spinecord.log
+```
+
+Run the line it prints, then start Claude Code again. Put the robot arguments of your registration (`--ev3`, `--twin`, …) on the same line, next to `--log-file`. The printed line holds the file's full path: `~` is your home folder (`/Users/you/spinecord.log` on a Mac, `C:\Users\you\spinecord.log` on Windows), and a relative path is taken from the clone. The server creates the file's folder, and it does not start when the file cannot be opened.
+
+Read the file while the server runs:
+
+| | Follow it | Search it |
+|---|---|---|
+| macOS, Linux | `tail -f ~/spinecord.log` | `grep '"ev":"call"' ~/spinecord.log` |
+| Windows PowerShell | `Get-Content $HOME\spinecord.log -Wait` | `Select-String '"ev":"call"' $HOME\spinecord.log` |
+
+Every tool call leaves one line when it is answered:
 
 ```json
 {"ev":"call","ts":"2026-11-22T08:19:28.089Z","tool":"drive","robot_id":"r1-sim","ok":true,"code":null,"reason":"completed","ms":350,"trace_id":null,"moved":true}
@@ -213,8 +229,8 @@ Arguments, results and images are never logged.
 
 | Question | Look for |
 |---|---|
-| What did the model call, and what failed? | `grep '"ev":"call"' server.log`, then `grep '"ok":false'` |
-| An error message says `(trace_id ab12cd34)` | `grep ab12cd34 server.log`: the `"ev":"internal"` line has the stack |
+| What did the model call, and what failed? | `grep '"ev":"call"' ~/spinecord.log`, then `grep '"ok":false'` |
+| An error message says `(trace_id ab12cd34)` | `grep ab12cd34 ~/spinecord.log`: the `"ev":"internal"` line has the stack |
 | Did the robot move during a call that failed? | `"moved":true` on its line; read the robot (`read_all`) before moving again |
 | Why is a robot offline or in fault? | the `"ev":"link"` and `"ev":"activity"` lines carry `from`, `to` and `why` |
 

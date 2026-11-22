@@ -96,7 +96,7 @@ JSON tree (`ProgramNode` in types.ts), no code. Caps: 500 nodes, `repeat.times �
 
 ## 6. The process
 
-An MCP client starts it (`claude mcp add -s user spinecord -- bun <repo>/apps/local/main.ts`; `bun apps/local/main.ts --print-add` prints that command with the absolute path, quoted for the shells of the computer it runs on; on Windows the separator is printed as `"--"`). stdout carries JSON-RPC only; every log line is one JSON object on stderr.
+An MCP client starts it (`claude mcp add -s user spinecord -- bun <repo>/apps/local/main.ts`; `bun apps/local/main.ts --print-add` prints that command with the absolute path, quoted for the shells of the computer it runs on; on Windows the separator is printed as `"--"`). stdout carries JSON-RPC only; every log line is one JSON object on stderr. With `--log-file <path>` each of those lines is also appended to that file, written when it is logged, so the lines of a process that ends are in it. The path follows the rule of every path on the command line (absolute as it is, a leading `~` the home folder, relative from the repository root); the file's folder is created; a file that cannot be opened ends the start with exit code 1 and the path on stderr. `--print-add` carries the flag with the absolute path.
 
 **Call log.** Every `tools/call` writes one line to stderr when it is answered:
 
@@ -114,7 +114,7 @@ An MCP client starts it (`claude mcp add -s user spinecord -- bun <repo>/apps/lo
 | `trace_id` | the id of an `internal` error behind this answer, else null |
 | `moved` | true when a moving operation was sent to the robot during the call, or may have been (a call the backstop ended); false when nothing was sent, as for a refused argument or `busy` |
 
-The line never holds arguments, result data or images. An `internal` error (§7) also writes `{"ev":"internal","ts","trace_id","tool","robot_id","message","stack"}` with the stack of the failure and of what caused it, cut at 4000 characters; the `trace_id` is the one in the error's message, and in a program step's `error.trace_id` when a step failed that way. To find a call: `grep '"ev":"call"'` on the server's stderr, then filter on `robot_id`, `ok` or `trace_id`.
+The line never holds arguments, result data or images. An `internal` error (§7) also writes `{"ev":"internal","ts","trace_id","tool","robot_id","message","stack"}` with the stack of the failure and of what caused it, cut at 4000 characters; the `trace_id` is the one in the error's message, and in a program step's `error.trace_id` when a step failed that way. To find a call: `grep '"ev":"call"'` on the server's stderr or its `--log-file`, then filter on `robot_id`, `ok` or `trace_id`.
 
 **Robots.** Chosen on the command line or in a config file (`bun apps/local/main.ts --help` lists every option). Without arguments: the twin of the example robot (`deployments/example/robots/r1.json`) in `apps/local/examples/room.json`. `--twin`, `--ev3` and `--ev3dev` without a robot file use that example robot. A relative path on the command line is taken from the repository root, one in a config file from that file's folder; the working directory of the process decides nothing. A file that is not there ends the start with its absolute path.
 

@@ -53,7 +53,9 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  asking for a password or about the host key
     --ssh-key <file>             private key file, which must exist (default: ssh's own keys and agent)
     --install-bridge             copy the bridge to the brick before connecting
-  --config <file.json>           all of the above as a file, for more than one robot of a kind:
+  --log-file <path>              also append every JSON log line of stderr to this file; its folder is
+                                 created, and a file that cannot be opened ends the start
+  --config <file.json>           the robots and the port as a file, for more than one robot of a kind:
                                  {"port"?: n, "robots": [
                                    {"source": "twin", "robot": path, "world": path, "seed"?: n, "id"?: s},
                                    {"source": "ev3", "robot": path, "id"?: s},
@@ -86,6 +88,8 @@ export interface LocalConfig {
   robots: RobotSource[];
   /** Port of the page that lends a stock EV3. Bound only when a robot of source "ev3" exists. */
   port: number;
+  /** `--log-file`, absolute: the file that gets every JSON log line of stderr too. */
+  logFile?: string;
 }
 
 const ROBOT_ID = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -246,10 +250,13 @@ export function loadConfig(argv: string[]): LocalConfig {
       ssh: { type: "string" },
       "ssh-key": { type: "string" },
       "install-bridge": { type: "boolean" },
+      "log-file": { type: "string" },
     },
   });
   if (values.help) throw new HelpAsked();
-  const given = Object.keys(values);
+  // --log-file says where the log goes, not which robots run: it stands beside --config and beside no robot flag
+  const given = Object.keys(values).filter((k) => k !== "log-file");
+  if (values["log-file"] === "") throw new Error("--log-file needs a path");
   let config: LocalConfig;
   if (values.config !== undefined) {
     if (given.length > 1)
@@ -320,5 +327,6 @@ export function loadConfig(argv: string[]): LocalConfig {
   if (twice.length) throw new Error(`each robot needs its own id, got ${twice[0]} twice: set "id" in a --config file`);
   if (config.robots.filter((r) => r.source === "ev3").length > 1)
     throw new Error("one stock-firmware EV3 per process: the page lends one brick");
+  if (values["log-file"] !== undefined) config.logFile = fromRepo(values["log-file"]);
   return config;
 }

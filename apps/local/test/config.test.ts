@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, posix, relative, win32 } from "node:path";
 import { DEFAULT_PORT, EXAMPLE, REPO, USAGE, loadConfig, parseSshTarget, pathFrom } from "../src/config";
@@ -28,6 +28,20 @@ describe("command line", () => {
     const c = loadConfig([]);
     expect(c.robots.map((r) => [r.source, r.id])).toEqual([["twin", "r1-sim"]]);
     expect(c.port).toBe(DEFAULT_PORT);
+  });
+  test("--log-file: absolute as it is, ~ in the home folder, relative from the repository; it chooses no robot", () => {
+    const abs = join(tmp, "logs", "server.log");
+    const alone = loadConfig(["--log-file", abs]);
+    expect(alone.logFile).toBe(abs);
+    expect(alone.robots.map((r) => r.id)).toEqual(["r1-sim"]);
+    expect(loadConfig(["--log-file=~/spinecord.log"]).logFile).toBe(join(homedir(), "spinecord.log"));
+    expect(loadConfig(["--ev3", "--log-file", "logs/server.log"])).toMatchObject({
+      logFile: join(REPO, "logs", "server.log"),
+      robots: [{ source: "ev3" }],
+    });
+    expect(loadConfig([]).logFile).toBeUndefined();
+    expect(() => loadConfig(["--log-file="])).toThrow("--log-file needs a path");
+    expect(USAGE).toContain("--log-file <path>");
   });
   test("an EV3 and its twin side by side", () => {
     const c = loadConfig(["--ev3", EXAMPLE.robot, "--twin", EXAMPLE.robot, "--world", EXAMPLE.world, "--port", "9001"]);
@@ -268,6 +282,28 @@ describe("--print-add", () => {
       );
     }
   });
+  test("--log-file is passed through with its absolute path", () => {
+    expect(
+      addCommand(
+        { platform: "darwin", repo: "/Users/ana/spinecord", args: ["--log-file", "~/spinecord.log"] },
+        "/Users/ana",
+      ),
+    ).toBe(
+      'claude mcp add -s user spinecord -- bun "/Users/ana/spinecord/apps/local/main.ts" --log-file "/Users/ana/spinecord.log"',
+    );
+    expect(
+      addCommand(
+        { platform: "win32", repo: "C:\\Users\\Ana\\spinecord", args: ["--ev3", "--log-file", "~/spinecord.log"] },
+        "C:\\Users\\Ana",
+      ),
+    ).toBe(
+      'claude mcp add -s user spinecord "--" bun "C:\\Users\\Ana\\spinecord\\apps\\local\\main.ts" --ev3 ' +
+        '--log-file "C:\\Users\\Ana\\spinecord.log"',
+    );
+    expect(addCommand({ platform: "linux", repo: "/home/ana/spinecord", args: ["--log-file=logs/s.log"] })).toEndWith(
+      ' --log-file "/home/ana/spinecord/logs/s.log"',
+    );
+  });
   test("the entry point prints the command for this computer from any folder and starts nothing", () => {
     const elsewhere = mkdtempSync(join(tmpdir(), "spinecord elsewhere "));
     try {
@@ -283,6 +319,11 @@ describe("--print-add", () => {
       );
       expect(run.err).toContain("claude mcp remove -s user spinecord");
       expect(run.code).toBe(0);
+      const logFile = join(elsewhere, "logs", "server.log");
+      const logged = main(elsewhere, "--print-add", "--log-file", logFile);
+      expect(logged).toMatchObject({ code: 0 });
+      expect(logged.out).toEndWith(` bun "${MAIN}" --log-file "${logFile}"\n`);
+      expect(existsSync(logFile)).toBe(false); // printing starts nothing: the file is opened by the server
       // a command that would not start is not printed
       const wrong = main(elsewhere, "--print-add", "--ev3", "none.json");
       expect(wrong).toMatchObject({ code: 2, out: "" });

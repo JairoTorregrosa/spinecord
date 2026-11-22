@@ -1,11 +1,32 @@
 // stdout belongs to JSON-RPC (MCP over stdio): one stray line there and the client drops the connection.
-// Imported first by main.ts, before any module that could print: every console method writes to stderr.
+// Imported first by main.ts, ahead of any module that could print: every console method writes to stderr.
+import { mkdirSync, openSync, writeSync } from "node:fs";
+import { dirname } from "node:path";
+
 const toStderr = (...args: unknown[]): void => console.error(...args);
 console.log = toStderr;
 console.info = toStderr;
 console.debug = toStderr;
 
-/** One JSON line per event on stderr: {"ev": ..., ...fields}. */
+/** The file of `--log-file`, open for appending; undefined when the flag was not given. */
+let file: number | undefined;
+
+/**
+ * `--log-file`: every line of `log` also goes to the end of this file, written synchronously, so the last
+ * lines of a process that exits are in it. Creates the file's folder. Throws when the file cannot be opened.
+ */
+export function logTo(path: string): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    file = openSync(path, "a");
+  } catch (e) {
+    throw new Error(`--log-file: cannot open ${path} for appending: ${(e as Error).message}`, { cause: e });
+  }
+}
+
+/** One JSON line per event on stderr, and in the file of `--log-file`: {"ev": ..., ...fields}. */
 export function log(ev: string, fields: Record<string, unknown> = {}): void {
-  process.stderr.write(`${JSON.stringify({ ev, ...fields })}\n`);
+  const line = `${JSON.stringify({ ev, ...fields })}\n`;
+  process.stderr.write(line);
+  if (file !== undefined) writeSync(file, line);
 }
