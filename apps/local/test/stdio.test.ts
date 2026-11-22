@@ -227,7 +227,7 @@ describe("the process ends", () => {
     ]);
     expect(code).toBe(2);
     expect(out).toBe("");
-    expect(err).toContain("--twin needs --world");
+    expect(err).toContain("--twin: cannot read");
     expect(err).toContain("usage:");
   });
 });

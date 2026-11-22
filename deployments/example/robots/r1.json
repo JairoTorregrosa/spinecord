@@ -1,5 +1,5 @@
 {
-  "description": "Example robot (not a default): the LEGO EV3 educator base. Large motors on B (left) and C (right), a medium motor on A, four sensors. `pair` are the ports of the synced motor pair, `hardware` the facts about the brick that are not motion limits, `profile` a contract RobotProfile (CONTRACT.md §3). The twin r1-sim is built from this same file.",
+  "description": "Example robot (not a default): the LEGO EV3 educator base. Large motors on B (left) and C (right), a medium motor on A, four sensors. `pair` are the ports of the synced motor pair, `hardware` the facts about the brick that are not motion limits (`tone_volume_pct` is read on stock firmware, `speech_volume_pct` on ev3dev), `profile` a contract RobotProfile (CONTRACT.md §3). The twin r1-sim is built from this same file.",
   "pair": {
     "left": "B",
     "right": "C"
@@ -7,7 +7,8 @@
   "hardware": {
     "low_battery_v": 6.5,
     "max_tone_ms": 5000,
-    "tone_volume_pct": 50
+    "tone_volume_pct": 50,
+    "speech_volume_pct": 100
   },
   "profile": {
     "id": "r1",
