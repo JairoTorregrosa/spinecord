@@ -28,7 +28,8 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
 
   --help                         this text
   --print-add [robots...]        print the "claude mcp add" command that registers this server with those
-                                 robots, with absolute paths quoted for this computer's shell; starts nothing
+                                 robots, with absolute paths, quoted for this computer's shells (on Windows:
+                                 PowerShell and cmd.exe); starts nothing
 
   (no arguments)                 the example robot's twin (deployments/example/robots/r1.json) in
                                  apps/local/examples/room.json

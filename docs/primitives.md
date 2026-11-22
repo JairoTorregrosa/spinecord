@@ -52,7 +52,7 @@ What has run on a real brick, with dates and commits, and the checklist of what 
 |---|---|---|
 | EV3 stock firmware over USB (WebHID bridge page) | 🟡 tested against the byte-level emulator; not run on a real brick | driver-ev3 · apps/robot-page · apps/local |
 | EV3 over Bluetooth (Web Serial) | ⬜ | driver-ev3 |
-| EV3 on ev3dev over SSH | 🟡 bridge version 4 tested against a fake sysfs tree; not run on a real brick (bridge version 1 ran on one, 2026-11-21) | driver-ev3dev |
+| EV3 on ev3dev over SSH | 🟡 bridge version 4 tested against a fake sysfs tree; not run on a real brick (a bridge before version 4 ran on one, 2026-11-21) | driver-ev3dev |
 | Twin in the server's process | ✅ | apps/local · sim-ev3 |
 | Phone or microcontroller as extra devices | ⬜ | a new provider |
 | Model docs as MCP resources (robot notes, device specs) | ⬜ | apps/local |

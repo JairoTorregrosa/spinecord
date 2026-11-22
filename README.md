@@ -64,20 +64,12 @@ It prints one line, with the full path of your clone in quotes. On a Mac it look
 claude mcp add -s user spinecord -- bun "/Users/you/spinecord/apps/local/main.ts"
 ```
 
-Copy the printed line, paste it in the same terminal and press Enter. The same line works in Terminal, PowerShell and cmd.exe.
+Copy the printed line, paste it in the same terminal and press Enter. On Windows the printed line is the same for PowerShell and cmd.exe.
 
 - `-s user` registers the server for every folder of your user. Without it Claude Code knows the server only in the folder where the command ran.
-- The path is absolute, so the server starts from whatever folder Claude Code is in. Typed by hand, the line is `claude mcp add -s user spinecord -- bun "<full path of the clone>/apps/local/main.ts"`; cmd.exe does not expand `$PWD`, so on Windows use the printed line.
+- The path is absolute, so the server starts from whatever folder Claude Code is in. Typed by hand on macOS or Linux, the line is `claude mcp add -s user spinecord -- bun "<full path of the clone>/apps/local/main.ts"`. On Windows use the printed line: it writes the separator as `"--"`, because PowerShell drops a bare `--` when `claude` was installed with npm, and it holds the path in full, because cmd.exe does not expand `$PWD`.
 
-### 3. Allow its tools once
-
-Claude Code asks before the first use of each tool, and spinecord has 14. A script that drives the robot ([Code Mode](docs/code-mode.md)) waits at each of those questions. Allow the server's tools once: inside Claude Code type `/permissions`, choose Allow, add the rule `mcp__spinecord`. The same rule as a line of `~/.claude/settings.json`:
-
-```json
-{ "permissions": { "allow": ["mcp__spinecord"] } }
-```
-
-### 4. Start Claude Code in a folder of your own
+### 3. Start Claude Code in a folder of your own
 
 ```sh
 mkdir my-robot
@@ -87,7 +79,17 @@ claude
 
 Make the folder anywhere outside the clone (your home folder, the desktop). Inside the clone Claude Code reads this repository's `AGENTS.md` and source, which are written for people who change spinecord, not for driving a robot.
 
-`/mcp` inside Claude Code shows `spinecord` connected with 14 tools. Ask: "list the robots, then drive until 15 cm from the wall".
+`/mcp` inside Claude Code shows `spinecord` connected with 14 tools.
+
+### 4. Allow its tools once
+
+Claude Code asks before the first use of each tool, and spinecord has 14. A script that drives the robot ([Code Mode](docs/code-mode.md)) waits at each of those questions. Allow the server's tools once: in the Claude Code you just started type `/permissions`, choose Allow, add the rule `mcp__spinecord`. The same rule as a line of `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["mcp__spinecord"] } }
+```
+
+Then ask: "list the robots, then drive until 15 cm from the wall".
 
 ### Choose the robots
 
@@ -157,7 +159,7 @@ Keep a hand near the robot on a first run. These paths are tested against the tw
 |---|---|
 | Stock EV3 over USB through the bridge page (`--ev3`) | not run |
 | EV3 on ev3dev with bridge version 4, the one in this repository (`--ev3dev`) | not run |
-| EV3 on ev3dev with bridge version 1 | run on 2026-11-21 |
+| EV3 on ev3dev with a bridge before version 4 | run on 2026-11-21 |
 
 The dated log and the checklist of what to run: [`docs/hardware-log.md`](docs/hardware-log.md).
 

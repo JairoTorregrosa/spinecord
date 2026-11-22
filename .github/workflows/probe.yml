@@ -1,11 +1,18 @@
 name: probe
-# Temporary: runs the line `--print-add` prints in the three Windows shells, with Claude Code from npm.
+# Temporary: runs the lines `--print-add` prints, as printed, in the Windows shells, with Claude Code installed
+# through npm (claude.ps1 and claude.cmd) and through the native installer (claude.exe). The clone and the folder
+# Claude Code is asked from have a space in their names. A job fails when a registration is not Connected.
 on:
   pull_request:
 permissions:
   contents: read
 jobs:
   register:
+    name: register ${{ matrix.install }}
+    strategy:
+      fail-fast: false
+      matrix:
+        install: [npm, native]
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -17,7 +24,13 @@ jobs:
           bun-version-file: my code/spinecord/package.json
       - run: bun install --filter @spinecord/local --frozen-lockfile
         working-directory: my code/spinecord
-      - run: npm install -g @anthropic-ai/claude-code
+      - if: matrix.install == 'npm'
+        run: npm install -g @anthropic-ai/claude-code
+      - if: matrix.install == 'native'
+        shell: pwsh
+        run: |
+          irm https://claude.ai/install.ps1 | iex
+          Add-Content $env:GITHUB_PATH (Join-Path $env:USERPROFILE ".local\bin")
       - name: pwsh
         shell: pwsh
         working-directory: my code/spinecord
@@ -27,22 +40,24 @@ jobs:
           $ErrorActionPreference = "Continue"
           $PSVersionTable.PSVersion.ToString()
           Get-Command claude -All | Format-Table CommandType, Source
-          $line = (bun apps/local/main.ts --print-add --ev3 --twin 2>$null)
-          Write-Host "printed: $line"
+          claude --version
+          $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "cfg $env:PROBE"
           $empty = Join-Path $env:RUNNER_TEMP "my robot $env:PROBE"
           New-Item -ItemType Directory -Force $empty | Out-Null
-          foreach ($variant in @("bare", "quoted")) {
-            $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "cfg-$env:PROBE-$variant"
-            $cmd = if ($variant -eq "quoted") { $line.Replace(" -- ", ' "--" ') } else { $line }
-            Write-Host "== $variant : $cmd"
-            Invoke-Expression $cmd
-            Write-Host "add exit: $LASTEXITCODE"
+          $ok = $true
+          foreach ($robots in @("", "--ev3 --twin")) {
+            $line = (Invoke-Expression "bun apps/local/main.ts --print-add $robots 2>`$null")
+            Write-Host "PS> $line"
+            Invoke-Expression $line
             Push-Location $empty
-            claude mcp list
-            claude mcp get spinecord
+            $listed = (claude mcp list | Out-String)
+            Write-Host $listed
+            if ($listed -notmatch "main\.ts $robots".TrimEnd() + " - . Connected") { $ok = $false; Write-Host "NOT CONNECTED" }
+            Write-Host "PS> claude mcp remove -s user spinecord"
+            claude mcp remove -s user spinecord
             Pop-Location
           }
-          exit 0
+          if (-not $ok) { exit 1 }
       - name: powershell
         shell: powershell
         working-directory: my code/spinecord
@@ -52,45 +67,36 @@ jobs:
           $ErrorActionPreference = "Continue"
           $PSVersionTable.PSVersion.ToString()
           Get-Command claude -All | Format-Table CommandType, Source
-          $line = (bun apps/local/main.ts --print-add --ev3 --twin 2>$null)
-          Write-Host "printed: $line"
+          $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "cfg $env:PROBE"
           $empty = Join-Path $env:RUNNER_TEMP "my robot $env:PROBE"
           New-Item -ItemType Directory -Force $empty | Out-Null
-          foreach ($variant in @("bare", "quoted")) {
-            $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "cfg-$env:PROBE-$variant"
-            $cmd = if ($variant -eq "quoted") { $line.Replace(" -- ", ' "--" ') } else { $line }
-            Write-Host "== $variant : $cmd"
-            Invoke-Expression $cmd
-            Write-Host "add exit: $LASTEXITCODE"
+          $ok = $true
+          foreach ($robots in @("", "--ev3 --twin")) {
+            $line = (Invoke-Expression "bun apps/local/main.ts --print-add $robots 2>`$null")
+            Write-Host "PS> $line"
+            Invoke-Expression $line
             Push-Location $empty
-            claude mcp list
-            claude mcp get spinecord
+            $listed = (claude mcp list | Out-String)
+            Write-Host $listed
+            if ($listed -notmatch "main\.ts $robots".TrimEnd() + " - . Connected") { $ok = $false; Write-Host "NOT CONNECTED" }
+            Write-Host "PS> claude mcp remove -s user spinecord"
+            claude mcp remove -s user spinecord
             Pop-Location
           }
-          exit 0
+          if (-not $ok) { exit 1 }
       - name: cmd
         shell: cmd
         working-directory: my code/spinecord
         run: |
           where claude
-          for /f "delims=" %%L in ('bun apps\local\main.ts --print-add --ev3 --twin 2^>nul') do set "LINE=%%L"
-          echo printed: %LINE%
+          set "CLAUDE_CONFIG_DIR=%RUNNER_TEMP%\cfg cmd"
           mkdir "%RUNNER_TEMP%\my robot cmd"
-          set "CLAUDE_CONFIG_DIR=%RUNNER_TEMP%\cfg-cmd-bare"
-          echo == bare
+          for /f "delims=" %%L in ('bun apps\local\main.ts --print-add --ev3 --twin 2^>nul') do set "LINE=%%L"
+          echo C:^> %LINE%
           call %LINE%
-          echo add exit: %ERRORLEVEL%
           pushd "%RUNNER_TEMP%\my robot cmd"
-          call claude mcp list
-          call claude mcp get spinecord
+          call claude mcp list > "%RUNNER_TEMP%\listed.txt"
+          type "%RUNNER_TEMP%\listed.txt"
+          findstr /C:"--ev3 --twin - " "%RUNNER_TEMP%\listed.txt" | findstr /C:"Connected" || exit /b 1
+          call claude mcp remove -s user spinecord
           popd
-          set "CLAUDE_CONFIG_DIR=%RUNNER_TEMP%\cfg-cmd-quoted"
-          set LINEQ=%LINE: -- = "--" %
-          echo == quoted : %LINEQ%
-          call %LINEQ%
-          echo add exit: %ERRORLEVEL%
-          pushd "%RUNNER_TEMP%\my robot cmd"
-          call claude mcp list
-          call claude mcp get spinecord
-          popd
-          exit /b 0

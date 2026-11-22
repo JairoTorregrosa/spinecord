@@ -94,7 +94,7 @@ Installs the bridge, then prints the inventory and one read of every device as J
 
 ## Not verified on hardware
 
-Bridge version 4 has not run on a brick: everything here is tested against the fake tree with the computer's Python. The one run on a brick used bridge version 1, on the brick's Python 3.5.3 (`docs/hardware-log.md`, with the checklist of what to run).
+Bridge version 4 has not run on a brick: everything here is tested against the fake tree with the computer's Python. The one run on a brick used a bridge before version 4, on the brick's Python 3.5.3 (`docs/hardware-log.md`, with the checklist of what to run).
 
 To confirm on a brick:
 

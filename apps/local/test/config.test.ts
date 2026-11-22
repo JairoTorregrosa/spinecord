@@ -180,9 +180,10 @@ describe("--print-add", () => {
   test("Windows: absolute paths with spaces, quoted for PowerShell and cmd.exe", () => {
     const repo = "C:\\Users\\Ana Maria\\my code\\spinecord";
     const main = '"C:\\Users\\Ana Maria\\my code\\spinecord\\apps\\local\\main.ts"';
-    expect(addCommand({ platform: "win32", repo, args: [] })).toBe(`claude mcp add -s user spinecord -- bun ${main}`);
+    // "--" in quotes: PowerShell keeps a bare one for itself when claude is a script
+    expect(addCommand({ platform: "win32", repo, args: [] })).toBe(`claude mcp add -s user spinecord "--" bun ${main}`);
     expect(addCommand({ platform: "win32", repo, args: ["--ev3", "--twin"] })).toBe(
-      `claude mcp add -s user spinecord -- bun ${main} --ev3 --twin`,
+      `claude mcp add -s user spinecord "--" bun ${main} --ev3 --twin`,
     );
     expect(
       addCommand({
@@ -191,7 +192,7 @@ describe("--print-add", () => {
         args: ["--twin", "deployments/example/robots/r1.json", "--world=D:\\my worlds\\w.json", "--seed", "7"],
       }),
     ).toBe(
-      `claude mcp add -s user spinecord -- bun ${main} ` +
+      `claude mcp add -s user spinecord "--" bun ${main} ` +
         '--twin "C:\\Users\\Ana Maria\\my code\\spinecord\\deployments\\example\\robots\\r1.json" ' +
         '--world "D:\\my worlds\\w.json" --seed 7',
     );
@@ -202,7 +203,7 @@ describe("--print-add", () => {
         args: ["--ev3dev", "--ssh", "robot@ev3dev.local", "--ssh-key", "C:\\Users\\Ana Maria\\.ssh\\id_ed25519"],
       }),
     ).toBe(
-      `claude mcp add -s user spinecord -- bun ${main} --ev3dev --ssh robot@ev3dev.local ` +
+      `claude mcp add -s user spinecord "--" bun ${main} --ev3dev --ssh robot@ev3dev.local ` +
         '--ssh-key "C:\\Users\\Ana Maria\\.ssh\\id_ed25519"',
     );
     // what PowerShell and cmd.exe read differently inside double quotes is refused, never printed
@@ -237,7 +238,12 @@ describe("--print-add", () => {
       expect(run.out).toBe(
         `${addCommand({ platform: process.platform, repo: REPO, args: ["--ev3", "--twin", "--world", EXAMPLE.world] })}\n`,
       );
-      expect(run.out).toContain(`-- bun "${MAIN}" --ev3 --twin --world "${EXAMPLE.world}"`);
+      expect(run.out).toContain(` bun "${MAIN}" --ev3 --twin --world "${EXAMPLE.world}"`);
+      expect(run.out).toStartWith(
+        process.platform === "win32"
+          ? 'claude mcp add -s user spinecord "--" bun '
+          : "claude mcp add -s user spinecord -- bun ",
+      );
       expect(run.err).toContain("claude mcp remove -s user spinecord");
       expect(run.code).toBe(0);
       // a command that would not start is not printed

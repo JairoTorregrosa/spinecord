@@ -36,12 +36,17 @@ export interface AddCommandInput {
   args: string[];
 }
 
-/** `claude mcp add -s user spinecord -- bun "<repo>/apps/local/main.ts" [robots...]` for that computer. */
+/**
+ * `claude mcp add -s user spinecord -- bun "<repo>/apps/local/main.ts" [robots...]` for that computer.
+ * On Windows the separator is written `"--"`: PowerShell takes a bare `--` for itself when `claude` is a script
+ * (the `claude.ps1` that npm installs), and the robot flags after it are then read as options of `claude`.
+ * Quoted, it reaches `claude` from PowerShell and from cmd.exe.
+ */
 export function addCommand({ platform, repo, args }: AddCommandInput): string {
   const windows = platform === "win32";
   const rules = windows ? win32 : posix;
   const quote = windows ? quoteWindows : quotePosix;
-  const out = ["claude", "mcp", "add", "-s", "user", "spinecord", "--", "bun"];
+  const out = ["claude", "mcp", "add", "-s", "user", "spinecord", windows ? '"--"' : "--", "bun"];
   out.push(quote(rules.join(repo, "apps", "local", "main.ts")));
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;

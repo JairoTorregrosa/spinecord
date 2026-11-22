@@ -87,7 +87,7 @@ JSON tree (`ProgramNode` in types.ts), no code. Caps: 500 nodes, `repeat.times â
 
 ## 6. The process
 
-An MCP client starts it (`claude mcp add -s user spinecord -- bun <repo>/apps/local/main.ts`; `bun apps/local/main.ts --print-add` prints that command with the absolute path, quoted for the computer it runs on). stdout carries JSON-RPC only; every log line is one JSON object on stderr.
+An MCP client starts it (`claude mcp add -s user spinecord -- bun <repo>/apps/local/main.ts`; `bun apps/local/main.ts --print-add` prints that command with the absolute path, quoted for the shells of the computer it runs on; on Windows the separator is printed as `"--"`). stdout carries JSON-RPC only; every log line is one JSON object on stderr.
 
 **Robots.** Chosen on the command line or in a config file (`bun apps/local/main.ts --help` lists every option). Without arguments: the twin of the example robot (`deployments/example/robots/r1.json`) in `apps/local/examples/room.json`. `--twin`, `--ev3` and `--ev3dev` without a robot file use that example robot. A relative path on the command line is taken from the repository root, one in a config file from that file's folder; the working directory of the process decides nothing. A file that is not there ends the start with its absolute path.
 
