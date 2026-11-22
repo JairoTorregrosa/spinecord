@@ -502,13 +502,16 @@ describe("the call log", () => {
     expect(JSON.stringify(frame.lines).length).toBeLessThan(300);
     const program = await logged(robot, "run_program", { robot_id: "m1", body: { wait_ms: 5 } });
     expect(program.lines[0]!.fields).toMatchObject({ reason: "succeeded", moved: false });
-    const refused = await logged(robot, "turn", { robot_id: "m1", angle_deg: 0.3 });
-    expect(refused.lines[0]!.fields).toMatchObject({ ok: false, code: "invalid_argument", reason: null, moved: false });
+    const tiny = await logged(robot, "turn", { robot_id: "m1", angle_deg: 0.3 });
+    expect(tiny.lines[0]!.fields).toMatchObject({ ok: true, code: null, reason: "completed", moved: false });
+    const until = { device: "no.such", channel: "x", op: "eq", value: 1 };
+    const refused = await logged(robot, "turn", { robot_id: "m1", angle_deg: 20, until });
+    expect(refused.lines[0]!.fields).toMatchObject({ ok: false, code: "unknown_device", reason: null, moved: false });
     const nobody = await logged(robot, "read_all", { robot_id: "x".repeat(500) });
     expect(nobody.lines[0]!.fields).toMatchObject({ ok: false, code: "unknown_robot", robot_id: `${"x".repeat(64)}…` });
     const unknown = await logged(robot, "y".repeat(500), {});
     expect(unknown.lines[0]!.fields).toMatchObject({ tool: `${"y".repeat(64)}…`, robot_id: null, moved: false });
-    for (const l of [read, frame, program, refused, nobody, unknown])
+    for (const l of [read, frame, program, tiny, refused, nobody, unknown])
       expect(Object.keys(l.lines[0]!.fields)).toEqual(FIELDS);
   });
 

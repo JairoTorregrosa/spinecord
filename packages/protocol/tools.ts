@@ -38,9 +38,9 @@ Result format: structuredContent is the envelope and matches the tool's outputSc
 Shapes of \`data\` (always an object, never a bare array):
 - list_robots: {robots:[{id, backend, link, activity, fault_reason, connect}]}.
 - read_device, read_all, wait_until: {readings:[{device, channel, value, unit?, ts, error?, absent?}]}, one reading per channel: readings.find(r => r.channel === "distance_cm").value. read_all and wait_until add ms; wait_until adds met and reason.
-- drive, turn, arc, command_device: {requested, applied, measured, clamped, clamps?, reason, ms}, plus readings (the same shape) when reason is condition_met: the readings that met \`until\`. measured of drive, turn and arc has the same fields: distance_cm, heading_change_deg, source, left_deg, right_deg.
-- reason completed: the whole request was done. clamped:true beside it says an argument that is not the target (the speed) was cut to a limit; clamps:[{arg, requested, applied, target}] lists what was cut. reason clamped: the target itself (distance, angle, a bounded parameter) was cut, and that shorter target was reached. condition_met: \`until\` ended the move. stalled, preempted, timeout: the move ended early; measured says how far it got.
-- sample_device: {samples:[[t_ms, value]], min, max, mean, last, rate_hz}. stop: {motors_stopped, activity}. run_program: {outcome, reason, steps:[{path, tool, ok, reason | error, measured?, clamped?, ms}], ms}.
+- drive, turn, arc, command_device: {requested, applied, measured, clamped, clamps?, reason, note?, ms}, plus readings (the same shape) when reason is condition_met: the readings that met \`until\`. measured of drive, turn and arc has the same fields: distance_cm, heading_change_deg, source, left_deg, right_deg.
+- reason completed: the whole request was done. clamped:true beside it says an argument that is not the target (the speed) was cut to a limit; clamps:[{arg, requested, applied, target}] lists what was cut. reason clamped: the target itself (distance, angle, a bounded parameter) was cut, and that shorter target was reached. condition_met: \`until\` ended the move. stalled, preempted, timeout: the move ended early; measured says how far it got. A nonzero target of drive, turn or arc under the drivetrain's smallest move also answers completed: nothing is sent, measured is about 0 and note names the minimum, so a small computed correction needs no special case.
+- sample_device: {samples:[[t_ms, value]], min, max, mean, last, rate_hz}. stop: {motors_stopped, activity}. run_program: {outcome, reason, steps:[{path, tool, ok, reason | error, measured?, clamped?, note?, ms}], ms}.
 
 If you write code that calls these tools (several calls in one script):
 - What a call hands the script depends on the client that runs it: the envelope as an object, or the envelope as JSON text, and a result with ok:false may be thrown (the thrown message is the text block, so its last line is the envelope JSON). Define one helper that returns the envelope in every case and make every call through it: const call = async (tool, args) => { let r; try { r = await TOOL(tool, args); } catch (e) { try { return JSON.parse(String(e.message).split("\\n").at(-1)); } catch { throw e; } } return typeof r === "string" ? JSON.parse(r) : (r.structuredContent ?? r); }; where TOOL is how the client exposes these tools. An error the helper throws again never reached the server (an argument the tool does not declare): read its message.
@@ -205,7 +205,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Drive straight",
     annotations: act,
     description:
-      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, clamps, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. completed = the whole distance was driven, also when clamped is true because only the speed was cut (clamps lists each cut argument); reason clamped = distance_cm itself was cut to max_drive_cm and that shorter distance was driven. A distance under the drivetrain's smallest move (one degree of wheel rotation) fails with invalid_argument naming the minimum; 0 is no motion. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. data.readings then holds the readings that met the condition: use them, since a read made after the stop can sit on the other side of the threshold by the noise of the sensor (approx in describe_device). A condition channel that returns no value fails the call with condition_unreadable: the move was braked and error.measured holds what it had done. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
+      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, clamps, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. completed = the whole distance was driven, also when clamped is true because only the speed was cut (clamps lists each cut argument); reason clamped = distance_cm itself was cut to max_drive_cm and that shorter distance was driven. A nonzero distance under the drivetrain's smallest move (one degree of wheel rotation; either sign) sends nothing and answers ok with reason completed, measured of about 0, applied.distance_cm 0 and `note`, a sentence that names the minimum: a computed correction that small needs no check of its own. 0 is no motion, without a note. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. data.readings then holds the readings that met the condition: use them, since a read made after the stop can sit on the other side of the threshold by the noise of the sensor (approx in describe_device). A condition channel that returns no value fails the call with condition_unreadable: the move was braked and error.measured holds what it had done. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
     input: {
       type: "object",
       properties: {
@@ -224,7 +224,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Turn in place",
     annotations: act,
     description:
-      "Rotates in place by angle_deg (positive = counter-clockwise/left, negative = right), then brakes. Returns the shape drive returns: {requested:{angle_deg, speed_pct}, applied, measured:{distance_cm, heading_change_deg (the angle turned), source (gyro if present, else encoders), left_deg, right_deg}, clamped, clamps, reason, ms}, with the reasons of drive. This is the tool for turning by an angle: it measures the change of heading itself, wherever the gyro's angle stands. Supports `until` like drive; there a gyro's angle_deg is the cumulative angle since the gyro's last reset, not the angle of this turn, so on a robot that has already turned send the gyro's reset command first or compare against a value read just before. An angle under the drivetrain's smallest move fails with invalid_argument naming the minimum. Requires a drivetrain. Clamped to max_turn_deg.",
+      "Rotates in place by angle_deg (positive = counter-clockwise/left, negative = right), then brakes. Returns the shape drive returns: {requested:{angle_deg, speed_pct}, applied, measured:{distance_cm, heading_change_deg (the angle turned), source (gyro if present, else encoders), left_deg, right_deg}, clamped, clamps, reason, ms}, with the reasons of drive. This is the tool for turning by an angle: it measures the change of heading itself, wherever the gyro's angle stands. Supports `until` like drive; there a gyro's angle_deg is the cumulative angle since the gyro's last reset, not the angle of this turn, so on a robot that has already turned send the gyro's reset command first or compare against a value read just before. A nonzero angle under the drivetrain's smallest move sends nothing and answers ok like drive: reason completed, applied.angle_deg 0 and `note` naming the minimum. Requires a drivetrain. Clamped to max_turn_deg.",
     input: {
       type: "object",
       properties: {
@@ -243,7 +243,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Drive along an arc",
     annotations: act,
     description:
-      "Drives along a circular arc, then brakes. radius_cm (> 0) is measured to the robot's center. angle_deg is the heading change: positive = curve left (counter-clockwise), negative = curve right. direction forward (default) or backward. Example: a quarter circle to the right while moving forward = {radius_cm: 20, angle_deg: -90}. Returns the same shape as drive with measured distance and heading change. Supports `until`. Requires a drivetrain.",
+      "Drives along a circular arc, then brakes. radius_cm (> 0) is measured to the robot's center. angle_deg is the heading change: positive = curve left (counter-clockwise), negative = curve right. direction forward (default) or backward. Example: a quarter circle to the right while moving forward = {radius_cm: 20, angle_deg: -90}. Returns the same shape as drive with measured distance and heading change. A nonzero angle_deg under the drivetrain's smallest move sends nothing and answers ok like drive, with `note` naming the minimum. Supports `until`. Requires a drivetrain.",
     input: {
       type: "object",
       properties: {
@@ -485,6 +485,11 @@ const commandResult = obj({
     "Present when reason is condition_met: the readings that met the until condition, the shape read_all returns.",
   ),
   problem: { type: "string", description: "Present when the motion went wrong, e.g. a wheel turned backwards." },
+  note: {
+    type: "string",
+    description:
+      "Present on drive, turn and arc when the nonzero target is under the drivetrain's smallest move: nothing was sent, reason is completed, and the sentence names the minimum.",
+  },
   chunks: num,
   ms: num,
 });
@@ -589,6 +594,10 @@ const DATA: Record<string, Schema> = {
         error: obj({ code: named(ERROR_CODES), message: str, trace_id: str }),
         measured: freeform("What the step's call measured: the measured of the same call outside a program."),
         clamped: { type: "boolean", description: "Present and true when the step's call cut an argument to a limit." },
+        note: {
+          type: "string",
+          description: "Present when the step's target is under the drivetrain's smallest move: nothing was sent.",
+        },
         ms: num,
       }),
     ),

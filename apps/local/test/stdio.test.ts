@@ -1,5 +1,8 @@
 // The server as Claude Code runs it: a spawned `bun apps/local/main.ts`, MCP over its stdio, a twin inside.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { TOOLS } from "../../../packages/protocol/tools";
 import { EXAMPLE } from "../src/config";
 import { MAIN, startServer, until, wheelSpeeds, wheelsTurning, type TestServer } from "./client";
@@ -213,6 +216,68 @@ describe("the process ends", () => {
     expect(s.events("stopped")).toEqual([{ ev: "stopped", robot_id: R, motors_stopped: true }]);
     jsonRpcOnly(s);
   });
+
+  test("--log-file: the file gets every line of stderr, the last ones too, and a second start appends", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spinecord-log-"));
+    try {
+      const file = join(dir, "not", "there", "yet", "server.log");
+      const s = await startServer(["--log-file", file]);
+      await s.tool("drive", { robot_id: R, distance_cm: 3, speed_pct: 50 });
+      await s.tool("read_all", { robot_id: "nobody" });
+      expect(await s.closeStdin()).toBe(0);
+      jsonRpcOnly(s);
+      const first = readFileSync(file, "utf8");
+      expect(first.endsWith("\n")).toBe(true);
+      expect(first.split("\n").slice(0, -1)).toEqual(s.stderr);
+      expect(s.events("call").map((l) => l.tool)).toEqual(["drive", "read_all"]);
+      expect(s.events("exit")).toHaveLength(1);
+      const again = await startServer(["--log-file", file]);
+      expect(await again.closeStdin()).toBe(0);
+      expect(readFileSync(file, "utf8").split("\n").slice(0, -1)).toEqual([...s.stderr, ...again.stderr]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("--log-file that cannot be opened exits 1 with its path on stderr and nothing on stdout", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spinecord-log-"));
+    try {
+      // a folder cannot be made inside a file, on every OS
+      writeFileSync(join(dir, "a-file"), "");
+      const file = join(dir, "a-file", "server.log");
+      const child = Bun.spawn([process.execPath, MAIN, "--log-file", file], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      expect(code).toBe(1);
+      expect(out).toBe("");
+      expect(err).toContain(`--log-file: cannot open ${file} for appending`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // /dev/full opens and refuses every write (ENOSPC): a disk that filled up while the server ran
+  test.skipIf(process.platform !== "linux")(
+    "--log-file whose writes fail: one line says so on stderr, calls are served and the robots are stopped at the end",
+    async () => {
+      const s = await startServer(["--log-file", "/dev/full"]);
+      const drive = await s.tool("drive", { robot_id: R, distance_cm: 3, speed_pct: 50 });
+      expect(drive.envelope).toMatchObject({ ok: true, data: { reason: "completed" } });
+      expect(await s.closeStdin()).toBe(0);
+      jsonRpcOnly(s);
+      expect(s.events("log_file_failed")).toMatchObject([{ path: "/dev/full" }]);
+      expect(s.events("call")).toHaveLength(1);
+      expect(s.events("stopped")).toMatchObject([{ robot_id: R, motors_stopped: true }]);
+      expect(s.events("exit")).toHaveLength(1);
+    },
+  );
 
   test("a wrong flag exits 2 with the usage on stderr and nothing on stdout", async () => {
     const child = Bun.spawn([process.execPath, MAIN, "--twin", "missing.json"], {

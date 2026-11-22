@@ -1,9 +1,10 @@
 // spinecord on one computer: an MCP server over stdio with the runtime and the robots inside this process.
 //   claude mcp add -s user spinecord -- bun <repo>/apps/local/main.ts [robots...]
 // `bun apps/local/main.ts --print-add [robots...]` prints that command for this computer and starts nothing.
-// stdout carries JSON-RPC and nothing else; every log line is one JSON object on stderr.
+// stdout carries JSON-RPC and nothing else; every log line is one JSON object on stderr, and `--log-file <path>`
+// appends the same lines to a file.
 // When the client goes away (stdin closes) or the process is told to end, every motor is stopped first.
-import { log } from "./src/stderr"; // first: it moves console output off stdout
+import { log, logTo } from "./src/stderr"; // first: it moves console output off stdout
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { HelpAsked, loadConfig, REPO, USAGE, type LocalConfig } from "./src/config";
 import { LISTED_TOOLS, buildServer } from "./src/mcp";
@@ -36,6 +37,7 @@ try {
 
 let fleet: Fleet;
 try {
+  if (config.logFile !== undefined) logTo(config.logFile);
   fleet = await buildFleet(config, { log });
 } catch (e) {
   process.stderr.write(`spinecord: ${(e as Error).message}\n`);

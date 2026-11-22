@@ -100,6 +100,8 @@ export interface ProgramStep {
   measured?: Record<string, Value>;
   /** true when the step's call cut an argument to a limit. */
   clamped?: true;
+  /** Why the step's call sent nothing: its target is under the drivetrain's smallest move. */
+  note?: string;
   ms: number;
 }
 export interface ProgramResult {
@@ -540,23 +542,21 @@ class RuntimeImpl implements LocalRuntime {
     return { asked, speed, clamps: cut("speed_pct", asked, speed, false) };
   }
 
-  // The smallest move of a drivetrain (CONTRACT §4): MIN_WHEEL_DEG of rotation of its leading wheel. A smaller
-  // target is refused, not rounded up to a step or answered as done. A target of exactly 0 asks for no motion
-  // and is answered as done.
-  private smallestStep(
+  // The smallest move of a drivetrain (CONTRACT §4): MIN_WHEEL_DEG of rotation of its leading wheel. A nonzero
+  // target under it is answered as done with nothing sent, and the result carries the note returned here: a
+  // script that computes a correction (turn(90 - measured)) gets an answer it can go on from. A target of
+  // exactly 0 asks for no motion and has no note.
+  private underSmallestStep(
     tool: string,
     field: string,
     asked: number,
     unit: string,
     leadDeg: number,
     perDeg: number, // units of `field` per degree of the leading wheel
-  ): void {
-    if (leadDeg === 0 || Math.abs(leadDeg) >= MIN_WHEEL_DEG) return;
+  ): string | undefined {
+    if (leadDeg === 0 || Math.abs(leadDeg) >= MIN_WHEEL_DEG) return undefined;
     const min = Math.ceil(MIN_WHEEL_DEG * perDeg * 100) / 100;
-    throw rerr(
-      "invalid_argument",
-      `${tool}: ${field} ${asked} is below the smallest move of this drivetrain, ${min} ${unit} (${MIN_WHEEL_DEG} degree of wheel rotation, the step its wheels are measured in), so nothing was sent and nothing moved. Ask for at least ${min} ${unit}, or 0 for no motion. A move this small overshoots by a few wheel degrees: read measured.`,
-    );
+    return `${tool}: ${field} ${asked} is below the smallest move of this drivetrain, ${min} ${unit} (${MIN_WHEEL_DEG} degree of wheel rotation, the step its wheels are measured in): nothing was sent and nothing moved.`;
   }
 
   private planDrive(a: Args): Run {
@@ -566,19 +566,27 @@ class RuntimeImpl implements LocalRuntime {
     const dist = Math.sign(asked) * Math.min(Math.abs(asked), lim.max_drive_cm);
     const sp = this.speed(a);
     const wheel = (dt.forward_sign * 360 * dist) / (Math.PI * dt.wheel_diameter_cm);
-    this.smallestStep("drive", "distance_cm", asked, "cm", wheel, (Math.PI * dt.wheel_diameter_cm) / 360);
+    const note = this.underSmallestStep(
+      "drive",
+      "distance_cm",
+      asked,
+      "cm",
+      wheel,
+      (Math.PI * dt.wheel_diameter_cm) / 360,
+    );
     const until = a.until === undefined ? undefined : compileCondition(a.until, this.resolver, "until");
     return moving((signal) =>
       this.move(
         "drive",
         { distance_cm: asked, speed_pct: sp.asked },
-        { distance_cm: dist, speed_pct: sp.speed },
+        { distance_cm: note ? 0 : dist, speed_pct: sp.speed },
         [...cut("distance_cm", asked, dist, true), ...sp.clamps],
-        wheel,
-        wheel,
+        note ? 0 : wheel,
+        note ? 0 : wheel,
         sp.speed,
         until,
         signal,
+        note,
       ),
     );
   }
@@ -589,19 +597,20 @@ class RuntimeImpl implements LocalRuntime {
     const angle = Math.sign(asked) * Math.min(Math.abs(asked), this.prof.limits.max_turn_deg);
     const sp = this.speed(a);
     const w = (dt.forward_sign * angle * dt.axle_track_cm) / dt.wheel_diameter_cm; // positive angle = counter-clockwise: right wheel forward
-    this.smallestStep("turn", "angle_deg", asked, "deg", w, dt.wheel_diameter_cm / dt.axle_track_cm);
+    const note = this.underSmallestStep("turn", "angle_deg", asked, "deg", w, dt.wheel_diameter_cm / dt.axle_track_cm);
     const until = a.until === undefined ? undefined : compileCondition(a.until, this.resolver, "until");
     return moving((signal) =>
       this.move(
         "turn",
         { angle_deg: asked, speed_pct: sp.asked },
-        { angle_deg: angle, speed_pct: sp.speed },
+        { angle_deg: note ? 0 : angle, speed_pct: sp.speed },
         [...cut("angle_deg", asked, angle, true), ...sp.clamps],
-        -w,
-        w,
+        note ? 0 : -w,
+        note ? 0 : w,
         sp.speed,
         until,
         signal,
+        note,
       ),
     );
   }
@@ -625,7 +634,7 @@ class RuntimeImpl implements LocalRuntime {
     const right = toDeg(center + (theta * dt.axle_track_cm) / 2);
     // the outer wheel leads: its path per degree of heading is (radius + half the axle track)
     const lead = Math.abs(left) >= Math.abs(right) ? left : right;
-    this.smallestStep(
+    const note = this.underSmallestStep(
       "arc",
       "angle_deg",
       asked,
@@ -638,16 +647,17 @@ class RuntimeImpl implements LocalRuntime {
       this.move(
         "arc",
         { radius_cm: radius, angle_deg: asked, direction, speed_pct: sp.asked },
-        { radius_cm: radius, angle_deg: round1(angle), direction, speed_pct: sp.speed },
+        { radius_cm: radius, angle_deg: note ? 0 : round1(angle), direction, speed_pct: sp.speed },
         [
           ...(angle !== asked ? [{ arg: "angle_deg", requested: asked, applied: round1(angle), target: true }] : []),
           ...sp.clamps,
         ],
-        left,
-        right,
+        note ? 0 : left,
+        note ? 0 : right,
         sp.speed,
         until,
         signal,
+        note,
       ),
     );
   }
@@ -1188,6 +1198,7 @@ class RuntimeImpl implements LocalRuntime {
     speed: number,
     until: CompiledCondition | undefined,
     signal: AbortSignal,
+    note?: string, // why nothing was sent: the target is under the smallest move
   ): Promise<RuntimeResult> {
     const { dt, pair, cmd } = this.drivetrain(tool);
     const t0 = this.clock.now();
@@ -1278,6 +1289,7 @@ class RuntimeImpl implements LocalRuntime {
         ...clampFields(run.reason, clamps, run.clamped),
         ...(run.readings ? { readings: run.readings } : {}),
         ...(run.problem ? { problem: run.problem } : {}),
+        ...(note ? { note } : {}),
         chunks: run.chunks,
         ms: Math.round(this.clock.now() - t0),
       },
@@ -1661,6 +1673,7 @@ class RuntimeImpl implements LocalRuntime {
       const did = {
         ...(isObj(data.measured) ? { measured: data.measured as Record<string, Value> } : {}),
         ...(data.clamped === true ? { clamped: true as const } : {}),
+        ...(typeof data.note === "string" ? { note: data.note } : {}),
       };
       if (reason === "preempted") {
         record({ path, tool, ok: false, reason, ...did, ms: ms() });

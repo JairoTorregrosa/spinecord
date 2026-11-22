@@ -1,11 +1,12 @@
 // `--print-add`: the one command that registers this server with Claude Code, written for the computer it runs
 // on. Every path in it is absolute, so the registration works from whatever folder Claude Code is started in,
-// and quoted for that computer's shells, so a folder with a space in its name works. Pure: no I/O.
+// and quoted for that computer's shells, so a folder with a space in its name works. No I/O.
+import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { pathFrom } from "./config";
 
 /** Flags whose value is a file. `--twin`, `--ev3` and `--ev3dev` may stand alone (the example robot). */
-const PATH_FLAGS = ["--twin", "--world", "--ev3", "--ev3dev", "--config", "--ssh-key"];
+const PATH_FLAGS = ["--twin", "--world", "--ev3", "--ev3dev", "--config", "--ssh-key", "--log-file"];
 const PLAIN = /^[A-Za-z0-9_@+=:,./-]+$/;
 
 /** One argument as a POSIX shell (sh, bash, zsh) reads it back unchanged. */
@@ -40,9 +41,10 @@ export interface AddCommandInput {
  * `claude mcp add -s user spinecord -- bun "<repo>/apps/local/main.ts" [robots...]` for that computer.
  * On Windows the separator is written `"--"`: PowerShell takes a bare `--` for itself when `claude` is a script
  * (the `claude.ps1` that npm installs), and the robot flags after it are then read as options of `claude`.
- * Quoted, it reaches `claude` from PowerShell and from cmd.exe.
+ * Quoted, it reaches `claude` from PowerShell and from cmd.exe. `home` is the home folder a leading `~` of a
+ * path stands for; tests pass one.
  */
-export function addCommand({ platform, repo, args }: AddCommandInput): string {
+export function addCommand({ platform, repo, args }: AddCommandInput, home: string = homedir()): string {
   const windows = platform === "win32";
   const rules = windows ? win32 : posix;
   const quote = windows ? quoteWindows : quotePosix;
@@ -56,7 +58,7 @@ export function addCommand({ platform, repo, args }: AddCommandInput): string {
       const next = args[i + 1];
       const value = eq !== -1 ? arg.slice(eq + 1) : next !== undefined && !next.startsWith("-") ? args[++i]! : null;
       out.push(flag);
-      if (value !== null) out.push(quote(pathFrom(repo, value, rules)));
+      if (value !== null) out.push(quote(pathFrom(repo, value, rules, home)));
     } else out.push(PLAIN.test(arg) ? arg : quote(arg));
   }
   return out.join(" ");
