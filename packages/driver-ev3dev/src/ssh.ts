@@ -217,11 +217,12 @@ export function bridgeCommand(remotePath: string): string {
   const m = /^([A-Za-z_][A-Za-z0-9_]*)\.py$/.exec(name);
   if (!m) return `python3 -u ${path}`;
   const code = [
-    "import os, sys, runpy",
+    "import os, sys",
     `d = os.path.expanduser('${posix.dirname(path)}')`,
     "sys.path[0] = d",
+    "import runpy",
     `m = __import__('${m[1]!}')`,
-    `getattr(m, 'run', None) and m.run(['${name}']) or runpy.run_path(os.path.join(d, '${name}'), run_name='__main__')`,
+    `(getattr(m, 'run', None) or (lambda a: runpy.run_path(os.path.join(d, '${name}'), run_name='__main__')))(['${name}'])`,
   ].join("; ");
   return `python3 -u -c "${code}"`;
 }

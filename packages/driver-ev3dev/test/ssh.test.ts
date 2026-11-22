@@ -7,7 +7,7 @@ import { bridgeCommand } from "../src/ssh";
 describe("the command that starts the bridge", () => {
   test("a file named like a module is imported, so Python keeps its bytecode", () => {
     expect(bridgeCommand("~/spinecord/ev3dev_bridge.py")).toBe(
-      `python3 -u -c "import os, sys, runpy; d = os.path.expanduser('~/spinecord'); sys.path[0] = d; m = __import__('ev3dev_bridge'); getattr(m, 'run', None) and m.run(['ev3dev_bridge.py']) or runpy.run_path(os.path.join(d, 'ev3dev_bridge.py'), run_name='__main__')"`,
+      `python3 -u -c "import os, sys; d = os.path.expanduser('~/spinecord'); sys.path[0] = d; import runpy; m = __import__('ev3dev_bridge'); (getattr(m, 'run', None) or (lambda a: runpy.run_path(os.path.join(d, 'ev3dev_bridge.py'), run_name='__main__')))(['ev3dev_bridge.py'])"`,
     );
   });
   test("any other name runs as a script", () => {
@@ -27,7 +27,8 @@ describe.skipIf(!posixPython)("the command, run by a POSIX shell with the local 
   const home = mkdtempSync(join(tmpdir(), "spinecord-launch-"));
   mkdirSync(join(home, "b"));
   // a module of the session's working folder (the home folder) must not shadow the standard library
-  writeFileSync(join(home, "time.py"), "raise SystemExit('the home folder shadowed time')\n");
+  for (const mod of ["runpy", "json"])
+    writeFileSync(join(home, `${mod}.py`), `raise SystemExit('the home folder shadowed ${mod}')\n`);
   const run = (file: string, body: string): string => {
     writeFileSync(join(home, "b", file), body);
     const out = Bun.spawnSync(["sh", "-c", bridgeCommand(`~/b/${file}`)], {
@@ -37,9 +38,9 @@ describe.skipIf(!posixPython)("the command, run by a POSIX shell with the local 
     return `${out.stdout.toString()}${out.stderr.toString()}`.trim();
   };
   const script = (tag: string) =>
-    `import sys, time\ndef main():\n    print('${tag}', sys.argv[0] if sys.argv else '')\nif __name__ == '__main__':\n    main()\n`;
+    `import sys, json\ndef main():\n    print('${tag}', sys.argv[0] if sys.argv else '')\nif __name__ == '__main__':\n    main()\n`;
   test("a module with run is imported and run, with its name as argv[0]", () => {
-    expect(run("withrun.py", "import sys, time\ndef run(argv):\n    print('run', argv[0])\n")).toBe("run withrun.py");
+    expect(run("withrun.py", "import sys, json\ndef run(argv):\n    print('run', argv[0])\n")).toBe("run withrun.py");
   });
   test("a module without run is run as a script", () => {
     expect(run("norun.py", script("main"))).toStartWith("main");
