@@ -479,6 +479,10 @@ const DATA: Record<string, Schema> = {
       max_program_ms: num,
     }),
     notes: strings,
+    scan_error: nullable("string", {
+      description:
+        "null when the device list is current. Else why the latest device scan failed; the list is then the one of the last scan that succeeded.",
+    }),
   }),
   describe_device: obj({ ...deviceFields, channels: list(channelSpec), commands: list(commandSpec) }),
   read_device: readings,

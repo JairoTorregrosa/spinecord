@@ -3,7 +3,7 @@ import { RuntimeError } from "../protocol/types";
 import type { DeviceSpec, Limits, Provider, RobotProfile, RobotTool, RuntimeResult } from "../protocol/types";
 import { FakeClock } from "./clock";
 import { MockProvider } from "./mock";
-import { createRuntime, LINK_FRESH_MS, MAX_CHUNK_MS, UNTIL_POLL_MS } from "./runtime";
+import { createRuntime, LINK_FRESH_MS, MAX_CHUNK_MS, SCAN_RETRY_MAX_MS, SCAN_RETRY_MS, UNTIL_POLL_MS } from "./runtime";
 
 const LIMITS = {
   max_speed_pct: 80,
@@ -318,6 +318,82 @@ describe("sensing", () => {
       "invalid_argument",
     );
     await fails(s.call("sample_device", { device: "mock.gas", channel: "ppm", duration_ms: 9000 }), "invalid_argument");
+  });
+});
+
+describe("device re-scan", () => {
+  const TOUCH: DeviceSpec = {
+    id: "mock.touch",
+    provider: "mock",
+    kind: "touch",
+    roles: [],
+    channels: [{ name: "pressed", type: "boolean", description: "Pressed." }],
+    commands: [],
+    description: "A touch sensor plugged in later.",
+  };
+  test("a re-scan that fails keeps the last good registry, is reported by describe_robot, and is retried", async () => {
+    const s = setup();
+    await s.rt.ready();
+    const t0 = s.clock.now();
+    s.mock.failScans = 1;
+    s.mock.values.set("mock.touch.pressed", true);
+    s.mock.plug(TOUCH); // tells the runtime to scan again; that scan fails
+    // every kind of call keeps working on the registry of the last scan that succeeded
+    const d = await s.call("describe_robot");
+    expect(d.devices.map((x: any) => x.id)).not.toContain("mock.touch");
+    expect(d.scan_error).toContain("the brick did not answer the device scan");
+    expect((await s.call("read_device", { device: "mock.gas" }))[0].value).toBe(412);
+    expect((await s.call("read_all")).readings.length).toBeGreaterThan(0);
+    expect((await s.call("drive", { distance_cm: 5 })).reason).toBe("completed");
+    // the retry comes by itself, SCAN_RETRY_MS after the failure
+    await s.clock.sleep(SCAN_RETRY_MS + 1);
+    const after = await s.call("describe_robot");
+    expect(after.scan_error).toBeNull();
+    expect(after.devices.map((x: any) => x.id)).toContain("mock.touch");
+    expect((await s.call("read_device", { device: "mock.touch" }))[0].value).toBe(true);
+    expect(s.mock.scans).toBe(3); // the first scan, the one that failed, one retry
+    expect(s.clock.now() - t0).toBeGreaterThanOrEqual(SCAN_RETRY_MS);
+    s.rt.dispose();
+  });
+  test("scans that keep failing are retried with a growing wait, and refresh() rejects with the failure", async () => {
+    const s = setup();
+    await s.rt.ready();
+    s.mock.failScans = 4;
+    const t0 = s.clock.now();
+    await expect(s.rt.refresh()).rejects.toThrow("did not answer");
+    const seen: number[] = [];
+    while (s.mock.failScans > 0) {
+      const n = s.mock.scans;
+      await s.clock.sleep(10);
+      if (s.mock.scans > n) seen.push(Math.round((s.clock.now() - t0) / 10) * 10);
+      expect((await s.call("read_device", { device: "mock.gas" }))[0].value).toBe(412);
+    }
+    // waits of 250, 500 and 1000 ms after the first failure
+    expect(seen).toEqual([SCAN_RETRY_MS, 3 * SCAN_RETRY_MS, 7 * SCAN_RETRY_MS]);
+    expect((await s.call("describe_robot")).scan_error).toContain("4 in a row");
+    await s.clock.sleep(8 * SCAN_RETRY_MS + 10);
+    expect((await s.call("describe_robot")).scan_error).toBeNull();
+    const scans = s.mock.scans;
+    await s.clock.sleep(2 * SCAN_RETRY_MAX_MS);
+    expect(s.mock.scans).toBe(scans); // a scan that succeeded ends the retries
+  });
+  test("dispose() ends the retries; a first scan that fails still fails ready() and every call", async () => {
+    const s = setup();
+    await s.rt.ready();
+    s.mock.failScans = 100;
+    await s.rt.refresh().catch(() => {});
+    s.rt.dispose();
+    const scans = s.mock.scans;
+    await s.clock.sleep(4 * SCAN_RETRY_MAX_MS);
+    expect(s.mock.scans).toBe(scans);
+
+    const clock = new FakeClock();
+    const mock = new MockProvider({ clock });
+    mock.failScans = 1;
+    const rt = createRuntime({ profile: s.profile, providers: [mock], clock });
+    await expect(rt.ready()).rejects.toThrow("did not answer");
+    await fails(rt.call("read_all", {}, new AbortController().signal), "internal");
+    rt.dispose();
   });
 });
 

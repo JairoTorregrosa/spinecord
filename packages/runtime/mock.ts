@@ -51,6 +51,8 @@ export class MockProvider implements Provider {
   readonly reads: string[] = []; // device of every read(), in the order they were made
   frameTs = 0; // capture time of the camera frame
   failRead: string | undefined; // device id whose reads throw
+  failScans = 0; // how many of the next devices() calls throw
+  scans = 0; // devices() calls
   private readonly clock: Clock;
   private readonly rate: number;
   latency: number; // transport round trip, ms; a test may change it between calls (a link that got slower)
@@ -266,6 +268,11 @@ export class MockProvider implements Provider {
   }
 
   async devices(): Promise<DeviceSpec[]> {
+    this.scans++;
+    if (this.failScans > 0) {
+      this.failScans--;
+      throw new Error("the brick did not answer the device scan");
+    }
     return this.specs;
   }
   onDevicesChanged(cb: () => void): () => void {

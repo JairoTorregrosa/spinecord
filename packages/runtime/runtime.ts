@@ -38,6 +38,9 @@ export const UNTIL_POLL_MS = 10;
 // How old a timed round trip may be and still let the first chunk of a move coast: about what a move itself
 // relies on between two of its chunks. Older than this, the link is timed again before anything moves.
 export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
+// A device re-scan that failed is tried again after this long, doubling after every failure up to the max.
+export const SCAN_RETRY_MS = 250;
+export const SCAN_RETRY_MAX_MS = 5000;
 const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image"];
 const ROBOT_TOOLS: readonly RobotTool[] = [
   "describe_robot",
@@ -69,7 +72,9 @@ export interface LocalRuntime extends Runtime {
   readonly backend: BackendKind;
   readonly stop_worst_ms: number; // upper bound for stop(): slowest provider + runtime overhead
   ready(): Promise<void>; // first device scan done (throws if it failed)
-  refresh(): Promise<void>; // re-scan every provider's devices
+  // Re-scans every provider's devices; rejects when the scan failed. The registry of the last scan that
+  // succeeded stays in use meanwhile, calls keep working on it, and the scan is tried again by itself.
+  refresh(): Promise<void>;
   dispose(): void; // unsubscribe from every provider
 }
 export interface ProgramStep {
@@ -138,7 +143,13 @@ class RuntimeImpl implements LocalRuntime {
   private readonly linkMs = new WeakMap<Provider, number>();
   private readonly linkAt = new WeakMap<Provider, number>(); // when that read came back
   private readonly inflight = new Set<AbortController>();
+  // What every call waits for: the latest scan. It rejects only while no scan has ever succeeded.
   private scan: Promise<void>;
+  private scanned = false; // `entries` comes from a scan that succeeded
+  // A re-scan failed and `entries` is the registry of the last scan that succeeded; shown by describe_robot.
+  private scanFailure: { message: string; attempts: number } | undefined;
+  private retry: AbortController | undefined; // the wait before the next attempt
+  private disposed = false;
   readonly backend: BackendKind;
 
   constructor(o: RuntimeOptions) {
@@ -166,7 +177,7 @@ class RuntimeImpl implements LocalRuntime {
     this.scan.catch(() => {}); // surfaced by ready() and by every call()
     for (const p of built) {
       const off = p.onDevicesChanged?.(() => {
-        // A failed re-read is not hidden: every call fails with it until a later scan succeeds.
+        // A failed re-read is not hidden: describe_robot reports it until a later scan succeeds.
         void this.refresh().catch(() => {});
       });
       if (off) this.unsubscribe.push(off);
@@ -179,6 +190,8 @@ class RuntimeImpl implements LocalRuntime {
   private callerActivity: RobotActivity = "idle"; // activity of the call being planned, as its caller reported it
   private readonly unsubscribe: (() => void)[] = [];
   dispose(): void {
+    this.disposed = true;
+    this.retry?.abort();
     for (const off of this.unsubscribe.splice(0)) off();
   }
 
@@ -193,10 +206,29 @@ class RuntimeImpl implements LocalRuntime {
     return this.scan;
   }
   refresh(): Promise<void> {
+    this.retry?.abort(); // this attempt is the retry
+    this.retry = undefined;
     // one scan at a time, in the order requested
-    this.scan = this.scan.catch(() => {}).then(() => this.rescan());
+    const attempt = this.scan.catch(() => {}).then(() => this.rescan());
+    // Calls wait for the attempt. One that fails leaves the last good registry in place and is tried again;
+    // with no registry at all (no scan ever succeeded) calls fail with it.
+    this.scan = attempt.catch((err) => {
+      this.scanFailed(err);
+      if (!this.scanned) throw err;
+    });
     this.scan.catch(() => {});
-    return this.scan;
+    attempt.catch(() => {});
+    return attempt;
+  }
+  private scanFailed(err: unknown): void {
+    const attempts = (this.scanFailure?.attempts ?? 0) + 1;
+    this.scanFailure = { message: String((err as Error)?.message ?? err), attempts };
+    if (this.disposed) return;
+    const wait = new AbortController();
+    this.retry = wait;
+    void this.clock.sleep(Math.min(SCAN_RETRY_MS * 2 ** (attempts - 1), SCAN_RETRY_MAX_MS), wait.signal).then(() => {
+      if (!wait.signal.aborted) void this.refresh().catch(() => {});
+    });
   }
 
   private async rescan(): Promise<void> {
@@ -215,6 +247,8 @@ class RuntimeImpl implements LocalRuntime {
         next.set(d.id, { spec: { ...d, roles: [...roles] }, provider: p });
       }
     this.entries = next;
+    this.scanned = true;
+    this.scanFailure = undefined;
   }
 
   private roleMap(): Record<string, string> {
@@ -1557,6 +1591,9 @@ class RuntimeImpl implements LocalRuntime {
       drivetrain: this.prof.drivetrain ?? null,
       limits: this.prof.limits,
       notes: this.prof.notes,
+      scan_error: this.scanFailure
+        ? `device scan failed (${this.scanFailure.attempts} in a row): ${this.scanFailure.message}. The device list and each channel's active flag are those of the last scan that succeeded and may be out of date; the scan is tried again by itself.`
+        : null,
     };
   }
 

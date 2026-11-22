@@ -67,6 +67,8 @@ Headings, turn angles and rotation rates about the vertical axis are counter-clo
 
 The runtime reads and commands a device through its manifest alone: a provider that announces a kind outside this table needs no change in the runtime or the tools.
 
+**Device scans.** The runtime scans its providers' devices when the link is attached and again whenever a provider says its list changed (a sensor plugged or unplugged, a sensor mode switch that moved the `active` flags). A scan that fails after one has succeeded changes nothing: every call keeps working on the registry of the last scan that succeeded, `describe_robot` says so in `scan_error` (why the scan failed and how many times in a row; null when the registry is current), and the runtime scans again by itself after 250 ms, doubling the wait after each failure up to 5 s, until a scan succeeds or the link closes. The first scan of a link has no registry to fall back on: when it fails, the robot does not come online (§1).
+
 ## 3. Robot profile
 
 `RobotProfile {id, roles, drivetrain?, limits, notes}`. Without `drivetrain`, `drive/turn/arc` return `unsupported`. The default EV3 profile: educator base, pair B+C, wheel 5.6 cm, axle 12 cm. Notes are facts for the model, written by whoever built the robot.
