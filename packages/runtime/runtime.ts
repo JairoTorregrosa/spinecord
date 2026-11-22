@@ -549,7 +549,7 @@ class RuntimeImpl implements LocalRuntime {
   private heading(dt: Drivetrain): { entry: Entry; channel: string } | undefined {
     const h = dt.heading;
     if (!h) return undefined;
-    const e = this.entries.get(this.roleMap()[h.device] ?? h.device);
+    const e = this.entries.get(h.device) ?? this.entries.get(this.roleMap()[h.device] ?? ""); // id, then role
     return e?.spec.channels.some((c) => c.name === h.channel && c.type === "number")
       ? { entry: e, channel: h.channel }
       : undefined;

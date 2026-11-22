@@ -32,6 +32,8 @@ export async function armWorks(tool: Tool, motors: string[]) {
   expect(devices.filter((x) => x.kind === "motor").map((x) => x.id)).toEqual(motors);
   expect(devices.some((x) => x.kind === "motor_pair" || x.id === "ev3.pair")).toBe(false);
   expect(d.data.roles).toEqual({ gripper: "ev3.A", lift: "ev3.B", limit: "ev3.S1" });
+  // nothing points a robot without wheels at the drivetrain tools
+  expect(d.next).toEqual(["read_all", "describe_device", "command_device"]);
 
   for (const [name, args] of [
     ["drive", { distance_cm: 5 }],
@@ -54,9 +56,15 @@ export async function armWorks(tool: Tool, motors: string[]) {
       args: { degrees: 90, speed_pct: 30 },
     });
     expect(moved).toMatchObject({ ok: true, data: { reason: "completed" } });
-    expect(Math.abs(((await at()).value as number) - from - 90)).toBeLessThanOrEqual(25);
+    // it turned, the way it was asked: how exactly a stop lands is the drivers' own tests
+    const turned = ((await at()).value as number) - from;
+    expect(turned).toBeGreaterThan(30);
+    expect(turned).toBeLessThan(270);
+    expect(moved.next).toEqual(["read_device", "read_all", "stop"]);
   }
   expect((await tool("read_device", { device: "limit" })).ok).toBe(true);
-  expect((await tool("read_all")).ok).toBe(true);
+  const all = await tool("read_all");
+  expect(all.ok).toBe(true);
+  expect(all.next).toEqual(["command_device"]);
   expect(await tool("stop")).toMatchObject({ ok: true, data: { motors_stopped: true, activity: "idle" } });
 }

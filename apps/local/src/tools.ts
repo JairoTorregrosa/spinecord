@@ -18,6 +18,8 @@ export const TOOL: ReadonlyMap<string, ToolDef> = new Map(TOOLS.map((t) => [t.na
 // fail at start if the catalog uses a schema keyword the validator would not enforce
 for (const t of TOOLS) assertSupported(t.input, `tool ${t.name}.input`);
 
+/** The tools that need a drivetrain: a robot without one is never pointed at them. */
+const DRIVETRAIN_TOOLS = ["drive", "turn", "arc"];
 /** Suggested next tools after a success. Every name is a served tool (tested). */
 export const NEXT_OK: Record<string, string[]> = {
   list_robots: ["describe_robot"],
@@ -61,6 +63,16 @@ function next(tool: string, error?: ToolError, afterMove = false, fix: string[] 
   // retryable and argument errors: the same tool is the obvious next step, after the tools that fix the error
   const same = (error.retryable || error.code === "invalid_argument") && TOOL.has(tool) ? [tool] : [];
   return [...new Set([...fix.filter((t) => TOOL.has(t)), ...same, ...base])];
+}
+
+/** `next` after a success on this robot: without a drivetrain it names no drivetrain tool (CONTRACT §3). */
+function nextFor(robot: LocalRobot, tool: string): string[] {
+  const all = next(tool);
+  if (robot.runtime()?.profile().drivetrain) return all;
+  const kept = all.filter((t) => !DRIVETRAIN_TOOLS.includes(t));
+  return kept.includes("command_device") || !all.some((t) => DRIVETRAIN_TOOLS.includes(t))
+    ? kept
+    : [...kept, "command_device"];
 }
 
 export interface Out {
@@ -125,7 +137,7 @@ export async function callTool(
     const { robot_id: _robot, request_id: _label, ...rest } = input;
     const result = await robot.call(name, rest, cancel);
     return {
-      envelope: { ok: true, robot: robot.view(), data: result.data, next: next(name) },
+      envelope: { ok: true, robot: robot.view(), data: result.data, next: nextFor(robot, name) },
       ...(result.image ? { image: result.image } : {}),
       moved: result.moved === true,
       internal: result.internal ?? [],
