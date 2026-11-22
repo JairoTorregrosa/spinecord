@@ -38,6 +38,8 @@ flowchart LR
 
 One process on your laptop: the MCP server, the runtime and the robots. No account, no network service. Needs [bun](https://bun.sh) ≥ 1.3.14, git and Claude Code.
 
+### 1. Install
+
 macOS or Linux (Terminal), Windows (PowerShell): the same three commands.
 
 ```sh
@@ -48,32 +50,116 @@ bun install --filter @spinecord/local
 
 `--filter @spinecord/local` installs what the server needs and nothing of the development toolchain: 6 packages, 16 MB. Measured on a fresh clone with an empty cache: 0.7 s on macOS (Apple M1 Pro), 1.1 s on a Windows CI runner. A plain `bun install` is 30 packages, 95 MB, 1.9 s on the same Mac.
 
-Then register it with Claude Code, with the full path of the clone:
+### 2. Register it with Claude Code
+
+Still in the `spinecord` folder, ask the server for the command of this computer:
 
 ```sh
-# macOS, Linux
-claude mcp add spinecord -- bun "$PWD/apps/local/main.ts"
+bun apps/local/main.ts --print-add
 ```
 
-```powershell
-# Windows PowerShell
-claude mcp add spinecord -- bun "$PWD\apps\local\main.ts"
+It prints one line, with the full path of your clone in quotes. On a Mac it looks like this:
+
+```sh
+claude mcp add -s user spinecord -- bun "/Users/you/spinecord/apps/local/main.ts"
 ```
+
+Copy the printed line, paste it in the same terminal and press Enter. The same line works in Terminal, PowerShell and cmd.exe.
+
+- `-s user` registers the server for every folder of your user. Without it Claude Code knows the server only in the folder where the command ran.
+- The path is absolute, so the server starts from whatever folder Claude Code is in. Typed by hand, the line is `claude mcp add -s user spinecord -- bun "<full path of the clone>/apps/local/main.ts"`; cmd.exe does not expand `$PWD`, so on Windows use the printed line.
+
+### 3. Allow its tools once
+
+Claude Code asks before the first use of each tool, and spinecord has 14. A script that drives the robot ([Code Mode](docs/code-mode.md)) waits at each of those questions. Allow the server's tools once: inside Claude Code type `/permissions`, choose Allow, add the rule `mcp__spinecord`. The same rule as a line of `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["mcp__spinecord"] } }
+```
+
+### 4. Start Claude Code in a folder of your own
+
+```sh
+mkdir my-robot
+cd my-robot
+claude
+```
+
+Make the folder anywhere outside the clone (your home folder, the desktop). Inside the clone Claude Code reads this repository's `AGENTS.md` and source, which are written for people who change spinecord, not for driving a robot.
 
 `/mcp` inside Claude Code shows `spinecord` connected with 14 tools. Ask: "list the robots, then drive until 15 cm from the wall".
 
-Without arguments the server runs a simulated twin of the example robot (`r1-sim`) in an empty room. Arguments after `main.ts` choose the robots:
+### Choose the robots
+
+Without arguments the server runs a simulated twin of the example robot (`r1-sim`) in an empty room. Arguments after `--print-add` choose the robots:
 
 | Robot | Arguments |
 |---|---|
-| a twin | `--twin <robot.json> --world <world.json>` |
-| a LEGO EV3 on stock firmware, USB | `--ev3 <robot.json>`, then open `http://127.0.0.1:8767/` in Chrome or Edge and press "Connect EV3". Keep that tab open; it may be covered or in the background |
-| a LEGO EV3 on ev3dev | `--ev3dev <robot.json> --ssh <user@host>` (`--install-bridge` copies the bridge to the brick) |
-| several at once | `--ev3 r.json --twin r.json --world w.json`, or `--config <file.json>` |
+| the twin of the example robot | none, or `--twin` (`--world <world.json>` for another room) |
+| a LEGO EV3 on stock firmware, USB | `--ev3`, then open `http://127.0.0.1:8767/` in Chrome or Edge and press "Connect EV3". Keep that tab open; it may be covered or in the background |
+| a LEGO EV3 on ev3dev | `--ev3dev --ssh robot@<host> --install-bridge`, after the ssh key below |
+| an EV3 and its twin | `--ev3 --twin` |
+| a robot file of your own | `--ev3 <robot.json>`, `--twin <robot.json>`, `--ev3dev <robot.json>` |
+| several robots of a kind | `--config <file.json>` |
 
-Robot file: [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json). Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](CONTRACT.md). The server logs on stderr (`claude --debug` shows it); closing Claude Code stops the motors.
+The registration holds the arguments. To switch robots, remove it and add it again, then start Claude Code again:
 
-Tested on a real EV3: [`docs/hardware-log.md`](docs/hardware-log.md).
+```sh
+claude mcp remove -s user spinecord
+bun apps/local/main.ts --print-add --ev3 --twin
+```
+
+and run the line it prints.
+
+`--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](CONTRACT.md). The server logs on stderr (`claude --debug` shows it).
+
+### An EV3 on ev3dev: the ssh key first
+
+The server runs `ssh` without a keyboard: it cannot type a password and cannot answer the question about a new host key. Set both up once per computer and brick. `<host>` is the brick's name or address on your network (the brick shows its address at the top of its screen); `robot` is ev3dev's user, and its password is `maker` unless you changed it.
+
+macOS, Linux:
+
+```sh
+ssh-keygen -t ed25519      # only when you have no key yet; press Enter at each question
+ssh-copy-id robot@<host>   # answer "yes" to the host key, then type the brick's password
+ssh robot@<host> exit      # passes when it ends without asking anything
+```
+
+Windows PowerShell (no `ssh-copy-id` there):
+
+```powershell
+ssh-keygen -t ed25519
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh robot@<host> "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+ssh robot@<host> exit
+```
+
+Then register with `--ev3dev --ssh robot@<host> --install-bridge`: `--install-bridge` copies the bridge (one Python file) to the brick. A brick that is off or out of reach does not stop the server: `list_robots` shows it `offline` with what to check, the server keeps trying, and the robot is `online` when the brick answers.
+
+### Check the direction before the first run
+
+Put the robot on the floor with free space ahead and ask: "drive forward 5 cm". Look at it. If it went backward, the motors are mounted the other way round: open the robot file (`deployments/example/robots/r1.json` in your clone, or your own file), change `"forward_sign": 1` to `"forward_sign": -1` under `profile.drivetrain`, save, and start Claude Code again.
+
+### Stopping the robot
+
+| What you do | What happens |
+|---|---|
+| Press `Esc` in Claude Code | Claude Code interrupts the call. When it cancels a move, the server stops the robot with the same stop as the `stop` tool: it brakes every motor and checks that they read speed 0 |
+| Say "stop the robot" | The `stop` tool. It preempts every call and reports `motors_stopped` |
+| Close Claude Code | The server stops every motor before it exits |
+| Stock EV3: close the bridge tab or pull the USB cable | No further command reaches the brick. The one that is running ends by itself: every motion command is limited to 250 ms on the brick |
+| ev3dev: the network or the computer goes away | A watchdog on the brick brakes every motor after 1 s without a message. A second process on the brick brakes them when the bridge itself is killed |
+
+Keep a hand near the robot on a first run. These paths are tested against the twin, the byte-level EV3 emulator and a fake ev3dev brick; what has run on a real brick is in the next section.
+
+### What has run on a real brick
+
+| Path | On a real brick |
+|---|---|
+| Stock EV3 over USB through the bridge page (`--ev3`) | not run |
+| EV3 on ev3dev with bridge version 4, the one in this repository (`--ev3dev`) | not run |
+| EV3 on ev3dev with bridge version 1 | run on 2026-11-21 |
+
+The dated log and the checklist of what to run: [`docs/hardware-log.md`](docs/hardware-log.md).
 
 Sense → act loops in one model turn (Claude Code Code Mode): [`docs/code-mode.md`](docs/code-mode.md).
 

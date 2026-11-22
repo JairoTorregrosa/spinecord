@@ -38,8 +38,10 @@ Confirm "Yes, turn on Code Mode" on first use. The session shows `Code Mode (exp
 The server is a process on this computer, with the robots inside (README, "Use it from Claude Code"):
 
 ```bash
-claude mcp add spinecord -- bun <repo>/apps/local/main.ts
+claude mcp add -s user spinecord -- bun "<repo>/apps/local/main.ts"
 ```
+
+`bun apps/local/main.ts --print-add`, run in the clone, prints that line with the absolute path for the computer it runs on. Start `claude` in a folder outside the clone.
 
 Check with `/mcp` inside Claude Code: `spinecord` is connected and lists its tools. Then ask for `list_robots`.
 
@@ -199,31 +201,30 @@ A script saves one model turn for every call that follows another without a deci
 
 ## 6. Measured
 
-One run per row (n=1), 2026-11-22. Claude Code 2.1.330, interactive in tmux, model `claude-fable-5-2` at effort medium, the server started by the session as `bun apps/local/main.ts` (the twin `r1-sim` in `apps/local/examples/room.json`), a fresh empty directory, and the prompt of §4, word for word. The server column is the version the server reports (`serverInfo.version`). Read from the session transcript: wall time is first to last entry; a model request is one answer of the model; output tokens are summed once per model request; spinecord calls are the tool calls the transcript lists.
+One run (n=1), 2026-11-22, Code Mode on. Server 3.0.0 (the version it reports in `serverInfo.version`), Claude Code 2.1.330, interactive in tmux, model `claude-fable-5-2` at effort medium, the server started by the session as `bun apps/local/main.ts` (the twin `r1-sim` in `apps/local/examples/room.json`), a fresh empty directory, and the prompt of §4, word for word. Read from the session transcript: wall time is first to last entry; a model request is one answer of the model; output tokens are summed once per model request; spinecord calls are the tool calls the transcript lists.
 
-| Server | Code Mode | Wall time | Model requests | spinecord calls | Output tokens | Scripts that threw | Result |
-|---|---|---|---|---|---|---|---|
-| 2.0.0 | off | 58 s | 15 | 14 | 2,596 | — | 4 legs, stops at 15.0 / 15.1 / 15.3 / 15.6 cm, turns 89° |
-| 2.0.0 | on | 134 s | 6 | 53 (40 `read_device`) | 3,565 | 1 | 4 legs, stops at 15.0 / 14.7 / 14.9 / 14.9 cm, turns 88–89° |
-| 3.0.0 | on | 74 s | 3 | 27 (16 `read_device`) | 2,386 | 0 | 4 legs, stops at 14.9 / 14.7 / 14.6 / 14.9 cm, turns 88–90° |
+| Wall time | Model requests | spinecord calls | Output tokens | Scripts that threw | Result |
+|---|---|---|---|---|---|
+| 74 s | 3 | 27 (16 `read_device`) | 2,386 | 0 | 4 legs, stops at 14.9 / 14.7 / 14.6 / 14.9 cm, turns 88–90° |
 
-What the rows show:
+What the run shows:
 
-- For four legs with no decision between calls, plain calls are the faster way (§5). The eight calls of §4 take about 18 s on the twin; the rest of a Code Mode run is the model writing scripts and the reads it adds to them.
-- The script that threw in the 2.0.0 row read `data.readings` from `read_device`; server 2.0.0 answers `read_device` with a bare array. It ended with the robot still at its start and cost one model request. Server 3.0.0 answers every channel read as `{readings}` (§3.2), and its instructions carry the shapes and the helper of §3.1.
-- In both Code Mode rows the model used `drive` with `until`, not a polling loop of its own, and added reads around each move to cross-check it (pose, odometer, gyro). Those reads are most of the calls, and how many the model adds is its choice in each run. In the 3.0.0 row each leg is one `drive` and one `turn`: the reading that met the condition comes with the move (§3.4).
-- With n=1 per row, wall time and call count carry the spread of the model's choices. The row-to-row difference that does not depend on it is the script that threw on a shape.
+- Each leg is one `drive` with `until` and one `turn`: the reading that met the condition comes with the move (§3.4), and the model wrote no polling loop of its own.
+- 16 of the 27 calls are reads the model added around the moves to cross-check them (pose, odometer, gyro). How many it adds is its choice in each run.
+- The eight calls of §4 take about 18 s on the twin. The rest of the 74 s is the model writing scripts and those reads.
+- No script threw: every channel read answers `{readings}` (§3.2), and the server's instructions carry the shapes and the helper of §3.1.
+- With n=1, wall time and call count carry the spread of the model's choices.
 
 ## 7. Limits
 
 | Limit | Value | What to do |
 |---|---|---|
 | Code you wait on | stops after 10 minutes | Keep one script to one task; a spinecord call is at most `max_command_ms`, a program at most `max_program_ms` |
-| Permissions and hooks | every call in the code goes through them under the tool's usual name | Allow the spinecord tools once, or each call prompts mid-loop |
+| Permissions and hooks | every call in the code goes through them under the tool's usual name | Allow the spinecord tools once (`/permissions`, allow rule `mcp__spinecord`), or each call prompts mid-loop |
 | A `PreToolUse` hook that does not finish | the call is refused | Keep hooks on these tools fast |
 | Where it runs | terminal CLI only; no VS Code panel, Desktop app, cloud session, Remote Control | Run the robot session from a terminal |
 | Resume | only in a terminal with Code Mode on | Keep the variable set |
 | `wait_until` | ≤ 10 s per call | Loop it with a bound, or use `until` on the move |
 | `sample_device` | ≤ 5 s, ≤ 50 Hz | Use it for trends instead of a read loop |
 | Images | one image block per result, outside `structuredContent` | A camera frame still needs a model turn to be looked at |
-| Stop | `Esc` stops the code; the docs do not say that a `finally` still runs | The robot finishes at most its current bounded command. Say "stop the robot" (the `stop` tool) if it must brake now |
+| Stop | `Esc` stops the code. When Claude Code cancels the call in flight (`notifications/cancelled`), the server stops a move with the same verified stop as the `stop` tool and aborts any other call (CONTRACT §1, Cancellation). The docs do not say that a `finally` still runs | Do not count on `finally` to stop the robot. After `Esc`, read the robot (`read_all`) before the next move. "stop the robot" (the `stop` tool) brakes at any time |

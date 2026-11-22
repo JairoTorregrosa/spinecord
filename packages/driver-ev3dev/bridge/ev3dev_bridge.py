@@ -29,7 +29,7 @@ Safety rules of this file:
     guard below. A degree move is always sent as an absolute
     target = the position read at the start of the operation + the delta. run-to-rel-pos is
     not used: on a real brick it counts from the previous target, not from where the motor
-    is, so after a coasting overshoot the next relative move ran backward.
+    is, so a relative move sent after a coasting overshoot runs backward.
   * One command is one operation, limited by time here on the brick: hello's max_op_ms of
     motion, never above MAX_OP_MS. The watchdog covers a dead link during a long operation. A degree move that has not arrived by then is braked and reported as it stands.
   * A read never writes. A channel that needs another sensor mode answers
@@ -81,7 +81,7 @@ EXIT_OK = 0              # stdin closed or a signal: the link was closed
 EXIT_CRASH = 1           # an unexpected error
 EXIT_USAGE = 2           # bad arguments, or not an ev3dev brick
 EXIT_GUARD_LOST = 3      # the guard process ended: every motor was braked and the bridge ended itself
-VERSION = "4"            # 4: beacon_heading counter-clockwise-positive, guard process
+VERSION = "4"            # sent in hello as "bridge"; the provider refuses a bridge older than the one it needs
 # What a beacon channel answers while the sensor sees no beacon. A reading with this error is sent with
 # "absent": true: the sensor answered, the read did not fail.
 NO_BEACON = "no beacon in view on channel 1"
@@ -219,7 +219,7 @@ def next_look(timed_left_s, travel):
     A timed run: when its time is up. A degree move (`travel`: a (counts still to go, counts per second)
     pair per moving motor): half the time the farthest motor still needs at its commanded speed, so the
     looks get closer together toward the target, where the answer is due. Never rarer than TICK_S (the
-    time cap and a blocked wheel are noticed as before) and never closer than MOTION_TICK_S (a look is
+    time cap and a blocked wheel are noticed within one tick) and never closer than MOTION_TICK_S (a look is
     three sysfs reads per motor on a slow processor).
     """
     if timed_left_s is not None:
