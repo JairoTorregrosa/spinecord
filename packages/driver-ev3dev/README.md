@@ -30,7 +30,7 @@ await ev3.command("ev3.pair", "run_pair", { left_deg: 40, right_deg: 40, speed_p
 await ev3.close(); // stops the heartbeat; the brick brakes
 ```
 
-`limits` and `hardware` are required; a missing or non-positive field throws `RuntimeError("misconfigured")`. `EXAMPLE_EV3DEV_HARDWARE` is a documented example and is never applied by itself. Other options: `id` (default `ev3`), `pair` (default B left, C right), `roles`, `heartbeatMs` (300), `helloTimeoutMs` (20000, covers the ssh handshake and Python start), `requestTimeoutMs` (2000), `linkSilenceMs` (3000), `stopLinkMs` (700).
+`limits` and `hardware` are required; a missing or non-positive field throws `RuntimeError("misconfigured")`. `EXAMPLE_EV3DEV_HARDWARE` is a documented example and is never applied by itself. Other options: `id` (default `ev3`), `pair` (default B left, C right), `roles`, `heartbeatMs` (300), `helloTimeoutMs` (60000, covers the ssh handshake and Python start), `requestTimeoutMs` (2000), `linkSilenceMs` (3000), `stopLinkMs` (700).
 
 ### ssh
 
@@ -94,11 +94,10 @@ Installs the bridge, then prints the inventory and one read of every device as J
 
 ## Not verified on hardware
 
-Bridge version 4 has not run on a brick: everything here is tested against the fake tree with the computer's Python. The one run on a brick used a bridge before version 4, on the brick's Python 3.5.3 (`docs/hardware-log.md`, with the checklist of what to run).
+Bridge version 4 ran on a brick on 2026-11-22, on its Python 3.5.3: connect, stop, the square, `kill -9` of the bridge and the guard (`docs/hardware-log.md`, with the checklist of what to run). Everything else here is tested against the fake tree with the computer's Python.
 
 To confirm on a brick:
 
-- the bridge of this version on the brick's Python 3.5 (its syntax is checked with a minimum-version linter, not run on 3.5);
 - the exact mode names and `decimals` per sensor;
 - that `state` shows `running` right after a command write, and `speed` reads exactly 0 at rest;
 - chained coasting operations, and how smooth coasting chunks are over an ssh round trip;

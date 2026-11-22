@@ -2,7 +2,7 @@
 // tree, reached through the real ssh code path with a local program standing in for `ssh` (bench/fake-ssh.ts).
 // Needs a POSIX sh and a local python3, like the driver's own bridge tests.
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRobotFile } from "../../../packages/driver-ev3/robot-file";
@@ -93,6 +93,75 @@ describe("an ev3dev brick over ssh", () => {
       expect(await tool("stop")).toMatchObject({ ok: true, data: { motors_stopped: true, activity: "idle" } });
     } finally {
       expect(await fleet.shutdown()).toEqual([{ robot_id: "dev", motors_stopped: true }]);
+    }
+  });
+
+  /** The fleet of one ev3dev robot reached through fake-ssh, with the bridge already on the brick. */
+  const preinstalled = async (bridge: string, events: string[]) => {
+    const home2 = mkdtempSync(join(tmpdir(), "spinecord-local-home-"));
+    mkdirSync(join(home2, "spinecord"));
+    writeFileSync(join(home2, "spinecord", "ev3dev_bridge.py"), bridge);
+    Object.assign(process.env, { BENCH_FAKE_HOME: home2, SYSFS_ROOT: brick!.root });
+    const robot = parseRobotFile(await Bun.file(EXAMPLE.robot).json(), EXAMPLE.robot);
+    const fleet = await buildFleet(
+      {
+        port: 0,
+        robots: [
+          {
+            source: "ev3dev",
+            id: "dev",
+            robot,
+            hardware: { low_battery_v: 6.5, max_tone_ms: 5000, speech_volume_pct: 80 },
+            ssh: {
+              host: "fake-brick",
+              user: "robot",
+              sshCommand: join(import.meta.dir, "..", "..", "..", "bench", "fake-ssh.ts"),
+            },
+            installBridge: false,
+          },
+        ],
+      },
+      { log: (ev) => void events.push(ev), reconnectMs: 50 },
+    );
+    return { fleet, done: () => rmSync(home2, { recursive: true, force: true }) };
+  };
+  const BRIDGE = readFileSync(
+    join(import.meta.dir, "..", "..", "..", "packages", "driver-ev3dev", "bridge", "ev3dev_bridge.py"),
+    "utf8",
+  );
+  /** The same bridge as a script only: no `run`, its main called from `__main__`. */
+  const withoutRun = (src: string) =>
+    src
+      .replace("def run(argv):", "def _start(argv):")
+      .replace(/\n    run\(sys\.argv\)\s*$/, "\n    _start(sys.argv)\n");
+
+  test.skipIf(!runs)("a bridge without run on the brick is run as a script and comes online", async () => {
+    const legacy = withoutRun(BRIDGE);
+    expect(legacy).not.toMatch(/^def run\(/m);
+    expect(legacy).toContain("    _start(sys.argv)");
+    const events: string[] = [];
+    const { fleet, done } = await preinstalled(legacy, events);
+    try {
+      await online(fleet);
+      expect(events).not.toContain("bridge_installed");
+    } finally {
+      await fleet.shutdown();
+      done();
+    }
+  });
+
+  test.skipIf(!runs)("an older bridge without run is misconfigured, with the reinstall hint", async () => {
+    const older = withoutRun(BRIDGE).replace('VERSION = "4"', 'VERSION = "3"');
+    const events: string[] = [];
+    const { fleet, done } = await preinstalled(older, events);
+    try {
+      await until("an attempt failed", () => events.includes("ev3dev_attach_failed"), 20_000);
+      const dev = await listed(fleet, "dev");
+      expect(dev.link).toBe("offline");
+      expect(dev.connect).toContain("--install-bridge");
+    } finally {
+      await fleet.shutdown();
+      done();
     }
   });
 
