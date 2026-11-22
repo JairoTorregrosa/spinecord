@@ -22,14 +22,19 @@ describe("local catalog", () => {
       "run_program",
     ]);
   });
-  test("every tool is a catalog tool with the same title and annotations", () => {
+  test("every tool is a catalog tool with the same title and annotations, except idempotency", () => {
     for (const t of LOCAL_TOOLS) {
       const base = TOOLS.find((b) => b.name === t.name)!;
       expect(base).toBeDefined();
       expect(t.title).toBe(base.title);
-      expect(t.annotations).toEqual(base.annotations);
+      expect({ ...t.annotations, idempotentHint: base.annotations.idempotentHint }).toEqual(base.annotations);
       assertSupported(t.input, t.name);
     }
+  });
+  test("a tool that moves the robot is not idempotent: a repeated call moves it again", () => {
+    const hints = Object.fromEntries(LOCAL_TOOLS.map((t) => [t.name, t.annotations.idempotentHint]));
+    for (const name of ["drive", "turn", "arc", "command_device", "run_program"]) expect(hints[name]).toBe(false);
+    for (const name of ["read_all", "wait_until", "stop", "reset_fault"]) expect(hints[name]).toBe(true);
   });
   test("no text names what only a relay has", () => {
     const relayOnly =

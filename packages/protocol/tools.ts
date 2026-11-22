@@ -959,6 +959,8 @@ export const LOCAL_TOOLS: ToolDef[] = Object.keys(LOCAL_VARIANTS).map((name) => 
       ...base,
       description: variant.description ?? base.description,
       input: localInput(variant.input ?? base.input),
+      // local mode keeps no record of answered calls: a tool that moves the robot moves it again on every call
+      annotations: { ...base.annotations, idempotentHint: !base.annotations.destructiveHint },
     },
     envelope(data, localRobotState),
     "local:output",
