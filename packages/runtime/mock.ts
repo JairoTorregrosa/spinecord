@@ -42,16 +42,18 @@ export class MockProvider implements Provider {
   arm = 0;
   slip = 1; // fraction of commanded wheel motion that really happens
   reverseFromOp = 0; // from this run_pair operation on (1-based), the wheels turn the wrong way (a driver bug)
+  echo = false; // run_pair's `measured` repeats what was asked, whatever the wheels did (a driver that does not measure)
   coastDeg = 0; // extra wheel degrees a brake:false operation rolls on after it ends
   stalled = false; // motors do not move and report "stalled"
   stopVerified = true; // what stop() reports
   stops = 0;
   readonly brakes: string[] = []; // devices braked with their own brake{} command
+  readonly reads: string[] = []; // device of every read(), in the order they were made
   frameTs = 0; // capture time of the camera frame
   failRead: string | undefined; // device id whose reads throw
   private readonly clock: Clock;
   private readonly rate: number;
-  private readonly latency: number;
+  latency: number; // transport round trip, ms; a test may change it between calls (a link that got slower)
   private readonly opMs: number;
   private specs: DeviceSpec[];
   private readonly changed = new Set<() => void>();
@@ -285,30 +287,35 @@ export class MockProvider implements Provider {
 
   async read(device: string, channels?: string[], opts?: { allow_mode_switch?: boolean }): Promise<Reading[]> {
     if (opts?.allow_mode_switch) this.switchReads++;
-    if (this.latency) await this.clock.sleep(this.latency);
+    this.reads.push(device);
+    if (this.latency) await this.clock.sleep(this.latency / 2); // request on its way
     if (this.failRead === device) throw new Error(`mock: ${device} unplugged`);
     const spec = this.specs.find((d) => d.id === device);
     if (!spec) throw new Error(`mock: no device ${device}`);
-    return (channels ?? spec.channels.filter((c) => c.active !== false).map((c) => c.name)).map((channel): Reading => {
-      if (spec.channels.find((c) => c.name === channel)?.active === false) {
-        if (!(channels?.includes(channel) && opts?.allow_mode_switch))
-          return { device, channel, value: null, ts: this.clock.now(), error: "mode_switch_required" };
-        this.modeSwitches++;
-      }
-      if (spec.channels.find((c) => c.name === channel)?.type === "image") {
-        return {
-          device,
-          channel,
-          value: null,
-          image: { mime: "image/jpeg" as const, b64: "/9j/AAAA", age_ms: this.clock.now() - this.frameTs },
-          ts: this.frameTs,
-        };
-      }
-      const src = this.values.get(`${device}.${channel}`);
-      const value = typeof src === "function" ? src() : (src ?? null);
-      const ts = this.clock.now();
-      return value === null ? { device, channel, value, ts, error: "no value" } : { device, channel, value, ts };
-    });
+    const got = (channels ?? spec.channels.filter((c) => c.active !== false).map((c) => c.name)).map(
+      (channel): Reading => {
+        if (spec.channels.find((c) => c.name === channel)?.active === false) {
+          if (!(channels?.includes(channel) && opts?.allow_mode_switch))
+            return { device, channel, value: null, ts: this.clock.now(), error: "mode_switch_required" };
+          this.modeSwitches++;
+        }
+        if (spec.channels.find((c) => c.name === channel)?.type === "image") {
+          return {
+            device,
+            channel,
+            value: null,
+            image: { mime: "image/jpeg" as const, b64: "/9j/AAAA", age_ms: this.clock.now() - this.frameTs },
+            ts: this.frameTs,
+          };
+        }
+        const src = this.values.get(`${device}.${channel}`);
+        const value = typeof src === "function" ? src() : (src ?? null);
+        const ts = this.clock.now();
+        return value === null ? { device, channel, value, ts, error: "no value" } : { device, channel, value, ts };
+      },
+    );
+    if (this.latency) await this.clock.sleep(this.latency / 2); // reply on its way
+    return got;
   }
 
   async command(
@@ -364,7 +371,7 @@ export class MockProvider implements Provider {
         this.left = l0 + dir * l * f * this.slip;
         this.right = r0 + dir * r * f * this.slip;
       });
-      const out = { left_deg: this.left - l0, right_deg: this.right - r0 };
+      const out = this.echo ? { left_deg: l, right_deg: r } : { left_deg: this.left - l0, right_deg: this.right - r0 };
       if (args.brake === false && reason !== "stalled") {
         this.left += dir * Math.sign(l) * this.coastDeg;
         this.right += dir * Math.sign(r) * this.coastDeg;
