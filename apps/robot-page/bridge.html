@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lend an EV3 · spinecord</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+      }
+      body {
+        max-width: 36rem;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      button {
+        font: inherit;
+        padding: 0.6rem 1.2rem;
+        border-radius: 0.5rem;
+        border: 1px solid;
+        cursor: pointer;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.25rem 1rem;
+      }
+      dt {
+        font-weight: 600;
+      }
+      dd {
+        margin: 0;
+      }
+      #s-detail {
+        color: #b3261e;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Lend an EV3</h1>
+      <p>
+        This page passes USB packets between the EV3 plugged into this computer and the spinecord process that served
+        it. Turn the brick on, plug its USB cable in and press the button. Then leave this tab open: it may be covered
+        or in the background, it must not be closed.
+      </p>
+      <p><button type="button" id="choose">Connect EV3</button></p>
+      <dl aria-live="polite">
+        <dt>EV3</dt>
+        <dd id="s-device">–</dd>
+        <dt>spinecord process</dt>
+        <dd id="s-socket">–</dd>
+        <dt>Commands passed</dt>
+        <dd id="s-packets">0</dd>
+      </dl>
+      <p id="s-detail" role="status"></p>
+    </main>
+    <script type="module" src="bridge.js"></script>
+  </body>
+</html>

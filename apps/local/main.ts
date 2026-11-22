@@ -1,0 +1,64 @@
+// spinecord on one computer: an MCP server over stdio with the runtime and the robots inside this process.
+//   claude mcp add spinecord -- bun <repo>/apps/local/main.ts [robots...]
+// stdout carries JSON-RPC and nothing else; every log line is one JSON object on stderr.
+// When the client goes away (stdin closes) or the process is told to end, every motor is stopped first.
+import { log } from "./src/stderr"; // first: it moves console output off stdout
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { HelpAsked, loadConfig, USAGE, type LocalConfig } from "./src/config";
+import { LISTED_TOOLS, buildServer } from "./src/mcp";
+import { buildFleet, type Fleet } from "./src/sources";
+
+let config: LocalConfig;
+try {
+  config = loadConfig(process.argv.slice(2));
+} catch (e) {
+  if (e instanceof HelpAsked) {
+    process.stderr.write(`${USAGE}\n`);
+    process.exit(0);
+  }
+  process.stderr.write(`spinecord: ${(e as Error).message}\n\n${USAGE}\n`);
+  process.exit(2);
+}
+
+let fleet: Fleet;
+try {
+  fleet = await buildFleet(config, { log });
+} catch (e) {
+  process.stderr.write(`spinecord: ${(e as Error).message}\n`);
+  process.exit(1);
+}
+for (const r of fleet.robots) log("robot", r.listing());
+if (fleet.bridge)
+  process.stderr.write(
+    `spinecord: to lend the EV3, open ${fleet.bridge.url} in Chrome or Edge and press "Connect EV3"\n`,
+  );
+
+let ending: Promise<never> | null = null;
+/** Stops every motor, says so on stderr, exits. Runs once whatever asks for it. */
+function end(why: string, code = 0): Promise<never> {
+  ending ??= (async () => {
+    log("ending", { why });
+    const stopped = await fleet.shutdown();
+    for (const s of stopped) log("stopped", s);
+    log("exit", { code, why });
+    process.exit(code);
+  })();
+  return ending;
+}
+
+const server = buildServer(fleet.robots);
+const transport = new StdioServerTransport();
+transport.onerror = (e) => log("transport_error", { error: e.message });
+await server.connect(transport);
+// set after connect(): the server installs its own onclose there
+const closed = transport.onclose;
+transport.onclose = () => {
+  closed?.();
+  void end("stdin closed");
+};
+process.stdin.on("end", () => void end("stdin ended"));
+process.stdin.on("close", () => void end("stdin closed"));
+process.on("SIGINT", () => void end("SIGINT"));
+process.on("SIGTERM", () => void end("SIGTERM"));
+process.on("SIGHUP", () => void end("SIGHUP"));
+log("ready", { robots: fleet.robots.map((r) => r.id), tools: LISTED_TOOLS.length });

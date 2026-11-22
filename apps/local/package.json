@@ -1,0 +1,13 @@
+{
+  "name": "@spinecord/local",
+  "private": true,
+  "description": "Local-only MCP server over stdio: the runtime and the robots (twin, ev3dev over SSH, stock EV3 lent by a browser page) in one bun process",
+  "type": "module",
+  "scripts": {
+    "start": "bun main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0"
+  }
+}

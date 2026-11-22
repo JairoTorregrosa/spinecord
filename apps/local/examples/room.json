@@ -1,0 +1,43 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "room",
+  "arena": {
+    "width_cm": 120,
+    "height_cm": 120
+  },
+  "obstacles": [],
+  "zones": [],
+  "lines": [],
+  "points": [
+    {
+      "label": "center",
+      "x": 60,
+      "y": 60,
+      "radius_cm": 8
+    }
+  ],
+  "start": {
+    "x": 60,
+    "y": 60,
+    "heading_deg": 0
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.02
+  },
+  "extensions": {
+    "ev3": {
+      "motors": {
+        "A": "medium",
+        "B": "large",
+        "C": "large"
+      },
+      "sensors": {
+        "1": "touch",
+        "2": "gyro",
+        "3": "color",
+        "4": "ultrasonic"
+      }
+    }
+  }
+}

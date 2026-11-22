@@ -616,11 +616,11 @@ const toolError = obj(
 );
 
 /** The envelope around one tool's data (CONTRACT §7). One schema covers success and failure: check `ok`. */
-const envelope = (data: Schema): Omit<OutputSchema, "$id"> => ({
+const envelope = (data: Schema, robot: Schema = robotState): Omit<OutputSchema, "$id"> => ({
   type: "object",
   properties: {
     ok: { type: "boolean", description: "true → data is present; false → error is present." },
-    robot: robotState,
+    robot,
     data,
     error: toolError,
     next: list(str, "Suggested next tools."),
@@ -827,10 +827,142 @@ function contentHash(text: string): string {
 // Why `$id`: MCP clients compile a validator per outputSchema and keep it by `$id` when there is one. Without it
 // they compile all of them again after every tools/list (about 35 ms for this catalog with Ajv), and the first
 // tool call after each listing pays for it. The hash changes with the schema, so a client never keeps a stale one.
+const withOutput = (t: Omit<ToolDef, "output">, schema: Omit<OutputSchema, "$id">, space = "output"): ToolDef => ({
+  ...t,
+  output: { $id: `urn:${SERVER_NAME}:${space}:${t.name}:${contentHash(JSON.stringify(schema))}`, ...schema },
+});
 export const TOOLS: ToolDef[] = CATALOG.map((t) => {
   const data = DATA[t.name];
   if (!data) throw new Error(`tools.ts: ${t.name} has no output schema`);
-  const schema = envelope(data);
-  const $id = `urn:${SERVER_NAME}:output:${t.name}:${contentHash(JSON.stringify(schema))}`;
-  return { ...t, output: { $id, ...schema } };
+  return withOutput(t, envelope(data));
+});
+
+// ---------- Local mode (CONTRACT §11) ----------
+// The catalog a local, single-process server serves (apps/local): the tools whose execution is the runtime's,
+// derived from CATALOG above. A tool whose text or schema names something only the relay has (tokens, control,
+// idempotency, the program library, episodes) has a local variant here; every other one is the catalog's entry.
+// A description promises only what the process does.
+
+export const LOCAL_SERVER_INSTRUCTIONS = `Controls the robots this process runs on this computer: physical robots (for example LEGO EV3 bricks) and simulated twins. The tool set is fixed and generic: a robot is a set of devices; each device describes its readable channels and its bounded commands.
+
+How to work:
+1. list_robots, then describe_robot to learn devices, roles, drivetrain, limits and notes. describe_device gives one device's full channel and command schemas. A robot whose link is offline says in \`connect\` what a person must do to bring it online.
+2. Prefer the drivetrain tools (drive, turn, arc) for motion. Use command_device for any other actuator. Every command is bounded (degrees, milliseconds or instant) and clamped to the robot's limits; nothing runs open-ended.
+3. Close the loop: after acting, read_device / read_all / sample_device, or look through a camera device (read_device on an image channel). Compare requested vs measured in every result; physical robots slip.
+4. To react to the world inside one action, pass an \`until\` condition; to wait without moving, use wait_until. run_program runs a whole behavior, given inline as data, next to the hardware.
+5. Test on a twin first when there is one: a robot with backend sim has the same devices as the hardware robot plus a "sim.world" device.
+6. One moving call at a time per robot: a second one fails with busy, it is not queued. Call stop the moment something looks wrong. stop never waits behind another call.
+
+Every result is JSON: {ok, robot:{id, backend, link, activity}, data | error:{code, message, retryable, retry_after_ms?}, next:[suggested tools]}. Errors are never disguised as data; a missing value is null with an error string. Nothing is stored between calls: a moving call sent twice moves twice, so after a failed or unanswered moving call read the robot (read_all) before moving again. Units: cm, degrees (positive = counter-clockwise), speed in percent of max, time in ms.
+
+Result format: structuredContent is the envelope and matches the tool's outputSchema. The text block repeats it for clients without structured output: line 1 is a one-line summary, the last line is the envelope as single-line JSON.
+
+If you write code that calls these tools (several calls in one script):
+- Compose the whole sense → act loop in one script and return only what you need; do not spend a model turn per call.
+- Check \`ok\` after every call. On ok:false leave the loop at once and return the error; never continue on stale data.
+- Await each moving call before the next one on the same robot; reads may run in parallel with a move.
+- A script that moves the robot wraps the motion in try/finally and calls stop in the finally whenever it did not finish cleanly.
+- Bound every loop (iterations and total time) and keep the script well under 10 minutes; prefer one call with \`until\` over a fast polling loop.`;
+
+const localRobotId = { type: "string", description: "Robot id from list_robots." } as const;
+const localRequestId = {
+  type: "string",
+  maxLength: 64,
+  description:
+    "Optional label for this call. It is not an idempotency key: nothing is stored, and the same call sent twice acts twice.",
+} as const;
+
+/** The local definition of each served tool: a description or an input of its own, else the catalog entry's. */
+const LOCAL_VARIANTS: Record<string, { description?: string; input?: ToolDef["input"] }> = {
+  list_robots: {
+    description:
+      "Lists the robots this process runs, with their state. Returns [{id, backend (ev3|sim), link (offline|handshaking|online), activity (idle|acting|stopping|running_program|fault), fault_reason (why it is in fault, else null), connect (what a person must do to bring an offline robot online, else null)}]. Start here.",
+  },
+  describe_robot: {},
+  describe_device: {},
+  read_device: {},
+  read_all: {},
+  sample_device: {},
+  wait_until: {},
+  drive: {
+    description:
+      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, measured:{distance_cm, heading_change_deg}, clamped, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
+  },
+  turn: {},
+  arc: {},
+  command_device: {
+    description:
+      "Runs one named command on one device, e.g. a motor's run_degrees, a speaker's tone, a display's text, a servo's set_angle, the twin's sim.world load_world. Args must match the command's params schema from describe_device. Every command is bounded (bound.kind degrees|ms|instant) and clamped; returns {requested, measured, clamped, reason, ms}. Supports `until` for commands that move. Commands that move require idle (one moving call at a time, else busy); commands that do not move (sound, display, light) run in every state but fault.",
+  },
+  stop: {
+    description:
+      "Immediately brakes every actuator and aborts any running command or program, without waiting behind it. Returns {motors_stopped: boolean, activity}. If the stop cannot be verified (every motor must read speed 0) the robot enters fault. Allowed in any state. Use whenever something looks wrong.",
+  },
+  reset_fault: {
+    description:
+      'Leaves the fault state after verifying all motors are stopped. Returns {activity: "idle"} or fails with stop_unverified. Only valid in fault (else illegal_state). A fault means a stop could not be confirmed: read the robot (read_all) and check its cable and power first.',
+  },
+  run_program: {
+    description:
+      "Runs a behavior given inline as data (no code) next to the hardware and waits for it. body is a tree of nodes: {seq:[...]}, {repeat:{times≤50, body}}, {while:{cond, body, max_iterations≤200}}, {if:{cond, then, else?}}, {call:{tool: drive|turn|arc|command_device|wait_until, args}}, {wait_ms≤10000}, {succeed:msg}, {fail:msg}. Args inside calls omit robot_id and request_id. The optional success condition is checked at the end. Returns {outcome: succeeded|failed|aborted|timeout, steps:[{path, tool, ok, reason|error, ms}], ms}. Requires idle (else busy). Activity is running_program until it ends; stop aborts it. Total time is capped by max_program_ms. Nothing is stored: send the body with every call.",
+    input: {
+      type: "object",
+      properties: {
+        robot_id: localRobotId,
+        body: { type: "object", description: "Program tree." },
+        success: condition,
+        request_id: localRequestId,
+      },
+      required: ["robot_id", "body"],
+      additionalProperties: false,
+    },
+  },
+};
+
+function localInput(input: ToolDef["input"]): ToolDef["input"] {
+  const properties: Record<string, unknown> = { ...input.properties };
+  if ("robot_id" in properties) properties.robot_id = localRobotId;
+  if ("request_id" in properties) properties.request_id = localRequestId;
+  const required = (input.required ?? []).filter((k) => k !== "request_id");
+  return { type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false };
+}
+
+const { control: _control, episode: _episode, ...localStateFields } = stateFields;
+const localRobotState = obj(
+  localStateFields,
+  Object.keys(localStateFields),
+  "Robot state after the call. Absent for tools that address no robot.",
+);
+const LOCAL_DATA: Record<string, Schema> = {
+  list_robots: list(
+    obj(
+      {
+        ...localStateFields,
+        fault_reason: nullable("string"),
+        connect: nullable("string", {
+          description: "What a person must do to bring an offline robot online, e.g. the page to open.",
+        }),
+      },
+      Object.keys(localStateFields),
+    ),
+  ),
+};
+
+/** The local catalog, in CATALOG order. Served verbatim by apps/local; `output` is the envelope with the local robot state. */
+export const LOCAL_TOOLS: ToolDef[] = Object.keys(LOCAL_VARIANTS).map((name) => {
+  const base = CATALOG.find((t) => t.name === name);
+  const data = LOCAL_DATA[name] ?? DATA[name];
+  if (!base || !data) throw new Error(`tools.ts: local tool ${name} is not in the catalog`);
+  const variant = LOCAL_VARIANTS[name]!;
+  return withOutput(
+    {
+      ...base,
+      description: variant.description ?? base.description,
+      input: localInput(variant.input ?? base.input),
+      // local mode keeps no record of answered calls: a tool that moves the robot moves it again on every call
+      annotations: { ...base.annotations, idempotentHint: !base.annotations.destructiveHint },
+    },
+    envelope(data, localRobotState),
+    "local:output",
+  );
 });

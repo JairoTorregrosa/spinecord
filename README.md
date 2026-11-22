@@ -30,7 +30,47 @@ flowchart LR
 
 | App | Does |
 |---|---|
+| [`local`](apps/local) | spinecord on one computer: MCP over stdio, the runtime and the robots (twin, ev3dev, stock EV3) in one bun process |
 | [`robot-page`](apps/robot-page) | the page a person opens in Chrome or Edge to lend an EV3 over USB: `bun apps/robot-page/serve.ts`, then `http://localhost:8766` |
+
+## Use it from Claude Code, on your computer
+
+One process on your laptop: the MCP server, the runtime and the robots. No account, no network service. Needs [bun](https://bun.sh) ≥ 1.3.14, git and Claude Code.
+
+macOS or Linux (Terminal), Windows (PowerShell): the same three commands.
+
+```sh
+git clone https://github.com/JairoTorregrosa/spinecord
+cd spinecord
+bun install --filter @spinecord/local
+```
+
+`--filter @spinecord/local` installs what the local server needs and nothing of the development toolchain: 6 packages, 16 MB. Measured on a fresh clone with an empty cache: 0.7 s on macOS (Apple M1 Pro), 1.1 s on a Windows CI runner. A plain `bun install` is 124 packages, 318 MB, 16 s on the same Mac.
+
+Then register it with Claude Code, with the full path of the clone:
+
+```sh
+# macOS, Linux
+claude mcp add spinecord -- bun "$PWD/apps/local/main.ts"
+```
+
+```powershell
+# Windows PowerShell
+claude mcp add spinecord -- bun "$PWD\apps\local\main.ts"
+```
+
+`/mcp` inside Claude Code shows `spinecord` connected with 14 tools. Ask: "list the robots, then drive until 15 cm from the wall".
+
+Without arguments the server runs a simulated twin of the example robot (`r1-sim`) in an empty room. Arguments after `main.ts` choose the robots:
+
+| Robot | Arguments |
+|---|---|
+| a twin | `--twin <robot.json> --world <world.json>` |
+| a LEGO EV3 on stock firmware, USB | `--ev3 <robot.json>`, then open `http://127.0.0.1:8767/` in Chrome or Edge and press "Connect EV3". Keep that tab open; it may be covered or in the background |
+| a LEGO EV3 on ev3dev | `--ev3dev <robot.json> --ssh <user@host>` (`--install-bridge` copies the bridge to the brick) |
+| several at once | `--ev3 r.json --twin r.json --world w.json`, or `--config <file.json>` |
+
+Robot file: [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json). Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md` §11](CONTRACT.md). The server logs on stderr (`claude --debug` shows it); closing Claude Code stops the motors.
 
 Tested on a real EV3: [`docs/hardware-log.md`](docs/hardware-log.md).
 
@@ -46,6 +86,8 @@ Sense → act loops in one model turn (Claude Code Code Mode): [`docs/code-mode.
 | programs | `save_program` `list_programs` `get_program` `verify_program` `run_program` `retire_program` |
 | episodes | `start_episode` `mark_episode` `end_episode` |
 | admin | `take_control` `release_control` `stop_all` |
+
+The local server serves discover, sense, act and `run_program` (the program inline).
 
 Full descriptions and schemas: [`packages/protocol/tools.ts`](packages/protocol/tools.ts). Behavior: [`CONTRACT.md`](CONTRACT.md). Boundaries: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 

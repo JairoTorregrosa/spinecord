@@ -7,7 +7,8 @@
     "url": "https://github.com/JairoTorregrosa/spinecord"
   },
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/local"
   ],
   "type": "module",
   "scripts": {
