@@ -55,10 +55,12 @@ const N = {
   stop: QUICK ? 4 : 16,
   reaction: QUICK ? 4 : 20,
   square: QUICK ? 1 : 3,
+  usb: QUICK ? 10 : 50,
   bridge: QUICK ? 20 : 100,
   bridgeCold: QUICK ? 2 : 8,
 };
 const SPEED_PCT = 30;
+const USB_PACKET_MS = 2;
 const THRESHOLD_CM = 30;
 const LINKS = [0, 30, 600] as const;
 const ROBOT = "bench";
@@ -169,6 +171,7 @@ async function reads(relay: Relay, mcp: Mcp, twin: Twin, us: string): Promise<vo
   const out: number[][] = fns.map(() => []);
   const inside: number[] = [];
   const perReadAll = { provider_calls: 0, brick_packets: 0 };
+  const readAllPackets: number[] = [];
   for (let i = 0; i < N.warm + N.reads; i++) {
     for (const [k, fn] of fns.entries()) {
       const c0 = twin.calls.length,
@@ -183,6 +186,7 @@ async function reads(relay: Relay, mcp: Mcp, twin: Twin, us: string): Promise<vo
       if (k === 1) {
         perReadAll.provider_calls = twin.ops.length - o0;
         perReadAll.brick_packets = twin.packets.length - k0;
+        readAllPackets.push(perReadAll.brick_packets);
       }
     }
   }
@@ -262,6 +266,24 @@ async function reads(relay: Relay, mcp: Mcp, twin: Twin, us: string): Promise<vo
     mcp_read: metrics.mcp_read.p50,
   };
   breakdown.read_all_per_call = perReadAll;
+  metrics.packets_read_all = metric("packets one read_all sends to the stock EV3 brick", readAllPackets, "packets");
+
+  // the same read_all with the cable's own latency on every packet: what round trips to the brick cost
+  const usb: number[] = [];
+  twin.usb.packet_ms = USB_PACKET_MS;
+  try {
+    for (let i = 0; i < 5 + N.usb; i++) {
+      const t0 = now();
+      await twin.runtime.call("read_all", {}, idle);
+      if (i >= 5) usb.push(now() - t0);
+    }
+  } finally {
+    twin.usb.packet_ms = 0;
+  }
+  metrics.ev3_read_all_usb = metric(
+    `runtime read_all on the stock EV3 with ${USB_PACKET_MS} ms added to every packet (USB HID), no server`,
+    usb,
+  );
 }
 
 /** first_motion and stop_latency share a run: drive, wait for motion, stop through MCP. */
@@ -397,6 +419,7 @@ async function reaction(mcp: Mcp, twin: Twin, us: string, rnd: () => number): Pr
 async function square(mcp: Mcp, twin: Twin, link_ms: number, runs: number): Promise<void> {
   const robot_id = twin.id;
   const totals: number[] = [],
+    packets: number[] = [],
     counts: number[] = [],
     bytes: number[] = [],
     closure: number[] = [];
@@ -431,6 +454,7 @@ async function square(mcp: Mcp, twin: Twin, link_ms: number, runs: number): Prom
       const end = twin.brick.world.pose;
       totals.push(total);
       counts.push(calls);
+      packets.push(twin.packets.length - k0);
       closure.push(Math.hypot(end.x - start.x, end.y - start.y));
       const ops = twin.ops.slice(o0);
       const sum = (xs: number[]) => round(xs.reduce((a, b) => a + b, 0));
@@ -469,6 +493,11 @@ async function square(mcp: Mcp, twin: Twin, link_ms: number, runs: number): Prom
       [bytes.reduce((a, b) => a + b, 0) / runs],
       "bytes",
     );
+    metrics.packets_square = metric(
+      "packets the whole square sends to the stock EV3 brick (8 moves)",
+      packets,
+      "packets",
+    );
     metrics.square_closure = metric("distance between where the square ends and where it started", closure, "cm");
   }
   (breakdown.square as Record<string, unknown>)[`${link_ms}ms`] = detail;
@@ -501,6 +530,7 @@ const results: Results = {
     speed_pct: SPEED_PCT,
     reaction_threshold_cm: THRESHOLD_CM,
     link_round_trip_ms: LINKS,
+    usb_packet_ms: USB_PACKET_MS,
     world: "packages/sim-world/examples/line-oval.json, noise off",
     profile: "packages/sim-ev3/examples/twin.example.json (max_command_ms 60000)",
     sim_clock: "real time, 1x",
@@ -580,6 +610,9 @@ const ORDER = [
   "square_twin_30ms",
   "square_twin_600ms",
   "square_closure",
+  "packets_square",
+  "packets_read_all",
+  "ev3_read_all_usb",
   "calls_square",
   "bytes_square_response",
   "bytes_square_total",
