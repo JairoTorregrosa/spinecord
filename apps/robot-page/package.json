@@ -1,10 +1,6 @@
 {
   "name": "@spinecord/robot-page",
   "private": true,
-  "type": "module",
-  "scripts": {
-    "test": "bun test",
-    "build": "bun build.ts",
-    "serve": "bun serve.ts"
-  }
+  "description": "The bridge page a person opens in Chrome or Edge to lend an EV3 over USB to the spinecord process on the same computer",
+  "type": "module"
 }

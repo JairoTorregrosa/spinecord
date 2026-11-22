@@ -1,6 +1,6 @@
-// The whole physical-AI path, assembled from the real pieces:
-//   MCP Client (Streamable HTTP) -> Worker in Miniflare -> Durable Object -> real WebSocket ->
-//   createRuntimeClient -> createRuntime -> Ev3Provider -> Ev3Link -> SimBrick (byte-level EV3 on 2D physics)
+// The path of a tool call, assembled from the real pieces, in this process:
+//   callTool (apps/local) -> LocalRobot (link and activity state) -> createRuntime -> Ev3Provider -> Ev3Link ->
+//   SimBrick (byte-level EV3 on 2D physics)
 // The simulated brick runs on the real clock at 1x, so sim time and wall time are the same time.
 // The bench owns three taps, none of which changes package code:
 //   packets    every packet that reaches the brick (when, how long until its reply, opcodes)
@@ -20,12 +20,14 @@ import type {
   RobotProfile,
   Value,
 } from "../packages/protocol/types";
-import { createRuntimeClient, type ClientState, type RuntimeClient } from "../packages/runtime/client";
 import { createRuntime, type LocalRuntime } from "../packages/runtime/runtime";
 import { drivetrainFromProfile, LARGE_DEG_S, SimBrick } from "../packages/sim-ev3/brick";
 import { NO_NOISE, parseWorld, World } from "../packages/sim-world/world";
 import { SimWorldProvider } from "../packages/sim-world/world-provider";
-import { fromServer, ROOT, RUNTIME_TOKEN, TOKEN } from "./relay";
+import { LocalRobot } from "../apps/local/src/robot";
+import { callTool, summarize } from "../apps/local/src/tools";
+
+export const ROOT = join(import.meta.dir, "..");
 
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const now = () => performance.now();
@@ -83,7 +85,7 @@ class TapTransport implements Transport {
 
 /**
  * Sits between the runtime and a provider: records each call and adds the link's round trip to it
- * (half before, half after), as a USB cable, a LAN or a tunnel between the runtime and the hardware would.
+ * (half before, half after), as a USB cable, a LAN or an SSH tunnel between the runtime and the hardware would.
  */
 class TapProvider implements Provider {
   readonly id: string;
@@ -201,70 +203,37 @@ export async function buildTwin(id: string, seed: number): Promise<Twin> {
   return { id, profile, brick, world, ev3, runtime, link, usb, packets: tap.packets, ops, calls, ready_ms };
 }
 
-/** Connects the twin's runtime to the relay with the real client over a real WebSocket. Resolves when online. */
-export async function connect(twin: Twin, url: string): Promise<{ client: RuntimeClient; online_ms: number }> {
-  const t0 = now();
-  let state: ClientState = "idle";
-  let detail = "";
-  const client = createRuntimeClient({
-    runtime: twin.runtime,
-    url: `${url.replace(/^http/, "ws")}/ws/robot`,
-    token: RUNTIME_TOKEN,
-    onState: (s, d) => {
-      state = s;
-      detail = d;
-    },
-  });
-  client.connect();
-  while ((state as ClientState) !== "online") {
-    if ((state as ClientState) === "closed") throw new Error(`runtime client for ${twin.id} was refused: ${detail}`);
-    if (now() - t0 > 10_000) throw new Error(`runtime client for ${twin.id} is still ${state} after 10 s`);
-    await sleep(1);
-  }
-  return { client, online_ms: now() - t0 };
-}
-
 export interface ToolOut {
   envelope: Envelope<any>;
   /** UTF-8 bytes of the text block the model receives. */
   bytes: number;
   ms: number;
 }
-export interface Mcp {
-  /** One tools/call. Throws unless the envelope is ok, so a benchmark never times an error by accident. */
+export interface Tools {
+  /** One tool call. Throws unless the envelope is ok, so a benchmark never times an error by accident. */
   call(name: string, args: Record<string, unknown>, allowError?: boolean): Promise<ToolOut>;
-  /** UTF-8 bytes of the tools/list result (the catalog a model pays for on every session). */
-  toolsListBytes(): Promise<number>;
-  /** One tools/list round trip (auth + MCP server in the Worker; no Durable Object, no storage). */
-  listTools(): Promise<unknown>;
-  close(): Promise<void>;
+  /** ms from attach() to online (device scan + verified stop). */
+  online_ms: number;
 }
 
-export async function mcpClient(url: string, token = TOKEN): Promise<Mcp> {
-  const { Client, StreamableHTTPClientTransport } = await fromServer("@modelcontextprotocol/client");
-  const c = new Client({ name: "spinecord-bench", version: "0.0.0" });
-  await c.connect(
-    new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
-      requestInit: { headers: { Authorization: `Bearer ${token}` } },
-    }),
-  );
+/** The twin as apps/local holds it: a LocalRobot around the runtime, its tools through callTool. No stdio. */
+export async function localTools(twin: Twin): Promise<Tools> {
+  const robot = new LocalRobot({ id: twin.id });
+  const t0 = now();
+  await robot.attach(twin.runtime);
+  const online_ms = now() - t0;
   return {
+    online_ms,
     async call(name, args, allowError = false) {
       const t0 = now();
-      const res = await c.callTool({ name, arguments: args });
+      const { envelope } = await callTool([robot], name, args);
       const ms = now() - t0;
-      // what a model reads is the text block; code reads structuredContent
-      const text = (res.content as { type: string; text: string }[])[0]!.text;
-      const envelope = res.structuredContent as unknown as Envelope<any>;
       if (!envelope.ok && !allowError)
         throw new Error(`${name} ${JSON.stringify(args)} failed: ${JSON.stringify(envelope.error)}`);
-      return { envelope, bytes: Buffer.byteLength(text, "utf8"), ms };
+      // what a model reads is the text block: the summary line, then the envelope (apps/local/src/mcp.ts)
+      const text = `${summarize(name, envelope)}\n${JSON.stringify(envelope)}`;
+      return { envelope: envelope as Envelope<any>, bytes: Buffer.byteLength(text, "utf8"), ms };
     },
-    async toolsListBytes() {
-      return Buffer.byteLength(JSON.stringify(await c.listTools()), "utf8");
-    },
-    listTools: () => c.listTools(),
-    close: () => c.close(),
   };
 }
 

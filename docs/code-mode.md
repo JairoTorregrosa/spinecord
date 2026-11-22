@@ -35,11 +35,7 @@ Confirm "Yes, turn on Code Mode" on first use. The session shows `Code Mode (exp
 
 ## 2. Add the server
 
-```bash
-claude mcp add --transport http spinecord https://<worker>.workers.dev/mcp --header "Authorization: Bearer <token>"
-```
-
-Or the local server, with the robots in a process on this computer (README, "Use it from Claude Code, on your computer"):
+The server is a process on this computer, with the robots inside (README, "Use it from Claude Code"):
 
 ```bash
 claude mcp add spinecord -- bun <repo>/apps/local/main.ts
@@ -55,14 +51,14 @@ Check with `/mcp` inside Claude Code: `spinecord` is connected and lists its too
 | Every tool has an `outputSchema` with its own `data` shape | The fields are known before the first call |
 | The text block is `summary line` + `\n` + the same envelope as one-line JSON | Fallback when the client hands the script text: `JSON.parse(text.split("\n").at(-1))` |
 | `isError` is true exactly when `ok` is false | An error is never disguised as data |
-| `until` on `drive` / `turn` / `arc` / `command_device` | The runtime watches the condition next to the hardware every max(10 ms, one read) while the motion runs and aborts it when met; no model or relay round trip per check, unlike a polling loop in a script |
-| `request_id` on moving tools | Relay: same id + same arguments = the stored result, the robot does not act twice. Local server: an optional label, nothing is stored |
+| `until` on `drive` / `turn` / `arc` / `command_device` | The runtime watches the condition next to the hardware every max(10 ms, one read) while the motion runs and aborts it when met; no model turn per check, unlike a polling loop in a script |
+| `request_id` on moving tools | An optional label. Nothing is stored: the same call sent twice moves the robot twice |
 
 ## 4. Example: drive until something is closer than 15 cm, then turn
 
 Ask Claude:
 
-> On robot t3-sim, drive forward until the distance sensor reads under 15 cm, then turn left 90°. Repeat up to 6 times. Do it in one script and tell me how far each leg went.
+> On robot r1-sim, drive forward until the distance sensor reads under 15 cm, then turn left 90°. Repeat up to 6 times. Do it in one script and tell me how far each leg went.
 
 The script it should write looks like this. The Code Mode docs do not say how an MCP tool is exposed inside the code, so `call` is the one function to adapt: Claude binds it to the spinecord tools of its session.
 
@@ -74,8 +70,7 @@ const call = async (tool, args) => {
   return r.structuredContent ?? JSON.parse(r.content[0].text.split("\n").at(-1));
 };
 
-const robot_id = "t3-sim";
-const id = () => crypto.randomUUID(); // one request_id per intended action
+const robot_id = "r1-sim";
 const near = { device: "ev3.S4", channel: "distance_cm", op: "lt", value: 15 }; // ids come from describe_robot
 const legs = [];
 let moved = false;
@@ -86,14 +81,14 @@ async function run() {
     for (let leg = 0; leg < 6; leg++) {
       moved = true;
       // one bounded call; the runtime stops the wheels when the condition becomes true
-      const d = await call("drive", { robot_id, distance_cm: 80, speed_pct: 30, until: near, request_id: id() });
+      const d = await call("drive", { robot_id, distance_cm: 80, speed_pct: 30, until: near });
       if (!d.ok) return { failed: "drive", error: d.error, robot: d.robot, legs };
       legs.push({ leg, cm: d.data.measured.distance_cm, reason: d.data.reason });
       // stalled, clamped, preempted, timeout: not what was asked, so leave (the finally brakes)
       if (d.data.reason !== "condition_met" && d.data.reason !== "completed") return { ended: d.data.reason, legs };
 
       if (d.data.reason === "condition_met") {
-        const t = await call("turn", { robot_id, angle_deg: 90, request_id: id() });
+        const t = await call("turn", { robot_id, angle_deg: 90 });
         if (!t.ok) return { failed: "turn", error: t.error, robot: t.robot, legs };
         if (t.data.reason !== "completed") return { ended: t.data.reason, legs };
       }
@@ -116,7 +111,7 @@ Rules the script follows (the server sends them in its instructions too):
 | Stop the loop on any error or unexpected `reason` | `return`, never `continue` |
 | `stop` on failure | `try / finally` around everything that moves |
 | Bounded | `leg < 6`, `distance_cm: 80`, no `while (true)` |
-| No blind retry of a move | A failed or unanswered `drive` is not sent again with a new `request_id`; read the robot first (`read_all`) |
+| No blind retry of a move | A failed or unanswered `drive` is not sent again; read the robot first (`read_all`) |
 | Return little | `legs`, not every reading |
 
 ## 5. Limits

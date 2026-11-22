@@ -1,11 +1,11 @@
-// The one JSON Schema validator (hand-written subset, no dependency), shared by the relay and the runtime.
+// The one JSON Schema validator (hand-written subset, no dependency), shared by apps/local and the runtime.
 // Keywords: type, enum, const, minimum, maximum, exclusiveMinimum, exclusiveMaximum, minLength, maxLength, pattern,
 // items, minItems, maxItems, properties, required, additionalProperties.
 // Two modes:
-//   "full"   every keyword. The tool catalog (relay) and the arguments the runtime is about to execute, after clamping.
+//   "full"   every keyword. Tool inputs, tool results, and the arguments the runtime is about to execute, after clamping.
 //   "shape"  structure only: type, enum, const, pattern, required, additionalProperties, nested properties and items.
 //            Size limits (minimum, maximum, exclusive*, minLength, maxLength, minItems, maxItems) are skipped: the
-//            relay uses it on device command arguments, whose sizes the runtime clamps or chunks before checking them.
+//            it fits device command arguments whose sizes are clamped or chunked before they are checked in full.
 // A key whose value is undefined counts as absent (callers validate in-process objects, not only parsed JSON).
 
 export type SchemaMode = "shape" | "full";

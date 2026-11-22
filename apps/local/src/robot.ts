@@ -1,4 +1,4 @@
-// One robot of this process and the only state it has (CONTRACT §11): a link (is there a runtime to talk to?)
+// One robot of this process and the only state it has (CONTRACT §1): a link (is there a runtime to talk to?)
 // and an activity. Both follow the transition tables of protocol/types.ts, asserted on every transition.
 //   link      offline → handshaking → online → offline
 //   activity  idle → acting | running_program → idle        one moving call at a time; a second one gets `busy`
@@ -10,7 +10,7 @@ import {
   LINK_TRANSITIONS,
   RuntimeError,
   type ErrorCode,
-  type LocalRobotStateView,
+  type RobotStateView,
   type RobotActivity,
   type RobotLink,
   type RobotTool,
@@ -116,7 +116,7 @@ export class LocalRobot {
     this.toActivity("fault", reason);
     this.faultReason = reason;
   }
-  view(): LocalRobotStateView {
+  view(): RobotStateView {
     return { id: this.id, backend: this.rt?.backend ?? null, link: this.link, activity: this.activity };
   }
   listing() {

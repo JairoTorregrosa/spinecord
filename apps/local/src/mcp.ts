@@ -1,12 +1,12 @@
-// The MCP surface over stdio: protocol's LOCAL_TOOLS through the low-level Server, so the JSON Schemas pass
+// The MCP surface over stdio: protocol's TOOLS through the low-level Server, so the JSON Schemas pass
 // unchanged. Every result is the envelope as structuredContent plus a text block (summary line, then the same JSON).
 import { Server } from "@modelcontextprotocol/server";
-import { LOCAL_SERVER_INSTRUCTIONS, LOCAL_TOOLS, SERVER_NAME, SERVER_VERSION } from "../../../packages/protocol/tools";
+import { SERVER_INSTRUCTIONS, TOOLS, SERVER_NAME, SERVER_VERSION } from "../../../packages/protocol/tools";
 import { firstViolation } from "../../../packages/protocol/schema";
 import type { LocalRobot } from "./robot";
 import { TOOL, callTool, summarize } from "./tools";
 
-export const LISTED_TOOLS = LOCAL_TOOLS.map((t) => ({
+export const LISTED_TOOLS = TOOLS.map((t) => ({
   name: t.name,
   title: t.title,
   description: t.description,
@@ -18,7 +18,7 @@ export const LISTED_TOOLS = LOCAL_TOOLS.map((t) => ({
 export function buildServer(robots: readonly LocalRobot[]): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {} }, instructions: LOCAL_SERVER_INSTRUCTIONS },
+    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
   server.setRequestHandler("tools/list", async () => ({ tools: LISTED_TOOLS as never }));
   server.setRequestHandler("tools/call", async (request, ctx) => {

@@ -1,5 +1,5 @@
 // Where a robot's runtime comes from. Each source wires packages together and hands the runtime to a LocalRobot:
-//   twin     SimBrick + the real Ev3Provider + SimWorldProvider (the wiring of apps/twin-runner), built at start
+//   twin     SimBrick + the real Ev3Provider + SimWorldProvider, built at start
 //   ev3dev   Ev3devProvider over the system ssh client, connected at start
 //   ev3      the real Ev3Provider over the bridge page's socket, built each time the page opens an EV3
 import { Ev3Provider } from "../../../packages/driver-ev3/provider";

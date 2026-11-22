@@ -2,7 +2,7 @@
 // simulated brick is read directly.
 import { describe, expect, test } from "bun:test";
 import { ACTIVITY_TRANSITIONS, type RobotProfile } from "../../../packages/protocol/types";
-import { LOCAL_TOOLS } from "../../../packages/protocol/tools";
+import { TOOLS } from "../../../packages/protocol/tools";
 import { realClock } from "../../../packages/runtime/clock";
 import { MockProvider } from "../../../packages/runtime/mock";
 import { createRuntime } from "../../../packages/runtime/runtime";
@@ -336,7 +336,7 @@ describe("shutdown", () => {
 
 describe("next", () => {
   test("every suggested tool is a served tool, and every served tool has suggestions", () => {
-    const served = new Set(LOCAL_TOOLS.map((t) => t.name));
+    const served = new Set(TOOLS.map((t) => t.name));
     expect(Object.keys(NEXT_OK).sort()).toEqual([...served].sort());
     for (const names of [...Object.values(NEXT_OK), ...Object.values(NEXT_ERR)])
       for (const name of names) expect(served.has(name)).toBe(true);

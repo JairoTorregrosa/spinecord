@@ -111,8 +111,8 @@ jobs:
           no-cache: true
       - run: bun install --filter @spinecord/local --frozen-lockfile
       - run: bun test ./apps/local
-  # relay (Miniflare) + twin runner + MCP client, end to end. Slower than a test shard and the same on every OS,
-  # so it runs once, on ubuntu, outside the shards.
+  # The local server end to end (apps/local/test/stdio.test.ts: a spawned server, MCP over stdio, a twin) with the
+  # other app tests. It runs on every pull request, whatever the diff reaches.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -122,6 +122,4 @@ jobs:
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
-      # the apps' own tests (apps/ is outside the package shards)
       - run: bun test ./apps
-      - run: bun run e2e

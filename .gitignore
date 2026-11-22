@@ -1,6 +1,4 @@
 node_modules/
-.wrangler/
 dist/
 *.local
-.dev.vars
 scripts/boundaries.local.txt

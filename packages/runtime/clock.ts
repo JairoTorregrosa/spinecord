@@ -1,4 +1,4 @@
-// Time source injected into the runtime and the relay client, so limits (1500 ms, 3 s, max_program_ms)
+// Time source injected into the runtime, so limits (1500 ms, max_command_ms, max_program_ms)
 // are testable without waiting. `sleep` resolves early (never rejects) when its signal aborts.
 export interface Clock {
   now(): number;

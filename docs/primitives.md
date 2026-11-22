@@ -11,10 +11,10 @@ Legend: ✅ shipped · 🟡 partial · ⬜ missing. **Where** = the package that
 | Read any channel, all channels, sample over time | `read_device` `read_all` `sample_device` | ✅ | runtime |
 | Wait for a condition, stop a move on a condition | `wait_until`, `until` | ✅ | runtime |
 | Wheel odometry pose (x, y, heading) from encoders | `pose` channel on the drivetrain | ⬜ | runtime |
-| First-person camera frame | `camera` device, image channel | 🟡 twin only | sim-world · device page |
-| Overhead pose of every robot (fiducial markers) | `pose_tracker` device | ⬜ | device page |
-| Phone IMU, compass, shake | `imu` device | ⬜ | device page |
-| Listen: speech to text, loudness | `microphone` device | ⬜ | device page |
+| First-person camera frame | `camera` device, image channel | 🟡 twin only | sim-world · a camera provider |
+| Overhead pose of every robot (fiducial markers) | `pose_tracker` device | ⬜ | a camera provider |
+| Phone IMU, compass, shake | `imu` device | ⬜ | a phone provider |
+| Listen: speech to text, loudness | `microphone` device | ⬜ | a phone provider |
 | Sensor calibration (color white/black, gyro zero) | `calibrate{}` command per sensor | ⬜ | drivers |
 
 ## Act
@@ -23,38 +23,35 @@ Legend: ✅ shipped · 🟡 partial · ⬜ missing. **Where** = the package that
 |---|---|---|---|
 | Drive, turn, arc (any differential drivetrain) | `drive` `turn` `arc` | ✅ | runtime |
 | Any bounded device command | `command_device` | ✅ | runtime |
-| Speak text | `speak{text, voice?, rate_wpm?}` on `speaker` when the device can (CONTRACT §2.3) | 🟡 ev3dev (`espeak`) and twin (`sim.speaker`, records `last_spoken`); device page missing | driver-ev3dev · sim-world · device page |
+| Speak text | `speak{text, voice?, rate_wpm?}` on `speaker` when the device can (CONTRACT §2.3) | 🟡 ev3dev (`espeak`) and twin (`sim.speaker`, records `last_spoken`) | driver-ev3dev · sim-world |
 | Play a sound file | `play{name}` on `speaker` | ⬜ | drivers |
 | Show text and simple images | `text{lines}` `image{png}` on `display` | 🟡 stock only | driver-ev3dev |
 | Lights | `led.set{pattern}` | ✅ | drivers |
-| Go to a point | program over `pose` + `turn` + `drive` | ⬜ | library |
+| Go to a point | program over `pose` + `turn` + `drive` | ⬜ | runtime |
 
 ## Learn and reuse
 
 | Primitive | How the model reaches it | State | Where |
 |---|---|---|---|
-| Programs as data, verified on a twin | `save_program` `verify_program` `run_program` | ✅ | server · runtime |
+| Programs as data, run next to the hardware | `run_program{body, success?}` | ✅ | runtime |
+| Named programs kept between sessions | a program store + run by name | ⬜ | apps/local |
 | Program parameters (`drive {distance_cm: $d}`) | `params` in program + `run_program{args}` | ⬜ | protocol · runtime |
-| Train a behavior from a declarative reward | training spec on the twin | 🟡 sim only, no tool | sim-world · server |
-| Shared library of community programs | `list_programs` across principals | ✅ | server |
+| Train a behavior from a declarative reward | training spec on the twin | 🟡 sim only, no tool | sim-world |
 
 ## Coordinate
 
 | Primitive | How the model reaches it | State | Where |
 |---|---|---|---|
-| Many robots, one endpoint, per-principal access | `list_robots`, principals | ✅ | server |
-| Admin takes control, stops all | `take_control` `stop_all` | ✅ | server |
-| Shared arena state (where every robot is) | `pose_tracker` + `list_robots` poses | ⬜ | server · device page |
-| Episodes with time and interventions | `start_episode` … | ✅ | server |
+| Many robots in one process, each with its own state | `list_robots`, `robot_id` on every tool | ✅ | apps/local |
+| Shared arena state (where every robot is) | `pose_tracker` + `list_robots` poses | ⬜ | apps/local · a camera provider |
 
 ## Connect
 
 | Primitive | State | Where |
 |---|---|---|
-| EV3 stock firmware over USB (WebHID) | 🟡 driver done, page missing | driver-ev3 · apps/robot-page |
+| EV3 stock firmware over USB (WebHID bridge page) | 🟡 no run on a real brick in `docs/hardware-log.md` | driver-ev3 · apps/robot-page · apps/local |
 | EV3 over Bluetooth (Web Serial) | ⬜ | driver-ev3 |
 | EV3 on ev3dev over SSH | ✅ real robot | driver-ev3dev |
-| Twin runner (headless, CI, demos) | ⬜ | apps/twin-runner |
-| Phone or microcontroller as extra devices | ⬜ | apps/device-page |
-| Deployed server (Cloudflare) | ⬜ | server |
-| Model docs as MCP resources (robot notes, device specs) | ⬜ | server |
+| Twin in the server's process | ✅ | apps/local · sim-ev3 |
+| Phone or microcontroller as extra devices | ⬜ | a new provider |
+| Model docs as MCP resources (robot notes, device specs) | ⬜ | apps/local |

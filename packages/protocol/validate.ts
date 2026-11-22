@@ -1,6 +1,6 @@
 // Pure, dependency-free validators shared by every package (single owner of these rules).
 // They check shape and caps only; device existence is checked by the runtime against real devices.
-import type { CompareOp, Condition, ProgramNode, RobotProfile } from "./types";
+import type { CompareOp, Condition, ProgramNode } from "./types";
 
 export const PROGRAM_CAPS = {
   max_nodes: 500,
@@ -126,28 +126,4 @@ export function isProgramNode(x: unknown): x is ProgramNode {
 }
 export function isCondition(x: unknown): x is Condition {
   return validateCondition(x).length === 0;
-}
-
-// Stable hash of what makes a program's behavior transferable: drivetrain, roles, limits.
-// Twin and hardware must match for a verified program to run (CONTRACT §1 Program).
-export function profileHash(p: RobotProfile): string {
-  const canon = JSON.stringify(sortKeys({ drivetrain: p.drivetrain ?? null, roles: p.roles, limits: p.limits }));
-  let h1 = 0x811c9dc5,
-    h2 = 0x01000193;
-  for (let i = 0; i < canon.length; i++) {
-    const c = canon.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
-    h2 = Math.imul(h2 ^ c, 0x5bd1e995) >>> 0;
-  }
-  return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
-}
-function sortKeys(x: unknown): unknown {
-  if (Array.isArray(x)) return x.map(sortKeys);
-  if (isObj(x))
-    return Object.fromEntries(
-      Object.keys(x)
-        .sort()
-        .map((k) => [k, sortKeys(x[k])]),
-    );
-  return x;
 }

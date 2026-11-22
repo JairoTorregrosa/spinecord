@@ -1,6 +1,6 @@
 // The server as Claude Code runs it: a spawned `bun apps/local/main.ts`, MCP over its stdio, a twin inside.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { LOCAL_TOOLS } from "../../../packages/protocol/tools";
+import { TOOLS } from "../../../packages/protocol/tools";
 import { EXAMPLE } from "../src/config";
 import { MAIN, startServer, until, wheelSpeeds, wheelsTurning, type TestServer } from "./client";
 
@@ -29,7 +29,7 @@ describe("a twin behind stdio", () => {
   });
 
   test("tools/list is the local catalog, each tool with its outputSchema", () => {
-    expect(s.listed.map((t) => t.name)).toEqual(LOCAL_TOOLS.map((t) => t.name));
+    expect(s.listed.map((t) => t.name)).toEqual(TOOLS.map((t) => t.name));
     for (const t of s.listed) expect((t.outputSchema as { type: string }).type).toBe("object");
   });
 

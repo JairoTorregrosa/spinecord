@@ -1,19 +1,19 @@
-// One tool call, from arguments to the CONTRACT §7 envelope. The catalog is protocol's LOCAL_TOOLS, served
+// One tool call, from arguments to the CONTRACT §7 envelope. The catalog is protocol's TOOLS, served
 // verbatim; the work is the runtime's; this file validates the arguments, finds the robot and wraps the answer.
 import { firstViolation, assertSupported } from "../../../packages/protocol/schema";
-import { LOCAL_TOOLS, type ToolDef } from "../../../packages/protocol/tools";
+import { TOOLS, type ToolDef } from "../../../packages/protocol/tools";
 import {
   RuntimeError,
   type ErrorCode,
   type ImagePayload,
-  type LocalEnvelope,
+  type Envelope,
   type ToolError,
 } from "../../../packages/protocol/types";
 import { LocalError, shuttingDown, type LocalRobot } from "./robot";
 
-export const TOOL: ReadonlyMap<string, ToolDef> = new Map(LOCAL_TOOLS.map((t) => [t.name, t]));
+export const TOOL: ReadonlyMap<string, ToolDef> = new Map(TOOLS.map((t) => [t.name, t]));
 // fail at start if the catalog uses a schema keyword the validator would not enforce
-for (const t of LOCAL_TOOLS) assertSupported(t.input, `local tool ${t.name}.input`);
+for (const t of TOOLS) assertSupported(t.input, `local tool ${t.name}.input`);
 
 /** Suggested next tools after a success. Every name is a served tool (tested). */
 export const NEXT_OK: Record<string, string[]> = {
@@ -59,7 +59,7 @@ function next(tool: string, error?: ToolError, afterMove = false): string[] {
 }
 
 export interface Out {
-  envelope: LocalEnvelope<unknown>;
+  envelope: Envelope<unknown>;
   image?: ImagePayload;
 }
 const fail = (tool: string, error: ToolError, robot?: LocalRobot, afterMove = false): Out => ({
@@ -124,7 +124,7 @@ export async function callTool(
 const FACTS = ["reason", "outcome", "met", "motors_stopped", "activity"];
 const MAX_MESSAGE = 200;
 /** Line 1 of the text block: what happened, for a reader that does not parse the JSON below it. Never a newline. */
-export function summarize(tool: string, e: LocalEnvelope<unknown>): string {
+export function summarize(tool: string, e: Envelope<unknown>): string {
   const robot = e.robot ? ` robot=${e.robot.id} link=${e.robot.link} activity=${e.robot.activity}` : "";
   const after = e.next.length ? ` next=${e.next.join(",")}` : "";
   let what = "";

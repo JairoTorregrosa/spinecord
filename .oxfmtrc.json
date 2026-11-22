@@ -6,14 +6,5 @@
   "semi": true,
   "singleQuote": false,
   "endOfLine": "lf",
-  "ignorePatterns": [
-    "**/worker-configuration.d.ts",
-    "**/fixtures/**",
-    "**/*.schema.json",
-    "**/dist/**",
-    "**/.wrangler/**",
-    "**/*.md",
-    "bun.lock",
-    "test-timings.json"
-  ]
+  "ignorePatterns": ["**/fixtures/**", "**/*.schema.json", "**/dist/**", "**/*.md", "bun.lock", "test-timings.json"]
 }
