@@ -9,7 +9,7 @@
 // robot_offline. The next call opens again, until close(): a closed provider opens nothing.
 //
 // The provider never chunks and never retries a motion: the runtime does the first, nobody the second.
-import { RuntimeError } from "../../protocol/types";
+import { RETRYABLE, RuntimeError } from "../../protocol/types";
 import type {
   ChannelSpec,
   CommandResult,
@@ -168,7 +168,6 @@ const ERROR_CODES: readonly ErrorCode[] = [
   "internal",
   "misconfigured",
 ];
-const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout"];
 const err = (code: ErrorCode, message: string) => new RuntimeError(code, message, RETRYABLE.includes(code));
 
 // ---------------------------------------------------------------- device catalogue

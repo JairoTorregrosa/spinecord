@@ -1,7 +1,7 @@
 // The runtime executes every tool that addresses one robot, next to the hardware (CONTRACT.md §4). It knows devices only
 // through their manifests and the Provider interface; the only kinds it names are motor_pair (drivetrain)
 // and gyro (heading source). Limits come from the profile. The process around it (apps/local) owns the link and activity state.
-import { RuntimeError } from "../protocol/types";
+import { RETRYABLE, RuntimeError } from "../protocol/types";
 import type {
   BackendKind,
   CommandResult,
@@ -38,7 +38,6 @@ export const UNTIL_POLL_MS = 10;
 // How old a timed round trip may be and still let the first chunk of a move coast: about what a move itself
 // relies on between two of its chunks. Older than this, the link is timed again before anything moves.
 export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
-const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image"];
 const ROBOT_TOOLS: readonly RobotTool[] = [
   "describe_robot",
   "describe_device",

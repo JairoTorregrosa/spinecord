@@ -170,6 +170,8 @@ export type ErrorCode =
   | "stale_image"
   | "internal"
   | "misconfigured";
+/** The codes a caller may send again as they are (CONTRACT §7). The one list: the runtime and the drivers read it. */
+export const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image"];
 export interface ToolError {
   code: ErrorCode;
   message: string;

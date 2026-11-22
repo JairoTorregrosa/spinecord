@@ -68,7 +68,7 @@ test("the call helper returns the envelope for a result and for an error", async
   const failed = await call("read_device", { robot_id: "nobody", device: "distance" });
   expect(failed).toMatchObject({ ok: false, error: { code: "unknown_robot" }, next: ["list_robots"] });
   expect(failed.data).toBeUndefined();
-  // a call the client refuses before it reaches the server is thrown again as it came
+  // a call the client refuses, which never reaches the server, is thrown again as it came
   const refused = helper({
     [`${PREFIX}drive`]: async () => {
       throw new Error("Not sent: the tool does not declare `robot`.");
@@ -77,7 +77,19 @@ test("the call helper returns the envelope for a result and for an error", async
   await expect(refused("drive", { robot: R })).rejects.toThrow("Not sent: the tool does not declare `robot`.");
 });
 
+/** Puts the twin where a session finds it: the middle of the room, heading 0. Each scenario starts from there. */
+async function home(): Promise<void> {
+  const r = await s.tool("command_device", {
+    robot_id: R,
+    device: "sim.world",
+    command: "reset",
+    args: { x_cm: 60, y_cm: 60, heading_deg: 0 },
+  });
+  if (!r.envelope.ok) throw new Error(`reset failed: ${r.envelope.error.message}`);
+}
+
 test("the square example drives four legs to the wall and reports each one", async () => {
+  await home();
   calls.length = 0;
   const out = await square()(helper(tools()), R);
   expect(out.failed).toBeUndefined();
@@ -96,6 +108,7 @@ test("the square example drives four legs to the wall and reports each one", asy
 }, 120_000);
 
 test("the square example leaves at the first error and brakes", async () => {
+  await home();
   calls.length = 0;
   // the second drive goes to a robot the server does not have: a real error envelope, thrown as Code Mode throws it
   const out = await square()(helper(tools((tool, n) => (tool === "drive" && n === 2 ? "nobody" : undefined))), R);

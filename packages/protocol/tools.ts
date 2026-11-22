@@ -252,7 +252,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Command a device",
     annotations: act,
     description:
-      "Runs one named command on one device, e.g. a motor's run_degrees, a speaker's tone, a display's text, a servo's set_angle, the twin's sim.world load_world. Args must match the command's params schema from describe_device. Every command is bounded (bound.kind degrees|ms|instant) and clamped; returns {requested, measured, clamped, reason, ms}. Supports `until` for commands that move. Commands that move require idle (one moving call at a time, else busy); commands that do not move (sound, display, light) run in every state but fault.",
+      "Runs one named command on one device, e.g. a motor's run_degrees, a speaker's tone, a display's text, a servo's set_angle, the twin's sim.world load_world. Args must match the command's params schema from describe_device. Every command is bounded (bound.kind degrees|ms|instant) and clamped; returns {requested, applied (the request after clamping), measured (what the device reports), clamped, reason, ms}. Supports `until` for commands that move. Commands that move require idle (one moving call at a time, else busy); commands that do not move (sound, display, light) run in every state but fault.",
     input: {
       type: "object",
       properties: {

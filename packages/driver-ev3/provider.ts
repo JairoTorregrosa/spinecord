@@ -12,7 +12,7 @@
 //
 // Reads have no side effects: a sensor channel whose mode is not the current one is not read
 // unless the caller names it and passes allow_mode_switch.
-import { RuntimeError } from "../protocol/types";
+import { RETRYABLE, RuntimeError } from "../protocol/types";
 import type {
   ChannelSpec,
   CommandResult,
@@ -512,16 +512,16 @@ export class Ev3Provider implements Provider {
   private toRuntime(e: unknown): RuntimeError {
     if (e instanceof RuntimeError) return e;
     if (e instanceof Ev3Error) {
-      const map: Record<Ev3Error["code"], [ErrorCode, boolean]> = {
-        no_reply: ["timeout", true],
-        brick_error: ["internal", false],
-        bad_reply: ["internal", false],
-        transport: ["robot_offline", true],
-        stopped: ["busy", true],
-        bad_param: ["invalid_argument", false],
+      const map: Record<Ev3Error["code"], ErrorCode> = {
+        no_reply: "timeout",
+        brick_error: "internal",
+        bad_reply: "internal",
+        transport: "robot_offline",
+        stopped: "busy",
+        bad_param: "invalid_argument",
       };
-      const [code, retryable] = map[e.code];
-      return new RuntimeError(code, `ev3 ${e.code}: ${e.message}`, retryable);
+      const code = map[e.code];
+      return new RuntimeError(code, `ev3 ${e.code}: ${e.message}`, RETRYABLE.includes(code));
     }
     if (e instanceof RangeError) return new RuntimeError("invalid_argument", e.message);
     return new RuntimeError("internal", `ev3: ${(e as Error)?.message ?? String(e)}`);

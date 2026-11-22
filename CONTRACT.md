@@ -130,7 +130,7 @@ An MCP client starts it (`claude mcp add spinecord -- bun <repo>/apps/local/main
 | stale_image | yes | frame older than 1500 ms |
 | internal | no | an unexpected failure (a malformed reply from a brick, a bug); the message carries it |
 
-`misconfigured` (no) is what a provider or the runtime throws for a bad configuration. At start it ends the process. When an `ev3dev` link is opened again it fails that attempt: the robot stays `offline`, the attempt is repeated, and `connect` carries the reason (§1). `ErrorCode` in types.ts has these codes and no other, and they are the `code` enum of every output schema.
+`misconfigured` (no) is what a provider or the runtime throws for a bad configuration. At start it ends the process. When an `ev3dev` link is opened again it fails that attempt: the robot stays `offline`, the attempt is repeated, and `connect` carries the reason (§1). `ErrorCode` in types.ts has these codes and no other, and they are the `code` enum of every output schema. `RETRYABLE` in types.ts is the one list of the codes a caller may send again; the runtime and the drivers read it.
 
 ## 8. Tools
 

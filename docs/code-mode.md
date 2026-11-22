@@ -103,7 +103,7 @@ A reading whose channel could not be read has `value: null` and an `error` strin
 | Fact | Why it matters in code |
 |---|---|
 | `until` on `drive` / `turn` / `arc` / `command_device` | The runtime watches the condition next to the hardware every max(10 ms, one read) while the motion runs and aborts it when met; no model turn and no script loop per check |
-| A move's result carries `measured` | Distance and heading change need no read before and after the move |
+| A move's result carries `measured` | Distance and heading change need no reads around the move |
 | A condition and a read take a role (`distance`, `gyro`) or a device id (`ev3.S4`) | `describe_robot` gives both |
 | `request_id` on moving tools | An optional label. Nothing is stored: the same call sent twice moves the robot twice |
 
@@ -192,14 +192,14 @@ One run per row (n=1), 2026-11-22. Claude Code 2.1.330, interactive in tmux, mod
 | Server | Code Mode | Wall time | Model requests | spinecord calls | Output tokens | Scripts that threw | Result |
 |---|---|---|---|---|---|---|---|
 | 2.0.0 | off | 58 s | 15 | 14 | 2,596 | — | 4 legs, stops at 15.0 / 15.1 / 15.3 / 15.6 cm, turns 89° |
-| 2.0.0 | on | 134 s | 7 | 53 (40 `read_device`) | 3,565 | 1 | 4 legs, stops at 15.0 / 14.7 / 14.9 / 14.9 cm, turns 88–89° |
-| 2.1.0 | on | 149 s | 5 | 77 (65 `read_device`) | 2,673 | 0 | 4 legs, stops at 14.5 / 14.7 / 14.8 / 14.8 cm, turns 89–90° |
+| 2.0.0 | on | 134 s | 6 | 53 (40 `read_device`) | 3,565 | 1 | 4 legs, stops at 15.0 / 14.7 / 14.9 / 14.9 cm, turns 88–89° |
+| 2.1.0 | on | 149 s | 4 | 77 (65 `read_device`) | 2,673 | 0 | 4 legs, stops at 14.5 / 14.7 / 14.8 / 14.8 cm, turns 89–90° |
 
 What the rows show:
 
 - For four legs with no decision between calls, plain calls are the faster way (§5). The twelve calls of §4 take about 18 s on the twin; the rest of a Code Mode run is the model writing scripts and the reads it adds to them.
-- The script that threw in the 2.0.0 row read `data.readings` from `read_device`; server 2.0.0 answers `read_device` with a bare array. It stopped before any motion and cost one model request. Server 2.1.0 answers every channel read as `{readings}` (§3.2), and its instructions carry the shapes and the helper of §3.1.
-- In every Code Mode run the model used `drive` with `until`, not a polling loop of its own, and added reads around each move to cross-check it (pose, odometer, gyro). Those reads are most of the calls and they vary from run to run: two more runs of the 2.1.0 setup on the same day, on a server that differed from 2.1.0 in at most three sentences of its instructions and descriptions, took 106 s with 29 calls and 107 s with 48 calls. With n=1 per row, a difference of tens of seconds or tens of calls between rows is within that spread. What held in all three: no script failed on the shape of a result.
+- The script that threw in the 2.0.0 row read `data.readings` from `read_device`; server 2.0.0 answers `read_device` with a bare array. It ended with the robot still at its start and cost one model request. Server 2.1.0 answers every channel read as `{readings}` (§3.2), and its instructions carry the shapes and the helper of §3.1.
+- In every Code Mode run the model used `drive` with `until`, not a polling loop of its own, and added reads around each move to cross-check it (pose, odometer, gyro). Those reads are most of the calls, and how many the model adds is its choice in each run. With n=1 per row, wall time and call count carry that spread; the row-to-row difference that does not depend on it is the script that threw on a shape.
 
 ## 7. Limits
 
