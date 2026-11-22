@@ -598,11 +598,20 @@ describe("fake brick", () => {
   function tapped(wrap: (t: LineTransport) => LineTransport = (t) => t) {
     const { brick } = setup();
     const inner = wrap(brick.transport(python!));
-    const sent: { op: string; reads?: { device: string; channels: string[] }[] }[] = [];
+    const sent: { op: string; id?: number; reads?: { device: string; channels: string[] }[] }[] = [];
+    const got: { id?: number; mode?: string }[] = [];
     const transport: LineTransport = {
       open: () => inner.open(),
       close: () => inner.close(),
-      onLine: (cb) => inner.onLine(cb),
+      onLine: (cb) =>
+        inner.onLine((line) => {
+          try {
+            got.push(JSON.parse(line) as (typeof got)[number]);
+          } catch {
+            /* not a JSON line */
+          }
+          cb(line);
+        }),
       onClose: (cb) => inner.onClose(cb),
       send(line) {
         const msg = JSON.parse(line) as (typeof sent)[number];
@@ -612,7 +621,7 @@ describe("fake brick", () => {
     };
     const provider = new Ev3devProvider(transport, OPTS);
     open.push({ brick, provider });
-    return { brick, provider, sent };
+    return { brick, provider, sent, got };
   }
 
   brickTest("a read of every device is one request line, answered as the same reads one by one", async () => {
@@ -641,7 +650,7 @@ describe("fake brick", () => {
   });
 
   brickTest("inside a shared read, a device that cannot be read fails alone and no mode is switched", async () => {
-    const { provider, brick, sent } = tapped();
+    const { provider, brick, sent, got } = tapped();
     await provider.devices();
     brick.setSensor(1, "value0", "garbage"); // the ultrasonic's driver is broken
     let changed = 0;
@@ -664,6 +673,16 @@ describe("fake brick", () => {
     expect(switching![0]!.error).toBeUndefined();
     expect(brick.sensor(0, "mode")).toBe("GYRO-RATE");
     expect(changed).toBe(1);
+    // The switching read left first and waited for its sensor while the shared read was answered: each answer
+    // names the mode of its own sensor, whatever was read in between.
+    expect(sent.map((m) => m.op)).toEqual(["read", "read_many"]);
+    expect(got.find((l) => l.id === sent[0]!.id)!.mode).toBe("GYRO-RATE");
+    const s2 = (await provider.read("ev3.S2")).map((r) => [r.channel, r.error ?? "read"]);
+    expect(s2).toEqual([
+      ["angle_deg", "mode_switch_required"],
+      ["rate_deg_s", "read"],
+    ]);
+    expect(changed).toBe(1); // the provider already knew the gyro's new mode: nothing changed again
   });
 
   brickTest(

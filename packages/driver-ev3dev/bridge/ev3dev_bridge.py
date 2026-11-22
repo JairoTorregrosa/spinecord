@@ -248,6 +248,7 @@ class Sensor(object):
         self.channels = SENSORS[self.driver][1]
         self.modes = read_list(os.path.join(directory, "modes"))
         self.decimals = {}     # mode -> its `decimals` attribute, once read
+        self.mode_seen = None  # the mode the read in progress found this sensor in (None: read it again)
         self.presses = 0       # touch only: bumps counted by this process
         self.was_pressed = False
 
@@ -315,7 +316,6 @@ class Bridge(object):
         self.speech = None         # hello: {"espeak", "aplay", "voices", "default_voice"} when the brick can speak
         self.talk = None           # the phrase being spoken now
         self.last_touch = 0.0
-        self.mode_seen = None      # the mode the read in progress found its sensor in
         self.battery = None        # path of the battery's voltage_now, once found
         self.sink = None           # read_many: the answers of its reads are collected here instead of sent
 
@@ -696,13 +696,15 @@ class Bridge(object):
         """Generator: leaves the values of `mode` in self.got. Writes the mode only when `switch` is true."""
         if sensor.modes is not None and mode not in sensor.modes:
             raise BridgeError("unsupported", "sensor %s has no mode %s; it offers: %s" % (sensor.driver, mode, " ".join(sensor.modes)))
-        self.mode_seen = sensor.get("mode")
-        if self.mode_seen != mode:
+        sensor.mode_seen = sensor.get("mode")
+        if sensor.mode_seen != mode:
             if not switch:
                 raise BridgeError("mode_switch_required", "mode_switch_required")
-            self.mode_seen = None                # after a switch the mode is read again, not assumed
             sensor.set("mode", mode)
             yield MODE_SWITCH_S
+            # After a switch the mode is read again, not assumed. Cleared here, after the wait: other
+            # requests were handled meanwhile, and nothing they saw may pass for what this read found.
+            sensor.mode_seen = None
         decimals = sensor.decimals.get(mode)
         if decimals is None:
             try:
@@ -715,7 +717,7 @@ class Bridge(object):
 
     def read_sensor(self, rid, sensor, names, switch):
         values = {}
-        self.mode_seen = None
+        sensor.mode_seen = None
         for n in names:
             if n in values:
                 continue
@@ -738,7 +740,7 @@ class Bridge(object):
                 for m in same:
                     values[m] = (None, e.message if e.code == "mode_switch_required" else "%s: %s" % (e.code, e.message))
         # The mode this read found the sensor in. Read here only if nothing above did, or a switch was written.
-        mode = self.mode_seen
+        mode = sensor.mode_seen
         if mode is None:
             try:
                 mode = sensor.get("mode")
