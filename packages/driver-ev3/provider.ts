@@ -94,7 +94,7 @@ export interface Ev3ProviderOptions {
   hardware: Ev3Hardware;
   /** Provider id and device id prefix. Default "ev3". */
   id?: string;
-  /** Ports of the synced pair `<id>.pair`. Default B (left) + C (right). */
+  /** Ports of the synced pair `<id>.pair`. Absent: the robot has no pair, and its motors are single motors. */
   pair?: { left: OutputPort; right: OutputPort };
   /** role -> device id (from the robot profile); copied into DeviceSpec.roles. */
   roles?: Record<string, string>;
@@ -427,7 +427,7 @@ export class Ev3Provider implements Provider {
    */
   readonly stop_worst_ms: number;
   private readonly o: {
-    pair: { left: OutputPort; right: OutputPort };
+    pair: { left: OutputPort; right: OutputPort } | undefined;
     maxSpeedPct: number;
     boundMs: number;
     hw: Ev3Hardware;
@@ -469,7 +469,7 @@ export class Ev3Provider implements Provider {
     if (!/^[a-z0-9_-]+$/i.test(this.id)) fail(`id "${this.id}" must be letters, digits, _ or -`);
     this.roles = { ...opts.roles };
     this.o = {
-      pair: opts.pair ?? { left: "B", right: "C" },
+      pair: opts.pair,
       maxSpeedPct: opts.limits.max_speed_pct,
       boundMs: Math.max(1, Math.floor(Math.min(MAX_MOTION_MS, opts.limits.max_command_ms))),
       hw: {
@@ -485,12 +485,13 @@ export class Ev3Provider implements Provider {
       now: opts.now ?? (() => performance.now()),
       sleep: opts.sleep ?? sleep,
     };
-    if (
-      !(this.o.pair.left in OUTPUT_MASK) ||
-      !(this.o.pair.right in OUTPUT_MASK) ||
-      this.o.pair.left === this.o.pair.right
-    )
-      fail("pair needs two different ports A-D");
+    const pair: unknown = this.o.pair;
+    if (pair !== undefined) {
+      const { left, right } = (typeof pair === "object" && pair !== null ? pair : {}) as Record<string, unknown>;
+      if (typeof left !== "string" || typeof right !== "string" || !(left in OUTPUT_MASK) || !(right in OUTPUT_MASK))
+        fail("pair needs two different ports A-D");
+      if (left === right) fail("pair needs two different ports A-D");
+    }
     for (const k of ["degPerSecAt100", "timeoutMs", "modeSwitchTimeoutMs", "stopSettleMs", "pollMs"] as const)
       if (!positive(this.o[k])) fail(`${k} must be > 0`);
     this.stop_worst_ms = Math.ceil(
@@ -711,26 +712,27 @@ export class Ev3Provider implements Provider {
         ),
       );
     }
-    if (isMotor(o.pair.left) && isMotor(o.pair.right)) {
+    const pair = o.pair;
+    if (pair && isMotor(pair.left) && isMotor(pair.right)) {
       out.push(
         mk(
           "pair",
           "motor_pair",
-          `Synchronized motor pair: left = port ${o.pair.left}, right = port ${o.pair.right}.`,
+          `Synchronized motor pair: left = port ${pair.left}, right = port ${pair.right}.`,
           [
             {
               name: "left_deg",
               type: "number",
               unit: "deg",
               max_rate_hz: 50,
-              description: `Encoder position of the left motor (port ${o.pair.left}). Positive = the motor's own forward direction, the same sign run_pair uses.`,
+              description: `Encoder position of the left motor (port ${pair.left}). Positive = the motor's own forward direction, the same sign run_pair uses.`,
             },
             {
               name: "right_deg",
               type: "number",
               unit: "deg",
               max_rate_hz: 50,
-              description: `Encoder position of the right motor (port ${o.pair.right}). Positive = the motor's own forward direction, the same sign run_pair uses.`,
+              description: `Encoder position of the right motor (port ${pair.right}). Positive = the motor's own forward direction, the same sign run_pair uses.`,
             },
           ],
           [
@@ -914,6 +916,12 @@ export class Ev3Provider implements Provider {
     return out;
   }
 
+  /** The ports behind `<id>.pair`. That device is announced only for a declared pair, so a lookup found it. */
+  private pairPorts(): { left: OutputPort; right: OutputPort } {
+    if (!this.o.pair) throw new RuntimeError("unknown_device", `${this.id}.pair: this robot declares no motor pair`);
+    return this.o.pair;
+  }
+
   private async lookup(device: string): Promise<Lookup> {
     if (!this.specs) await this.devices();
     const idOrRole = this.specs!.has(device) ? device : (this.roles[device] ?? device);
@@ -979,8 +987,9 @@ export class Ev3Provider implements Provider {
       }
       case "motor_pair":
         return group(async () => {
-          const li = outputIndex(this.o.pair.left),
-            ri = outputIndex(this.o.pair.right);
+          const pair = this.pairPorts();
+          const li = outputIndex(pair.left),
+            ri = outputIndex(pair.right);
           const g = await this.link.read((b) => [...outputGetCount(li, b), ...outputGetCount(ri, b + 4)], 8);
           return { left_deg: { value: readI32(g, 0) }, right_deg: { value: readI32(g, 4) } };
         });
@@ -1217,9 +1226,10 @@ export class Ev3Provider implements Provider {
             right = this.number(args, "right_deg", where);
           const s = this.speed(args, where);
           const brake = this.brakeArg(args, where);
-          const li = outputIndex(o.pair.left),
-            ri = outputIndex(o.pair.right);
-          const mask = OUTPUT_MASK[o.pair.left] | OUTPUT_MASK[o.pair.right];
+          const pair = this.pairPorts();
+          const li = outputIndex(pair.left),
+            ri = outputIndex(pair.right);
+          const mask = OUTPUT_MASK[pair.left] | OUTPUT_MASK[pair.right];
           // B1 (c_output.c / d_pwm.c): the master runs at `speed`, the other at speed*(100-|turn|)/100.
           // turn > 0: master = lower port; turn < 0: master = higher port.
           const leftLeads = Math.abs(left) >= Math.abs(right);
@@ -1254,7 +1264,8 @@ export class Ev3Provider implements Provider {
           );
         }
         case "motor_pair.brake": {
-          const ports = [outputIndex(o.pair.left), outputIndex(o.pair.right)];
+          const pair = this.pairPorts();
+          const ports = [outputIndex(pair.left), outputIndex(pair.right)];
           for (const r of new Set(ports.map((i) => this.running.get(i)))) r?.abort(true);
           const g0 = await this.link.command(
             ports.flatMap((p, i) => outputGetCount(p, i * 4)),

@@ -44,7 +44,7 @@ describe("reasons and clamps", () => {
   });
   test("a turn past max_turn_deg turns to the limit: reason clamped, the target marked", async () => {
     const limits = await call("describe_robot");
-    const max = limits.ok ? limits.data.limits.max_turn_deg : 0;
+    const max = limits.ok ? limits.data.drivetrain.max_turn_deg : 0;
     const t = await call("turn", { angle_deg: max + 100, speed_pct: 60 });
     expect(t).toMatchObject({
       ok: true,

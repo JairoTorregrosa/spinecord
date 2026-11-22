@@ -1,6 +1,6 @@
 // The runtime executes every tool that addresses one robot, next to the hardware (CONTRACT.md §4). It knows devices only
-// through their manifests and the Provider interface; the only kinds it names are motor_pair (drivetrain)
-// and gyro (heading source). Limits come from the profile. The process around it (apps/local) owns the link and activity state.
+// through their manifests and the Provider interface; the only kind it names is motor_pair (drivetrain);
+// the heading of a drivetrain is the channel its profile names. Limits come from the profile. The process around it (apps/local) owns the link and activity state.
 import { RETRYABLE, RuntimeError } from "../protocol/types";
 import { newTraceId, stackOf } from "../protocol/types";
 import type {
@@ -197,9 +197,24 @@ class RuntimeImpl implements LocalRuntime {
   constructor(o: RuntimeOptions) {
     if (!o.profile) throw rerr("misconfigured", "createRuntime: profile is required");
     if (!o.providers?.length) throw rerr("misconfigured", "createRuntime: at least one provider is required");
-    for (const k of ["max_speed_pct", "max_command_ms", "max_drive_cm", "max_turn_deg", "max_program_ms"] as const) {
+    for (const k of ["max_speed_pct", "max_command_ms", "max_program_ms"] as const) {
       if (!(o.profile.limits?.[k] > 0))
         throw rerr("misconfigured", `createRuntime: profile.limits.${k} must be a positive number`);
+    }
+    const dt = o.profile.drivetrain;
+    if (dt) {
+      for (const k of ["max_drive_cm", "max_turn_deg"] as const)
+        if (!(dt[k] > 0))
+          throw rerr("misconfigured", `createRuntime: profile.drivetrain.${k} must be a positive number`);
+      const h: unknown = dt.heading;
+      if (h !== undefined) {
+        const { device, channel } = (typeof h === "object" && h !== null ? h : {}) as Record<string, unknown>;
+        if (typeof device !== "string" || device === "" || typeof channel !== "string" || channel === "")
+          throw rerr(
+            "misconfigured",
+            `createRuntime: profile.drivetrain.heading must be {device, channel} (a device id or a role, and one of its channels), got ${JSON.stringify(h)}`,
+          );
+      }
     }
     const built = o.providers.map((p) => (typeof p === "function" ? p(o.profile.limits) : p));
     const ids = built.map((p) => p.id);
@@ -498,10 +513,12 @@ class RuntimeImpl implements LocalRuntime {
   // ---------- drivetrain ----------
   private drivetrain(tool: string): { dt: Drivetrain; pair: Entry; cmd: CommandSpec } {
     const dt = this.prof.drivetrain;
+    // the fix is the same for every reason below: the robot's actuators are its devices
+    const unsupported = (message: string) =>
+      fixedBy(["describe_robot", "command_device"], rerr("unsupported", message));
     if (!dt)
-      throw rerr(
-        "unsupported",
-        `${tool}: this robot has no drivetrain in its profile, so it cannot drive, turn or arc. Use command_device on individual actuators (see describe_robot).`,
+      throw unsupported(
+        `${tool}: this robot has no drivetrain in its profile (describe_robot shows drivetrain: null), so it cannot drive, turn or arc. Its motors are devices: describe_robot lists them, command_device moves one.`,
       );
     if (
       dt.type !== "differential" ||
@@ -509,31 +526,33 @@ class RuntimeImpl implements LocalRuntime {
       !(dt.axle_track_cm > 0) ||
       (dt.forward_sign !== 1 && dt.forward_sign !== -1)
     ) {
-      throw rerr(
-        "unsupported",
+      throw unsupported(
         `${tool}: the profile's drivetrain is not a valid differential drive (needs wheel_diameter_cm > 0, axle_track_cm > 0, forward_sign 1 or -1).`,
       );
     }
     const pair = this.entries.get(dt.pair_device);
     if (!pair)
-      throw rerr(
-        "unsupported",
+      throw unsupported(
         `${tool}: drivetrain pair device "${dt.pair_device}" is not attached. Attached devices: ${[...this.entries.keys()].join(", ") || "(none)"}.`,
       );
     const cmd = pair.spec.commands.find((c) => c.name === "run_pair");
     const hasEnc = ["left_deg", "right_deg"].every((n) => pair.spec.channels.some((c) => c.name === n));
     if (!cmd || !hasEnc)
-      throw rerr(
-        "unsupported",
+      throw unsupported(
         `${tool}: drivetrain pair device ${pair.spec.id} must expose command run_pair and channels left_deg, right_deg (kind motor_pair); it is kind ${pair.spec.kind}.`,
       );
     return { dt, pair, cmd };
   }
 
-  private gyro(): Entry | undefined {
-    const byRole = this.entries.get(this.roleMap()["gyro"] ?? "");
-    const e = byRole ?? [...this.entries.values()].find((x) => x.spec.kind === "gyro");
-    return e?.spec.channels.some((c) => c.name === "angle_deg" && c.type === "number") ? e : undefined;
+  // The heading channel the drivetrain names (CONTRACT §3), when its device is attached and has that numeric
+  // channel. Nothing else is a heading source: no device is picked by its kind or its role.
+  private heading(dt: Drivetrain): { entry: Entry; channel: string } | undefined {
+    const h = dt.heading;
+    if (!h) return undefined;
+    const e = this.entries.get(this.roleMap()[h.device] ?? h.device);
+    return e?.spec.channels.some((c) => c.name === h.channel && c.type === "number")
+      ? { entry: e, channel: h.channel }
+      : undefined;
   }
 
   private speed(a: Args): { asked: number; speed: number; clamps: Clamp[] } {
@@ -561,9 +580,8 @@ class RuntimeImpl implements LocalRuntime {
 
   private planDrive(a: Args): Run {
     const { dt } = this.drivetrain("drive");
-    const lim = this.prof.limits;
     const asked = a.distance_cm as number;
-    const dist = Math.sign(asked) * Math.min(Math.abs(asked), lim.max_drive_cm);
+    const dist = Math.sign(asked) * Math.min(Math.abs(asked), dt.max_drive_cm);
     const sp = this.speed(a);
     const wheel = (dt.forward_sign * 360 * dist) / (Math.PI * dt.wheel_diameter_cm);
     const note = this.underSmallestStep(
@@ -594,7 +612,7 @@ class RuntimeImpl implements LocalRuntime {
   private planTurn(a: Args): Run {
     const { dt } = this.drivetrain("turn");
     const asked = a.angle_deg as number;
-    const angle = Math.sign(asked) * Math.min(Math.abs(asked), this.prof.limits.max_turn_deg);
+    const angle = Math.sign(asked) * Math.min(Math.abs(asked), dt.max_turn_deg);
     const sp = this.speed(a);
     const w = (dt.forward_sign * angle * dt.axle_track_cm) / dt.wheel_diameter_cm; // positive angle = counter-clockwise: right wheel forward
     const note = this.underSmallestStep("turn", "angle_deg", asked, "deg", w, dt.wheel_diameter_cm / dt.axle_track_cm);
@@ -619,13 +637,12 @@ class RuntimeImpl implements LocalRuntime {
   // way the robot travels. Wheel paths: center path ± heading change × half the axle track.
   private planArc(a: Args): Run {
     const { dt } = this.drivetrain("arc");
-    const lim = this.prof.limits;
     const radius = a.radius_cm as number;
     const asked = a.angle_deg as number;
     const direction = (a.direction as "forward" | "backward" | undefined) ?? "forward";
-    let angle = Math.sign(asked) * Math.min(Math.abs(asked), lim.max_turn_deg);
+    let angle = Math.sign(asked) * Math.min(Math.abs(asked), dt.max_turn_deg);
     const path = Math.abs((radius * angle * Math.PI) / 180); // distance travelled by the robot's center
-    if (path > lim.max_drive_cm) angle *= lim.max_drive_cm / path;
+    if (path > dt.max_drive_cm) angle *= dt.max_drive_cm / path;
     const sp = this.speed(a);
     const theta = (angle * Math.PI) / 180;
     const center = (direction === "forward" ? 1 : -1) * radius * Math.abs(theta);
@@ -693,10 +710,10 @@ class RuntimeImpl implements LocalRuntime {
       );
     return { l: l!.value, r: r!.value };
   }
-  private async gyroAngle(g: Entry | undefined): Promise<number | undefined> {
-    if (!g) return undefined;
+  private async headingAngle(h: { entry: Entry; channel: string } | undefined): Promise<number | undefined> {
+    if (!h) return undefined;
     try {
-      const [r] = await this.readEntry(g, ["angle_deg"]);
+      const [r] = await this.readEntry(h.entry, [h.channel]);
       return typeof r!.value === "number" ? r!.value : undefined;
     } catch {
       return undefined;
@@ -1202,7 +1219,7 @@ class RuntimeImpl implements LocalRuntime {
   ): Promise<RuntimeResult> {
     const { dt, pair, cmd } = this.drivetrain(tool);
     const t0 = this.clock.now();
-    const gyro = this.gyro();
+    const gyro = this.heading(dt);
     const leftLeads = Math.abs(L) >= Math.abs(R);
     const target = leftLeads ? L : R;
     const leadKey = leftLeads ? "left_deg" : "right_deg";
@@ -1220,7 +1237,7 @@ class RuntimeImpl implements LocalRuntime {
       mark: () => {
         after = undefined;
         const read = this.encoders(pair);
-        before ??= Promise.all([read, this.gyroAngle(gyro)]);
+        before ??= Promise.all([read, this.headingAngle(gyro)]);
         before.catch(() => {});
         at = read;
         return read.then((e) => {
@@ -1238,7 +1255,7 @@ class RuntimeImpl implements LocalRuntime {
         return { f: frac(est), start: frac(ahead(start)), drift: target === 0 ? 0 : drift / target };
       },
       settle: async () => {
-        const [enc, g] = await Promise.all([this.encoders(pair), this.gyroAngle(gyro)]);
+        const [enc, g] = await Promise.all([this.encoders(pair), this.headingAngle(gyro)]);
         before ??= Promise.resolve([enc, g]); // nothing was sent: the move starts and ends here
         enc0 ??= (await before)[0];
         after = { enc, g };
@@ -1270,7 +1287,8 @@ class RuntimeImpl implements LocalRuntime {
     const dr = dt.forward_sign * (enc.r - start.r);
     const cmPerDeg = (Math.PI * dt.wheel_diameter_cm) / 360;
     const source = g0 !== undefined && g1 !== undefined ? "gyro" : "encoders";
-    // Providers normalize angles to the contract's sign (counter-clockwise positive), so the gyro is trusted as is.
+    // Providers normalize angles to the contract's sign (counter-clockwise positive), so the heading channel is
+    // trusted as is. `source` says "gyro" for it and "encoders" for the wheels.
     const heading = source === "gyro" ? g1! - g0! : ((dr - dl) * dt.wheel_diameter_cm) / (2 * dt.axle_track_cm);
     // drive, turn and arc report the same fields
     const measured: Record<string, Value> = {
@@ -1773,7 +1791,7 @@ class RuntimeImpl implements LocalRuntime {
         description: d.description,
       })),
       roles: this.roleMap(),
-      drivetrain: this.prof.drivetrain ?? null,
+      drivetrain: this.prof.drivetrain ?? null, // null: no drivetrain tools, the motors are devices
       limits: this.prof.limits,
       notes: this.prof.notes,
       scan_error: this.scanFailure

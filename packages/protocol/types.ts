@@ -119,17 +119,21 @@ export type BackendKind = "ev3" | "sim";
 // ---------- Robot profile (§3) ----------
 export interface Drivetrain {
   type: "differential";
-  pair_device: string; // device exposing the `run_pair` command (EV3: synced motors B+C)
+  pair_device: string; // device exposing the `run_pair` command (EV3: the synced pair the robot file declares)
   wheel_diameter_cm: number;
   axle_track_cm: number;
   forward_sign: 1 | -1;
+  max_drive_cm: number; // longest distance of one drive or arc
+  max_turn_deg: number; // largest angle of one turn or arc
+  // The channel that measures rotation about the vertical axis, in degrees; `device` is a device id or a role.
+  // Absent → the heading of a move comes from the wheel encoders. The runtime picks no heading device itself.
+  heading?: { device: string; channel: string };
 }
-// The ONLY source of motion limits. Providers are constructed with these (no separate provider bounds for speed).
+// The limits of every robot, with or without wheels. Providers are constructed with these (no separate provider
+// bounds for speed). The distance and angle limits of a drivetrain move are fields of Drivetrain.
 export interface Limits {
   max_speed_pct: number;
   max_command_ms: number;
-  max_drive_cm: number;
-  max_turn_deg: number;
   max_program_ms: number;
 }
 export interface RobotProfile {

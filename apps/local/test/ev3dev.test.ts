@@ -10,6 +10,7 @@ import { FakeBrick } from "../../../packages/driver-ev3dev/test/fake-brick";
 import { EXAMPLE, loadConfig } from "../src/config";
 import { buildFleet, type Fleet } from "../src/sources";
 import { callTool } from "../src/tools";
+import { ARM, armWorks, file, toolsOf } from "./arm";
 import { sleep, until } from "./client";
 
 const python3 = Bun.which("python3");
@@ -151,7 +152,7 @@ describe("an ev3dev brick over ssh", () => {
   });
 
   test.skipIf(!runs)("an older bridge without run is misconfigured, with the reinstall hint", async () => {
-    const older = withoutRun(BRIDGE).replace('VERSION = "4"', 'VERSION = "3"');
+    const older = withoutRun(BRIDGE).replace('VERSION = "5"', 'VERSION = "4"');
     const events: string[] = [];
     const { fleet, done } = await preinstalled(older, events);
     try {
@@ -363,5 +364,58 @@ describe("an ev3dev brick over ssh", () => {
         expect(stopped).toContainEqual({ robot_id: "r1", motors_stopped: true });
       }
     },
+  );
+});
+
+describe("the arm example on an ev3dev brick: no pair, no drivetrain", () => {
+  const home = mkdtempSync(join(tmpdir(), "spinecord-local-home-"));
+  const brick = runs
+    ? new FakeBrick({
+        motors: [{ port: "A" }, { port: "B" }],
+        sensors: [{ port: 1, driver: "lego-ev3-touch", mode: "TOUCH", modes: ["TOUCH"], values: [0] }],
+        battery_uv: 7900000,
+      })
+    : null;
+  afterAll(() => {
+    delete process.env.BENCH_FAKE_HOME;
+    delete process.env.SYSFS_ROOT;
+    brick?.dispose();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test.skipIf(!runs)(
+    "the hello carries no pair: drivetrain null, no pair device, drive unsupported, each motor moves",
+    async () => {
+      Object.assign(process.env, { BENCH_FAKE_HOME: home, SYSFS_ROOT: brick!.root });
+      const stopPlaying = [0, 1].map((i) => brick!.playMotor(i));
+      const fleet = await buildFleet(
+        {
+          port: 0,
+          robots: [
+            {
+              source: "ev3dev",
+              id: "arm",
+              robot: await file(ARM),
+              hardware: { low_battery_v: 6.5, max_tone_ms: 5000, speech_volume_pct: 80 },
+              ssh: {
+                host: "fake-brick",
+                user: "robot",
+                sshCommand: join(import.meta.dir, "..", "..", "..", "bench", "fake-ssh.ts"),
+              },
+              installBridge: true,
+            },
+          ],
+        },
+        { log: () => {} },
+      );
+      try {
+        await online(fleet, "arm");
+        await armWorks(toolsOf(fleet.robots, "arm"), ["ev3.A", "ev3.B"]);
+      } finally {
+        stopPlaying.forEach((stop) => stop());
+        expect(await fleet.shutdown()).toEqual([{ robot_id: "arm", motors_stopped: true }]);
+      }
+    },
+    30_000,
   );
 });

@@ -16,11 +16,13 @@ const RATE = 1000; // deg/s at 100 %, same in the fake and in the provider's cal
 const LIMITS = {
   max_speed_pct: 100,
   max_command_ms: 20000,
-  max_drive_cm: 100,
-  max_turn_deg: 360,
   max_program_ms: 60000,
 };
-const CONFIG: Ev3ProviderOptions = { limits: LIMITS, hardware: EXAMPLE_EV3_HARDWARE };
+const CONFIG: Ev3ProviderOptions = {
+  limits: LIMITS,
+  hardware: EXAMPLE_EV3_HARDWARE,
+  pair: { left: "B", right: "C" },
+};
 function rig(opts: { fake?: ConstructorParameters<typeof FakeEV3>[0]; provider?: Partial<Ev3ProviderOptions> } = {}) {
   const fake = new FakeEV3({ degPerSecAt100: RATE, ...opts.fake });
   const ev3 = new Ev3Provider(fake, { ...CONFIG, degPerSecAt100: RATE, pollMs: 2, timeoutMs: 200, ...opts.provider });
@@ -112,6 +114,8 @@ describe("config", () => {
     );
     expect(codeOf(mk({ ...CONFIG, hardware: { ...EXAMPLE_EV3_HARDWARE, max_tone_ms: 40000 } }))).toBe("misconfigured");
     expect(codeOf(mk({ ...CONFIG, pair: { left: "B", right: "B" } }))).toBe("misconfigured");
+    expect(codeOf(mk({ ...CONFIG, pair: { left: "B" } as never }))).toBe("misconfigured");
+    expect(codeOf(mk({ ...CONFIG, pair: undefined }))).toBe("constructed");
     expect(codeOf(mk(CONFIG))).toBe("constructed");
     expect(EXAMPLE_EV3_HARDWARE).toEqual({ low_battery_v: 6.5, max_tone_ms: 5000, tone_volume_pct: 50 });
   });
@@ -321,6 +325,26 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
     expect(await b.ev3.read("ev3.S2")).toEqual([]);
     expect(await code(b.ev3.read("ev3.S2", ["distance_cm"]))).toBe("unknown_channel");
     expect(await code(b.ev3.command("ev3.D", "run_time", { ms: 10, speed_pct: 10 }, never()))).toBe("unknown_command");
+  });
+
+  test("a robot that declares no pair has no pair device: motors on B and C are two motors", async () => {
+    const b = rig({ provider: { pair: undefined } });
+    const devices = await b.ev3.devices();
+    expect(devices.filter((d) => d.kind === "motor").map((d) => d.id)).toEqual(["ev3.B", "ev3.C"]);
+    expect(devices.some((d) => d.kind === "motor_pair")).toBe(false);
+    expect(await code(b.ev3.read("ev3.pair"))).toBe("unknown_device");
+    const args = { left_deg: 60, right_deg: 60, speed_pct: 40 };
+    expect(await code(b.ev3.command("ev3.pair", "run_pair", args, never()))).toBe("unknown_device");
+    expect(await code(b.ev3.command("ev3.pair", "brake", {}, never()))).toBe("unknown_device");
+    expect(motionOps(b.fake)).toEqual([]);
+    // each motor moves by itself, and stop() still brakes and verifies every port
+    for (const port of ["B", "C"] as const) {
+      const r = await b.ev3.command(`ev3.${port}`, "run_degrees", { degrees: 60, speed_pct: 40 }, never());
+      expect(r.reason).toBe("completed");
+      expect(Math.abs(b.fake.tacho(port) - 60)).toBeLessThanOrEqual(15);
+    }
+    expect(await b.ev3.stop()).toEqual({ motors_stopped: true });
+    expectSafe(b.fake);
   });
 
   test("the pair is configurable", async () => {

@@ -18,13 +18,15 @@ const PROFILE: RobotProfile = {
   id: "m1",
   roles: {},
   notes: [],
-  limits: { max_speed_pct: 80, max_command_ms: 10000, max_drive_cm: 100, max_turn_deg: 360, max_program_ms: 20000 },
+  limits: { max_speed_pct: 80, max_command_ms: 10000, max_program_ms: 20000 },
   drivetrain: {
     type: "differential",
     pair_device: "mock.pair",
     wheel_diameter_cm: 5.6,
     axle_track_cm: 12,
     forward_sign: 1,
+    max_drive_cm: 100,
+    max_turn_deg: 360,
   },
 };
 async function mockRobot() {

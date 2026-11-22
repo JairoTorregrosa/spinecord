@@ -9,6 +9,7 @@ Requests (one JSON object per line; every reply echoes "id"):
   {"op":"hello","id":1,"config":{"bounds":{"max_speed_pct":..,"max_op_ms":..,"low_battery_v":..,"max_tone_ms":..,
                                            "speech_volume_pct":..},
                                  "pair":{"left":"B","right":"C"}}}
+                                       "pair" is optional: without it there is no "pair" device.
   {"op":"read","id":2,"device":"S4","channels":["proximity_pct"],"allow_mode_switch":false}
   {"op":"read_many","id":5,"reads":[{"device":"B"},{"device":"S4","channels":["proximity_pct"]}]}
                                        several reads, one answer: {"results":[<what each read alone answers>]}.
@@ -81,7 +82,7 @@ EXIT_OK = 0              # stdin closed or a signal: the link was closed
 EXIT_CRASH = 1           # an unexpected error
 EXIT_USAGE = 2           # bad arguments, or not an ev3dev brick
 EXIT_GUARD_LOST = 3      # the guard process ended: every motor was braked and the bridge ended itself
-VERSION = "4"            # sent in hello as "bridge"; the provider refuses a bridge older than the one it needs
+VERSION = "5"            # sent in hello as "bridge"; the provider refuses a bridge older than the one it needs
 # What a beacon channel answers while the sensor sees no beacon. A reading with this error is sent with
 # "absent": true: the sensor answered, the read did not fail.
 NO_BEACON = "no beacon in view on channel 1"
@@ -521,13 +522,15 @@ class Bridge(object):
             raise BridgeError("misconfigured", "config.bounds.max_speed_pct must be <= 100")
         if b["speech_volume_pct"] > 100:
             raise BridgeError("misconfigured", "config.bounds.speech_volume_pct must be <= 100")
-        pair = config.get("pair") or {}
-        left, right = pair.get("left"), pair.get("right")
-        if left not in list("ABCD") or right not in list("ABCD") or left == right:
-            raise BridgeError("misconfigured", "config.pair needs two different ports A-D as left and right")
+        pair = config.get("pair")
+        if pair is not None:
+            left, right = (pair.get("left"), pair.get("right")) if isinstance(pair, dict) else (None, None)
+            if left not in list("ABCD") or right not in list("ABCD") or left == right:
+                raise BridgeError("misconfigured", "config.pair, when given, needs two different ports A-D as left and right")
+            pair = (left, right)
         self.bounds = dict((k, b[k]) for k in BOUND_KEYS)
         self.op_ms = int(max(1, min(MAX_OP_MS, b["max_op_ms"])))   # never above MAX_OP_MS, whatever the config says
-        self.pair = (left, right)
+        self.pair = pair                                           # None: this robot has no motor pair
         self.battery = None
         self.scan()
         if self.speech_found is None:
@@ -596,19 +599,22 @@ class Bridge(object):
         if self.bounds is None:
             raise BridgeError("misconfigured", "send hello with config.bounds before any other request")
 
+    def has_pair(self):
+        return self.pair is not None and self.pair[0] in self.motors and self.pair[1] in self.motors
+
     def find(self, device):
         """-> (kind, object or None)"""
         if device in self.motors:
             return "motor", self.motors[device]
         if device == "pair":
-            if self.pair[0] in self.motors and self.pair[1] in self.motors:
+            if self.has_pair():
                 return "motor_pair", None
         elif isinstance(device, str) and re.match(r"^S[1-4]$", device) and int(device[1]) in self.sensors:
             s = self.sensors[int(device[1])]
             return s.kind, s
         elif device in ("speaker", "display", "led", "buttons", "battery"):
             return device, None
-        names = sorted(self.motors) + (["pair"] if self.pair[0] in self.motors and self.pair[1] in self.motors else [])
+        names = sorted(self.motors) + (["pair"] if self.has_pair() else [])
         names += ["S%d" % k for k in sorted(self.sensors)] + ["speaker", "display", "led", "buttons", "battery"]
         raise BridgeError("unknown_device", "unknown device %s; devices: %s" % (json.dumps(device), ", ".join(names)))
 

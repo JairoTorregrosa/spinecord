@@ -7,14 +7,15 @@ Runs on real robots. A row counts for the commit it names: a check passes for a 
 | Path | On a real brick |
 | --- | --- |
 | Stock EV3 over USB through the bridge page (`apps/local --ev3`) | not run |
-| EV3 on ev3dev, bridge version 4 (`apps/local --ev3dev`) | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard (log below); direction by eye, `until`, the watchdog and brick off at start not yet |
+| EV3 on ev3dev, bridge version 5 (`apps/local --ev3dev`): version 4 plus a hello that may leave out `pair` | not run |
+| EV3 on ev3dev, bridge version 4 | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard (log below); direction by eye, `until`, the watchdog and brick off at start not yet |
 | EV3 on ev3dev, a bridge before version 4 | run on 2026-11-21 (log below) |
 
 Everything else about these paths is tested without a brick: the stock driver against the byte-level emulator (`packages/sim-ev3`), the ev3dev bridge against a fake sysfs tree with the local Python (`packages/driver-ev3dev/test`).
 
 ## To run
 
-One pass per path (USB through the bridge page; ev3dev with bridge version 4). For each check add a row to the log with the date, the commit (`git rev-parse --short HEAD`), the robot and what was measured. Robot on the floor, a hand near it.
+One pass per path (USB through the bridge page; ev3dev with the bridge in this repository, version 5; a tick carries the date it ran and the log names the commit). For each check add a row to the log with the date, the commit (`git rev-parse --short HEAD`), the robot and what was measured. Robot on the floor, a hand near it.
 
 | Check | How | Passes when | USB | ev3dev |
 | --- | --- | --- | --- | --- |
@@ -28,6 +29,7 @@ One pass per path (USB through the bridge page; ev3dev with bridge version 4). F
 | `kill -9` of the bridge | during a 100 cm `drive`: `ssh robot@<host> "pkill -9 -f ev3dev_bridge.py"` | the guard brakes both motors; the robot is `offline`, then `online` by itself | n/a | ☑ 2026-11-22 |
 | the guard | with the robot online: `ssh robot@<host> "pgrep -af 'python3 -S'"`, then `kill` the process it lists | the guard is listed (the provider refuses a bridge without one); after the kill the bridge brakes every motor and ends, the robot is `offline`, then `online` with a new guard | n/a | ☑ 2026-11-22 |
 | watchdog | during a 100 cm `drive`: take the brick off the network | both motors brake about 1 s after the last message | n/a | ☐ |
+| a robot without a pair | start with `deployments/example/robots/arm.json` on a brick with motors on B and C; `describe_robot`, then `command_device` `run_degrees` on each | two `motor` devices and no `motor_pair`; `drivetrain: null`; `drive` answers `unsupported`; each motor turns by itself | ☐ | ☐ |
 | brick off at start | start the server with the brick off, then turn it on | the server starts; the robot is `offline` with its hint, then `online` | n/a | ☐ |
 
 ## Log

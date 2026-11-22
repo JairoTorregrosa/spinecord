@@ -6,8 +6,8 @@ import type { OutputPort } from "./encode";
 import type { Ev3Hardware } from "./provider";
 
 export interface RobotFile {
-  /** Ports of the synced motor pair `<id>.pair`. */
-  pair: { left: OutputPort; right: OutputPort };
+  /** Ports of the synced motor pair `<id>.pair`. Absent: the robot has no pair, and no such device is announced. */
+  pair?: { left: OutputPort; right: OutputPort };
   hardware: Ev3Hardware;
   profile: RobotProfile;
 }
@@ -32,9 +32,12 @@ export function parseRobotFile(json: unknown, where: string): RobotFile {
       : fail(field, `must be a motor port A, B, C or D, got ${JSON.stringify(v)}`);
 
   const root = obj(json, "the file");
-  const pairIn = obj(root.pair, "pair");
-  const pair = { left: port(pairIn.left, "pair.left"), right: port(pairIn.right, "pair.right") };
-  if (pair.left === pair.right) fail("pair", `needs two different ports, got ${pair.left} twice`);
+  let pair: RobotFile["pair"];
+  if (root.pair !== undefined) {
+    const pairIn = obj(root.pair, "pair");
+    pair = { left: port(pairIn.left, "pair.left"), right: port(pairIn.right, "pair.right") };
+    if (pair.left === pair.right) fail("pair", `needs two different ports, got ${pair.left} twice`);
+  }
 
   const hw = obj(root.hardware, "hardware");
   const hardware: Ev3Hardware = {
@@ -50,8 +53,6 @@ export function parseRobotFile(json: unknown, where: string): RobotFile {
   const limits: Limits = {
     max_speed_pct: positive(lim.max_speed_pct, "profile.limits.max_speed_pct"),
     max_command_ms: positive(lim.max_command_ms, "profile.limits.max_command_ms"),
-    max_drive_cm: positive(lim.max_drive_cm, "profile.limits.max_drive_cm"),
-    max_turn_deg: positive(lim.max_turn_deg, "profile.limits.max_turn_deg"),
     max_program_ms: positive(lim.max_program_ms, "profile.limits.max_program_ms"),
   };
   if (!Array.isArray(p.notes) || p.notes.some((n) => typeof n !== "string"))
@@ -64,6 +65,11 @@ export function parseRobotFile(json: unknown, where: string): RobotFile {
   };
   if (p.drivetrain !== undefined) {
     const d = obj(p.drivetrain, "profile.drivetrain");
+    if (!pair)
+      fail(
+        "profile.drivetrain",
+        "needs `pair` ({left, right} motor ports) in the same file: the drivetrain's pair_device is announced only for a declared pair. A robot without wheels has neither",
+      );
     if (d.type !== "differential")
       fail("profile.drivetrain.type", `must be "differential", got ${JSON.stringify(d.type)}`);
     if (d.forward_sign !== 1 && d.forward_sign !== -1)
@@ -74,7 +80,16 @@ export function parseRobotFile(json: unknown, where: string): RobotFile {
       wheel_diameter_cm: positive(d.wheel_diameter_cm, "profile.drivetrain.wheel_diameter_cm"),
       axle_track_cm: positive(d.axle_track_cm, "profile.drivetrain.axle_track_cm"),
       forward_sign: d.forward_sign as 1 | -1,
+      max_drive_cm: positive(d.max_drive_cm, "profile.drivetrain.max_drive_cm"),
+      max_turn_deg: positive(d.max_turn_deg, "profile.drivetrain.max_turn_deg"),
     };
+    if (d.heading !== undefined) {
+      const h = obj(d.heading, "profile.drivetrain.heading");
+      profile.drivetrain.heading = {
+        device: text(h.device, "profile.drivetrain.heading.device"),
+        channel: text(h.channel, "profile.drivetrain.heading.channel"),
+      };
+    }
   }
-  return { pair, hardware, profile };
+  return { ...(pair ? { pair } : {}), hardware, profile };
 }

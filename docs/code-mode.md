@@ -88,7 +88,7 @@ A call that never reached the server is thrown too, with a message that does not
 | Tools | `data` | Read it with |
 |---|---|---|
 | `list_robots` | `{robots: [{id, backend, link, activity, fault_reason, connect}]}` | `data.robots[0].id` |
-| `describe_robot` | `{id, backend, devices: [{id, kind, roles, channels, commands, description}], roles, drivetrain, limits, notes, scan_error}` | `data.roles.distance` → a device id; `data.limits.max_drive_cm` |
+| `describe_robot` | `{id, backend, devices: [{id, kind, roles, channels, commands, description}], roles, drivetrain, limits, notes, scan_error}` | `data.roles.distance` → a device id; `data.drivetrain.max_drive_cm` (`data.drivetrain` is null on a robot without wheels) |
 | `describe_device` | `{id, kind, roles, channels: [{name, type, unit?, range?, active?, null_when_absent?, …}], commands: [{name, params, bound, moves}]}` | `data.commands.find((c) => c.name === "tone").params` |
 | `read_device` `read_all` `wait_until` | `{readings: [{device, channel, value, unit?, ts, error?, absent?}]}`, one reading per channel. `read_all` and `wait_until` add `ms`; `wait_until` adds `met` and `reason` | `data.readings.find((r) => r.channel === "distance_cm").value` |
 | `sample_device` | `{samples: [[t_ms, value], …], min, max, mean, last, rate_hz, unit?}` | `data.mean`, `data.samples.at(-1)[1]` |

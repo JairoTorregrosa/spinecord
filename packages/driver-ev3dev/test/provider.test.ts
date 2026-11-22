@@ -8,6 +8,7 @@ import {
   BRICK_WATCHDOG_MS,
   Ev3devProvider,
   EXAMPLE_EV3DEV_HARDWARE,
+  MIN_BRIDGE_VERSION,
   readOnlyTransport,
   type Ev3devProviderOptions,
   type LineTransport,
@@ -35,6 +36,7 @@ const OPTS: Ev3devProviderOptions = {
   maxOpMs: OP_MS,
   limits: { max_speed_pct: 60, max_command_ms: 15000 },
   hardware: EXAMPLE_EV3DEV_HARDWARE,
+  pair: { left: "B", right: "C" },
 };
 const IR_MODES = ["IR-PROX", "IR-SEEK", "IR-REMOTE", "IR-REM-A", "IR-S-ALT", "IR-CAL"];
 const GYRO_MODES = ["GYRO-ANG", "GYRO-RATE", "GYRO-FAS", "GYRO-G&A", "GYRO-CAL"];
@@ -178,6 +180,23 @@ describe("fake brick", () => {
     // Target still ahead: one absolute move to (position read just before the write) + delta.
     expect(out.ahead).toMatchObject({ command: "run-to-abs-pos", position_sp: "-67" });
     expect(out.ahead.reply.result).toMatchObject({ reason: "completed", measured: { degrees: -27 } });
+  });
+
+  brickTest("a robot that declares no pair: the hello carries none, and motors on B and C are two motors", async () => {
+    const { provider, brick, play } = setup({ pair: undefined, maxOpMs: PATIENT_OP_MS });
+    const specs = await provider.devices();
+    expect(specs.filter((s) => s.kind === "motor").map((s) => s.id)).toEqual(["ev3.B", "ev3.C"]);
+    expect(specs.some((s) => s.kind === "motor_pair")).toBe(false);
+    expect(await code(provider.read("ev3.pair"))).toBe("unknown_device");
+    const args = { left_deg: 40, right_deg: 40, speed_pct: 30 };
+    expect(await code(provider.command("ev3.pair", "run_pair", args, never))).toBe("unknown_device");
+    for (const i of [0, 1]) {
+      play(i);
+      const r = await provider.command(`ev3.${"BC"[i]}`, "run_degrees", { degrees: 40, speed_pct: 30 }, never);
+      expect(r).toMatchObject({ reason: "completed", measured: { degrees: 40 } });
+      expect(brick.motor(i, "position_sp")).toBe("40");
+    }
+    expect(await provider.stop()).toEqual({ motors_stopped: true });
   });
 
   brickTest("inventory becomes DeviceSpecs with the contract's kinds, ids and bounds", async () => {
@@ -953,6 +972,45 @@ describe("fake brick", () => {
       expect(((await ask({ op: "read", id: 4, device: "S4" })).readings as { value: unknown }[])[0]!.value).toBe(50);
     },
   );
+
+  brickTest("the bridge's hello: `pair` may be left out, and a pair that is given must be two ports", async () => {
+    const brick = new FakeBrick({ motors: [{ port: "B" }, { port: "C" }], sensors: [], battery_uv: 7000000 });
+    const transport = brick.transport(python!);
+    open.push({ brick, transport });
+    const lines: Record<string, unknown>[] = [];
+    transport.onLine((l) => lines.push(JSON.parse(l) as Record<string, unknown>));
+    transport.onClose(() => {});
+    await transport.open();
+    const ask = async (msg: Record<string, unknown>) => {
+      transport.send(JSON.stringify(msg));
+      expect(await until(() => lines.some((l) => l.id === msg.id), 5000)).toBe(true);
+      return lines.find((l) => l.id === msg.id)!;
+    };
+    const bounds = { max_speed_pct: 60, max_op_ms: 250, low_battery_v: 6.5, max_tone_ms: 5000, speech_volume_pct: 80 };
+    for (const [id, pair] of [
+      [1, { left: "B" }],
+      [2, { left: "B", right: "B" }],
+      [3, "BC"],
+    ] as const)
+      expect(await ask({ op: "hello", id, config: { bounds, pair } })).toMatchObject({
+        ok: false,
+        code: "misconfigured",
+        message: expect.stringContaining("config.pair"),
+      });
+    expect(await ask({ op: "hello", id: 4, config: { bounds } })).toMatchObject({
+      ok: true,
+      bridge: String(MIN_BRIDGE_VERSION),
+    });
+    expect(await ask({ op: "read", id: 5, device: "pair" })).toMatchObject({
+      ok: false,
+      code: "unknown_device",
+      message: expect.stringContaining("devices: B, C, speaker"),
+    });
+    expect((await ask({ op: "read", id: 6, device: "C", channels: ["position_deg"] })).ok).toBe(true);
+    // the same brick with the pair declared has the pair device
+    expect((await ask({ op: "hello", id: 7, config: { bounds, pair: { left: "B", right: "C" } } })).ok).toBe(true);
+    expect((await ask({ op: "read", id: 8, device: "pair" })).ok).toBe(true);
+  });
 
   brickTest("a read-only transport lets a shared read through", async () => {
     const { provider, sent } = tapped(readOnlyTransport);

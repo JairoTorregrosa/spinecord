@@ -17,6 +17,7 @@ const RATE = 1000;
 const CONFIG: Ev3ProviderOptions = {
   limits: { max_speed_pct: 100, max_command_ms: 20000 },
   hardware: EXAMPLE_EV3_HARDWARE,
+  pair: { left: "B", right: "C" },
   degPerSecAt100: RATE,
   pollMs: 2,
   timeoutMs: 200,

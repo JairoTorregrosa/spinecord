@@ -1,0 +1,26 @@
+{
+  "description": "Example robot (not a default): a LEGO EV3 arm that stands still. A medium motor on A (the gripper), a large motor on B (the lift) and a touch sensor on port 1. It has no `pair` and no `profile.drivetrain`: every motor is a device of its own for command_device, and drive, turn and arc answer `unsupported`. Whatever else is plugged into the brick is a device too, without a role. `hardware` are the facts about the brick that are not motion limits (`tone_volume_pct` is read on stock firmware, `speech_volume_pct` on ev3dev), `profile` a contract RobotProfile (CONTRACT.md §3). The twin arm-sim is built from this same file.",
+  "hardware": {
+    "low_battery_v": 6.5,
+    "max_tone_ms": 5000,
+    "tone_volume_pct": 50,
+    "speech_volume_pct": 100
+  },
+  "profile": {
+    "id": "arm",
+    "roles": {
+      "gripper": "ev3.A",
+      "lift": "ev3.B",
+      "limit": "ev3.S1"
+    },
+    "limits": {
+      "max_speed_pct": 40,
+      "max_command_ms": 10000,
+      "max_program_ms": 120000
+    },
+    "notes": [
+      "The gripper motor on A opens with positive degrees.",
+      "The lift motor on B raises the arm with positive degrees; the touch sensor on port 1 is pressed when the arm is fully down."
+    ]
+  }
+}

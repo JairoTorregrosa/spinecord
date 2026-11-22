@@ -18,8 +18,6 @@ import {
 const LIMITS = {
   max_speed_pct: 80,
   max_command_ms: 10000,
-  max_drive_cm: 100,
-  max_turn_deg: 360,
   max_program_ms: 20000,
 };
 function setup(
@@ -29,8 +27,11 @@ function setup(
     deg_s_per_pct?: number;
     drivetrain?: boolean;
     forward_sign?: 1 | -1;
-    gyro?: boolean;
+    gyro?: boolean; // a gyro device, which the drivetrain names as its heading unless `heading` says otherwise
     gyro_sign?: 1 | -1;
+    heading?: { device: string; channel: string } | false; // false: the gyro is attached and the profile names no heading
+    roles?: Record<string, string>;
+    max_turn_deg?: number;
     limits?: Partial<typeof LIMITS>;
     extra?: DeviceSpec[];
   } = {},
@@ -46,7 +47,7 @@ function setup(
   });
   const profile: RobotProfile = {
     id: "r1",
-    roles: { floor_color: "mock.color", horn: "mock.speaker" },
+    roles: { floor_color: "mock.color", horn: "mock.speaker", ...o.roles },
     notes: ["test robot"],
     limits: { ...LIMITS, ...o.limits },
     ...(o.drivetrain === false
@@ -58,6 +59,15 @@ function setup(
             wheel_diameter_cm: 5.6,
             axle_track_cm: 12,
             forward_sign: o.forward_sign ?? 1,
+            max_drive_cm: 100,
+            max_turn_deg: o.max_turn_deg ?? 360,
+            ...(o.heading === false
+              ? {}
+              : o.heading
+                ? { heading: o.heading }
+                : o.gyro
+                  ? { heading: { device: "mock.gyro", channel: "angle_deg" } }
+                  : {}),
           },
         }),
   };
@@ -101,7 +111,15 @@ describe("discovery", () => {
       commands: [],
     });
     expect(d.roles).toEqual({ floor_color: "mock.color", horn: "mock.speaker" });
-    expect(d.drivetrain.wheel_diameter_cm).toBe(5.6);
+    expect(d.drivetrain).toEqual({
+      type: "differential",
+      pair_device: "mock.pair",
+      wheel_diameter_cm: 5.6,
+      axle_track_cm: 12,
+      forward_sign: 1,
+      max_drive_cm: 100,
+      max_turn_deg: 360,
+    });
     expect(d.limits).toEqual(LIMITS);
     expect(d.notes).toEqual(["test robot"]);
     expect((await setup({ drivetrain: false }).call("describe_robot")).drivetrain).toBeNull();
@@ -857,8 +875,44 @@ describe("drivetrain", () => {
     expect(dg.measured.heading_change_deg).toBeCloseTo(-45, 0);
     const odd = setup({ gyro: true, gyro_sign: -1 }); // the gyro is trusted as reported: providers normalize the sign
     expect((await odd.call("turn", { angle_deg: 90 })).measured.heading_change_deg).toBeCloseTo(-90, 0);
-    const big = await setup({ limits: { max_turn_deg: 180 } }).call("turn", { angle_deg: 720 });
+    const big = await setup({ max_turn_deg: 180 }).call("turn", { angle_deg: 720 });
     expect(big).toMatchObject({ clamped: true, reason: "clamped", applied: { angle_deg: 180 } });
+  });
+  test("the heading of a move is the channel the drivetrain names, never a device found by kind or by role", async () => {
+    // a gyro is attached and carries the role `gyro`: without `heading` it is no heading source
+    const unnamed = setup({ gyro: true, heading: false, roles: { gyro: "mock.gyro" } });
+    const u = await unnamed.call("turn", { angle_deg: 90 });
+    expect(u.measured.source).toBe("encoders");
+    expect(u.measured.heading_change_deg).toBeCloseTo(90, 0);
+    expect(unnamed.mock.reads).not.toContain("mock.gyro");
+    // named by device id, and named by role
+    for (const heading of [
+      { device: "mock.gyro", channel: "angle_deg" },
+      { device: "yaw", channel: "angle_deg" },
+    ]) {
+      const s = setup({ gyro: true, gyro_sign: -1, heading, roles: { yaw: "mock.gyro" } });
+      const d = await s.call("turn", { angle_deg: 90 });
+      expect(d.measured.source).toBe("gyro");
+      expect(d.measured.heading_change_deg).toBeCloseTo(-90, 0); // the channel's own value, not the wheels'
+      expect((await s.call("describe_robot")).drivetrain.heading).toEqual(heading);
+    }
+    // a heading whose device is not attached, or whose channel the device does not have: the wheels measure
+    for (const heading of [
+      { device: "mock.gyro", channel: "angle_deg" },
+      { device: "mock.gyro", channel: "yaw_deg" },
+    ]) {
+      const s = setup({ gyro: heading.channel !== "angle_deg", heading });
+      expect((await s.call("turn", { angle_deg: 90 })).measured.source).toBe("encoders");
+    }
+    const clock = new FakeClock();
+    const bad = { ...setup().profile.drivetrain!, heading: { device: "mock.gyro" } as never };
+    expect(() =>
+      createRuntime({
+        profile: { ...setup().profile, drivetrain: bad },
+        providers: [new MockProvider({ clock })],
+        clock,
+      }),
+    ).toThrow(/drivetrain\.heading must be \{device, channel\}/);
   });
   test("arc: radius to the center, angle sign = heading change, direction = which way it travels", async () => {
     const run = async (angle_deg: number, direction?: "forward" | "backward") => {
@@ -1272,9 +1326,19 @@ describe("drivetrain", () => {
       ["turn", { angle_deg: 5 }],
       ["arc", { radius_cm: 5, angle_deg: 5 }],
     ] as const) {
-      expect((await fails(s.call(tool, args), "unsupported")).message).toContain("no drivetrain");
+      const e = await fails(s.call(tool, args), "unsupported");
+      expect(e.message).toContain("no drivetrain");
+      expect(e.next).toEqual(["describe_robot", "command_device"]);
     }
     expect(s.mock.log.length).toBe(0);
+    // the robot is complete without one: its motors are devices
+    expect((await s.call("describe_robot")).drivetrain).toBeNull();
+    const moved = await s.call("command_device", {
+      device: "mock.arm",
+      command: "run_degrees",
+      args: { degrees: 90, speed_pct: 30 },
+    });
+    expect(moved.reason).toBe("completed");
   });
   test("a stalled motor ends the move with reason stalled", async () => {
     const s = setup();
@@ -1759,11 +1823,21 @@ describe("errors", () => {
     expect(() => createRuntime({ profile: base, providers: [], clock })).toThrow(RuntimeError);
     expect(() =>
       createRuntime({
-        profile: { ...base, limits: { ...LIMITS, max_drive_cm: 0 } },
+        profile: { ...base, drivetrain: { ...base.drivetrain!, max_drive_cm: 0 } },
         providers: [new MockProvider({ clock })],
         clock,
       }),
-    ).toThrow(/max_drive_cm/);
+    ).toThrow(/drivetrain\.max_drive_cm/);
+    expect(() =>
+      createRuntime({
+        profile: { ...base, limits: { ...LIMITS, max_command_ms: 0 } },
+        providers: [new MockProvider({ clock })],
+        clock,
+      }),
+    ).toThrow(/limits\.max_command_ms/);
+    // a robot without a drivetrain declares no drive limits
+    const { drivetrain: _none, ...still } = base;
+    expect(() => createRuntime({ profile: still, providers: [new MockProvider({ clock })], clock })).not.toThrow();
     const twins: Provider[] = [new MockProvider({ clock, id: "a" }), new MockProvider({ clock, id: "a" })];
     expect(() => createRuntime({ profile: base, providers: twins, clock })).toThrow(/duplicate provider/);
   });
