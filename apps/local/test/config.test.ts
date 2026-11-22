@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, posix, relative, win32 } from "node:path";
 import { DEFAULT_PORT, EXAMPLE, REPO, USAGE, loadConfig, parseSshTarget, pathFrom } from "../src/config";
 import { addCommand } from "../src/print-add";
@@ -168,6 +168,43 @@ describe("where a path is taken from", () => {
       "/home/ana maria/spinecord/robots/r 2.json",
     );
     expect(pathFrom("/home/ana maria/spinecord", "/srv/r 2.json", posix)).toBe("/srv/r 2.json");
+  });
+  test("a leading ~ is the home folder on every OS, also where no shell expands it", () => {
+    const repo = "C:\\Users\\Ana Maria\\spinecord";
+    const home = "C:\\Users\\Ana Maria";
+    expect(pathFrom(repo, "~/.ssh/id_ed25519", win32, home)).toBe("C:\\Users\\Ana Maria\\.ssh\\id_ed25519");
+    expect(pathFrom(repo, "~\\.ssh\\id_ed25519", win32, home)).toBe("C:\\Users\\Ana Maria\\.ssh\\id_ed25519");
+    expect(pathFrom("/home/ana/spinecord", "~/.ssh/id_ed25519", posix, "/home/ana")).toBe("/home/ana/.ssh/id_ed25519");
+    expect(pathFrom("/home/ana/spinecord", "~", posix, "/home/ana")).toBe("/home/ana");
+    // a name that only starts with ~ is a relative path like any other
+    expect(pathFrom("/home/ana/spinecord", "~robots/r.json", posix, "/home/ana")).toBe(
+      "/home/ana/spinecord/~robots/r.json",
+    );
+    expect(pathFrom(REPO, "~/.ssh/id_ed25519")).toBe(join(homedir(), ".ssh", "id_ed25519"));
+  });
+  test("an ssh key file must exist: the error carries the absolute path that was tried", () => {
+    const key = file("id_test", "not a real key");
+    const ssh = ["--ev3dev", "--ssh", "robot@host"];
+    expect(loadConfig([...ssh, "--ssh-key", key]).robots[0]).toMatchObject({ ssh: { identityFile: key } });
+    expect(() => loadConfig([...ssh, "--ssh-key", "keys/none"])).toThrow(
+      `--ssh-key: cannot read ${join(REPO, "keys", "none")}`,
+    );
+    // --flag=~/x reaches the server unexpanded: it is the home folder, not a folder named ~ in the repository
+    expect(() => loadConfig([...ssh, "--ssh-key=~/spinecord no such key"])).toThrow(
+      `--ssh-key: cannot read ${join(homedir(), "spinecord no such key")}`,
+    );
+    expect(() => loadConfig([...ssh, "--ssh-key", tmp])).toThrow(`--ssh-key: cannot read ${tmp}: not a file`);
+    const config = (identity_file: string) =>
+      file("keyed.json", {
+        robots: [{ source: "ev3dev", robot: EXAMPLE.robot, ssh: { host: "h", user: "robot", identity_file } }],
+      });
+    expect(loadConfig(["--config", config("id_test")]).robots[0]).toMatchObject({ ssh: { identityFile: key } });
+    expect(() => loadConfig(["--config", config("none")])).toThrow(
+      `robots[0].ssh.identity_file: cannot read ${join(tmp, "none")}`,
+    );
+    expect(() => loadConfig(["--config", config("~/spinecord no such key")])).toThrow(
+      `robots[0].ssh.identity_file: cannot read ${join(homedir(), "spinecord no such key")}`,
+    );
   });
   test("--help says where a relative path is taken from", () => {
     expect(USAGE).toContain("A relative path on the command line is taken from the repository\nroot,");

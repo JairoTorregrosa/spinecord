@@ -2,7 +2,8 @@
 // built, and every failure names the flag or the field. A relative path on the command line is taken from the
 // repository root, one in a config file from that file's folder: the working directory of the process (the folder
 // an MCP client was started in) decides nothing.
-import { readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import nodePath, { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { parseRobotFile, type RobotFile } from "../../../packages/driver-ev3/robot-file";
@@ -15,8 +16,16 @@ export const DEFAULT_PORT = 8767;
 export const REPO = join(import.meta.dir, "..", "..", "..");
 /** The path rules of one operating system (`node:path`'s `posix` or `win32`); tests pass the other one. */
 export type PathRules = Pick<typeof nodePath, "resolve" | "join">;
-/** `p` when it is absolute, else `p` inside `base`. Never the working directory: `base` is absolute. */
-export const pathFrom = (base: string, p: string, rules: PathRules = nodePath): string => rules.resolve(base, p);
+/**
+ * `p` when it is absolute, `p` inside the home folder when it starts with `~` (`~/x`, `~\\x`: a shell expands
+ * neither inside `--flag=~/x` nor in a config file), else `p` inside `base`. Never the working directory: `base`
+ * and `home` are absolute.
+ */
+export function pathFrom(base: string, p: string, rules: PathRules = nodePath, home: string = homedir()): string {
+  if (p === "~") return home;
+  if (p.startsWith("~/") || p.startsWith("~\\")) return rules.join(home, p.slice(2));
+  return rules.resolve(base, p);
+}
 const fromRepo = (p: string): string => pathFrom(REPO, p);
 /** What a bare `bun apps/local/main.ts` runs: the example robot's twin in an empty walled room. */
 export const EXAMPLE = {
@@ -42,7 +51,7 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  listed offline and connected as soon as it answers
     --ssh <user@host[:port]>     where it is (required with --ev3dev); ssh must connect with a key, without
                                  asking for a password or about the host key
-    --ssh-key <file>             private key file (default: ssh's own keys and agent)
+    --ssh-key <file>             private key file, which must exist (default: ssh's own keys and agent)
     --install-bridge             copy the bridge to the brick before connecting
   --config <file.json>           all of the above as a file, for more than one robot of a kind:
                                  {"port"?: n, "robots": [
@@ -54,7 +63,7 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
 A robot file is {pair, hardware, profile}; for --ev3dev its hardware also needs speech_volume_pct. --twin, --ev3
 and --ev3dev without a file use the example robot, deployments/example/robots/r1.json.
 
-Paths: an absolute path is used as it is. A relative path on the command line is taken from the repository
+Paths: an absolute path is used as it is, and a leading ~ is the home folder. A relative path on the command line is taken from the repository
 root, a relative path inside a --config file from that file's folder. The folder the server is started in
 decides nothing. A file that is not there ends the start with its absolute path. The repository root is
   ${REPO}`;
@@ -104,6 +113,16 @@ function int(where: string, raw: unknown, min: number, max: number): number {
 function robotFile(where: string, path: string): { file: RobotFile; raw: unknown } {
   const raw = readJson(where, path);
   return { file: parseRobotFile(raw, `${where} ${path}`), raw };
+}
+/** A private key ssh is told to use. Checked here: ssh itself goes on with its default keys when the file is missing. */
+function keyFile(where: string, path: string): string {
+  try {
+    if (!statSync(path).isFile()) throw new Error("not a file");
+    accessSync(path, constants.R_OK);
+  } catch (e) {
+    throw new Error(`${where}: cannot read ${path}: ${(e as Error).message}`, { cause: e });
+  }
+  return path;
 }
 function world(where: string, path: string): unknown {
   const json = readJson(where, path);
@@ -179,7 +198,12 @@ function fromFile(file: string): LocalConfig {
             user: r.ssh.user,
             ...(r.ssh.port !== undefined ? { port: int(`${where}: ${f}.ssh.port`, r.ssh.port, 1, 65535) } : {}),
             ...(r.ssh.identity_file !== undefined
-              ? { identityFile: at(r.ssh.identity_file, `${f}.ssh.identity_file`) }
+              ? {
+                  identityFile: keyFile(
+                    `${where}: ${f}.ssh.identity_file`,
+                    at(r.ssh.identity_file, `${f}.ssh.identity_file`),
+                  ),
+                }
               : {}),
           },
           installBridge: r.install_bridge === true,
@@ -269,7 +293,9 @@ export function loadConfig(argv: string[]): LocalConfig {
         hardware: ev3devHardware(`--ev3dev ${robotPath}`, file, raw),
         ssh: {
           ...parseSshTarget("--ssh", values.ssh),
-          ...(values["ssh-key"] !== undefined ? { identityFile: fromRepo(values["ssh-key"]) } : {}),
+          ...(values["ssh-key"] !== undefined
+            ? { identityFile: keyFile("--ssh-key", fromRepo(values["ssh-key"])) }
+            : {}),
         },
         installBridge: values["install-bridge"] === true,
       });

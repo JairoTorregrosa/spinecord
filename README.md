@@ -145,11 +145,13 @@ Put the robot on the floor with free space ahead and ask: "drive forward 5 cm". 
 
 | What you do | What happens |
 |---|---|
-| Press `Esc` in Claude Code | Claude Code interrupts the call. When it cancels a move, the server stops the robot with the same stop as the `stop` tool: it brakes every motor and checks that they read speed 0 |
-| Say "stop the robot" | The `stop` tool. It preempts every call and reports `motors_stopped` |
+| Say "stop the robot" | The `stop` tool: it preempts every call, brakes every motor, checks that they read speed 0 and reports `motors_stopped`. This is the way to stop |
+| Press `Esc` in Claude Code | Claude Code interrupts the call. The server stops the robot, with the same stop, when Claude Code cancels the call. That Claude Code does so on `Esc` is not checked with a real session (the `Esc` row of the checklist in [`docs/hardware-log.md`](docs/hardware-log.md)): after `Esc`, say "stop the robot" |
 | Close Claude Code | The server stops every motor before it exits |
 | Stock EV3: close the bridge tab or pull the USB cable | No further command reaches the brick. The one that is running ends by itself: every motion command is limited to 250 ms on the brick |
 | ev3dev: the network or the computer goes away | A watchdog on the brick brakes every motor after 1 s without a message. A second process on the brick brakes them when the bridge itself is killed |
+
+One Claude Code session per robot. With `-s user` every Claude Code session on the computer starts its own server with the same robots. A second session opens a second link to the same ev3dev brick, and when either session ends, the brick brakes every motor, also in the middle of a move of the other session. With `--ev3` the second session's server does not start: the page's port is taken.
 
 Keep a hand near the robot on a first run. These paths are tested against the twin, the byte-level EV3 emulator and a fake ev3dev brick; what has run on a real brick is in the next section.
 
