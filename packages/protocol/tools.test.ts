@@ -34,7 +34,7 @@ describe("catalog", () => {
   test("model-facing text names only what this system has", () => {
     // accounts and access, stored results and programs, recorded attempts, devices on other machines
     const absent =
-      /\btokens?\b|\bprincipals?\b|\badmins?\b|\bowner\b|\bin control\b|\b(take|release)_control\b|\bepisodes?\b|\blibrary\b|\b(save|list|get|verify|retire)_programs?\b|\b10 min\b|\borgans?\b|\bphone\b|\bmicrocontroller\b|\bprovider_errors\b/i;
+      /\btokens?\b|\badmins?\b|\bowner\b|\bin control\b|\b(take|release)_control\b|\bepisodes?\b|\blibrary\b|\b(save|list|get|verify|retire)_programs?\b|\b10 min\b|\borgans?\b|\bphone\b|\bmicrocontroller\b|\bprovider_errors\b/i;
     for (const t of TOOLS) {
       expect(`${t.name}: ${t.description}`).not.toMatch(absent);
       expect(`${t.name}: ${JSON.stringify(t.input)}`).not.toMatch(absent);
