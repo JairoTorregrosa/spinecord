@@ -8,7 +8,7 @@ import { MockProvider } from "../../../packages/runtime/mock";
 import { createRuntime } from "../../../packages/runtime/runtime";
 import { EXAMPLE, loadConfig } from "../src/config";
 import { LocalRobot } from "../src/robot";
-import { buildFleet } from "../src/sources";
+import { buildFleet, keepAttached } from "../src/sources";
 import { NEXT_ERR, NEXT_OK, callTool } from "../src/tools";
 import { until } from "./client";
 
@@ -340,5 +340,70 @@ describe("next", () => {
     expect(Object.keys(NEXT_OK).sort()).toEqual([...served].sort());
     for (const names of [...Object.values(NEXT_OK), ...Object.values(NEXT_ERR)])
       for (const name of names) expect(served.has(name)).toBe(true);
+  });
+});
+
+describe("a link that can close", () => {
+  test("a link that closes during the handshake leaves the robot offline, and the next link brings it online", async () => {
+    const robot = new LocalRobot({ id: "m1", connect: "check the link" });
+    const events: string[] = [];
+    let opened = 0;
+    const link = keepAttached(
+      robot,
+      () => {
+        const first = ++opened === 1;
+        const mock = new MockProvider({ clock: realClock });
+        let gone: (reason: string) => void = () => {};
+        if (first)
+          // the link dies while the handshake's stop is on its way: nothing can be verified through it
+          mock.stop = async () => {
+            gone("the peer went away");
+            return { motors_stopped: false };
+          };
+        return {
+          runtime: createRuntime({ profile: PROFILE, providers: [mock], clock: realClock }),
+          onClose: (cb) => void (gone = cb),
+          close: async () => {},
+        };
+      },
+      { log: (ev) => void events.push(ev), reconnectMs: 10 },
+    );
+    try {
+      await expect(link.connect()).rejects.toThrow("closed during the handshake");
+      expect(robot.listing()).toMatchObject({ link: "offline", connect: "check the link" });
+      await link.connect();
+      expect(robot.listing()).toMatchObject({ link: "online", connect: null });
+      expect(opened).toBe(2);
+    } finally {
+      link.end();
+    }
+  });
+
+  test("a link that closes later puts the robot offline until a new one holds", async () => {
+    const robot = new LocalRobot({ id: "m1", connect: "check the link" });
+    const events: string[] = [];
+    const closers: ((reason: string) => void)[] = [];
+    const link = keepAttached(
+      robot,
+      () => ({
+        runtime: createRuntime({
+          profile: PROFILE,
+          providers: [new MockProvider({ clock: realClock })],
+          clock: realClock,
+        }),
+        onClose: (cb) => void closers.push(cb),
+        close: async () => {},
+      }),
+      { log: (ev) => void events.push(ev), reconnectMs: 10 },
+    );
+    try {
+      await link.connect();
+      closers[0]!("the peer went away");
+      expect(robot.listing()).toMatchObject({ link: "offline", connect: "check the link" });
+      await until("the robot is online again", () => robot.listing().link === "online");
+      expect(events).toEqual(["gone", "ready"]);
+    } finally {
+      link.end();
+    }
   });
 });

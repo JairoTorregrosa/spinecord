@@ -63,6 +63,78 @@ export interface FleetOptions {
   reconnectMs?: number;
 }
 
+/** One link to a robot's hardware: the runtime that talks through it, and the news that it closed. */
+export interface HardwareLink {
+  runtime: LocalRuntime;
+  onClose(cb: (reason: string) => void): void;
+  close(): Promise<void>;
+}
+/**
+ * Keeps a robot attached through links that can close. `connect` opens one and resolves when the robot is online
+ * through it. A link that closes, during the handshake or after it, puts the robot offline, and a new one is
+ * opened every `reconnectMs` until one holds. Logs `gone`, `ready` and `attach_failed`.
+ */
+export function keepAttached(
+  robot: LocalRobot,
+  open: () => HardwareLink,
+  o: { log: Log; reconnectMs?: number },
+): { connect(): Promise<void>; end(): void; close(): Promise<void> } {
+  // The link the robot is online through; null while the robot is offline.
+  let live: HardwareLink | null = null;
+  let ended = false;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  const again = (): void => {
+    if (ended) return;
+    retry = setTimeout(() => {
+      retry = null;
+      if (ended) return;
+      connect().then(
+        () => o.log("ready"),
+        (e: unknown) => {
+          o.log("attach_failed", { error: (e as Error).message });
+          again();
+        },
+      );
+    }, o.reconnectMs ?? 2000);
+    retry.unref?.();
+  };
+  const connect = async (): Promise<void> => {
+    const link = open();
+    let closed: string | null = null;
+    link.onClose((reason) => {
+      closed ??= reason;
+      if (live !== link || ended) return;
+      live = null;
+      robot.detach(`the link to the robot closed: ${reason}`);
+      o.log("gone", { why: reason });
+      void link.close().catch(() => {});
+      again();
+    });
+    try {
+      await robot.attach(link.runtime);
+    } catch (e) {
+      await link.close().catch(() => {});
+      throw e;
+    }
+    // a link that closed while the handshake ran is not a link: the robot must not stay online through it
+    if (closed !== null || ended) {
+      if (closed !== null) robot.detach(`the link to the robot closed during the handshake: ${closed}`);
+      await link.close().catch(() => {});
+      if (closed !== null) throw new Error(`the link closed during the handshake: ${closed}`);
+      return;
+    }
+    live = link;
+  };
+  return {
+    connect,
+    end() {
+      ended = true;
+      if (retry) clearTimeout(retry);
+    },
+    close: async () => void (await live?.close()),
+  };
+}
+
 /** Builds every robot of the config. Throws when one that must be there at start (twin, ev3dev) cannot be built. */
 export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<Fleet> {
   const robots: LocalRobot[] = [];
@@ -93,66 +165,28 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
       if (s.installBridge) o.log("bridge_installed", { robot_id: s.id, ...(await installBridge(s.ssh)) });
       const { pair } = s.robot;
       const profile = { ...s.robot.profile, id: s.id };
-      // The provider whose link the robot is online through; null while the robot is offline.
-      let live: Ev3devProvider | null = null;
-      let ended = false;
-      let retry: ReturnType<typeof setTimeout> | null = null;
-      /** A new ssh process, a new provider and runtime; the robot is online when it resolves. */
-      const connect = async (): Promise<void> => {
-        const transport = new SshLineTransport(s.ssh);
-        let provider!: Ev3devProvider;
-        const runtime = createRuntime({
-          profile,
-          providers: [
-            (limits) => {
-              provider = new Ev3devProvider(transport, { limits, hardware: s.hardware, pair, roles: profile.roles });
-              return provider;
-            },
-          ],
-        });
-        // the ssh process ended (the brick, the network or the bridge went away): the robot is offline until
-        // a new link has been opened and checked
-        transport.onClose((reason) => {
-          if (live !== provider || ended) return;
-          live = null;
-          robot.detach(`the link to the brick closed: ${reason}`);
-          o.log("ev3dev_gone", { robot_id: s.id, why: reason });
-          void provider.close().catch(() => {});
-          again();
-        });
-        try {
-          await robot.attach(runtime);
-        } catch (e) {
-          await provider.close().catch(() => {});
-          throw e;
-        }
-        if (ended) {
-          await provider.close().catch(() => {});
-          return;
-        }
-        live = provider;
-      };
-      const again = (): void => {
-        if (ended) return;
-        retry = setTimeout(() => {
-          retry = null;
-          if (ended) return;
-          connect().then(
-            () => o.log("ev3dev_ready", { robot_id: s.id }),
-            (e: unknown) => {
-              o.log("ev3dev_attach_failed", { robot_id: s.id, error: (e as Error).message });
-              again();
-            },
-          );
-        }, o.reconnectMs ?? 2000);
-        retry.unref?.();
-      };
-      await connect();
-      enders.push(() => {
-        ended = true;
-        if (retry) clearTimeout(retry);
-      });
-      closers.push(() => live?.close());
+      const link = keepAttached(
+        robot,
+        () => {
+          const transport = new SshLineTransport(s.ssh);
+          let provider!: Ev3devProvider;
+          const runtime = createRuntime({
+            profile,
+            providers: [
+              (limits) => {
+                provider = new Ev3devProvider(transport, { limits, hardware: s.hardware, pair, roles: profile.roles });
+                return provider;
+              },
+            ],
+          });
+          // the ssh process ended: the brick, the network or the bridge went away
+          return { runtime, onClose: (cb) => transport.onClose(cb), close: () => provider.close() };
+        },
+        { log: (ev, fields) => o.log(`ev3dev_${ev}`, { robot_id: s.id, ...fields }), reconnectMs: o.reconnectMs },
+      );
+      await link.connect();
+      enders.push(link.end);
+      closers.push(link.close);
       robots.push(robot);
     } else {
       const page = o.page ?? (await buildBridgePage());
