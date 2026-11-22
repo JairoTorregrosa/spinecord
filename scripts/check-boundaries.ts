@@ -1,12 +1,12 @@
 // Cross-platform (macOS, Windows, Linux): `bun scripts/check-boundaries.ts`.
-// Fails if package code references a specific use, or imports across the boundaries in ARCHITECTURE.md.
+// Fails if code under packages/ or apps/ references a specific use, or imports across the boundaries in
+// ARCHITECTURE.md.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 // --root <dir> checks another tree with the same layout (the script's own test plants a forbidden import in one)
 const rootArg = process.argv.indexOf("--root");
 const root = rootArg >= 0 ? resolve(process.argv[rootArg + 1] ?? "") : join(import.meta.dir, "..");
-const pkgs = join(root, "packages");
 // Generic words that signal code written for one event or use. Add private terms (names, places,
 // events) one per line to scripts/boundaries.local.txt, which is gitignored.
 const LOCAL = join(import.meta.dir, "boundaries.local.txt");
@@ -18,14 +18,21 @@ const extra = existsSync(LOCAL)
   : [];
 const TERMS = new RegExp(["taller", "workshop", "facilitat", "\\bmesa\\b", "\\btable_id\\b", ...extra].join("|"), "i");
 const EXT = /\.(ts|tsx|js|mjs|cjs|json|jsonc|html|md|txt|sql|py|toml|yaml|yml)$/;
-// package → packages it must not import (ARCHITECTURE.md dependency direction)
+const KINDS = ["packages", "apps"] as const;
+// unit → units it must not import (ARCHITECTURE.md dependency direction). A unit is `packages/<name>` or
+// `apps/<name>`. No package imports an app, whatever this table says.
 const FORBIDDEN: Record<string, string[]> = {
-  protocol: ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"],
-  "driver-ev3": ["driver-ev3dev", "sim-world", "sim-ev3", "runtime"],
-  "driver-ev3dev": ["driver-ev3", "sim-world", "sim-ev3", "runtime"],
-  "sim-world": ["driver-ev3", "driver-ev3dev", "sim-ev3", "runtime"],
-  "sim-ev3": ["driver-ev3dev", "runtime"],
-  runtime: ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3"],
+  "packages/protocol": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
+  "packages/driver-ev3": ["driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
+  "packages/driver-ev3dev": ["driver-ev3", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
+  "packages/sim-world": ["driver-ev3", "driver-ev3dev", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
+  "packages/sim-ev3": ["driver-ev3dev", "runtime"].map((p) => `packages/${p}`),
+  "packages/runtime": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3"].map((p) => `packages/${p}`),
+  // the bridge page speaks EV3 bytes and nothing else; apps/local builds and serves it, not the other way round
+  "apps/robot-page": [
+    ...["protocol", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
+    "apps/local",
+  ],
 };
 
 function* walk(dir: string): Generator<string> {
@@ -37,11 +44,27 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
+const units: string[] = [];
+for (const kind of KINDS) {
+  const dir = join(root, kind);
+  if (!existsSync(dir)) continue;
+  for (const name of readdirSync(dir)) if (statSync(join(dir, name)).isDirectory()) units.push(`${kind}/${name}`);
+}
+
+/** The unit an import specifier points into, or null (a dependency, a file of the same tree outside every unit). */
+function target(file: string, spec: string): string | null {
+  if (spec.startsWith(".")) {
+    const parts = relative(root, resolve(dirname(file), spec)).split(sep);
+    return parts.length >= 2 && units.includes(`${parts[0]}/${parts[1]}`) ? `${parts[0]}/${parts[1]}` : null;
+  }
+  // a workspace name: @scope/<directory name>
+  const name = spec.match(/^@[^/]+\/([^/]+)$/)?.[1];
+  return (name && units.find((u) => u.split("/")[1] === name)) || null;
+}
+
 const problems: string[] = [];
-for (const pkg of readdirSync(pkgs)) {
-  const dir = join(pkgs, pkg);
-  if (!statSync(dir).isDirectory()) continue;
-  for (const file of walk(dir)) {
+for (const unit of units) {
+  for (const file of walk(join(root, ...unit.split("/")))) {
     const rel = relative(root, file).split(sep).join("/");
     readFileSync(file, "utf8")
       .split(/\r?\n/)
@@ -53,15 +76,15 @@ for (const pkg of readdirSync(pkgs)) {
         );
         const spec = m?.[1] ?? m?.[2] ?? m?.[3];
         if (!spec) return;
-        if (spec.startsWith(".") && /(^|\/)apps\//.test(spec))
-          problems.push(`${rel}:${i + 1}: packages/${pkg} must not import an app (${spec})`);
-        for (const bad of FORBIDDEN[pkg] ?? []) {
-          if (
-            new RegExp(`(^|/)(packages/)?${bad}(/|$)|^@[^/]+/${bad}$`).test(spec) &&
-            (spec.startsWith(".") || spec.startsWith("@"))
-          )
-            problems.push(`${rel}:${i + 1}: packages/${pkg} must not import ${bad} (${spec})`);
-        }
+        const to = target(file, spec);
+        if (!to || to === unit) return;
+        const [kind, name] = to.split("/");
+        if (unit.startsWith("packages/") && kind === "apps")
+          problems.push(`${rel}:${i + 1}: ${unit} must not import an app (${spec})`);
+        else if (FORBIDDEN[unit]?.includes(to))
+          problems.push(
+            `${rel}:${i + 1}: ${unit} must not import ${kind === "apps" ? `the app ${name}` : name} (${spec})`,
+          );
       });
   }
 }
