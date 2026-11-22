@@ -1,4 +1,4 @@
-// Mirrors CONTRACT.md v2. Change CONTRACT.md first.
+// Mirrors CONTRACT.md v3. Change CONTRACT.md first.
 // Nothing here names a use case. Robots are bags of devices; devices describe themselves.
 
 // ---------- Values and conditions ----------
@@ -44,7 +44,7 @@ export interface CommandSpec {
 export interface DeviceSpec {
   id: string; // "<provider>.<local>", e.g. "ev3.B", "ev3.S3", "cam1.frame"
   provider: string; // the id of the provider that announced it: "ev3", "sim", ...
-  kind: string; // open vocabulary; known kinds listed in CONTRACT.md §2.2
+  kind: string; // open vocabulary; known kinds listed in CONTRACT.md §2.3
   roles: string[]; // aliases from the profile, e.g. ["left_wheel"]
   channels: ChannelSpec[];
   commands: CommandSpec[];
@@ -178,6 +178,8 @@ export type ErrorCode =
   | "condition_unreadable"
   | "internal"
   | "misconfigured";
+/** The codes a caller may send again as they are (CONTRACT §7). The one list: the runtime and the drivers read it. */
+export const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image"];
 export interface ToolError {
   code: ErrorCode;
   message: string;

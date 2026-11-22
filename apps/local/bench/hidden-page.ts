@@ -115,9 +115,11 @@ async function measure(state: string) {
   const rt = runtime!;
   const signal = new AbortController().signal;
   const angle = async () =>
-    ((await rt.call("read_device", { device: "gyro" }, signal)).data as { channel: string; value: number }[]).find(
-      (r) => r.channel === "angle_deg",
-    )!.value;
+    (
+      (await rt.call("read_device", { device: "gyro" }, signal)).data as {
+        readings: { channel: string; value: number }[];
+      }
+    ).readings.find((r) => r.channel === "angle_deg")!.value;
   const over: number[] = [];
   const ms: number[] = [];
   let rate = 0;

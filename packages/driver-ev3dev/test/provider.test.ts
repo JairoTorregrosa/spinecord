@@ -12,7 +12,7 @@ import {
   type Ev3devProviderOptions,
   type LineTransport,
 } from "../src/provider";
-import { checkRemotePath, sshArgs } from "../src/ssh";
+import { checkRemotePath, closeDetail, sshArgs } from "../src/ssh";
 import { FAKE_HAS_LEDS, FakeBrick, findPython } from "./fake-brick";
 
 // The bridge only ever runs on the brick (Linux): on Windows a file that is open cannot be replaced, so the fake
@@ -659,9 +659,11 @@ describe("fake brick", () => {
         windowsHide: true,
       });
       let gone = false;
+      let exitCode: number | null = null;
       const exited = new Promise<void>((resolve) =>
-        bridge.on("exit", () => {
+        bridge.on("exit", (code) => {
           gone = true;
+          exitCode = code;
           resolve();
         }),
       );
@@ -701,6 +703,11 @@ describe("fake brick", () => {
         expect([brick.motor(0, "stop_action"), brick.motor(1, "stop_action")]).toEqual(["brake", "brake"]);
         expect(lines.some((l) => l.ev === "guard_lost")).toBe(true);
         expect(stderr).toContain("the guard process ended");
+        // the bridge leaves with its own code and its own words: no abort of the interpreter, on any Python
+        expect(exitCode as number | null).toBe(3);
+        expect(stderr).not.toContain("Fatal Python error");
+        expect(stderr).not.toContain("Traceback");
+        expect(stderr.trim().split("\n").length).toBe(1);
       } finally {
         clearInterval(beat);
         bridge.kill("SIGKILL");
@@ -708,6 +715,39 @@ describe("fake brick", () => {
       }
     },
   );
+
+  test("the reason a link closed carries the bridge's own words, not an interpreter's dump", () => {
+    const own = "ev3dev_bridge: the guard process ended (exit -9); braked every motor and ending";
+    const dump = [
+      "Fatal Python error: _enter_buffered_busy: could not acquire lock for <_io.BufferedReader name='<stdin>'>",
+      "Python runtime state: finalizing (tstate=0x0000000100f1c9d0)",
+      "",
+      "Current thread 0x00000001f4e3a080 (most recent call first):",
+      "  <no Python frame>",
+    ].join("\n");
+    expect(closeDetail(`${own}\n${dump}\n`)).toBe(own);
+    // alone, a fatal error keeps its first line and loses the thread list
+    expect(closeDetail(dump)).toBe(
+      "Fatal Python error: _enter_buffered_busy: could not acquire lock for <_io.BufferedReader name='<stdin>'>",
+    );
+    // a bridge that cannot start (a module missing on the brick) says which error ended it
+    const importTime = [
+      "Traceback (most recent call last):",
+      '  File "/home/robot/.spinecord/ev3dev_bridge.py", line 60, in <module>',
+      "    import json",
+      "ImportError: No module named 'json'",
+    ].join("\n");
+    expect(closeDetail(importTime)).toBe("ImportError: No module named 'json'");
+    expect(closeDetail(`Warning: Permanently added 'brick' to known hosts.\n${importTime}\n`)).toBe(
+      "Warning: Permanently added 'brick' to known hosts. ImportError: No module named 'json'",
+    );
+    expect(closeDetail('Traceback (most recent call last):\n  File "x.py", line 1\nMemoryError\n')).toBe("MemoryError");
+    expect(closeDetail("ssh: connect to host brick port 22: Connection refused\n")).toBe(
+      "ssh: connect to host brick port 22: Connection refused",
+    );
+    expect(closeDetail('Traceback (most recent call last):\n  File "x.py", line 1\n')).toBe("");
+    expect(closeDetail("")).toBe("");
+  });
 
   brickTest("closing the link brakes every motor", async () => {
     const { provider, brick } = setup();
@@ -723,7 +763,10 @@ describe("fake brick", () => {
     await provider.close();
     expect(await code(provider.command("ev3.pair", "brake", {}, new AbortController().signal))).toBe("robot_offline");
     expect(await code(provider.read("ev3.S4"))).toBe("robot_offline");
-    await expect(provider.devices()).rejects.toThrow("this link to the brick was closed");
+    // the message says why the link is down and where to look, in words a model can act on
+    await expect(provider.devices()).rejects.toThrow(
+      "the link to the brick was closed on this side; this call ended with it. list_robots shows",
+    );
   });
 
   brickTest("a read-only transport refuses every command and stop before it is sent", async () => {

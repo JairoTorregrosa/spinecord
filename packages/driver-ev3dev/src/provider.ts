@@ -9,7 +9,7 @@
 // robot_offline. The next call opens again, until close(): a closed provider opens nothing.
 //
 // The provider never chunks and never retries a motion: the runtime does the first, nobody the second.
-import { RuntimeError } from "../../protocol/types";
+import { RETRYABLE, RuntimeError } from "../../protocol/types";
 import type {
   ChannelSpec,
   CommandResult,
@@ -174,13 +174,12 @@ const ERROR_CODES: readonly ErrorCode[] = [
   "internal",
   "misconfigured",
 ];
-const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout"];
 const err = (code: ErrorCode, message: string) => new RuntimeError(code, message, RETRYABLE.includes(code));
 
 // ---------------------------------------------------------------- device catalogue
 
 const MODE_NOTE =
-  "Shares the sensor with the other channels of its mode_group: only the channels of the current mode are active. Reading another one needs a mode switch (name it and pass allow_mode_switch), which takes about 0.1 s.";
+  "Shares the sensor with the other channels of its mode_group: only the channels of the current mode are active. Reading another one needs a mode switch, done only when a read names that channel while the robot is idle; it takes about 0.1 s.";
 const SENSOR_KINDS: Record<string, { description: string; channels: ChannelSpec[]; reset?: boolean }> = {
   touch: {
     description: "EV3 touch sensor (a button).",
@@ -390,6 +389,8 @@ export class Ev3devProvider implements Provider {
   };
   private readonly roles: Record<string, string>;
   private state: LinkState = "closed";
+  /** Why the link is down, in words a caller can act on; null while it is up or has never been opened. */
+  private closedWhy: string | null = null;
   private opening: Promise<void> | null = null;
   private ended = false; // close() was called: this provider opens no link again
   private fresh = false; // the inventory comes from the hello that just opened the link
@@ -493,6 +494,8 @@ export class Ev3devProvider implements Provider {
   }
 
   private teardown(reason: string): void {
+    // the first reason is why the link went down; what follows is cleanup
+    this.closedWhy ??= reason;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.state = "closed";
@@ -542,13 +545,13 @@ export class Ev3devProvider implements Provider {
     if (!Array.isArray(inv.motors) || !Array.isArray(inv.sensors) || !Array.isArray(inv.unknown) || !inv.capabilities) {
       throw err(
         "internal",
-        "ev3dev: the bridge's hello has no motors/sensors/unknown/capabilities; is the installed bridge older than this driver? Run installBridge().",
+        "ev3dev: the bridge's hello has no motors/sensors/unknown/capabilities; is the installed bridge older than this driver? Copy this version's bridge to the brick: start the server with --install-bridge (installBridge() in code).",
       );
     }
     if (inv.speech === undefined)
       throw err(
         "misconfigured",
-        "ev3dev: the bridge's hello does not say whether the brick can speak; the installed bridge is older than this driver. Run installBridge().",
+        "ev3dev: the bridge's hello does not say whether the brick can speak; the installed bridge is older than this driver. Copy this version's bridge to the brick: start the server with --install-bridge (installBridge() in code).",
       );
     if (!(Number(inv.bridge) >= MIN_BRIDGE_VERSION))
       throw err(
@@ -594,8 +597,9 @@ export class Ev3devProvider implements Provider {
         await this.hello(Math.max(1000, this.o.helloTimeoutMs - (Date.now() - t0)));
         this.fresh = true;
         this.state = "ready";
+        this.closedWhy = null;
       } catch (e) {
-        this.teardown("opening failed");
+        this.teardown("the link to the brick could not be opened");
         await this.transport.close().catch(() => {});
         throw e;
       } finally {
@@ -620,7 +624,10 @@ export class Ev3devProvider implements Provider {
   }
 
   private closedForGood(): RuntimeError {
-    return err("robot_offline", "ev3dev: this link to the brick was closed; a new link needs a new provider");
+    return err(
+      "robot_offline",
+      `ev3dev: ${this.closedWhy ?? "the link to the brick was closed on this side"}; this call ended with it. list_robots shows the robot's link and what brings it online.`,
+    );
   }
 
   /**
@@ -629,7 +636,7 @@ export class Ev3devProvider implements Provider {
    */
   async close(): Promise<void> {
     this.ended = true;
-    this.teardown("closed by the caller");
+    this.teardown("the link to the brick was closed on this side");
     await this.transport.close();
   }
 

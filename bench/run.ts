@@ -113,8 +113,8 @@ async function stdio(): Promise<void> {
   );
   const s = await startServer();
   try {
-    const robots = (await s.tool("list_robots")).envelope as { data: { id: string }[] };
-    const robot_id = robots.data[0]!.id;
+    const robots = (await s.tool("list_robots")).envelope as { data: { robots: { id: string }[] } };
+    const robot_id = robots.data.robots[0]!.id;
     const call = async (name: string, args: Record<string, unknown>) => {
       const res = await s.rpc("tools/call", { name, arguments: args });
       if (res.error || res.result.isError) throw new Error(`stdio ${name} failed: ${JSON.stringify(res)}`);

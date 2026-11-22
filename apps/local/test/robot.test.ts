@@ -388,6 +388,24 @@ describe("next", () => {
     for (const names of [...Object.values(NEXT_OK), ...Object.values(NEXT_ERR)])
       for (const name of names) expect(served.has(name)).toBe(true);
   });
+  test("busy suggests the same call, then a look, and stop last; illegal_state suggests a look", async () => {
+    const { mock, tool } = await mockRobot();
+    const move = tool("drive", { distance_cm: 60, speed_pct: 10 });
+    await until("the move to start", () => mock.log.length > 0 || mock.left !== 0);
+    expect(await tool("turn", { angle_deg: 10 })).toMatchObject({
+      ok: false,
+      error: { code: "busy", retryable: true },
+      next: ["turn", "read_all", "stop"],
+    });
+    await tool("stop");
+    await move;
+    // reset_fault outside fault: nothing to reset, so the suggestion is to read the robot
+    expect(await tool("reset_fault")).toMatchObject({
+      ok: false,
+      error: { code: "illegal_state" },
+      next: ["read_all"],
+    });
+  });
 });
 
 describe("a link that can close", () => {

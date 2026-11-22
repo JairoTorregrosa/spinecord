@@ -53,7 +53,7 @@ describe("a stock EV3 lent by the page", () => {
     expect(offline).toMatchObject({ ok: false, error: { code: "robot_offline" }, robot: { link: "offline" } });
     expect(!offline.ok && offline.error.message).toContain(r.bridge.url);
     expect((await callTool(r.fleet.robots, "list_robots", {})).envelope).toMatchObject({
-      data: [{ id: "r1", link: "offline", backend: null }],
+      data: { robots: [{ id: "r1", link: "offline", backend: null }] },
     });
 
     r.entry.page = r.openPage();

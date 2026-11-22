@@ -76,6 +76,11 @@ try:
 except ImportError:  # Windows (tests against a fake tree)
     fcntl = None
 
+# Exit codes of this process. Fixed, so the computer can tell why the bridge ended without reading text.
+EXIT_OK = 0              # stdin closed or a signal: the link was closed
+EXIT_CRASH = 1           # an unexpected error
+EXIT_USAGE = 2           # bad arguments, or not an ev3dev brick
+EXIT_GUARD_LOST = 3      # the guard process ended: every motor was braked and the bridge ended itself
 VERSION = "4"            # 4: beacon_heading counter-clockwise-positive, guard process
 # What a beacon channel answers while the sensor sees no beacon. A reading with this error is sent with
 # "absent": true: the sensor answered, the read did not fail.
@@ -363,6 +368,7 @@ class Bridge(object):
         self.sink = None           # read_many: the answers of its reads are collected here instead of sent
         self.guard = None          # main(): the guard process
         self.no_guard = "the bridge was not started through main()"
+        self.exit_code = EXIT_OK   # what main() returns after run()
         self.speech_found = None   # find_speech()'s answer, looked up once per process
 
     # ------------------------------------------------------------ paths
@@ -1338,6 +1344,7 @@ class Bridge(object):
                 sys.stderr.write("ev3dev_bridge: the guard process ended (exit %s); braked every motor and ending\n" % self.guard.returncode)
                 self.send({"ev": "guard_lost"})
                 time.sleep(0.05)                # the writer thread sends the line
+                self.exit_code = EXIT_GUARD_LOST
                 return
             self.watchdog()
             t = now()
@@ -1389,8 +1396,30 @@ def main(argv):
             bridge.stop_all_now()   # stdin closed, signal, broken stdout or a crash: motors are braked
         finally:
             bridge.hush()           # and the speech is cut
-    return 0
+    return bridge.exit_code
+
+
+def leave(code):
+    """Ends the process with `code` and nothing else. The reader thread sits in a read of stdin and the writer
+    thread may hold stdout: an interpreter that shuts down around them can abort with a fatal error of its own
+    (seen on Python 3.13), which would reach the computer as this bridge's last words. os._exit skips that
+    shutdown; the motors are braked and every line is written by the time this is called."""
+    try:
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(code)
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        CODE = main(sys.argv)
+    except SystemExit as e:
+        CODE = e.code if isinstance(e.code, int) else EXIT_OK
+    except BaseException as e:   # a bug: one line, then out
+        try:
+            sys.stderr.write("ev3dev_bridge: ended on an unexpected error: %r\n" % (e,))
+        except Exception:
+            pass
+        CODE = EXIT_CRASH
+    leave(CODE)

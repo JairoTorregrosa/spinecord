@@ -1,7 +1,7 @@
 // The runtime executes every tool that addresses one robot, next to the hardware (CONTRACT.md §4). It knows devices only
 // through their manifests and the Provider interface; the only kinds it names are motor_pair (drivetrain)
 // and gyro (heading source). Limits come from the profile. The process around it (apps/local) owns the link and activity state.
-import { RuntimeError } from "../protocol/types";
+import { RETRYABLE, RuntimeError } from "../protocol/types";
 import type {
   BackendKind,
   CommandResult,
@@ -47,7 +47,6 @@ export const LINK_MIN_SAMPLES = 3;
 // A device re-scan that failed is tried again after this long, doubling after every failure up to the max.
 export const SCAN_RETRY_MS = 250;
 export const SCAN_RETRY_MAX_MS = 5000;
-const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image"];
 const ROBOT_TOOLS: readonly RobotTool[] = [
   "describe_robot",
   "describe_device",
@@ -115,6 +114,8 @@ interface Monitor {
   readonly first: Promise<boolean>;
   state(): boolean;
   fresh(): Promise<boolean>;
+  /** The readings of the poll that met the condition; undefined while it is not met. */
+  readings(): Reading[] | undefined;
   stop(): void;
 }
 // Where a device really is during a chunked move, from a measurement of its own (wheel encoders).
@@ -299,7 +300,7 @@ class RuntimeImpl implements LocalRuntime {
           value: null,
           ...(unit ? { unit } : {}),
           ts: this.clock.now(),
-          error: "provider returned no value for this channel",
+          error: "the device returned no value for this channel",
         };
       return { ...r, device: e.spec.id, ...((r.unit ?? unit) ? { unit: r.unit ?? unit } : {}) };
     });
@@ -338,9 +339,10 @@ class RuntimeImpl implements LocalRuntime {
         );
       const readings = await this.readEntry(e, names, switching.length > 0);
       let image: ImagePayload | undefined;
-      const data = readings.map((r) => {
+      const out = readings.map((r) => {
         if (r.channel !== images[0]) return r;
-        if (!r.image) return r.error ? r : { ...r, value: null, error: "provider returned no image for this channel" };
+        if (!r.image)
+          return r.error ? r : { ...r, value: null, error: "the device returned no image for this channel" };
         const age_ms = Math.max(0, Math.round(r.image.age_ms));
         if (age_ms > STALE_IMAGE_MS)
           throw rerr(
@@ -350,6 +352,8 @@ class RuntimeImpl implements LocalRuntime {
         image = { mime: r.image.mime, b64: r.image.b64, age_ms };
         return { device: r.device, channel: r.channel, value: null, image: true, mime: image.mime, age_ms, ts: r.ts };
       });
+      // {readings}: the shape read_all and wait_until return
+      const data = { readings: out };
       return image ? { data, image } : { data };
     };
   }
@@ -444,12 +448,12 @@ class RuntimeImpl implements LocalRuntime {
       const ev = makeEvaluator(cond, this.readFn);
       for (;;) {
         const r = await ev.poll();
-        const after_ms = Math.round(this.clock.now() - t0);
-        if (r.met) return { data: { met: true, after_ms, readings: r.readings } };
-        if (signal.aborted) return { data: { met: false, after_ms, readings: r.readings, reason: "preempted" } };
-        if (after_ms >= timeout) return { data: { met: false, after_ms, readings: r.readings } };
+        const ms = Math.round(this.clock.now() - t0);
+        if (r.met) return { data: { met: true, reason: "condition_met", ms, readings: r.readings } };
+        if (signal.aborted) return { data: { met: false, reason: "preempted", ms, readings: r.readings } };
+        if (ms >= timeout) return { data: { met: false, reason: "timeout", ms, readings: r.readings } };
         // A poll without a value is asked again soon: it is an answer only when it repeats (conditions.ts).
-        await this.clock.sleep(Math.min(r.unreadable ? UNTIL_POLL_MS : period, timeout - after_ms), signal);
+        await this.clock.sleep(Math.min(r.unreadable ? UNTIL_POLL_MS : period, timeout - ms), signal);
       }
     };
   }
@@ -634,6 +638,7 @@ class RuntimeImpl implements LocalRuntime {
       started = 0,
       done = 0,
       wanted = 1;
+    let deciding: Reading[] | undefined;
     let nap: AbortController | undefined;
     let waiters: (() => void)[] = [];
     const wake = () => {
@@ -657,7 +662,10 @@ class RuntimeImpl implements LocalRuntime {
         let decided = true;
         try {
           const r = await ev.poll();
-          if (r.met) met = true;
+          if (r.met) {
+            met = true;
+            deciding = r.readings;
+          }
           decided = !r.unreadable; // a poll without a value is no answer: whoever waits for a poll waits on
         } catch (err) {
           failed = true;
@@ -680,6 +688,7 @@ class RuntimeImpl implements LocalRuntime {
     return {
       first,
       state: result,
+      readings: () => deciding,
       fresh: () => {
         wanted = started + 1;
         nap?.abort();
@@ -717,6 +726,8 @@ class RuntimeImpl implements LocalRuntime {
     measured: Record<string, Value>;
     braked: boolean;
     problem?: string;
+    // The readings that met `until`, when the run ended with reason condition_met.
+    readings?: Reading[];
     // The watch of `until` could not evaluate the condition: the move ended there, braked like any early end.
     // The caller reads what was done and throws the error with it.
     failure?: { error: unknown };
@@ -1070,6 +1081,7 @@ class RuntimeImpl implements LocalRuntime {
       measured,
       braked,
       ...(problem ? { problem } : {}),
+      ...(reason === "condition_met" && mon?.readings() ? { readings: mon.readings() } : {}),
       ...(failure ? { failure } : {}),
     };
   }
@@ -1172,10 +1184,12 @@ class RuntimeImpl implements LocalRuntime {
     const source = g0 !== undefined && g1 !== undefined ? "gyro" : "encoders";
     // Providers normalize angles to the contract's sign (counter-clockwise positive), so the gyro is trusted as is.
     const heading = source === "gyro" ? g1! - g0! : ((dr - dl) * dt.wheel_diameter_cm) / (2 * dt.axle_track_cm);
-    const measured: Record<string, Value> =
-      tool === "turn"
-        ? { angle_deg: round1(heading), source }
-        : { distance_cm: round1(((dl + dr) / 2) * cmPerDeg), heading_change_deg: round1(heading), source };
+    // drive, turn and arc report the same fields
+    const measured: Record<string, Value> = {
+      distance_cm: round1(((dl + dr) / 2) * cmPerDeg),
+      heading_change_deg: round1(heading),
+      source,
+    };
     measured.left_deg = round1(enc.l - start.l);
     measured.right_deg = round1(enc.r - start.r);
     if (run.failure) throw this.endedMove(run.failure.error, measured);
@@ -1186,6 +1200,7 @@ class RuntimeImpl implements LocalRuntime {
         measured,
         clamped: clamped || run.clamped,
         reason,
+        ...(run.readings ? { readings: run.readings } : {}),
         ...(run.problem ? { problem: run.problem } : {}),
         chunks: run.chunks,
         ms: Math.round(this.clock.now() - t0),
@@ -1275,6 +1290,7 @@ class RuntimeImpl implements LocalRuntime {
             measured: run.measured,
             clamped: anyClamp,
             reason: run.reason === "completed" && anyClamp ? "clamped" : run.reason,
+            ...(run.readings ? { readings: run.readings } : {}),
             ...(run.problem ? { problem: run.problem } : {}),
             chunks: run.chunks,
             ms: Math.round(this.clock.now() - t0),
@@ -1314,6 +1330,7 @@ class RuntimeImpl implements LocalRuntime {
           measured: total,
           clamped: anyClamp,
           reason: reason === "completed" && anyClamp ? "clamped" : reason,
+          ...(reason === "condition_met" && mon?.readings() ? { readings: mon.readings() } : {}),
           ...(ops > 1 ? { chunks: ops } : {}),
           ms: Math.round(this.clock.now() - t0),
         },
@@ -1418,12 +1435,9 @@ class RuntimeImpl implements LocalRuntime {
 
   // ---------- programs ----------
   private planProgram(a: Args): Run {
-    const src = isObj(a.program) ? a.program : a;
-    const body = src.body;
+    const body = a.body;
     const success =
-      src.success === undefined || src.success === null
-        ? undefined
-        : compileCondition(src.success, this.resolver, "success");
+      a.success === undefined || a.success === null ? undefined : compileCondition(a.success, this.resolver, "success");
     const issues = validateProgram(body);
     if (issues.length)
       throw rerr(
@@ -1558,10 +1572,7 @@ class RuntimeImpl implements LocalRuntime {
         record({ path, tool, ok: false, error: e, ms: ms() });
         throw new End("failed", `${path} (${tool}) failed: ${e.code}: ${e.message}`);
       }
-      const reason =
-        tool === "wait_until"
-          ? ((data.reason as string | undefined) ?? (data.met ? "condition_met" : "timeout"))
-          : String(data.reason);
+      const reason = String(data.reason);
       if (reason === "preempted") {
         record({ path, tool, ok: false, reason, ms: ms() });
         throw interrupted();

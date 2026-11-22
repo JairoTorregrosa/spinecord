@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "cuerpo-claude",
+      "name": "spinecord",
       "devDependencies": {
         "bun-types": "1.3.14",
         "lefthook": "2.2.2",
@@ -19,7 +19,7 @@
       },
     },
     "packages/driver-ev3": {
-      "name": "@spinecord/ev3",
+      "name": "@spinecord/driver-ev3",
     },
     "packages/driver-ev3dev": {
       "name": "@spinecord/driver-ev3dev",
@@ -115,9 +115,9 @@
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.92.0", "", { "os": "win32", "cpu": "x64" }, "sha512-0AyhqX0ciFuEnHIL+B4PIMMX3s/IpGHNEbbUqwsNhSrzWUSlEOPw/q7qFnRsEJfiKedcqVfUE/aXYuSMtpiFyw=="],
 
-    "@spinecord/driver-ev3dev": ["@spinecord/driver-ev3dev@workspace:packages/driver-ev3dev"],
+    "@spinecord/driver-ev3": ["@spinecord/driver-ev3@workspace:packages/driver-ev3"],
 
-    "@spinecord/ev3": ["@spinecord/ev3@workspace:packages/driver-ev3"],
+    "@spinecord/driver-ev3dev": ["@spinecord/driver-ev3dev@workspace:packages/driver-ev3dev"],
 
     "@spinecord/local": ["@spinecord/local@workspace:apps/local"],
 

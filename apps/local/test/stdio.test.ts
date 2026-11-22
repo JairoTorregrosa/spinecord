@@ -37,13 +37,13 @@ describe("a twin behind stdio", () => {
     const robots = await s.tool("list_robots");
     expect(robots.envelope).toMatchObject({
       ok: true,
-      data: [{ id: R, backend: "sim", link: "online", activity: "idle" }],
+      data: { robots: [{ id: R, backend: "sim", link: "online", activity: "idle" }] },
     });
     const robot = await s.tool("describe_robot", { robot_id: R });
     expect(robot.envelope).toMatchObject({ ok: true, robot: { id: R, activity: "idle" } });
     expect((await s.tool("describe_device", { robot_id: R, device: "distance" })).envelope.ok).toBe(true);
     const read = await s.tool("read_device", { robot_id: R, device: "distance" });
-    expect(read.envelope.ok && read.envelope.data[0].channel).toBe("distance_cm");
+    expect(read.envelope.ok && read.envelope.data.readings[0].channel).toBe("distance_cm");
     expect((await s.tool("read_all", { robot_id: R })).envelope.ok).toBe(true);
     const sample = await s.tool("sample_device", {
       robot_id: R,
@@ -106,7 +106,7 @@ describe("a twin behind stdio", () => {
     expect(!e.ok && e.error).toMatchObject({ code: "busy", retryable: true });
     expect(!e.ok && e.error.retry_after_ms).toBeGreaterThan(0);
     // reads are served while a move runs, and the robot is idle again after it
-    expect((await s.tool("list_robots")).envelope).toMatchObject({ data: [{ activity: "idle" }] });
+    expect((await s.tool("list_robots")).envelope).toMatchObject({ data: { robots: [{ activity: "idle" }] } });
   });
 
   test("stop during a move preempts it and every motor reads speed 0", async () => {
@@ -132,7 +132,7 @@ describe("the client cancels a call", () => {
     s.notify("notifications/cancelled", { requestId: move.id, reason: "the script was interrupted" });
     await until("the robot to be idle", async () => {
       const robots = await s.tool("list_robots");
-      return robots.envelope.ok && robots.envelope.data[0].activity === "idle";
+      return robots.envelope.ok && robots.envelope.data.robots[0].activity === "idle";
     });
     expect(performance.now() - t0).toBeLessThan(2000); // the 80 cm would take 19 s
     expect(await wheelSpeeds(s, R)).toEqual([0, 0, 0]);
@@ -157,7 +157,7 @@ describe("the client cancels a call", () => {
     s.notify("notifications/cancelled", { requestId: wait.id });
     await until("the cancel to be logged", () => s.events("cancelled").length > 0, 2000);
     expect(s.events("cancelled")).toEqual([{ ev: "cancelled", robot_id: R, tool: "wait_until", action: "abort" }]);
-    expect((await s.tool("list_robots")).envelope).toMatchObject({ data: [{ activity: "idle" }] });
+    expect((await s.tool("list_robots")).envelope).toMatchObject({ data: { robots: [{ activity: "idle" }] } });
     expect(await s.closeStdin()).toBe(0);
   });
 });
@@ -183,7 +183,7 @@ describe("two processes, one port", () => {
       // the first one is untouched
       expect((await first.tool("list_robots")).envelope).toMatchObject({
         ok: true,
-        data: [{ id: "r1", link: "offline" }],
+        data: { robots: [{ id: "r1", link: "offline" }] },
       });
     } finally {
       expect(await first.closeStdin()).toBe(0);

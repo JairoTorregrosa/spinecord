@@ -134,7 +134,7 @@ export type TestServer = Awaited<ReturnType<typeof startServer>>;
 /** True once a wheel of the twin reads a speed: a move is really under way. */
 export async function wheelsTurning(s: TestServer, robot_id: string): Promise<boolean> {
   const r = await s.tool("read_device", { robot_id, device: "ev3.B", channels: ["speed_deg_s"] });
-  return r.envelope.ok && Math.abs(r.envelope.data[0].value) > 0;
+  return r.envelope.ok && Math.abs(r.envelope.data.readings[0].value) > 0;
 }
 export async function wheelSpeeds(s: TestServer, robot_id: string): Promise<number[]> {
   const all = await s.tool("read_all", { robot_id });
