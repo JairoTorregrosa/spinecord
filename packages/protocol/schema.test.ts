@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { assertSupported, firstViolation, schemaIssues, validateSchema } from "./schema";
+import { assertSupported, firstViolation, validateSchema } from "./schema";
 
 const RUN_TIME = {
   type: "object",
@@ -27,20 +27,6 @@ describe("schema validator", () => {
     expect(firstViolation(RUN_TIME, { ms: 1000, speed_pct: 20 })).toBe("ms: must be <= 250 (maximum), got 1000");
     expect(firstViolation(RUN_TIME, 7)).toBe("(arguments): must be of type object, got integer");
     expect(firstViolation(RUN_TIME, { ms: 100, speed_pct: 20 })).toBeNull();
-  });
-
-  test("shape mode leaves sizes to whoever clamps them, and still checks structure", () => {
-    const oversized = { ms: 1000, speed_pct: 120, label: "abcd", marks: [1, -2] };
-    expect(schemaIssues(RUN_TIME, oversized, "args", "shape")).toEqual([]);
-    const shape = (v: unknown) => firstViolation(RUN_TIME, v, "args", "shape");
-    expect(shape({ speed_pct: 20 })).toBe("args.ms: is required");
-    expect(shape({ ms: "long", speed_pct: 20 })).toBe("args.ms: must be of type integer, got string");
-    expect(shape({ ms: 1.5, speed_pct: 20 })).toBe("args.ms: must be of type integer, got number");
-    expect(shape({ ms: 100, speed_pct: Number.NaN })).toBe("args.speed_pct: must be a finite number");
-    expect(shape({ ms: 100, speed_pct: 20, mode: "drift" })).toBe('args.mode: must be one of ["brake","coast"]');
-    expect(shape({ ms: 100, speed_pct: 20, label: "AB" })).toBe("args.label: must match pattern ^[a-z]*$");
-    expect(shape({ ms: 100, speed_pct: 20, marks: ["x"] })).toBe("args.marks[0]: must be of type integer, got string");
-    expect(shape({ ms: 100, speed_pct: 20, warp: 9 })).toMatch(/^args\.warp: unknown field .*allowed: ms, speed_pct/);
   });
 
   test("a key whose value is undefined is absent", () => {

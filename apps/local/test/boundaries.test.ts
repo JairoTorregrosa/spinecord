@@ -33,7 +33,7 @@ const TREE = {
   "apps/local/src/robot.ts": "export const robot = 1;\n",
 };
 
-test("an app may import packages, and a dependency whose name ends in a package's name", () => {
+test("an app may import packages and its own dependencies", () => {
   const r = check({
     ...TREE,
     "apps/local/main.ts": [

@@ -20,7 +20,7 @@ driver-ev3 ← apps/robot-page
 
 | Package | Owns | Never does |
 |---|---|---|
-| `protocol` | Types, FSM transition tables, the MCP tool catalog (`TOOLS`, with input and output schemas and the server instructions), and pure dependency-free validators shared by everyone (`validate.ts`: programs, conditions; `schema.ts`: the one JSON Schema validator, `shape` or `full`). | I/O, state, defaults for a specific robot. |
+| `protocol` | Types, FSM transition tables, the MCP tool catalog (`TOOLS`, with input and output schemas and the server instructions), and pure dependency-free validators shared by everyone (`validate.ts`: programs, conditions; `schema.ts`: the one JSON Schema validator). | I/O, state, defaults for a specific robot. |
 | `driver-ev3` | EV3 direct-command encoding/decoding, transports (WebHID, any byte Transport), serial link, `Ev3Provider` (EV3 ports → DeviceSpecs, bounded commands, verified stop), the robot file parser. | Kinematics, conditions, programs, MCP, robot state. |
 | `driver-ev3dev` | ev3dev bridge (Python 3.5, stdlib) over SSH stdio, on-brick watchdog, `Ev3devProvider` with the same device ids as `driver-ev3`. | Anything `driver-ev3` does not expose to a model. |
 | `sim-world` | World model loaded from JSON, physics, sensor models, `SimWorldProvider` (`sim.world`, `sim.camera`, `sim.speaker`), declarative training, viewer pieces. | Hardware protocols; hardcoded worlds or tasks. |

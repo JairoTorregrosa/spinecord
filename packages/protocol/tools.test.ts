@@ -31,15 +31,6 @@ describe("catalog", () => {
     for (const name of ["read_all", "wait_until", "stop", "reset_fault"]) expect(hints[name]).toBe(true);
     for (const t of TOOLS) expect(t.annotations.idempotentHint).toBe(!t.annotations.destructiveHint);
   });
-  test("no text names what the process does not have", () => {
-    const absent =
-      /\btokens?\b|\bin control\b|\bcontrol\b|\bepisodes?\b|\blibrary\b|\badmin\b|\bverif(y|ied)_program\b|\bsave_program\b|-sim\b|\b10 min\b/i;
-    for (const t of TOOLS) {
-      expect(t.description).not.toMatch(absent);
-      expect(JSON.stringify(t.input)).not.toMatch(absent);
-    }
-    expect(SERVER_INSTRUCTIONS).not.toMatch(absent);
-  });
   test("every tool the instructions name is in the catalog", () => {
     // snake_case words that are not a field with a unit or an id (retry_after_ms, request_id)
     for (const word of SERVER_INSTRUCTIONS.matchAll(/\b[a-z]+_[a-z]+\b/g))

@@ -34,7 +34,6 @@ Legend: ✅ shipped · 🟡 partial · ⬜ missing. **Where** = the package that
 | Primitive | How the model reaches it | State | Where |
 |---|---|---|---|
 | Programs as data, run next to the hardware | `run_program{body, success?}` | ✅ | runtime |
-| Named programs kept between sessions | a program store + run by name | ⬜ | apps/local |
 | Program parameters (`drive {distance_cm: $d}`) | `params` in program + `run_program{args}` | ⬜ | protocol · runtime |
 | Train a behavior from a declarative reward | training spec on the twin | 🟡 sim only, no tool | sim-world |
 
