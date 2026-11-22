@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { RuntimeError } from "../protocol/types";
 import type { DeviceSpec, Limits, Provider, RobotProfile, RobotTool, RuntimeResult } from "../protocol/types";
 import { FakeClock } from "./clock";
-import { UNREADABLE_POLLS } from "./conditions";
+import { UNDECIDED_POLLS, UNREADABLE_POLLS } from "./conditions";
 import { MockProvider } from "./mock";
 import {
   createRuntime,
@@ -556,6 +556,28 @@ describe("conditions and wait_until", () => {
     expect(both).toMatchObject({ met: false });
     expect(both.reason).toBeUndefined();
     expect(alt.clock.now() - a0).toBe(50);
+    // the same two channels under a move's `until`: the watch gives up after UNDECIDED_POLLS polls without an answer,
+    // and a call aborted while it waits for one ends at once
+    const mv = setup();
+    let t2 = 0;
+    mv.mock.values.set("mock.gas.ppm", () => (t2 % 2 === 0 ? null : 400));
+    mv.mock.values.set("mock.color.reflected_pct", () => (t2++ % 2 === 0 ? 50 : null));
+    const either = { any: [until, { device: "floor_color", channel: "reflected_pct", op: "lt", value: 20 }] };
+    const mv0 = mv.clock.now();
+    const gaveUp = await fails(mv.call("drive", { distance_cm: 60, until: either }), "condition_unreadable");
+    expect(gaveUp.message).toContain(`${UNDECIDED_POLLS} polls in a row`);
+    expect(mv.clock.now() - mv0).toBe((UNDECIDED_POLLS - 1) * UNTIL_POLL_MS);
+    expect(mv.mock.log.length).toBe(0); // no answer, no motion
+    const ab = setup({ latency_ms: 600 });
+    let t3 = 0;
+    ab.mock.values.set("mock.gas.ppm", () => (t3 % 2 === 0 ? null : 400));
+    ab.mock.values.set("mock.color.reflected_pct", () => (t3++ % 2 === 0 ? 50 : null));
+    const ctl = new AbortController();
+    const ab0 = ab.clock.now();
+    void ab.clock.sleep(900).then(() => ctl.abort());
+    const cut = await ab.call("drive", { distance_cm: 60, until: either }, ctl.signal);
+    expect(cut.reason).toBe("preempted");
+    expect(ab.clock.now() - ab0).toBeLessThanOrEqual(900 + 600); // the abort, then one reading of the wheels
     // under `not`, a poll without a value is still "not met": it never makes a condition true
     const x = setup();
     let k = 0;

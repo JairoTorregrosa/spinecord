@@ -30,6 +30,9 @@ const MAX_LEAVES = 32;
 // Polls in a row without a value, on the same comparison, that end an evaluation. One failed exchange with a
 // brick is not a broken sensor; three polls of a watched move are about 30 ms, inside one chunk.
 export const UNREADABLE_POLLS = 3;
+// Polls in a row that decided nothing, whichever comparison lacked its value, that end an evaluation: channels
+// failing in turn never reach UNREADABLE_POLLS each, and whoever waits for an answer must get one.
+export const UNDECIDED_POLLS = 10;
 const bad = (msg: string) => new RuntimeError("invalid_argument", msg);
 
 export function compileCondition(cond: unknown, reg: Resolver, path = "condition"): CompiledCondition {
@@ -98,6 +101,7 @@ export function makeEvaluator(
 ): { poll(): Promise<{ met: boolean; unreadable: boolean; readings: Reading[] }> } {
   const baseline: (Value | null | undefined)[] = c.leaves.map(() => undefined);
   const blindPolls: number[] = c.leaves.map(() => 0);
+  let undecided = 0;
   const byDevice = new Map<string, string[]>();
   for (const l of c.leaves) {
     const list = byDevice.get(l.device) ?? [];
@@ -165,7 +169,17 @@ export function makeEvaluator(
           );
       }
       // A poll with a comparison that could not be read decides nothing: not met, and `changed` keeps its baseline.
-      if (unreadable) return { met: false, unreadable, readings };
+      if (unreadable) {
+        if (++undecided >= UNDECIDED_POLLS) {
+          const blind = c.leaves.flatMap((l, i) => (blindPolls[i]! > 0 ? [`${l.device}.${l.channel}`] : []));
+          throw new RuntimeError(
+            "condition_unreadable",
+            `The condition cannot be evaluated: ${undecided} polls in a row had a channel without a value (in the last one: ${blind.join(", ")}). A channel that cannot be read is never taken as "not met". Read the robot (read_all) and check the sensors the condition names.`,
+          );
+        }
+        return { met: false, unreadable, readings };
+      }
+      undecided = 0;
       return {
         met: evalNode(
           c.tree,

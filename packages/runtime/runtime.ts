@@ -35,8 +35,6 @@ export const MAX_SAMPLE_HZ = 50;
 // one read takes when the link is slower. A channel's max_rate_hz does not slow it down: reading a sensor
 // faster than it refreshes costs nothing (reads have no side effects) and shortens the wait for its next value.
 export const UNTIL_POLL_MS = 10;
-// How many polls one evaluation of a program's condition (while, if, success) may take to get an answer.
-export const PROGRAM_CONDITION_POLLS = 10;
 // How old a timed round trip may be and still let the first chunk of a move coast: about what a move itself
 // relies on between two of its chunks. Older than this, the link is timed again before anything moves.
 export const LINK_FRESH_MS = 2 * MAX_CHUNK_MS;
@@ -627,7 +625,7 @@ class RuntimeImpl implements LocalRuntime {
   // every max(UNTIL_POLL_MS, the round trip of one such read) and calls `trip` the
   // moment it is met or cannot be evaluated, so the caller aborts the operation in flight instead of waiting
   // for it to end. One poll at a time; reads here never switch a sensor mode.
-  private monitor(cond: CompiledCondition, trip: () => void): Monitor {
+  private monitor(cond: CompiledCondition, trip: () => void, signal: AbortSignal): Monitor {
     const ev = makeEvaluator(cond, this.readFn);
     let met = false,
       failed = false,
@@ -646,10 +644,12 @@ class RuntimeImpl implements LocalRuntime {
       if (failed) throw error;
       return met;
     };
+    // Whoever waits for a poll also stops waiting when the call is aborted: the answer is then what is known.
     const until = async (n: number) => {
-      while (done < n && !settled()) await new Promise<void>((r) => waiters.push(r));
+      while (done < n && !settled() && !signal.aborted) await new Promise<void>((r) => waiters.push(r));
       return result();
     };
+    signal.addEventListener("abort", wake, { once: true });
     void (async () => {
       while (!settled()) {
         const asked = this.clock.now();
@@ -687,6 +687,7 @@ class RuntimeImpl implements LocalRuntime {
       },
       stop: () => {
         stopped = true;
+        signal.removeEventListener("abort", wake);
         nap?.abort();
         wake();
       },
@@ -801,11 +802,15 @@ class RuntimeImpl implements LocalRuntime {
     let tripped = false;
     const mon =
       o.until &&
-      this.monitor(o.until, () => {
-        if (!flying) return;
-        tripped = true;
-        flying.abort();
-      });
+      this.monitor(
+        o.until,
+        () => {
+          if (!flying) return;
+          tripped = true;
+          flying.abort();
+        },
+        signal,
+      );
     // A watch that could not evaluate the condition ends the move: nothing more is sent, and what follows the
     // loop brakes a device that still rolls.
     let failure: { error: unknown } | undefined;
@@ -1292,11 +1297,15 @@ class RuntimeImpl implements LocalRuntime {
       let why: "condition_met" | "timeout" | undefined;
       const mon =
         until &&
-        this.monitor(until, () => {
-          if (!flying) return;
-          why = "condition_met";
-          flying.abort();
-        });
+        this.monitor(
+          until,
+          () => {
+            if (!flying) return;
+            why = "condition_met";
+            flying.abort();
+          },
+          signal,
+        );
       const total: Record<string, Value> = {};
       const done = (reason: StopReason, anyClamp: boolean, ops: number): RuntimeResult => ({
         data: {
@@ -1476,10 +1485,9 @@ class RuntimeImpl implements LocalRuntime {
     const test = async (cond: unknown, path: string, ev?: ReturnType<typeof makeEvaluator>) => {
       try {
         const e = ev ?? makeEvaluator(compileCondition(cond, this.resolver, `program ${path}`), this.readFn);
-        // One answer is needed. A poll without a value is asked again; polls that never settle (channels that
-        // fail in turn) are not met after PROGRAM_CONDITION_POLLS of them.
+        // One answer is needed: a poll without a value is asked again until the evaluator answers or gives up.
         let r = await e.poll();
-        for (let n = 1; r.unreadable && n < PROGRAM_CONDITION_POLLS && !budget.signal.aborted; n++) {
+        while (r.unreadable && !budget.signal.aborted) {
           await this.clock.sleep(UNTIL_POLL_MS, budget.signal);
           r = await e.poll();
         }
