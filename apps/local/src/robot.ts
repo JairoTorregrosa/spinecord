@@ -67,7 +67,7 @@ export class LocalRobot {
   private move: Claim | null = null;
   private stopRun: Promise<{ motors_stopped: boolean; activity: RobotActivity }> | null = null;
   private resetRun: Promise<RuntimeResult> | null = null;
-  /** The verified stop a reset_fault is running in the runtime; a stop waits for it instead of running beside it. */
+  /** The verified stop a reset_fault is running in the runtime; a stop waits for it, so the two never run side by side. */
   private resetVerify: Promise<unknown> | null = null;
 
   constructor(private readonly o: RobotOptions) {
