@@ -87,8 +87,11 @@ def play_motors(root, stop):
                     target = f.read().strip()
                 if target == "":
                     continue  # the bridge is in the middle of a write
-                with open(os.path.join(d, "position"), "w") as f:
+                # in one step, as the kernel does: the bridge reads the old position or the new one, never ""
+                tmp = os.path.join(d, "position.tmp")
+                with open(tmp, "w") as f:
                     f.write(target + "\n")
+                os.replace(tmp, os.path.join(d, "position"))
                 with open(os.path.join(d, "command"), "w") as f:
                     f.write("done\n")
             except (OSError, IOError):
