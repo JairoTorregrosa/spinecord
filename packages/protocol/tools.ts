@@ -18,25 +18,35 @@ How to work:
 2. Prefer the drivetrain tools (drive, turn, arc) for motion. Use command_device for any other actuator. Every command is bounded (degrees, milliseconds or instant) and clamped to the robot's limits; nothing runs open-ended.
 3. Close the loop: after acting, read_device / read_all / sample_device, or look through a camera device (read_device on an image channel). Compare requested vs measured in every result; physical robots slip.
 4. To react to the world inside one action, pass an \`until\` condition; to wait without moving, use wait_until. run_program runs a whole behavior, given inline as data, next to the hardware.
-5. Test on a twin first when there is one: a robot with backend sim has the same devices as the hardware robot plus a "sim.world" device.
+5. Test on a twin first when there is one. A robot with backend sim is a twin: a simulated EV3 brick in a 2D world, driven through the code path of a stock brick. Its motors and sensors are the ones its world file declares, which need not match a hardware robot: describe_robot lists them. Three devices exist only on a twin: sim.world (pose and an overhead frame; its commands load another world and reset the pose), sim.camera (a forward camera's frame) and sim.speaker (its speak command records the text and makes no sound). A stock EV3 brick has no camera, and its speaker (ev3.speaker) has tone and beep but no speak. What a script reads from a sim.* device does not exist on hardware.
 6. One moving call at a time per robot: a second one fails with busy, it is not queued. Call stop the moment something looks wrong. stop never waits behind another call.
 
 Every result is JSON: {ok, robot:{id, backend, link, activity}, data | error:{code, message, retryable, retry_after_ms?, measured?}, next:[suggested tools]}. ok true → data is present; ok false → error is present and data is absent. Errors are never disguised as data; a missing value is null with an error string. Nothing is stored between calls: a moving call sent twice moves twice, so after a failed or unanswered moving call read the robot (read_all) before moving again. Units: cm, degrees (positive = counter-clockwise = left, in every channel and command, an infrared sensor's beacon_heading included), speed in percent of max, time in ms.
 
 A condition (\`until\`, wait_until, a program's while, if or success) never takes a channel it cannot read as "not met": after 3 polls in a row without a value, or 10 polls in a row that decided nothing, the call fails with condition_unreadable. A move the condition guarded was braked there and error.measured holds what it had done; read the robot (read_all) and check the sensor, and do not send the move again unread. A channel that describe_device marks null_when_absent may read null with absent:true (nothing in view, e.g. no beacon): that is an answer, and a comparison on it is not met.
 
+A condition is checked before anything is sent, and a call it fails moved nothing (invalid_argument):
+- A channel that is not active (active:false in describe_device: its sensor is in another mode) cannot be compared, since a condition never switches a sensor mode. \`next\` then starts with read_device: read that channel by name while the robot is idle, then send the call again.
+- A comparison the channel's range can never make true is refused, e.g. distance_cm lt 2 on a sensor whose range is [3, 255]. The message names the range.
+
+What a condition compares:
+- A gyro's angle_deg is cumulative since its last reset, not relative to where this move starts: on a robot that has already turned, \`until\` angle_deg lt -45 can be met at once. To turn by an angle, use turn with angle_deg (it measures the change itself); to compare the gyro's angle, send the gyro's reset command first.
+- op changed compares with the first value the call read. On a number channel that declares noise in describe_device it needs a difference larger than that noise in 2 polls in a row, so a still sensor does not trip it; on any other channel every difference counts.
+
 Result format: structuredContent is the envelope and matches the tool's outputSchema. The text block repeats it for clients without structured output: line 1 is a one-line summary, the last line is the envelope as single-line JSON.
 
 Shapes of \`data\` (always an object, never a bare array):
 - list_robots: {robots:[{id, backend, link, activity, fault_reason, connect}]}.
 - read_device, read_all, wait_until: {readings:[{device, channel, value, unit?, ts, error?, absent?}]}, one reading per channel: readings.find(r => r.channel === "distance_cm").value. read_all and wait_until add ms; wait_until adds met and reason.
-- drive, turn, arc, command_device: {requested, applied, measured, clamped, reason, ms}, plus readings (the same shape) when reason is condition_met: the readings that met \`until\`. measured of drive, turn and arc has the same fields: distance_cm, heading_change_deg, source, left_deg, right_deg.
-- sample_device: {samples:[[t_ms, value]], min, max, mean, last, rate_hz}. stop: {motors_stopped, activity}. run_program: {outcome, reason, steps, ms}.
+- drive, turn, arc, command_device: {requested, applied, measured, clamped, clamps?, reason, ms}, plus readings (the same shape) when reason is condition_met: the readings that met \`until\`. measured of drive, turn and arc has the same fields: distance_cm, heading_change_deg, source, left_deg, right_deg.
+- reason completed: the whole request was done. clamped:true beside it says an argument that is not the target (the speed) was cut to a limit; clamps:[{arg, requested, applied, target}] lists what was cut. reason clamped: the target itself (distance, angle, a bounded parameter) was cut, and that shorter target was reached. condition_met: \`until\` ended the move. stalled, preempted, timeout: the move ended early; measured says how far it got.
+- sample_device: {samples:[[t_ms, value]], min, max, mean, last, rate_hz}. stop: {motors_stopped, activity}. run_program: {outcome, reason, steps:[{path, tool, ok, reason | error, measured?, clamped?, ms}], ms}.
 
 If you write code that calls these tools (several calls in one script):
 - What a call hands the script depends on the client that runs it: the envelope as an object, or the envelope as JSON text, and a result with ok:false may be thrown (the thrown message is the text block, so its last line is the envelope JSON). Define one helper that returns the envelope in every case and make every call through it: const call = async (tool, args) => { let r; try { r = await TOOL(tool, args); } catch (e) { try { return JSON.parse(String(e.message).split("\\n").at(-1)); } catch { throw e; } } return typeof r === "string" ? JSON.parse(r) : (r.structuredContent ?? r); }; where TOOL is how the client exposes these tools. An error the helper throws again never reached the server (an argument the tool does not declare): read its message.
 - Compose the whole sense → act loop in one script and return only what you need; do not spend a model turn per call. A move's result carries what it measured (data.measured) and, when \`until\` ended it, the readings that met the condition (data.readings): read only what the move does not report.
 - Check \`ok\` after every call. On ok:false leave the loop at once and return the error; never continue on stale data.
+- A move did all that was asked when reason is completed, whatever \`clamped\` says. Test the reason, not \`clamped\`.
 - Await each moving call before the next one on the same robot; reads may run in parallel with a move.
 - A script that moves the robot wraps the motion in try/finally and calls stop in the finally whenever it did not finish cleanly.
 - Bound every loop (iterations and total time) and keep the script well under 10 minutes; prefer one call with \`until\` over a fast polling loop.`;
@@ -57,7 +67,7 @@ const speed = {
 const condition = {
   type: "object",
   description:
-    'Condition over device channels. Leaf: {device, channel, op, value}; op ∈ lt,lte,gt,gte (numbers), eq,neq, changed (no value), contains (vector channel includes value, e.g. buttons.pressed contains "enter"). Combine with {any:[...]}, {all:[...]}, {not:{...}}. Device may be an id or a role.',
+    "Condition over device channels. Leaf: {device, channel, op, value}; op ∈ lt,lte,gt,gte (numbers), eq,neq, changed (no value; differs from the first value read, by more than the channel's noise when describe_device declares one), contains (vector channel includes value, e.g. buttons.pressed contains \"enter\"). Combine with {any:[...]}, {all:[...]}, {not:{...}}. Device may be an id or a role. Checked before anything is sent: a channel that is not active (read it by name with read_device first) or a comparison outside the channel's range fails with invalid_argument. A gyro's angle_deg is cumulative since its last reset, not relative to the start of this call.",
 } as const;
 
 export interface ToolDef {
@@ -98,7 +108,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Describe device",
     annotations: ro,
     description:
-      "Returns one device's full spec: every channel (name, type number|boolean|string|vector|image, unit, range, max_rate_hz, accuracy note, active, null_when_absent) and every command (name, description, JSON Schema of params, bound kind degrees|ms|instant and its max, whether it moves). Use it before command_device on a device you have not used, and to discover what an attached device can do.",
+      "Returns one device's full spec: every channel (name, type number|boolean|string|vector|image, unit, range, max_rate_hz, accuracy note, noise, active, null_when_absent) and every command (name, description, JSON Schema of params, bound kind degrees|ms|instant and its max, whether it moves). Use it before command_device on a device you have not used, and to discover what an attached device can do.",
     input: {
       type: "object",
       properties: {
@@ -195,7 +205,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Drive straight",
     annotations: act,
     description:
-      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. data.readings then holds the readings that met the condition: use them, since a read made after the stop can sit on the other side of the threshold by the noise of the sensor (approx in describe_device). A condition channel that returns no value fails the call with condition_unreadable: the move was braked and error.measured holds what it had done. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
+      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, clamps, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. completed = the whole distance was driven, also when clamped is true because only the speed was cut (clamps lists each cut argument); reason clamped = distance_cm itself was cut to max_drive_cm and that shorter distance was driven. A distance under the drivetrain's smallest move (one degree of wheel rotation) fails with invalid_argument naming the minimum; 0 is no motion. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. data.readings then holds the readings that met the condition: use them, since a read made after the stop can sit on the other side of the threshold by the noise of the sensor (approx in describe_device). A condition channel that returns no value fails the call with condition_unreadable: the move was braked and error.measured holds what it had done. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
     input: {
       type: "object",
       properties: {
@@ -214,7 +224,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Turn in place",
     annotations: act,
     description:
-      "Rotates in place by angle_deg (positive = counter-clockwise/left, negative = right), then brakes. Returns the shape drive returns: {requested:{angle_deg, speed_pct}, applied, measured:{distance_cm, heading_change_deg (the angle turned), source (gyro if present, else encoders), left_deg, right_deg}, clamped, reason, ms}. Supports `until` like drive. Requires a drivetrain. Clamped to max_turn_deg.",
+      "Rotates in place by angle_deg (positive = counter-clockwise/left, negative = right), then brakes. Returns the shape drive returns: {requested:{angle_deg, speed_pct}, applied, measured:{distance_cm, heading_change_deg (the angle turned), source (gyro if present, else encoders), left_deg, right_deg}, clamped, clamps, reason, ms}, with the reasons of drive. This is the tool for turning by an angle: it measures the change of heading itself, wherever the gyro's angle stands. Supports `until` like drive; there a gyro's angle_deg is the cumulative angle since the gyro's last reset, not the angle of this turn, so on a robot that has already turned send the gyro's reset command first or compare against a value read just before. An angle under the drivetrain's smallest move fails with invalid_argument naming the minimum. Requires a drivetrain. Clamped to max_turn_deg.",
     input: {
       type: "object",
       properties: {
@@ -254,7 +264,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Command a device",
     annotations: act,
     description:
-      "Runs one named command on one device, e.g. a motor's run_degrees, a speaker's tone, a display's text, a servo's set_angle, the twin's sim.world load_world. Args must match the command's params schema from describe_device. Every command is bounded (bound.kind degrees|ms|instant) and clamped; returns {requested, applied (the request after clamping), measured (what the device reports), clamped, reason, ms}. Supports `until` for commands that move. Commands that move require idle (one moving call at a time, else busy); commands that do not move (sound, display, light) run in every state but fault.",
+      "Runs one named command on one device, e.g. a motor's run_degrees, a speaker's tone, a display's text, a servo's set_angle, the twin's sim.world load_world. Args must match the command's params schema from describe_device. Every command is bounded (bound.kind degrees|ms|instant) and clamped; returns {requested, applied (the request after clamping), measured (what the device reports), clamped, clamps, reason, ms}; reason completed = done as asked, also when clamped is true because an argument that is not the target (speed) was cut; reason clamped = a bounded parameter (the target) was cut. Supports `until` for commands that move. Commands that move require idle (one moving call at a time, else busy); commands that do not move (sound, display, light) run in every state but fault.",
     input: {
       type: "object",
       properties: {
@@ -297,7 +307,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Run program",
     annotations: act,
     description:
-      "Runs a behavior given inline as data (no code) next to the hardware and waits for it. body is a tree of nodes: {seq:[...]}, {repeat:{times≤50, body}}, {while:{cond, body, max_iterations≤200}}, {if:{cond, then, else?}}, {call:{tool: drive|turn|arc|command_device|wait_until, args}}, {wait_ms≤10000}, {succeed:msg}, {fail:msg}. Args inside calls omit robot_id and request_id. The optional success condition is checked at the end. Returns {outcome: succeeded|failed|aborted|timeout, steps:[{path, tool, ok, reason|error, ms}], ms}. Requires idle (else busy). Activity is running_program until it ends; stop aborts it. Total time is capped by max_program_ms. Nothing is stored: send the body with every call.",
+      "Runs a behavior given inline as data (no code) next to the hardware and waits for it. body is a tree of nodes: {seq:[...]}, {repeat:{times≤50, body}}, {while:{cond, body, max_iterations≤200}}, {if:{cond, then, else?}}, {call:{tool: drive|turn|arc|command_device|wait_until, args}}, {wait_ms≤10000}, {succeed:msg}, {fail:msg}. Args inside calls omit robot_id and request_id. The optional success condition is checked at the end. Returns {outcome: succeeded|failed|aborted|timeout, steps:[{path, tool, ok, reason|error, measured, clamped, ms}], ms}: one step per call the program made, with the reason and the measured values the same call returns outside a program (clamped only when true), so the result says what each step did. Requires idle (else busy). Activity is running_program until it ends; stop aborts it. Total time is capped by max_program_ms. Nothing is stored: send the body with every call.",
     input: {
       type: "object",
       properties: {
@@ -452,8 +462,24 @@ const commandResult = obj({
   measured: freeform(
     "What happened. drive, turn and arc give the same fields: distance_cm, heading_change_deg, source (gyro | encoders: where the heading comes from), left_deg and right_deg (wheel rotation). command_device gives what the command's device reports.",
   ),
-  clamped: bool,
-  reason: named(STOP_REASONS, "Anything but completed or condition_met means the request was not fully done."),
+  clamped: {
+    type: "boolean",
+    description:
+      "true → an argument was cut to a limit. With reason completed it was not the target (the speed): the request was done.",
+  },
+  clamps: list(
+    obj({
+      arg: str,
+      requested: num,
+      applied: num,
+      target: { type: "boolean", description: "true → this argument is the target: less was done than asked." },
+    }),
+    "Present when the runtime cut an argument: each one, as asked and as sent.",
+  ),
+  reason: named(
+    STOP_REASONS,
+    "completed = the whole request was done (clamped may still be true: the speed was cut). clamped = the target was cut to a limit and that shorter target was reached. condition_met = until ended it. stalled, preempted, timeout = ended early.",
+  ),
   readings: list(
     reading,
     "Present when reason is condition_met: the readings that met the until condition, the shape read_all returns.",
@@ -471,6 +497,11 @@ const channelSpec = obj({
   length: num,
   max_rate_hz: num,
   approx: str,
+  noise: {
+    type: "number",
+    description:
+      "How far two readings of an unchanged scene can lie apart, in the channel's unit. A condition's op changed needs a larger difference, in 2 polls in a row. Absent → every difference is a change.",
+  },
   mode_group: str,
   active: { type: "boolean", description: "false → reading it needs a mode switch: name it in channels." },
   null_when_absent: {
@@ -555,7 +586,9 @@ const DATA: Record<string, Schema> = {
         tool: str,
         ok: bool,
         reason: str,
-        error: obj({ code: named(ERROR_CODES), message: str }),
+        error: obj({ code: named(ERROR_CODES), message: str, trace_id: str }),
+        measured: freeform("What the step's call measured: the measured of the same call outside a program."),
+        clamped: { type: "boolean", description: "Present and true when the step's call cut an argument to a limit." },
         ms: num,
       }),
     ),

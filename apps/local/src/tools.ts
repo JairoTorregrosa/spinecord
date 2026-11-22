@@ -4,6 +4,9 @@ import { firstViolation, assertSupported } from "../../../packages/protocol/sche
 import { TOOLS, type ToolDef } from "../../../packages/protocol/tools";
 import {
   RuntimeError,
+  newTraceId,
+  stackOf,
+  type InternalFailure,
   type ErrorCode,
   type ImagePayload,
   type Envelope,
@@ -50,23 +53,38 @@ export const NEXT_ERR: Partial<Record<ErrorCode, string[]>> = {
   condition_unreadable: ["read_all", "describe_device"],
   internal: ["list_robots"],
 };
-function next(tool: string, error?: ToolError, afterMove = false): string[] {
+function next(tool: string, error?: ToolError, afterMove = false, fix: string[] = []): string[] {
   if (!error) return NEXT_OK[tool] ?? ["list_robots"];
   const base = NEXT_ERR[error.code] ?? [];
   // a move that had started: look at the robot first, never send the move again blindly
   if (afterMove) return [...new Set(["read_all", ...base])];
-  // retryable and argument errors: the same tool is the obvious next step
-  return (error.retryable || error.code === "invalid_argument") && TOOL.has(tool)
-    ? [...new Set([tool, ...base])]
-    : base;
+  // retryable and argument errors: the same tool is the obvious next step, after the tools that fix the error
+  const same = (error.retryable || error.code === "invalid_argument") && TOOL.has(tool) ? [tool] : [];
+  return [...new Set([...fix.filter((t) => TOOL.has(t)), ...same, ...base])];
 }
 
 export interface Out {
   envelope: Envelope<unknown>;
   image?: ImagePayload;
+  /** For the call log (CONTRACT §6): a moving operation was sent to the robot, or may have been. */
+  moved: boolean;
+  /** For the call log: the unexpected failures behind this answer, each under the trace id its message carries. */
+  internal: InternalFailure[];
 }
-const fail = (tool: string, error: ToolError, robot?: LocalRobot, afterMove = false): Out => ({
-  envelope: { ok: false, ...(robot ? { robot: robot.view() } : {}), error, next: next(tool, error, afterMove) },
+const fail = (
+  tool: string,
+  error: ToolError,
+  robot?: LocalRobot,
+  more: { afterMove?: boolean; fix?: string[]; moved?: boolean; internal?: InternalFailure[] } = {},
+): Out => ({
+  envelope: {
+    ok: false,
+    ...(robot ? { robot: robot.view() } : {}),
+    error,
+    next: next(tool, error, more.afterMove, more.fix),
+  },
+  moved: more.moved ?? false,
+  internal: more.internal ?? [],
 });
 
 /** `cancel`: the client's cancellation of this call (MCP notifications/cancelled). */
@@ -91,7 +109,11 @@ export async function callTool(
     return fail(name, { code: e.code, message: e.message, retryable: false });
   }
   if (name === "list_robots")
-    return { envelope: { ok: true, data: { robots: robots.map((r) => r.listing()) }, next: next(name) } };
+    return {
+      envelope: { ok: true, data: { robots: robots.map((r) => r.listing()) }, next: next(name) },
+      moved: false,
+      internal: [],
+    };
   const robot = robots.find((r) => r.id === input.robot_id);
   if (!robot)
     return fail(name, {
@@ -105,24 +127,36 @@ export async function callTool(
     return {
       envelope: { ok: true, robot: robot.view(), data: result.data, next: next(name) },
       ...(result.image ? { image: result.image } : {}),
+      moved: result.moved === true,
+      internal: result.internal ?? [],
     };
   } catch (e) {
-    const error: ToolError =
+    // not a contract error: a bug here. The message carries it; nothing is hidden behind a default.
+    const typed =
       e instanceof RuntimeError
-        ? {
-            code: e.code,
-            message: e.message,
-            retryable: e.retryable,
-            ...(e instanceof LocalError && e.retry_after_ms !== undefined ? { retry_after_ms: e.retry_after_ms } : {}),
-            ...(e.measured ? { measured: e.measured } : {}),
-          }
-        : // not a contract error: a bug here. The message carries it; nothing is hidden behind a default.
-          {
-            code: "internal",
-            message: `${name} failed unexpectedly: ${String((e as Error)?.message ?? e)}`,
-            retryable: false,
-          };
-    return fail(name, error, robot, e instanceof LocalError && e.afterMove);
+        ? e
+        : new RuntimeError("internal", `${name} failed unexpectedly: ${String((e as Error)?.message ?? e)}`).from(e);
+    // every internal error has a trace id in its message, and the log has its stack under that id
+    const internal: InternalFailure[] = [];
+    if (typed.code === "internal") {
+      const fresh = typed.trace_id === undefined;
+      typed.trace_id ??= newTraceId();
+      const message = fresh ? `${typed.message} (trace_id ${typed.trace_id})` : typed.message;
+      internal.push({ trace_id: typed.trace_id, message, stack: stackOf(typed) });
+      typed.message = message;
+    }
+    const afterMove = typed instanceof LocalError && typed.afterMove;
+    const error: ToolError = {
+      code: typed.code,
+      message: typed.message,
+      retryable: typed.retryable,
+      ...(typed instanceof LocalError && typed.retry_after_ms !== undefined
+        ? { retry_after_ms: typed.retry_after_ms }
+        : {}),
+      ...(typed.measured ? { measured: typed.measured } : {}),
+    };
+    // a call the backstop ended never said what it sent: it counts as moved
+    return fail(name, error, robot, { afterMove, fix: typed.next, moved: typed.moved ?? afterMove, internal });
   }
 }
 

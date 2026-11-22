@@ -29,6 +29,10 @@ export interface ChannelSpec {
   // without `absent` is a failed read on this channel too (CONTRACT §2.2).
   null_when_absent?: boolean;
   approx?: string; // honest note on accuracy, e.g. "IR proximity is ~0.7 cm per unit"
+  // How far two readings of a scene that did not change can lie apart, in the channel's unit (number channels,
+  // and each component of a numeric vector). A condition's `changed` takes a difference up to this as no change
+  // (CONTRACT §4). Absent = the channel is exact: every difference is a change.
+  noise?: number;
   description: string;
 }
 export type BoundKind = "degrees" | "ms" | "instant";
@@ -59,12 +63,22 @@ export type JsonSchema = {
 
 // ---------- Provider interface (implemented by packages/driver-ev3, packages/driver-ev3dev and packages/sim-world) ----------
 export type StopReason = "completed" | "condition_met" | "timeout" | "clamped" | "stalled" | "preempted";
+// From a provider, `clamped` (and the reason "clamped") says the device cut a value of one operation. The runtime
+// decides the reason of the whole call: "clamped" there means the target was cut short (CONTRACT §0.2).
 export interface CommandResult {
   requested: Record<string, Value>;
   measured: Record<string, Value>;
   clamped: boolean;
   reason: StopReason;
   ms: number;
+}
+/** One argument the runtime cut to a limit: what was asked and what was sent. */
+export interface Clamp {
+  arg: string;
+  requested: number;
+  applied: number;
+  /** true → the argument is the target of the command (a distance, an angle, a bound parameter): less was done than asked. */
+  target: boolean;
 }
 // Image channels: value is null and `image` carries the frame (ts = capture time). Errors: value null + error.
 export interface Reading {
@@ -213,11 +227,27 @@ export interface ImagePayload {
   b64: string;
   age_ms: number;
 }
+/** An unexpected failure, for the process's log (CONTRACT §6): the id its message carries, and where it came from. */
+export interface InternalFailure {
+  trace_id: string;
+  message: string;
+  stack?: string;
+}
 export interface RuntimeResult {
   data: unknown;
   image?: ImagePayload;
+  /** A moving operation was sent to a device during the call. Never part of the envelope: the call log has it. */
+  moved?: boolean;
+  /** Unexpected failures the call answered as data (a program step that failed with `internal`). For the log only. */
+  internal?: InternalFailure[];
 }
 export class RuntimeError extends Error {
+  /** The tools that fix this error, in order; the envelope's `next` starts with them (CONTRACT §7). */
+  next?: string[];
+  /** Names an `internal` error: the message carries it, and the process logs the stack under it (CONTRACT §6). */
+  trace_id?: string;
+  /** A moving operation was sent to a device before the call failed. */
+  moved?: boolean;
   constructor(
     public code: ErrorCode,
     message: string,
@@ -227,6 +257,27 @@ export class RuntimeError extends Error {
   ) {
     super(message);
   }
+  /** Takes over what `from` knew beyond code and message. For an error built from another one. */
+  from(from: unknown): this {
+    if (from instanceof RuntimeError) {
+      this.next ??= from.next;
+      this.trace_id ??= from.trace_id;
+      this.moved ??= from.moved;
+      this.cause ??= from.cause ?? from;
+    } else this.cause ??= from;
+    return this;
+  }
+}
+/** A short random id for one unexpected failure. Not a secret: it joins a message to a log line. */
+export const newTraceId = (): string => Math.random().toString(36).slice(2, 10).padEnd(8, "0");
+/** The stack of an error for the log, starting at what first went wrong: its cause comes before the error built from it. */
+export function stackOf(e: unknown): string {
+  const parts: string[] = [];
+  for (let at = e, depth = 0; at !== undefined && at !== null && depth < 4; depth++) {
+    parts.unshift(at instanceof Error ? (at.stack ?? `${at.name}: ${at.message}`) : String(at));
+    at = at instanceof Error ? at.cause : undefined;
+  }
+  return parts.join("\nreported as: ");
 }
 export interface Runtime {
   profile(): RobotProfile;

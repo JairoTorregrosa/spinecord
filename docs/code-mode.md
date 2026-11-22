@@ -92,13 +92,13 @@ A call that never reached the server is thrown too, with a message that does not
 | `describe_device` | `{id, kind, roles, channels: [{name, type, unit?, range?, active?, null_when_absent?, …}], commands: [{name, params, bound, moves}]}` | `data.commands.find((c) => c.name === "tone").params` |
 | `read_device` `read_all` `wait_until` | `{readings: [{device, channel, value, unit?, ts, error?, absent?}]}`, one reading per channel. `read_all` and `wait_until` add `ms`; `wait_until` adds `met` and `reason` | `data.readings.find((r) => r.channel === "distance_cm").value` |
 | `sample_device` | `{samples: [[t_ms, value], …], min, max, mean, last, rate_hz, unit?}` | `data.mean`, `data.samples.at(-1)[1]` |
-| `drive` `turn` `arc` | `{requested, applied, measured: {distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, reason, ms}`, plus `readings` when `reason` is `condition_met`: the readings that met `until` | `data.reason === "condition_met"`, `data.measured.distance_cm`, `data.readings[0].value` |
-| `command_device` | `{requested, applied, measured, clamped, reason, ms}`, plus `readings` like a move; `measured` is what the device reports | `data.reason === "completed"` |
+| `drive` `turn` `arc` | `{requested, applied, measured: {distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, clamps?, reason, ms}`, plus `readings` when `reason` is `condition_met`: the readings that met `until` | `data.reason === "condition_met"`, `data.measured.distance_cm`, `data.readings[0].value` |
+| `command_device` | `{requested, applied, measured, clamped, clamps?, reason, ms}`, plus `readings` like a move; `measured` is what the device reports | `data.reason === "completed"` |
 | `stop` | `{motors_stopped, activity}` | `data.motors_stopped` |
 | `reset_fault` | `{activity}` | `data.activity === "idle"` |
-| `run_program` | `{outcome, reason, steps: [{path, tool, ok, reason \| error, ms}], steps_dropped, ms}` | `data.outcome === "succeeded"` |
+| `run_program` | `{outcome, reason, steps: [{path, tool, ok, reason \| error, measured?, clamped?, ms}], steps_dropped, ms}` | `data.outcome === "succeeded"` |
 
-A reading whose channel could not be read has `value: null` and an `error` string. A channel that `describe_device` marks `null_when_absent` (an infrared beacon's heading and distance) can read `value: null` with `absent: true`: nothing is in view, which is an answer and not a failure. Headings are positive to the left in every channel, `beacon_heading` included. `scan_error` of `describe_robot` is null while the device list is current; a string there says why the latest device scan failed, and `devices` is then the list of the last scan that succeeded. `reason` of a move is `completed`, `condition_met`, `clamped`, `stalled`, `preempted` or `timeout`; anything but the first two means the request was not fully done. Every tool lists the same shape in its `outputSchema`.
+A reading whose channel could not be read has `value: null` and an `error` string. A channel that `describe_device` marks `null_when_absent` (an infrared beacon's heading and distance) can read `value: null` with `absent: true`: nothing is in view, which is an answer and not a failure. Headings are positive to the left in every channel, `beacon_heading` included. `scan_error` of `describe_robot` is null while the device list is current; a string there says why the latest device scan failed, and `devices` is then the list of the last scan that succeeded. `reason` of a move is `completed`, `condition_met`, `clamped`, `stalled`, `preempted` or `timeout`; `completed` means the whole request was done, also when `clamped` is true: that flag beside `completed` says an argument that is not the target (the speed) was cut, and `clamps: [{arg, requested, applied, target}]` lists what. `clamped` as a reason means the target itself (distance, angle) was cut to a limit and the shorter target was reached. Test `reason`, never `clamped`, to know whether a move did what was asked. A step of `run_program` carries the `reason` and `measured` of its call. Every tool lists the same shape in its `outputSchema`.
 
 ### 3.3 Errors a script meets
 
@@ -153,6 +153,7 @@ async function square(call, robot_id) {
 
       const t = await call("turn", { robot_id, angle_deg: 90 }); // positive = left
       if (!t.ok) return { failed: "turn", leg, error: t.error, legs };
+      // completed = the whole turn was made, also when clamped is true (only the speed was cut to the limit)
       if (t.data.reason !== "completed") return { ended: t.data.reason, leg, legs };
 
       legs.push({

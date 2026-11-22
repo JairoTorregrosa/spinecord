@@ -257,7 +257,7 @@ export class LocalRobot {
     } catch (e) {
       // a move that failed on the way (the link dropped) is never "send it again": the robot may be somewhere else
       if (e instanceof RuntimeError && e.retryable && !(e instanceof LocalError && e.afterMove))
-        throw new LocalError(e.code, `${e.message} ${MAY_HAVE_MOVED}`, false, undefined, true, e.measured);
+        throw new LocalError(e.code, `${e.message} ${MAY_HAVE_MOVED}`, false, undefined, true, e.measured).from(e);
       throw e;
     } finally {
       // a stop or a fault that came meanwhile owns the state; only an undisturbed move goes back to idle

@@ -221,7 +221,7 @@ describe("how often a running operation is asked about", () => {
     expect(nextPollDelay(base)).toBeCloseTo(200 * APPROACH_UNSEEN, 9);
     expect(nextPollDelay({ ...base, rateSeen: true })).toBeCloseTo(200 * APPROACH_SEEN, 9);
     expect(nextPollDelay({ ...base, rateSeen: true, rttMs: 30 })).toBeCloseTo(200 * APPROACH_SEEN - 30, 9);
-    // near the target: the fixed tick, as before
+    // near the target: the fixed tick
     expect(nextPollDelay({ ...base, rateSeen: true, remainingDeg: 2 })).toBe(10);
     expect(nextPollDelay({ ...base, rateSeen: true, remainingDeg: -5 })).toBe(10);
     // a target the motor cannot reach in the time bound: the end of the operation comes first
@@ -251,7 +251,7 @@ describe("how often a running operation is asked about", () => {
       t += wait;
       asked++;
     }
-    expect(asked).toBeLessThanOrEqual(4); // a fixed 10 ms tick asks 20 times
+    expect(asked).toBeLessThanOrEqual(4); // far fewer than the 20 questions of one per 10 ms tick
     expect(at() - target).toBeLessThanOrEqual((rate * pollMs) / 1000); // no later than one tick past the target
   });
 
@@ -276,7 +276,7 @@ describe("how often a running operation is asked about", () => {
     const sent = packets(fake, from);
     expect(sent[0]).toEqual([B3, E.OP.OUTPUT_TIME_SPEED]);
     for (const p of sent.slice(1)) expect(p).toEqual([B3, A9]);
-    expect(sent.length).toBeLessThanOrEqual(4); // a fixed tick took about 18
+    expect(sent.length).toBeLessThanOrEqual(4); // one question per tick would be about 18
     expect(fake.errors).toEqual([]);
   });
 
@@ -297,7 +297,7 @@ describe("how often a running operation is asked about", () => {
     const sent = packets(fake, from);
     expect(sent[0]).toEqual([B3, B3, E.OP.OUTPUT_TIME_SYNC]);
     expect(sent.at(-1)).toEqual([E.OP.OUTPUT_STOP, B3, B3, A9]);
-    expect(sent.length).toBeLessThanOrEqual(8); // at this test's 2 ms tick a fixed tick took about 100
+    expect(sent.length).toBeLessThanOrEqual(8); // one question per 2 ms tick of this test would be about 100
     expect(fake.errors).toEqual([]);
   });
 
