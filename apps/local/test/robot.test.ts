@@ -614,6 +614,51 @@ describe("a link that can close", () => {
     }
   });
 
+  test("start does not wait: the robot is offline while what a link needs first fails, online when it holds", async () => {
+    const robot = new LocalRobot({ id: "m1", connect: "check the link" });
+    const events: string[] = [];
+    let reachable = false;
+    let opened = 0;
+    const link = keepAttached(
+      robot,
+      async () => {
+        opened++;
+        // what an ev3dev source does before a link: copy the bridge, which needs the brick
+        if (!reachable) throw new Error("ssh: connect to host: Connection refused");
+        return {
+          runtime: createRuntime({
+            profile: PROFILE,
+            providers: [new MockProvider({ clock: realClock })],
+            clock: realClock,
+          }),
+          onClose: () => {},
+          close: async () => {},
+        };
+      },
+      { log: (ev) => void events.push(ev), reconnectMs: 10 },
+    );
+    try {
+      link.start();
+      expect(robot.listing()).toMatchObject({ link: "offline", connect: "check the link" });
+      await until("three failed attempts", () => opened >= 3);
+      expect(robot.listing()).toMatchObject({
+        link: "offline",
+        connect: "check the link The last attempt failed: ssh: connect to host: Connection refused",
+      });
+      expect(events).toEqual(expect.arrayContaining(["attach_failed"]));
+      expect(events).not.toContain("ready");
+      reachable = true;
+      await until("the robot is online", () => robot.listing().link === "online");
+      expect(robot.listing()).toMatchObject({ link: "online", connect: null });
+      await until("ready is logged", () => events.includes("ready"));
+      const attempts = opened;
+      await new Promise((r) => setTimeout(r, 50));
+      expect(opened).toBe(attempts); // a link that holds is not opened again
+    } finally {
+      link.end();
+    }
+  });
+
   test("a link that closes later puts the robot offline until a new one holds", async () => {
     const robot = new LocalRobot({ id: "m1", connect: "check the link" });
     const events: string[] = [];

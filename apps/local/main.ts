@@ -1,16 +1,30 @@
 // spinecord on one computer: an MCP server over stdio with the runtime and the robots inside this process.
-//   claude mcp add spinecord -- bun <repo>/apps/local/main.ts [robots...]
+//   claude mcp add -s user spinecord -- bun <repo>/apps/local/main.ts [robots...]
+// `bun apps/local/main.ts --print-add [robots...]` prints that command for this computer and starts nothing.
 // stdout carries JSON-RPC and nothing else; every log line is one JSON object on stderr.
 // When the client goes away (stdin closes) or the process is told to end, every motor is stopped first.
 import { log } from "./src/stderr"; // first: it moves console output off stdout
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { HelpAsked, loadConfig, USAGE, type LocalConfig } from "./src/config";
+import { HelpAsked, loadConfig, REPO, USAGE, type LocalConfig } from "./src/config";
 import { LISTED_TOOLS, buildServer } from "./src/mcp";
+import { addCommand } from "./src/print-add";
 import { buildFleet, type Fleet } from "./src/sources";
 
+const argv = process.argv.slice(2);
+const printAdd = argv.includes("--print-add");
+const robotArgs = argv.filter((a) => a !== "--print-add");
 let config: LocalConfig;
 try {
-  config = loadConfig(process.argv.slice(2));
+  // also under --print-add: a command that would not start is not printed
+  config = loadConfig(robotArgs);
+  if (printAdd) {
+    process.stdout.write(`${addCommand({ platform: process.platform, repo: REPO, args: robotArgs })}\n`);
+    process.stderr.write(
+      "spinecord: run the line above in a terminal. When spinecord is already registered, first run: " +
+        "claude mcp remove -s user spinecord\n",
+    );
+    process.exit(0);
+  }
 } catch (e) {
   if (e instanceof HelpAsked) {
     process.stderr.write(`${USAGE}\n`);

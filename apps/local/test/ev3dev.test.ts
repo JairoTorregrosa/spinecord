@@ -7,14 +7,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRobotFile } from "../../../packages/driver-ev3/robot-file";
 import { FakeBrick } from "../../../packages/driver-ev3dev/test/fake-brick";
-import { EXAMPLE } from "../src/config";
-import { buildFleet } from "../src/sources";
+import { EXAMPLE, loadConfig } from "../src/config";
+import { buildFleet, type Fleet } from "../src/sources";
 import { callTool } from "../src/tools";
 import { sleep, until } from "./client";
 
 const python3 = Bun.which("python3");
 const runs = process.platform !== "win32" && python3 !== null;
 if (!runs) console.warn("SKIPPED: the ev3dev source test needs a POSIX sh and python3 on PATH");
+
+type Listed = { id: string; link: string; activity: string; connect: string | null };
+const listed = async (fleet: Fleet, id: string): Promise<Listed> =>
+  ((await callTool(fleet.robots, "list_robots", {})).envelope as { data: { robots: Listed[] } }).data.robots.find(
+    (r) => r.id === id,
+  )!;
+/** The brick is connected in the background: a fleet is built before its robot is online. */
+const online = (fleet: Fleet, id = "dev"): Promise<void> =>
+  until(`${id} is online`, async () => (await listed(fleet, id)).link === "online", 20_000);
 
 describe("an ev3dev brick over ssh", () => {
   const home = mkdtempSync(join(tmpdir(), "spinecord-local-home-"));
@@ -70,6 +79,7 @@ describe("an ev3dev brick over ssh", () => {
     try {
       const tool = async (name: string, args: Record<string, unknown> = {}) =>
         (await callTool(fleet.robots, name, { robot_id: "dev", ...args })).envelope;
+      await online(fleet);
       expect(events).toContain("bridge_installed");
       expect(await tool("describe_robot")).toMatchObject({
         ok: true,
@@ -114,17 +124,13 @@ describe("an ev3dev brick over ssh", () => {
     try {
       const tool = async (name: string, args: Record<string, unknown> = {}) =>
         (await callTool(fleet.robots, name, { robot_id: "dev", ...args })).envelope;
-      const listed = async () =>
-        (
-          (await callTool(fleet.robots, "list_robots", {})).envelope as {
-            data: { robots: { link: string; connect: string }[] };
-          }
-        ).data.robots[0]!;
-      expect(await listed()).toMatchObject({ link: "online", connect: null });
+      const dev = () => listed(fleet, "dev");
+      await online(fleet);
+      expect(await dev()).toMatchObject({ link: "online", connect: null });
 
       writeFileSync(down, "");
-      await until("the robot is offline", async () => (await listed()).link === "offline");
-      expect((await listed()).connect).toContain("ssh robot@fake-brick");
+      await until("the robot is offline", async () => (await dev()).link === "offline");
+      expect((await dev()).connect).toContain("ssh robot@fake-brick");
       // every attempt while the host is down fails and leaves the robot offline
       await until("a failed attempt", () => events.includes("ev3dev_attach_failed"));
       expect(await tool("read_all")).toMatchObject({
@@ -134,11 +140,11 @@ describe("an ev3dev brick over ssh", () => {
       });
       expect(await tool("drive", { distance_cm: 3 })).toMatchObject({ ok: false, error: { code: "robot_offline" } });
       expect((await tool("stop")).ok).toBe(false);
-      expect((await listed()).link).toBe("offline");
+      expect((await dev()).link).toBe("offline");
 
       rmSync(down);
-      await until("the robot is online again", async () => (await listed()).link === "online");
-      expect(await listed()).toMatchObject({ activity: "idle", connect: null });
+      await until("the robot is online again", async () => (await dev()).link === "online");
+      expect(await dev()).toMatchObject({ activity: "idle", connect: null });
       expect(await tool("read_device", { device: "distance" })).toMatchObject({
         ok: true,
         data: { readings: [{ channel: "distance_cm", value: 42 }] },
@@ -197,6 +203,7 @@ describe("an ev3dev brick over ssh", () => {
         const link = async () =>
           ((await callTool(fleet.robots, "list_robots", {})).envelope as { data: { robots: { link: string }[] } }).data
             .robots[0]!.link;
+        await online(fleet);
         expect(alive().length).toBe(1);
         // under `until` the move is made of short chunks, and on this fast link they coast
         const drive = tool("drive", {
@@ -220,6 +227,72 @@ describe("an ev3dev brick over ssh", () => {
         await fleet.shutdown();
       }
       expect(alive().length).toBe(0);
+    },
+  );
+
+  test.skipIf(!runs)(
+    "a brick that is off at start: the twin serves, the brick is offline with its hint, then online when it answers",
+    async () => {
+      // a brick that never had a bridge: its home is empty, and the host is down before the server starts
+      const fresh = mkdtempSync(join(tmpdir(), "spinecord-local-off-"));
+      const down = join(fresh, "host-is-down");
+      writeFileSync(down, "");
+      Object.assign(process.env, { BENCH_FAKE_HOME: fresh, SYSFS_ROOT: brick!.root, BENCH_FAKE_DOWN: down });
+      // the command line of the README: the example robot file as it is, the bridge copied by the server
+      const config = loadConfig(["--twin", "--ev3dev", "--ssh", "robot@fake-brick", "--install-bridge"]);
+      const dev = config.robots.find((r) => r.source === "ev3dev")!;
+      if (dev.source !== "ev3dev") throw new Error("unreachable");
+      dev.ssh.sshCommand = join(import.meta.dir, "..", "..", "..", "bench", "fake-ssh.ts");
+      const events: { ev: string; error?: unknown }[] = [];
+      const started = Date.now();
+      const fleet = await buildFleet(config, {
+        log: (ev, f) => void events.push({ ev, error: f?.error }),
+        reconnectMs: 50,
+      });
+      try {
+        const tool = async (robot_id: string, name: string, args: Record<string, unknown> = {}) =>
+          (await callTool(fleet.robots, name, { robot_id, ...args })).envelope;
+        // the start does not wait for the brick
+        expect(Date.now() - started).toBeLessThan(2000);
+        expect((await listed(fleet, "r1")).link).not.toBe("online");
+        expect(await listed(fleet, "r1-sim")).toMatchObject({ link: "online", activity: "idle", connect: null });
+        expect(await tool("r1-sim", "read_device", { device: "distance" })).toMatchObject({ ok: true });
+        expect(await tool("r1-sim", "drive", { distance_cm: 3, speed_pct: 40 })).toMatchObject({ ok: true });
+
+        await until("a failed attempt", () => events.some((e) => e.ev === "ev3dev_attach_failed"));
+        await until("the robot is offline", async () => (await listed(fleet, "r1")).link === "offline");
+        const hint = (await listed(fleet, "r1")).connect!;
+        expect(hint).toContain("Check that the brick is on");
+        expect(hint).toContain('"ssh robot@fake-brick" connects from this computer without asking for a password');
+        expect(hint).toContain("The last attempt failed:");
+        // a brick out of reach is not a misconfigured one: nothing tells the person to reinstall anything
+        expect(hint).not.toContain("does not come online by itself");
+        expect(await tool("r1", "drive", { distance_cm: 3 })).toMatchObject({
+          ok: false,
+          robot: { link: "offline" },
+          error: { code: "robot_offline", retryable: true },
+        });
+        expect(existsSync(join(fresh, "spinecord", "ev3dev_bridge.py"))).toBe(false);
+        expect(events.some((e) => e.ev === "bridge_installed")).toBe(false);
+        // the twin still serves while the attempts fail
+        expect(await tool("r1-sim", "read_all")).toMatchObject({ ok: true, robot: { link: "online" } });
+
+        rmSync(down);
+        await online(fleet, "r1");
+        expect(await listed(fleet, "r1")).toMatchObject({ activity: "idle", connect: null });
+        expect(events.filter((e) => e.ev === "bridge_installed").length).toBe(1);
+        expect(existsSync(join(fresh, "spinecord", "ev3dev_bridge.py"))).toBe(true);
+        expect(await tool("r1", "read_device", { device: "distance" })).toMatchObject({
+          ok: true,
+          data: { readings: [{ channel: "distance_cm", value: 42 }] },
+        });
+        expect(await tool("r1", "stop")).toMatchObject({ ok: true, data: { motors_stopped: true } });
+      } finally {
+        rmSync(down, { force: true });
+        const stopped = await fleet.shutdown();
+        rmSync(fresh, { recursive: true, force: true });
+        expect(stopped).toContainEqual({ robot_id: "r1", motors_stopped: true });
+      }
     },
   );
 });
