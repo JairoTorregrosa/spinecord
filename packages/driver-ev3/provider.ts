@@ -306,23 +306,26 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
           mode: 1,
           count: 2,
           decode: ([h, d]) =>
-            d < 0 || d > 100 ? { value: null, error: "no beacon in view on channel 1" } : { value: Math.round(h) },
+            // native: negative = beacon to the left; the contract is counter-clockwise-positive (left = positive)
+            d < 0 || d > 100 ? NO_BEACON : { value: -Math.round(h) + 0 },
           spec: {
             name: "beacon_heading",
+            null_when_absent: true,
             type: "number",
             range: [-25, 25],
             max_rate_hz: 5,
-            approx: `Unitless, negative = beacon to the left. ${MODE_NOTE}`,
-            description: "Direction of the remote beacon (channel 1).",
+            approx: `Unitless, positive = beacon to the left (counter-clockwise), 0 = straight ahead. ${MODE_NOTE}`,
+            description:
+              "Direction of the remote beacon (channel 1). The provider negates the sensor's native value, which is negative to the left.",
           },
         },
         {
           mode: 1,
           count: 2,
-          decode: ([, d]) =>
-            d < 0 || d > 100 ? { value: null, error: "no beacon in view on channel 1" } : { value: Math.round(d) },
+          decode: ([, d]) => (d < 0 || d > 100 ? NO_BEACON : { value: Math.round(d) }),
           spec: {
             name: "beacon_distance_pct",
+            null_when_absent: true,
             type: "number",
             unit: "pct",
             range: [0, 100],
@@ -364,7 +367,9 @@ const BRAKE_PARAM = {
 };
 
 type Args = Record<string, Value>;
-type Got = { value: Value | null; error?: string };
+type Got = { value: Value | null; error?: string; absent?: true };
+/** What a beacon channel answers while the sensor sees no beacon: an answer of the sensor, not a failed read. */
+const NO_BEACON: Got = { value: null, error: "no beacon in view on channel 1", absent: true };
 interface Lookup {
   spec: DeviceSpec;
   local: string;
@@ -936,6 +941,7 @@ export class Ev3Provider implements Provider {
       const u = spec.channels.find((c) => c.name === channel)!.unit;
       if (u) out.unit = u;
       if (r.value === null) out.error = r.error ?? "no value";
+      if (r.value === null && r.absent) out.absent = true;
       return out;
     };
     /** One brick exchange for all the channels; a failure becomes null readings. */

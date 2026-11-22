@@ -27,8 +27,8 @@ import type {
 export const MAX_MOTION_MS = 3000;
 /** The bridge brakes every motor after this long without a message. Fixed in the bridge, not configurable. */
 export const BRICK_WATCHDOG_MS = 1000;
-/** Oldest bridge this driver talks to (its hello's `bridge`): the first one that answers `read_many`. */
-export const MIN_BRIDGE_VERSION = 3;
+/** Oldest bridge this driver talks to (its hello's `bridge`): the first one whose `beacon_heading` is counter-clockwise-positive and that starts the guard process. */
+export const MIN_BRIDGE_VERSION = 4;
 /** How long the bridge waits for every motor to read speed 0 after a stop. */
 export const BRIDGE_STOP_VERIFY_MS = 800;
 export const MODE_SWITCH_REQUIRED = "mode_switch_required";
@@ -107,6 +107,12 @@ export interface Ev3devProviderOptions {
 /** What the bridge reports in `hello`. Raw sysfs names are kept so a mismatch is visible. */
 export interface BridgeInventory {
   bridge: string;
+  /** The brick-side guard process is running: it brakes every motor when the bridge process ends, however it ends. */
+  guard: boolean;
+  /** Why not, when `guard` is false. */
+  no_guard: string | null;
+  /** Process id of the guard on the brick, null when it is not running. */
+  guard_pid: number | null;
   python: string;
   watchdog_ms: number;
   max_op_ms: number;
@@ -285,14 +291,17 @@ const SENSOR_KINDS: Record<string, { description: string; channels: ChannelSpec[
       },
       {
         name: "beacon_heading",
+        null_when_absent: true,
         type: "number",
         range: [-25, 25],
         max_rate_hz: 5,
-        approx: `Unitless, negative = beacon to the left. ${MODE_NOTE}`,
-        description: "Direction of the remote beacon (channel 1).",
+        approx: `Unitless, positive = beacon to the left (counter-clockwise), 0 = straight ahead. ${MODE_NOTE}`,
+        description:
+          "Direction of the remote beacon (channel 1). The bridge negates the sensor's native value, which is negative to the left.",
       },
       {
         name: "beacon_distance_pct",
+        null_when_absent: true,
         type: "number",
         unit: "pct",
         range: [0, 100],
@@ -351,7 +360,7 @@ interface Lookup {
 }
 /** What the bridge answers to one read, alone or inside read_many. */
 interface ReadReply {
-  readings?: { channel: string; value: Value | null; error?: string }[];
+  readings?: { channel: string; value: Value | null; error?: string; absent?: boolean }[];
   mode?: unknown;
 }
 /** A read waiting to leave with the others of the same turn. */
@@ -547,7 +556,12 @@ export class Ev3devProvider implements Provider {
     if (!(Number(inv.bridge) >= MIN_BRIDGE_VERSION))
       throw err(
         "misconfigured",
-        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${MIN_BRIDGE_VERSION} or newer. Copy this version's bridge to the brick: start the server with --install-bridge (installBridge() in code).`,
+        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${MIN_BRIDGE_VERSION} or newer. Reinstall it: start the server with --install-bridge (in a config file: "install_bridge": true), or call installBridge() from code. Every connection attempt fails here until then.`,
+      );
+    if (inv.guard !== true)
+      throw err(
+        "misconfigured",
+        `ev3dev: the bridge's guard process is not running (${String(inv.no_guard)}). It is what brakes the motors when the bridge process is killed on the brick, so the robot is not used without it. Check the brick's free memory and its python3.`,
       );
     if (inv.watchdog_ms !== BRICK_WATCHDOG_MS)
       throw err(
@@ -1096,6 +1110,7 @@ export class Ev3devProvider implements Provider {
       const unit = spec.channels.find((c) => c.name === n)!.unit;
       if (unit) reading.unit = unit;
       if (reading.value === null) reading.error = r?.error ?? "the bridge returned no value for this channel";
+      if (reading.value === null && r?.absent === true) reading.absent = true;
       return reading;
     });
     this.noteMode(local, res.mode);

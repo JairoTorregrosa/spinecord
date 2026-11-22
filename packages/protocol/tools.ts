@@ -21,19 +21,21 @@ How to work:
 5. Test on a twin first when there is one: a robot with backend sim has the same devices as the hardware robot plus a "sim.world" device.
 6. One moving call at a time per robot: a second one fails with busy, it is not queued. Call stop the moment something looks wrong. stop never waits behind another call.
 
-Every result is JSON: {ok, robot:{id, backend, link, activity}, data | error:{code, message, retryable, retry_after_ms?}, next:[suggested tools]}. ok true → data is present; ok false → error is present and data is absent. Errors are never disguised as data; a missing value is null with an error string. Nothing is stored between calls: a moving call sent twice moves twice, so after a failed or unanswered moving call read the robot (read_all) before moving again. Units: cm, degrees (positive = counter-clockwise), speed in percent of max, time in ms.
+Every result is JSON: {ok, robot:{id, backend, link, activity}, data | error:{code, message, retryable, retry_after_ms?, measured?}, next:[suggested tools]}. ok true → data is present; ok false → error is present and data is absent. Errors are never disguised as data; a missing value is null with an error string. Nothing is stored between calls: a moving call sent twice moves twice, so after a failed or unanswered moving call read the robot (read_all) before moving again. Units: cm, degrees (positive = counter-clockwise = left, in every channel and command, an infrared sensor's beacon_heading included), speed in percent of max, time in ms.
+
+A condition (\`until\`, wait_until, a program's while, if or success) never takes a channel it cannot read as "not met": after 3 polls in a row without a value, or 10 polls in a row that decided nothing, the call fails with condition_unreadable. A move the condition guarded was braked there and error.measured holds what it had done; read the robot (read_all) and check the sensor, and do not send the move again unread. A channel that describe_device marks null_when_absent may read null with absent:true (nothing in view, e.g. no beacon): that is an answer, and a comparison on it is not met.
 
 Result format: structuredContent is the envelope and matches the tool's outputSchema. The text block repeats it for clients without structured output: line 1 is a one-line summary, the last line is the envelope as single-line JSON.
 
 Shapes of \`data\` (always an object, never a bare array):
 - list_robots: {robots:[{id, backend, link, activity, fault_reason, connect}]}.
-- read_device, read_all, wait_until: {readings:[{device, channel, value, unit?, ts, error?}]}, one reading per channel: readings.find(r => r.channel === "distance_cm").value. read_all and wait_until add ms; wait_until adds met and reason.
-- drive, turn, arc, command_device: {requested, applied, measured, clamped, reason, ms}. measured of drive, turn and arc has the same fields: distance_cm, heading_change_deg, source, left_deg, right_deg.
+- read_device, read_all, wait_until: {readings:[{device, channel, value, unit?, ts, error?, absent?}]}, one reading per channel: readings.find(r => r.channel === "distance_cm").value. read_all and wait_until add ms; wait_until adds met and reason.
+- drive, turn, arc, command_device: {requested, applied, measured, clamped, reason, ms}, plus readings (the same shape) when reason is condition_met: the readings that met \`until\`. measured of drive, turn and arc has the same fields: distance_cm, heading_change_deg, source, left_deg, right_deg.
 - sample_device: {samples:[[t_ms, value]], min, max, mean, last, rate_hz}. stop: {motors_stopped, activity}. run_program: {outcome, reason, steps, ms}.
 
 If you write code that calls these tools (several calls in one script):
 - What a call hands the script depends on the client that runs it: the envelope as an object, or the envelope as JSON text, and a result with ok:false may be thrown (the thrown message is the text block, so its last line is the envelope JSON). Define one helper that returns the envelope in every case and make every call through it: const call = async (tool, args) => { let r; try { r = await TOOL(tool, args); } catch (e) { try { return JSON.parse(String(e.message).split("\\n").at(-1)); } catch { throw e; } } return typeof r === "string" ? JSON.parse(r) : (r.structuredContent ?? r); }; where TOOL is how the client exposes these tools. An error the helper throws again never reached the server (an argument the tool does not declare): read its message.
-- Compose the whole sense → act loop in one script and return only what you need; do not spend a model turn per call. A move's result carries what it measured (data.measured): read only what the move does not report.
+- Compose the whole sense → act loop in one script and return only what you need; do not spend a model turn per call. A move's result carries what it measured (data.measured) and, when \`until\` ended it, the readings that met the condition (data.readings): read only what the move does not report.
 - Check \`ok\` after every call. On ok:false leave the loop at once and return the error; never continue on stale data.
 - Await each moving call before the next one on the same robot; reads may run in parallel with a move.
 - A script that moves the robot wraps the motion in try/finally and calls stop in the finally whenever it did not finish cleanly.
@@ -88,7 +90,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Describe robot",
     annotations: ro,
     description:
-      "Returns everything needed to use one robot: {id, backend, devices:[{id, kind, roles, channels (names), commands (names), description}], roles (role → device id), drivetrain (wheel geometry, or null if the robot cannot drive), limits:{max_speed_pct, max_command_ms, max_drive_cm, max_turn_deg, max_program_ms}, notes (facts about how it is built)}. Call before acting and again after an error mentioning unknown_device, since attached devices can come and go.",
+      "Returns everything needed to use one robot: {id, backend, devices:[{id, kind, roles, channels (names), commands (names), description}], roles (role → device id), drivetrain (wheel geometry, or null if the robot cannot drive), limits:{max_speed_pct, max_command_ms, max_drive_cm, max_turn_deg, max_program_ms}, notes (facts about how it is built), scan_error (null when the device list is current; else why the latest device scan failed, and devices is then the list of the last scan that succeeded)}. Call before acting and again after an error mentioning unknown_device, since attached devices can come and go.",
     input: { type: "object", properties: { robot_id: robotId }, required: ["robot_id"], additionalProperties: false },
   },
   {
@@ -96,7 +98,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Describe device",
     annotations: ro,
     description:
-      "Returns one device's full spec: every channel (name, type number|boolean|string|vector|image, unit, range, max_rate_hz, accuracy note) and every command (name, description, JSON Schema of params, bound kind degrees|ms|instant and its max, whether it moves). Use it before command_device on a device you have not used, and to discover what an attached device can do.",
+      "Returns one device's full spec: every channel (name, type number|boolean|string|vector|image, unit, range, max_rate_hz, accuracy note, active, null_when_absent) and every command (name, description, JSON Schema of params, bound kind degrees|ms|instant and its max, whether it moves). Use it before command_device on a device you have not used, and to discover what an attached device can do.",
     input: {
       type: "object",
       properties: {
@@ -114,7 +116,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Read device",
     annotations: ro,
     description:
-      "Reads current values of one device's channels. Returns {readings:[{device, channel, value, unit?, ts, error?}]}, one reading per channel, the shape read_all returns. Reading never changes the device: without `channels` it reads the device's active non-image channels and leaves out the ones that need a sensor mode switch (active:false in describe_device). Name such a channel in `channels` to switch the mode and read it (only while the robot is idle, else busy; side effects are described per channel, e.g. switching the EV3 gyro resets its angle). A channel that could not be read has value null and an error string. Naming an image channel (e.g. a camera's \"frame\", one per call) returns the picture as an image content block, and its reading is {device, channel, value: null, image: true, mime, age_ms, ts}; a frame older than 1500 ms fails with stale_image. Works in any activity state while the robot is online.",
+      "Reads current values of one device's channels. Returns {readings:[{device, channel, value, unit?, ts, error?}]}, one reading per channel, the shape read_all returns. Reading never changes the device: without `channels` it reads the device's active non-image channels and leaves out the ones that need a sensor mode switch (active:false in describe_device). Name such a channel in `channels` to switch the mode and read it (only while the robot is idle, else busy; side effects are described per channel, e.g. switching the EV3 gyro resets its angle). A channel that could not be read has value null and an error string; a channel marked null_when_absent in describe_device can read value null with absent: true, which is an answer (nothing in view), not a failure. Naming an image channel (e.g. a camera's \"frame\", one per call) returns the picture as an image content block, and its reading is {device, channel, value: null, image: true, mime, age_ms, ts}; a frame older than 1500 ms fails with stale_image. Works in any activity state while the robot is online.",
     input: {
       type: "object",
       properties: {
@@ -168,7 +170,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Wait for condition",
     annotations: ro,
     description:
-      "Waits without moving until a condition over device channels becomes true or timeout_ms passes (≤ 10000). Returns {met: boolean, reason (condition_met | timeout | preempted), ms (how long it waited), readings (the values that decided it, the shape read_all returns)}. Not an error when the timeout passes: check met. The condition is read poll_hz times per second (default 20). Use for waiting on a button, a person, a light change.",
+      "Waits without moving until a condition over device channels becomes true or timeout_ms passes (≤ 10000). Returns {met: boolean, reason (condition_met | timeout | preempted), ms (how long it waited), readings (the values that decided it, the shape read_all returns)}. Not an error when the timeout passes: check met. A condition channel that returns no value in 3 polls in a row fails with condition_unreadable. The condition is read poll_hz times per second (default 20). Use for waiting on a button, a person, a light change.",
     input: {
       type: "object",
       properties: {
@@ -193,7 +195,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Drive straight",
     annotations: act,
     description:
-      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. One reading meets the condition: a read made after the stop can sit on the other side of the threshold by the noise of the sensor (approx in describe_device), and that is not a failed stop. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
+      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. data.readings then holds the readings that met the condition: use them, since a read made after the stop can sit on the other side of the threshold by the noise of the sensor (approx in describe_device). A condition channel that returns no value fails the call with condition_unreadable: the move was braked and error.measured holds what it had done. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
     input: {
       type: "object",
       properties: {
@@ -349,6 +351,7 @@ const ERROR_CODES = every<ErrorCode>()([
   "timeout",
   "stop_unverified",
   "stale_image",
+  "condition_unreadable",
   "internal",
   "misconfigured",
 ]);
@@ -392,7 +395,16 @@ const robotState = obj(
   "Robot state after the call. Absent for tools that address no robot.",
 );
 const toolError = obj(
-  { code: oneOf(ERROR_CODES), message: str, retryable: bool, retry_after_ms: num },
+  {
+    code: oneOf(ERROR_CODES),
+    message: str,
+    retryable: bool,
+    retry_after_ms: num,
+    measured: {
+      type: "object",
+      description: "What a move had done when the error ended it; the robot was stopped there.",
+    },
+  },
   ["code", "message", "retryable"],
   "Present when ok is false.",
 );
@@ -424,6 +436,11 @@ const reading = obj(
     image: { type: "boolean", description: "true on an image channel: the picture is the result's image block." },
     mime: str,
     age_ms: { type: "number", description: "Age of an image channel's frame, ms." },
+    absent: {
+      type: "boolean",
+      description:
+        "true → value is null because the device answered that it has nothing to report (no beacon in view), not because the read failed.",
+    },
   },
   [],
   "One channel value.",
@@ -437,6 +454,10 @@ const commandResult = obj({
   ),
   clamped: bool,
   reason: named(STOP_REASONS, "Anything but completed or condition_met means the request was not fully done."),
+  readings: list(
+    reading,
+    "Present when reason is condition_met: the readings that met the until condition, the shape read_all returns.",
+  ),
   problem: { type: "string", description: "Present when the motion went wrong, e.g. a wheel turned backwards." },
   chunks: num,
   ms: num,
@@ -452,6 +473,11 @@ const channelSpec = obj({
   approx: str,
   mode_group: str,
   active: { type: "boolean", description: "false → reading it needs a mode switch: name it in channels." },
+  null_when_absent: {
+    type: "boolean",
+    description:
+      "true → the channel may read null with absent:true (nothing in view): an answer, not a failure. A condition on it is then not met, never condition_unreadable.",
+  },
   description: str,
 });
 const commandSpec = obj({
@@ -495,6 +521,10 @@ const DATA: Record<string, Schema> = {
       max_program_ms: num,
     }),
     notes: strings,
+    scan_error: nullable("string", {
+      description:
+        "null when the device list is current. Else why the latest device scan failed; the list is then the one of the last scan that succeeded.",
+    }),
   }),
   describe_device: obj({ ...deviceFields, channels: list(channelSpec), commands: list(commandSpec) }),
   read_device: obj({ readings }),

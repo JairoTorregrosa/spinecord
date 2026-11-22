@@ -47,7 +47,7 @@ Check with `/mcp` inside Claude Code: `spinecord` is connected and lists its too
 
 ### 3.1 The envelope
 
-Every result is one envelope, `{ok, robot, data | error, next}`. `ok: true` → `data` is there. `ok: false` → `error: {code, message, retryable, retry_after_ms?}` is there and `data` is not. `robot` is `{id, backend, link, activity}` after the call; `list_robots` has none.
+Every result is one envelope, `{ok, robot, data | error, next}`. `ok: true` → `data` is there. `ok: false` → `error: {code, message, retryable, retry_after_ms?, measured?}` is there and `data` is not. `robot` is `{id, backend, link, activity}` after the call; `list_robots` has none.
 
 How the envelope reaches the script, in Claude Code 2.1.330 (observed 2026-11-22):
 
@@ -86,24 +86,35 @@ A call that never reached the server is thrown too, with a message that does not
 | Tools | `data` | Read it with |
 |---|---|---|
 | `list_robots` | `{robots: [{id, backend, link, activity, fault_reason, connect}]}` | `data.robots[0].id` |
-| `describe_robot` | `{id, backend, devices: [{id, kind, roles, channels, commands, description}], roles, drivetrain, limits, notes}` | `data.roles.distance` → a device id; `data.limits.max_drive_cm` |
-| `describe_device` | `{id, kind, roles, channels: [{name, type, unit?, range?, active?, …}], commands: [{name, params, bound, moves}]}` | `data.commands.find((c) => c.name === "tone").params` |
-| `read_device` `read_all` `wait_until` | `{readings: [{device, channel, value, unit?, ts, error?}]}`, one reading per channel. `read_all` and `wait_until` add `ms`; `wait_until` adds `met` and `reason` | `data.readings.find((r) => r.channel === "distance_cm").value` |
+| `describe_robot` | `{id, backend, devices: [{id, kind, roles, channels, commands, description}], roles, drivetrain, limits, notes, scan_error}` | `data.roles.distance` → a device id; `data.limits.max_drive_cm` |
+| `describe_device` | `{id, kind, roles, channels: [{name, type, unit?, range?, active?, null_when_absent?, …}], commands: [{name, params, bound, moves}]}` | `data.commands.find((c) => c.name === "tone").params` |
+| `read_device` `read_all` `wait_until` | `{readings: [{device, channel, value, unit?, ts, error?, absent?}]}`, one reading per channel. `read_all` and `wait_until` add `ms`; `wait_until` adds `met` and `reason` | `data.readings.find((r) => r.channel === "distance_cm").value` |
 | `sample_device` | `{samples: [[t_ms, value], …], min, max, mean, last, rate_hz, unit?}` | `data.mean`, `data.samples.at(-1)[1]` |
-| `drive` `turn` `arc` | `{requested, applied, measured: {distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, reason, ms}` | `data.reason === "condition_met"`, `data.measured.distance_cm` |
-| `command_device` | `{requested, applied, measured, clamped, reason, ms}`; `measured` is what the device reports | `data.reason === "completed"` |
+| `drive` `turn` `arc` | `{requested, applied, measured: {distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, reason, ms}`, plus `readings` when `reason` is `condition_met`: the readings that met `until` | `data.reason === "condition_met"`, `data.measured.distance_cm`, `data.readings[0].value` |
+| `command_device` | `{requested, applied, measured, clamped, reason, ms}`, plus `readings` like a move; `measured` is what the device reports | `data.reason === "completed"` |
 | `stop` | `{motors_stopped, activity}` | `data.motors_stopped` |
 | `reset_fault` | `{activity}` | `data.activity === "idle"` |
 | `run_program` | `{outcome, reason, steps: [{path, tool, ok, reason \| error, ms}], steps_dropped, ms}` | `data.outcome === "succeeded"` |
 
-A reading whose channel could not be read has `value: null` and an `error` string. `reason` of a move is `completed`, `condition_met`, `clamped`, `stalled`, `preempted` or `timeout`; anything but the first two means the request was not fully done. Every tool lists the same shape in its `outputSchema`.
+A reading whose channel could not be read has `value: null` and an `error` string. A channel that `describe_device` marks `null_when_absent` (an infrared beacon's heading and distance) can read `value: null` with `absent: true`: nothing is in view, which is an answer and not a failure. Headings are positive to the left in every channel, `beacon_heading` included. `scan_error` of `describe_robot` is null while the device list is current; a string there says why the latest device scan failed, and `devices` is then the list of the last scan that succeeded. `reason` of a move is `completed`, `condition_met`, `clamped`, `stalled`, `preempted` or `timeout`; anything but the first two means the request was not fully done. Every tool lists the same shape in its `outputSchema`.
 
-### 3.3 What the server does so a script does not have to
+### 3.3 Errors a script meets
+
+| `error.code` | What happened | In a script |
+|---|---|---|
+| `condition_unreadable` | A channel of the condition (`until`, `wait_until`, a program's `while`, `if`, `success`) returned no value in 3 polls in a row, or 10 polls in a row decided nothing. A move the condition guarded was braked there | Leave the loop. `error.measured` holds what the move had done, in the fields of `measured`. Read the robot (`read_all`) and check the sensor; the move is not to be sent again unread |
+| `busy` | A moving call is in flight | A script that awaits each move never meets it; `error.retry_after_ms` says when to ask again |
+| `robot_offline`, `timeout` on a move | The link closed or the backstop passed while the robot moved | Leave the loop; `next` starts with `read_all` |
+| `fault`, `stop_unverified` | A stop could not be verified | Leave the loop; a person looks at the robot, then `reset_fault` |
+| `unknown_device`, `unknown_channel`, `invalid_argument` | A name or an argument is wrong; the message lists the valid ones | Fix the script |
+
+### 3.4 What the server does so a script does not have to
 
 | Fact | Why it matters in code |
 |---|---|
 | `until` on `drive` / `turn` / `arc` / `command_device` | The runtime watches the condition next to the hardware every max(10 ms, one read) while the motion runs and aborts it when met; no model turn and no script loop per check |
 | A move's result carries `measured` | Distance and heading change need no reads around the move |
+| A move that `until` ended carries `readings` | The sensor value at the stop needs no read after it. A read made after the stop differs from it by the sensor's noise and can sit on the other side of the threshold |
 | A condition and a read take a role (`distance`, `gyro`) or a device id (`ev3.S4`) | `describe_robot` gives both |
 | `request_id` on moving tools | An optional label. Nothing is stored: the same call sent twice moves the robot twice |
 
@@ -113,7 +124,7 @@ Ask Claude:
 
 > Use the spinecord MCP robot r1-sim. Four times: drive forward until the distance sensor reads 15 cm or less from the wall, then turn 90 degrees left. Then report, per leg, the distance driven, the sensor reading after stopping, and the turn angle.
 
-The whole task is one script: twelve calls, three per leg. `call` is the helper of §3.1.
+The whole task is one script: eight calls, two per leg. `call` is the helper of §3.1.
 
 <!-- example: square -->
 
@@ -129,14 +140,14 @@ async function square(call, robot_id) {
       moved = true;
       // one bounded call: the runtime watches the sensor and brakes when the condition is met
       const d = await call("drive", { robot_id, distance_cm: 100, speed_pct: 30, until: near });
-      if (!d.ok) return { failed: "drive", leg, error: d.error, legs };
+      // an error ends the task. condition_unreadable (the sensor gave no value) braked the robot on the way:
+      // error.measured is what this leg had driven
+      if (!d.ok) return { failed: "drive", leg, error: d.error, driven_cm: d.error.measured?.distance_cm, legs };
       // completed (no wall within 100 cm), stalled, clamped, preempted, timeout: not what was asked
       if (d.data.reason !== "condition_met") return { ended: d.data.reason, leg, legs };
 
-      // the one thing the moves do not report: the sensor after the stop
-      const r = await call("read_device", { robot_id, device: "distance" });
-      if (!r.ok) return { failed: "read_device", leg, error: r.error, legs };
-      const wall_cm = r.data.readings.find((x) => x.channel === "distance_cm").value;
+      // the reading that met the condition comes with the move: no read after the stop
+      const wall_cm = d.data.readings.find((x) => x.channel === "distance_cm").value;
 
       const t = await call("turn", { robot_id, angle_deg: 90 }); // positive = left
       if (!t.ok) return { failed: "turn", leg, error: t.error, legs };
@@ -169,7 +180,8 @@ Rules the script follows (the server sends them in its instructions too):
 | `stop` on failure | `try / finally` around everything that moves |
 | Bounded | `leg <= 4`, `distance_cm: 100`, no `while (true)` |
 | No blind retry of a move | A failed or unanswered `drive` is not sent again; read the robot first (`read_all`) |
-| Read only what a move does not report | One `read_device` per leg; distance and angle come from `measured` |
+| Read only what a move does not report | No read at all: distance and angle come from `measured`, the sensor at the stop from `readings` |
+| An unreadable sensor is an error, not "not met" | `condition_unreadable` leaves through `if (!d.ok)` with `error.measured` |
 | Return little | `legs`, not every reading |
 
 ## 5. When Code Mode helps
@@ -197,7 +209,7 @@ One run per row (n=1), 2026-11-22. Claude Code 2.1.330, interactive in tmux, mod
 
 What the rows show:
 
-- For four legs with no decision between calls, plain calls are the faster way (§5). The twelve calls of §4 take about 18 s on the twin; the rest of a Code Mode run is the model writing scripts and the reads it adds to them.
+- For four legs with no decision between calls, plain calls are the faster way (§5). The eight calls of §4 take about 18 s on the twin; the rest of a Code Mode run is the model writing scripts and the reads it adds to them.
 - The script that threw in the 2.0.0 row read `data.readings` from `read_device`; server 2.0.0 answers `read_device` with a bare array. It ended with the robot still at its start and cost one model request. Server 2.1.0 answers every channel read as `{readings}` (§3.2), and its instructions carry the shapes and the helper of §3.1.
 - In every Code Mode run the model used `drive` with `until`, not a polling loop of its own, and added reads around each move to cross-check it (pose, odometer, gyro). Those reads are most of the calls, and how many the model adds is its choice in each run. With n=1 per row, wall time and call count carry that spread; the row-to-row difference that does not depend on it is the script that threw on a shape.
 

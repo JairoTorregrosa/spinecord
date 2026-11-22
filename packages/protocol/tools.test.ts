@@ -56,8 +56,17 @@ describe("catalog", () => {
       collect(s.items);
     };
     for (const t of TOOLS) collect(t.output);
+    // an error code is a word of the surface too; beacon_heading is a channel the sign rule names
+    const codes = (TOOLS[0]!.output.properties.error as { properties: { code: { enum: string[] } } }).properties.code
+      .enum;
     for (const word of SERVER_INSTRUCTIONS.matchAll(/\b[a-z]+(_[a-z]+)+\b/g))
-      if (!/_(ms|id|cm|deg|hz)$/.test(word[0]) && !fields.has(word[0])) expect(names).toContain(word[0]);
+      if (
+        !/_(ms|id|cm|deg|hz|heading)$/.test(word[0]) &&
+        !fields.has(word[0]) &&
+        !codes.includes(word[0]) &&
+        word[0] !== "condition_met"
+      )
+        expect(names).toContain(word[0]);
   });
   test("data is an object in every tool, and the tools that read channels share one readings field", () => {
     const data = (name: string) =>

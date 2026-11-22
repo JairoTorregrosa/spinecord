@@ -51,6 +51,10 @@ export class MockProvider implements Provider {
   readonly reads: string[] = []; // device of every read(), in the order they were made
   frameTs = 0; // capture time of the camera frame
   failRead: string | undefined; // device id whose reads throw
+  // "<device>.<channel>" → error: that channel's reads fail (value null with this error), whatever `values` holds
+  readonly readErrors = new Map<string, string>();
+  failScans = 0; // how many of the next devices() calls throw
+  scans = 0; // devices() calls
   private readonly clock: Clock;
   private readonly rate: number;
   latency: number; // transport round trip, ms; a test may change it between calls (a link that got slower)
@@ -266,6 +270,11 @@ export class MockProvider implements Provider {
   }
 
   async devices(): Promise<DeviceSpec[]> {
+    this.scans++;
+    if (this.failScans > 0) {
+      this.failScans--;
+      throw new Error("the brick did not answer the device scan");
+    }
     return this.specs;
   }
   onDevicesChanged(cb: () => void): () => void {
@@ -308,10 +317,16 @@ export class MockProvider implements Provider {
             ts: this.frameTs,
           };
         }
+        const ts = this.clock.now();
+        const failed = this.readErrors.get(`${device}.${channel}`);
+        if (failed !== undefined) return { device, channel, value: null, ts, error: failed };
         const src = this.values.get(`${device}.${channel}`);
         const value = typeof src === "function" ? src() : (src ?? null);
-        const ts = this.clock.now();
-        return value === null ? { device, channel, value, ts, error: "no value" } : { device, channel, value, ts };
+        if (value !== null) return { device, channel, value, ts };
+        // a null_when_absent channel answers "nothing to report"; any other channel without a value failed
+        return spec.channels.find((c) => c.name === channel)?.null_when_absent
+          ? { device, channel, value, ts, error: "nothing in view", absent: true }
+          : { device, channel, value, ts, error: "no value" };
       },
     );
     if (this.latency) await this.clock.sleep(this.latency / 2); // reply on its way

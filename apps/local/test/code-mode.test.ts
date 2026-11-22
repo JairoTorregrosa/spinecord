@@ -96,14 +96,14 @@ test("the square example drives four legs to the wall and reports each one", asy
   expect(out.ended).toBeUndefined();
   expect(out.legs.map((l) => l.leg)).toEqual([1, 2, 3, 4]);
   for (const l of out.legs) {
-    // stopped by the condition, close to the wall and not in it; the sensor is good to about 1 cm
-    expect(l.wall_cm).toBeLessThanOrEqual(16.5);
+    // the reading that met the condition, so never above the threshold; close to the wall and not in it
+    expect(l.wall_cm).toBeLessThanOrEqual(15);
     expect(l.wall_cm).toBeGreaterThan(8);
     expect(l.driven_cm).toBeGreaterThan(10);
     expect(Math.abs(l.turned_deg - 90)).toBeLessThan(5);
   }
-  // three calls per leg, and no stop: the script ended cleanly
-  expect(calls).toEqual(Array.from({ length: 4 }, () => ["drive", "read_device", "turn"]).flat());
+  // two calls per leg, and no stop: the script ended cleanly
+  expect(calls).toEqual(Array.from({ length: 4 }, () => ["drive", "turn"]).flat());
   expect((await s.tool("list_robots")).envelope).toMatchObject({ data: { robots: [{ id: R, activity: "idle" }] } });
 }, 120_000);
 
@@ -114,7 +114,7 @@ test("the square example leaves at the first error and brakes", async () => {
   const out = await square()(helper(tools((tool, n) => (tool === "drive" && n === 2 ? "nobody" : undefined))), R);
   expect(out).toMatchObject({ failed: "drive", leg: 2, error: { code: "unknown_robot" } });
   expect(out.legs.length).toBe(1);
-  expect(calls).toEqual(["drive", "read_device", "turn", "drive", "stop"]);
+  expect(calls).toEqual(["drive", "turn", "drive", "stop"]);
 }, 120_000);
 
 test("the shapes the document tabulates are the shapes the server sends", async () => {
@@ -142,6 +142,15 @@ test("the shapes the document tabulates are the shapes the server sends", async 
     });
   }
   expect(waited).toMatchObject({ met: true, reason: "condition_met", ms: expect.any(Number) });
+  // a move that its condition ended carries the same readings; one that ran to its end carries none
+  const met = await data("drive", {
+    distance_cm: 5,
+    until: { device: "distance", channel: "distance_cm", op: "gt", value: 0 },
+  });
+  expect(met.reason).toBe("condition_met");
+  expect(met.readings).toMatchObject([{ device: "ev3.S4", channel: "distance_cm", value: expect.any(Number) }]);
+  expect((await data("drive", { distance_cm: 2 })).readings).toBeUndefined();
+  expect((await data("describe_robot")).scan_error).toBeNull();
   // one measured shape in the three drivetrain tools
   const fields = ["distance_cm", "heading_change_deg", "source", "left_deg", "right_deg"];
   for (const [tool, args] of [

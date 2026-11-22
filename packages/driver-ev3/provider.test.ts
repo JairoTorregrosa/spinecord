@@ -487,12 +487,32 @@ describe("read(): no side effects", () => {
       (await ev3.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"], { allow_mode_switch: true })).map(
         (r) => r.value,
       ),
-    ).toEqual([-7, 33]);
+    ).toEqual([7, 33]); // native -7 = to the left; the contract is counter-clockwise-positive
     expect(fake.modeSwitches).toBe(1);
+    const s4 = (await ev3.devices()).find((d) => d.id === "ev3.S4")!;
+    expect(s4.channels.filter((c) => c.null_when_absent).map((c) => c.name)).toEqual([
+      "beacon_heading",
+      "beacon_distance_pct",
+    ]);
+    fake.setSensor(4, 33, [12, 40], 1);
+    expect((await ev3.read("ev3.S4", ["beacon_heading"]))[0].value).toBe(-12);
+    fake.setSensor(4, 33, [0, 40], 1);
+    expect(Object.is((await ev3.read("ev3.S4", ["beacon_heading"]))[0].value, 0)).toBe(true);
     fake.setSensor(4, 33, [0, -128], 1);
     const r = await ev3.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"]);
     expect(r.map((x) => x.value)).toEqual([null, null]);
     expect(r[0].error).toContain("no beacon");
+    expect(r.map((x) => x.absent)).toEqual([true, true]); // the sensor's answer, not a failed read
+    fake.unplugSensor(4);
+    const dead = await ev3.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"]);
+    expect(dead.map((x) => [x.value, x.absent])).toEqual([
+      [null, undefined],
+      [null, undefined],
+    ]);
+    fake.setSensor(4, 33, 48);
+    fake.setSensor(4, 33, [0, -128], 1);
+    fake.setSensor(4, 33, 3, 2);
+    await ev3.devices();
     expect((await ev3.read("ev3.S4", ["remote_buttons"], { allow_mode_switch: true }))[0].value).toBe(3);
   });
 

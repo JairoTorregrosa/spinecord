@@ -13,6 +13,22 @@ export const BRIDGE_FILE = fileURLToPath(new URL("../bridge/ev3dev_bridge.py", i
 /** Where installBridge() puts it on the brick, relative to the ssh user's home. */
 export const DEFAULT_REMOTE_PATH = "~/spinecord/ev3dev_bridge.py";
 
+/**
+ * What a process's stderr adds to the reason its link closed, for a model and a person: the bridge's own lines
+ * (`ev3dev_bridge: ...`) when it wrote any, else what was written (ssh's own message), without the dump an
+ * interpreter prints when it aborts (a fatal error and its thread list, a traceback).
+ */
+export function closeDetail(stderr: string): string {
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((l) => l.trimEnd())
+    .filter((l) => l.trim());
+  const own = lines.filter((l) => l.startsWith("ev3dev_bridge:"));
+  if (own.length) return own.join(" ");
+  const dump = lines.findIndex((l) => /^(Fatal Python error|Traceback \(most recent call last\))/.test(l));
+  return (dump < 0 ? lines : lines.slice(0, dump)).join(" ").trim();
+}
+
 /** Runs a command and exchanges text lines with it over stdin/stdout. stderr is kept for the close reason. */
 export class ProcessLineTransport implements LineTransport {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -78,7 +94,9 @@ export class ProcessLineTransport implements LineTransport {
         finish(e.code === "ENOENT" ? `${label}: program "${this.cmd}" not found on PATH` : `${label}: ${e.message}`),
       );
       child.once("close", (code, sig) =>
-        finish(`${label} exited (${sig ?? `code ${code}`})${this.stderr.trim() ? `: ${this.stderr.trim()}` : ""}`),
+        finish(
+          `${label} exited (${sig ?? `code ${code}`})${closeDetail(this.stderr) ? `: ${closeDetail(this.stderr)}` : ""}`,
+        ),
       );
     });
   }
