@@ -93,9 +93,7 @@ export interface Provider {
   // the runtime then re-reads devices().
   onDevicesChanged?(cb: () => void): () => void;
 }
-// "organ" = a provider reached over a link that carries no abort and promises no order: the runtime never cuts
-// its operations short and awaits every reading (CONTRACT §4).
-export type BackendKind = "ev3" | "sim" | "organ";
+export type BackendKind = "ev3" | "sim";
 
 // ---------- Robot profile (§3) ----------
 export interface Drivetrain {
@@ -157,7 +155,6 @@ export type ProgramNode =
 // ---------- Envelope (§7) ----------
 // The members are the `code` enum of every tool's output schema (tools.ts).
 export type ErrorCode =
-  | "unauthorized"
   | "unknown_robot"
   | "unknown_device"
   | "unknown_channel"
@@ -165,16 +162,12 @@ export type ErrorCode =
   | "unsupported"
   | "robot_offline"
   | "busy"
-  | "not_in_control"
   | "illegal_state"
   | "invalid_argument"
   | "fault"
   | "timeout"
   | "stop_unverified"
-  | "provider_stale"
   | "stale_image"
-  | "program_not_runnable"
-  | "rate_limited"
   | "internal"
   | "misconfigured";
 export interface ToolError {

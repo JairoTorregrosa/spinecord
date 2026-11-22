@@ -17,7 +17,7 @@ export interface MockOptions {
   // Declared per-operation time bound of the pair's run_pair (a device with its own watchdog may declare a
   // long one). Absent: run_pair is bounded in degrees and every operation is cut at 250 ms.
   op_ms?: number;
-  backend?: BackendKind; // default "sim"; "organ" = stands in for a provider an abort does not reach
+  backend?: BackendKind; // default "sim"
   pair_brake?: boolean; // false = the pair has no brake{} command (a manifest the runtime must refuse)
   extra?: DeviceSpec[]; // more manifests; their channels read from `values`
 }

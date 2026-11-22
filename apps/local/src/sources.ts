@@ -1,6 +1,6 @@
 // Where a robot's runtime comes from. Each source wires packages together and hands the runtime to a LocalRobot:
 //   twin     SimBrick + the real Ev3Provider + SimWorldProvider, built at start
-//   ev3dev   Ev3devProvider over the system ssh client, connected at start
+//   ev3dev   Ev3devProvider over the system ssh client, connected at start and again each time the link closes
 //   ev3      the real Ev3Provider over the bridge page's socket, built each time the page opens an EV3
 import { Ev3Provider } from "../../../packages/driver-ev3/provider";
 import type { Transport } from "../../../packages/driver-ev3/transport";
@@ -59,6 +59,8 @@ export interface FleetOptions {
   page?: BridgePageFiles;
   /** Port 0 (tests) takes any free port. */
   port?: number;
+  /** Pause before an ev3dev link that closed is opened again, and between attempts, ms. Default 2000. */
+  reconnectMs?: number;
 }
 
 /** Builds every robot of the config. Throws when one that must be there at start (twin, ev3dev) cannot be built. */
@@ -66,6 +68,8 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
   const robots: LocalRobot[] = [];
   const bricks = new Map<string, SimBrick>();
   const closers: (() => Promise<void> | void)[] = [];
+  // run before anything else at shutdown: a source stops bringing its robot back
+  const enders: (() => void)[] = [];
   let bridge: BridgeServer | null = null;
   const transitions = (id: string) => (fsm: string, from: string, to: string, why: string) =>
     o.log(fsm, { robot_id: id, from, to, why });
@@ -82,30 +86,73 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     } else if (s.source === "ev3dev") {
       const robot = new LocalRobot({
         id: s.id,
-        connect: `Check that the brick is on and that ssh ${s.ssh.user}@${s.ssh.host} works, then restart this server.`,
+        connect: `Check that the brick is on and that ssh ${s.ssh.user}@${s.ssh.host} works; this server connects again by itself.`,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
       });
       if (s.installBridge) o.log("bridge_installed", { robot_id: s.id, ...(await installBridge(s.ssh)) });
       const { pair } = s.robot;
       const profile = { ...s.robot.profile, id: s.id };
-      let provider!: Ev3devProvider;
-      const runtime = createRuntime({
-        profile,
-        providers: [
-          (limits) => {
-            provider = new Ev3devProvider(new SshLineTransport(s.ssh), {
-              limits,
-              hardware: s.hardware,
-              pair,
-              roles: profile.roles,
-            });
-            return provider;
-          },
-        ],
+      // The provider whose link the robot is online through; null while the robot is offline.
+      let live: Ev3devProvider | null = null;
+      let ended = false;
+      let retry: ReturnType<typeof setTimeout> | null = null;
+      /** A new ssh process, a new provider and runtime; the robot is online when it resolves. */
+      const connect = async (): Promise<void> => {
+        const transport = new SshLineTransport(s.ssh);
+        let provider!: Ev3devProvider;
+        const runtime = createRuntime({
+          profile,
+          providers: [
+            (limits) => {
+              provider = new Ev3devProvider(transport, { limits, hardware: s.hardware, pair, roles: profile.roles });
+              return provider;
+            },
+          ],
+        });
+        // the ssh process ended (the brick, the network or the bridge went away): the robot is offline until
+        // a new link has been opened and checked
+        transport.onClose((reason) => {
+          if (live !== provider || ended) return;
+          live = null;
+          robot.detach(`the link to the brick closed: ${reason}`);
+          o.log("ev3dev_gone", { robot_id: s.id, why: reason });
+          void provider.close().catch(() => {});
+          again();
+        });
+        try {
+          await robot.attach(runtime);
+        } catch (e) {
+          await provider.close().catch(() => {});
+          throw e;
+        }
+        if (ended) {
+          await provider.close().catch(() => {});
+          return;
+        }
+        live = provider;
+      };
+      const again = (): void => {
+        if (ended) return;
+        retry = setTimeout(() => {
+          retry = null;
+          if (ended) return;
+          connect().then(
+            () => o.log("ev3dev_ready", { robot_id: s.id }),
+            (e: unknown) => {
+              o.log("ev3dev_attach_failed", { robot_id: s.id, error: (e as Error).message });
+              again();
+            },
+          );
+        }, o.reconnectMs ?? 2000);
+        retry.unref?.();
+      };
+      await connect();
+      enders.push(() => {
+        ended = true;
+        if (retry) clearTimeout(retry);
       });
-      await robot.attach(runtime);
-      closers.push(() => provider.close());
+      closers.push(() => live?.close());
       robots.push(robot);
     } else {
       const page = o.page ?? (await buildBridgePage());
@@ -149,6 +196,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     bridge,
     async shutdown() {
       // every robot refuses calls before the first stop is issued
+      for (const end of enders) end();
       for (const r of robots) r.beginShutdown();
       const out = await Promise.all(robots.map(async (r) => ({ robot_id: r.id, motors_stopped: await r.shutdown() })));
       for (const close of closers) await Promise.resolve(close()).catch(() => {});

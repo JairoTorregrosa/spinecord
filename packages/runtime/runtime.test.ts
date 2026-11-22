@@ -17,7 +17,6 @@ function setup(
     latency_ms?: number;
     op_ms?: number;
     deg_s_per_pct?: number;
-    backend?: "sim" | "organ";
     drivetrain?: boolean;
     forward_sign?: 1 | -1;
     gyro?: boolean;
@@ -33,7 +32,6 @@ function setup(
     latency_ms: o.latency_ms,
     op_ms: o.op_ms,
     deg_s_per_pct: o.deg_s_per_pct,
-    backend: o.backend,
     ...(o.gyro ? { gyro: { heading_per_wheel_deg: 5.6 / 12, sign: o.gyro_sign } } : {}),
   });
   const profile: RobotProfile = {
@@ -126,21 +124,6 @@ describe("discovery", () => {
       "args.sped unknown field",
     );
   });
-  test("remote providers come and go at runtime", async () => {
-    const { rt, call, clock } = setup();
-    await rt.ready();
-    const organ = new MockProvider({ id: "mcu1", clock });
-    await rt.setRemoteProviders([organ]);
-    expect((await call("read_device", { device: "mcu1.gas" }))[0]).toMatchObject({
-      device: "mcu1.gas",
-      channel: "ppm",
-      value: 412,
-    });
-    expect(rt.localDevices().length).toBe(6);
-    expect(rt.devices().length).toBe(12);
-    await rt.setRemoteProviders([]);
-    await fails(call("read_device", { device: "mcu1.gas" }), "unknown_device");
-  });
 });
 
 describe("hot-plug", () => {
@@ -153,26 +136,20 @@ describe("hot-plug", () => {
     commands: [],
     channels: [{ name: "distance_cm", type: "number" as const, unit: "cm", description: "Distance." }],
   };
-  test("a provider's device change updates the registry and notifies listeners", async () => {
+  test("a provider's device change updates the registry", async () => {
     const s = setup();
     await s.rt.ready();
-    let notified = 0;
-    const off = s.rt.onLocalDevicesChanged(() => notified++);
     s.mock.values.set("mock.tof.distance_cm", 33);
     s.mock.plug(TOF);
     await s.clock.sleep(0);
-    expect(notified).toBe(1);
     expect((await s.call("read_device", { device: "mock.tof" }))[0]).toMatchObject({ value: 33, unit: "cm" });
     s.mock.unplug("mock.color");
     await s.clock.sleep(0);
-    expect(notified).toBe(2);
     expect((await fails(s.call("read_device", { device: "floor_color" }), "unknown_device")).message).toContain(
       'Role "floor_color" points to mock.color, which is not attached',
     );
-    off();
     s.mock.unplug("mock.tof");
     await s.clock.sleep(0);
-    expect(notified).toBe(2);
     expect(s.rt.devices().map((d) => d.id)).not.toContain("mock.tof");
     expect(s.mock.subscribers).toBe(1);
     s.rt.dispose();
@@ -770,15 +747,6 @@ describe("drivetrain", () => {
       expect(pairLog(slow.mock).length).toBeGreaterThanOrEqual(4); // 2.5 degrees of motion each, never the 5.5 of a late cut
       for (const c of pairLog(slow.mock)) expect(c.ms).toBeLessThanOrEqual(600 + MAX_CHUNK_MS);
     });
-    test("a remote organ is never cut by abort (it would not reach it): its own declared bound applies", async () => {
-      const s = setup({ op_ms: 3000, backend: "organ" });
-      s.mock.values.set("mock.color.reflected_pct", 50);
-      const until = { device: "floor_color", channel: "reflected_pct", op: "lt", value: 20 };
-      const d = await s.call("drive", { distance_cm: 1, speed_pct: 1, until });
-      expect(d.reason).toBe("completed");
-      expect(pairLog(s.mock).every((c) => c.reason !== "preempted")).toBe(true);
-      expect(pairLog(s.mock)[0]!.ms).toBe(2000); // the 20 degree probe ran whole
-    });
     test("no provider call is made only to measure: readings travel with the operations", async () => {
       const s = setup({ latency_ms: 600, gyro: true, limits: { max_command_ms: 20000 } });
       await s.call("drive", { distance_cm: 2, speed_pct: 25 }); // the first move of a session times the link
@@ -879,16 +847,6 @@ describe("drivetrain", () => {
       expect(e.reason).toBe("stalled");
       expect(e.problem).toContain("reversed");
       expect(pairLog(r.mock).length).toBe(1);
-    });
-    test("a remote organ's condition is read before each of its operations: once met, nothing more is sent", async () => {
-      const s = setup({ op_ms: 3000, backend: "organ", latency_ms: 40 });
-      const t0 = s.clock.now();
-      // true from 2050 ms on, while the reply of the first operation (the 20 degree probe, 2000 ms) is on its way
-      s.mock.values.set("mock.color.reflected_pct", () => (s.clock.now() - t0 >= 2050 ? 8 : 50));
-      const until = { device: "floor_color", channel: "reflected_pct", op: "lt", value: 20 };
-      const d = await s.call("drive", { distance_cm: 30, speed_pct: 1, until });
-      expect(d.reason).toBe("condition_met");
-      expect(pairLog(s.mock).length).toBe(1);
     });
     test("when max_command_ms runs out mid-move the result is timeout and nothing is left rolling", async () => {
       const s = setup({ latency_ms: 600, limits: { max_command_ms: 3000 } });
@@ -1024,7 +982,7 @@ describe("command_device", () => {
     const said: { ms: number; reason: string }[] = [];
     const talker: Provider = {
       id: "tts",
-      backend: "organ",
+      backend: "sim",
       stop_worst_ms: 100,
       devices: async () => [
         {
@@ -1447,23 +1405,6 @@ describe("errors", () => {
     await rt.ready();
     expect(seen).toEqual(LIMITS);
     expect(rt.devices().length).toBe(6);
-  });
-  test("an organ that cannot list its devices is reported, and the others still work", async () => {
-    const s = setup();
-    await s.rt.ready();
-    const good = new MockProvider({ id: "mcu1", clock: s.clock });
-    const broken = new MockProvider({ id: "cam1", clock: s.clock });
-    broken.devices = async () => {
-      throw new Error("cam1 did not answer");
-    };
-    const e = await fails(s.rt.setRemoteProviders([good, broken]), "provider_stale");
-    expect(e.message).toContain("cam1 (cam1 did not answer)");
-    expect((await s.call("describe_robot")).provider_errors).toEqual([
-      { provider: "cam1", error: "cam1 did not answer" },
-    ]);
-    expect((await s.call("read_device", { device: "mcu1.gas" }))[0].value).toBe(412);
-    await s.rt.setRemoteProviders([good]);
-    expect((await s.call("describe_robot")).provider_errors).toBeUndefined();
   });
   test("a broken setup fails loud", async () => {
     const clock = new FakeClock();

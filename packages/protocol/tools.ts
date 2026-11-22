@@ -318,7 +318,6 @@ const every =
 const keys = <K extends string>(table: Record<K, unknown>): K[] => Object.keys(table) as K[];
 
 const ERROR_CODES = every<ErrorCode>()([
-  "unauthorized",
   "unknown_robot",
   "unknown_device",
   "unknown_channel",
@@ -326,21 +325,17 @@ const ERROR_CODES = every<ErrorCode>()([
   "unsupported",
   "robot_offline",
   "busy",
-  "not_in_control",
   "illegal_state",
   "invalid_argument",
   "fault",
   "timeout",
   "stop_unverified",
-  "provider_stale",
   "stale_image",
-  "program_not_runnable",
-  "rate_limited",
   "internal",
   "misconfigured",
 ]);
 const STOP_REASONS = every<StopReason>()(["completed", "condition_met", "timeout", "clamped", "stalled", "preempted"]);
-const BACKENDS = every<BackendKind>()(["ev3", "sim", "organ"]);
+const BACKENDS = every<BackendKind>()(["ev3", "sim"]);
 
 const str = { type: "string" } as const;
 const num = { type: "number" } as const;

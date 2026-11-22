@@ -13,7 +13,7 @@ import { LocalError, shuttingDown, type LocalRobot } from "./robot";
 
 export const TOOL: ReadonlyMap<string, ToolDef> = new Map(TOOLS.map((t) => [t.name, t]));
 // fail at start if the catalog uses a schema keyword the validator would not enforce
-for (const t of TOOLS) assertSupported(t.input, `local tool ${t.name}.input`);
+for (const t of TOOLS) assertSupported(t.input, `tool ${t.name}.input`);
 
 /** Suggested next tools after a success. Every name is a served tool (tested). */
 export const NEXT_OK: Record<string, string[]> = {

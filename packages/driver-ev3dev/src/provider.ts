@@ -152,7 +152,6 @@ export interface BridgeInventory {
 }
 
 const ERROR_CODES: readonly ErrorCode[] = [
-  "unauthorized",
   "unknown_robot",
   "unknown_device",
   "unknown_channel",
@@ -160,16 +159,12 @@ const ERROR_CODES: readonly ErrorCode[] = [
   "unsupported",
   "robot_offline",
   "busy",
-  "not_in_control",
   "illegal_state",
   "invalid_argument",
   "fault",
   "timeout",
   "stop_unverified",
-  "provider_stale",
   "stale_image",
-  "program_not_runnable",
-  "rate_limited",
   "internal",
   "misconfigured",
 ];

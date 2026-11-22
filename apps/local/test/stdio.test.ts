@@ -23,12 +23,12 @@ describe("a twin behind stdio", () => {
     jsonRpcOnly(s);
   });
 
-  test("initialize names the server and carries the local instructions", () => {
+  test("initialize names the server and carries its instructions", () => {
     expect(s.init.serverInfo.name).toBe("spinecord");
     expect(s.init.instructions).toContain("One moving call at a time");
   });
 
-  test("tools/list is the local catalog, each tool with its outputSchema", () => {
+  test("tools/list is the catalog, each tool with its outputSchema", () => {
     expect(s.listed.map((t) => t.name)).toEqual(TOOLS.map((t) => t.name));
     for (const t of s.listed) expect((t.outputSchema as { type: string }).type).toBe("object");
   });
