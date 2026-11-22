@@ -41,7 +41,13 @@ export function summarize(tool: string, e: Envelope<unknown>): string {
   return `${tool} ${e.ok ? "ok" : "error"}${what}${robot}${next}`.replace(/\s+/g, " ");
 }
 
-export function buildServer(env: Env, cfg: Config, who: ToolPrincipal, trace_id: string): Server {
+export function buildServer(
+  env: Env,
+  cfg: Config,
+  who: ToolPrincipal,
+  trace_id: string,
+  ctx: ExecutionContext,
+): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
@@ -49,7 +55,7 @@ export function buildServer(env: Env, cfg: Config, who: ToolPrincipal, trace_id:
   server.setRequestHandler("tools/list", async () => ({ tools: LISTED_TOOLS as never }));
   server.setRequestHandler("tools/call", async (request) => {
     const name = request.params.name;
-    const out = await callTool(env, cfg, who, name, request.params.arguments, trace_id);
+    const out = await callTool(env, cfg, who, name, request.params.arguments, trace_id, ctx);
     // CONTRACT §7: the envelope is structuredContent; the text block is a summary line, then the same JSON on the last line
     const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [
       { type: "text", text: `${summarize(name, out.envelope)}\n${JSON.stringify(out.envelope)}` },
@@ -69,6 +75,7 @@ export function serveMcp(
   cfg: Config,
   who: ToolPrincipal,
   trace_id: string,
+  ctx: ExecutionContext,
 ): Promise<Response> {
-  return createMcpHandler(() => buildServer(env, cfg, who, trace_id)).fetch(request);
+  return createMcpHandler(() => buildServer(env, cfg, who, trace_id, ctx)).fetch(request);
 }

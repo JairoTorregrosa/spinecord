@@ -12,6 +12,15 @@ import * as store from "./store.ts";
 export const robotStub = (env: Env, robot_id: string) =>
   env.ROBOT.get(env.ROBOT.idFromName(robot_id)) as unknown as RobotDO;
 
+/**
+ * Resolves when the call log (D1) holds every call answered so far: all of them, or those of one robot.
+ * A robot's rows are written by its Durable Object; rows without a robot by the LIBRARY instance (store.CallLog).
+ */
+export async function callLogFlushed(env: Env, cfg: Config, robot_id?: string): Promise<void> {
+  const ids = robot_id === undefined ? [...cfg.robots, LIBRARY] : cfg.robots.includes(robot_id) ? [robot_id] : [];
+  await Promise.all(ids.map((id) => robotStub(env, id).callsFlushed()));
+}
+
 export async function listRobots(env: Env, cfg: Config, who: ToolPrincipal) {
   return Promise.all(
     visibleRobots(cfg, who).map(async (id) => {
@@ -40,6 +49,7 @@ export async function callTool(
   name: string,
   rawArgs: unknown,
   trace_id: string,
+  ctx: ExecutionContext,
 ): Promise<Out> {
   const t0 = Date.now();
   const args = (rawArgs ?? {}) as Record<string, unknown>;
@@ -47,7 +57,7 @@ export async function callTool(
   const robot_id = typeof args?.robot_id === "string" ? args.robot_id : null;
 
   /** terminal state of a call that never reaches a Durable Object: logged and stored here, once */
-  const local = async (state: "rejected" | "completed", out: Out): Promise<Out> => {
+  const local = (state: "rejected" | "completed", out: Out): Out => {
     const code = out.envelope.ok ? null : out.envelope.error.code;
     const ms = Date.now() - t0;
     log("call", {
@@ -60,24 +70,27 @@ export async function callTool(
       principal: who.principal_id,
       ok: out.envelope.ok,
     });
-    try {
-      await store.insertCall(env.DB, {
-        id: crypto.randomUUID(),
-        robot_id: null,
-        tool: name,
-        request_id: null,
-        state,
-        code,
-        ms,
-        episode_id: null,
-        created_at: t0,
-        principal: who.principal_id,
-        moving: false,
-        trace_id,
-      });
-    } catch (e) {
-      log("calls_write_error", { trace_id, message: e instanceof Error ? e.message : String(e) });
-    }
+    // off the response path: the row is handed to the LIBRARY instance, which writes it with its own (store.CallLog)
+    ctx.waitUntil(
+      Promise.resolve(
+        robotStub(env, LIBRARY).logCall({
+          id: crypto.randomUUID(),
+          robot_id: null,
+          tool: name,
+          request_id: null,
+          state,
+          code,
+          ms,
+          episode_id: null,
+          created_at: t0,
+          principal: who.principal_id,
+          moving: false,
+          trace_id,
+        }),
+      ).catch((e: unknown) =>
+        log("calls_write_error", { trace_id, message: e instanceof Error ? e.message : String(e) }),
+      ),
+    );
     return out;
   };
   const reject = (code: ErrorCode, message: string) => local("rejected", errOut(name, toolError(code, message)));
