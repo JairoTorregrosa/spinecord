@@ -64,6 +64,15 @@ export async function startServer(args: string[] = []) {
       waiting.set(mine, resolve);
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: mine, method, params })}\n`);
     });
+  /** Sends a request and tells its id at once, so a test can cancel it. */
+  const request = (method: string, params: unknown = {}): { id: number; answer: Promise<Rpc> } => {
+    const mine = ++id;
+    const answer = new Promise<Rpc>((resolve) => waiting.set(mine, resolve));
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: mine, method, params })}\n`);
+    return { id: mine, answer };
+  };
+  const notify = (method: string, params: unknown = {}): void =>
+    void child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
   const init = await rpc("initialize", {
     protocolVersion: "2025-06-18",
     capabilities: {},
@@ -97,6 +106,8 @@ export async function startServer(args: string[] = []) {
     stdout,
     stderr,
     rpc,
+    request,
+    notify,
     tool,
     /** JSON events from stderr ({"ev": ...}). */
     events: (ev: string) =>

@@ -37,7 +37,7 @@ describe("command line", () => {
       hardware: { speech_volume_pct: 80 },
       installBridge: false,
     });
-    expect(parseSshTarget("--ssh", "robot@10.0.0.2")).toEqual({ user: "robot", host: "10.0.0.2" });
+    expect(parseSshTarget("--ssh", "robot@brick.local")).toEqual({ user: "robot", host: "brick.local" });
   });
   test("every wrong input names its flag", () => {
     expect(() => loadConfig(["--twin", EXAMPLE.robot])).toThrow("--twin needs --world");

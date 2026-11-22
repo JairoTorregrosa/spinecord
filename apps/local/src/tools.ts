@@ -47,9 +47,11 @@ export const NEXT_ERR: Partial<Record<ErrorCode, string[]>> = {
   stale_image: ["describe_robot"],
   internal: ["list_robots"],
 };
-function next(tool: string, error?: ToolError): string[] {
+function next(tool: string, error?: ToolError, afterMove = false): string[] {
   if (!error) return NEXT_OK[tool] ?? ["list_robots"];
   const base = NEXT_ERR[error.code] ?? [];
+  // a move that had started: look at the robot first, never send the move again blindly
+  if (afterMove) return [...new Set(["read_all", ...base])];
   // retryable and argument errors: the same tool is the obvious next step
   return (error.retryable || error.code === "invalid_argument") && TOOL.has(tool)
     ? [...new Set([tool, ...base])]
@@ -60,11 +62,17 @@ export interface Out {
   envelope: LocalEnvelope<unknown>;
   image?: ImagePayload;
 }
-const fail = (tool: string, error: ToolError, robot?: LocalRobot): Out => ({
-  envelope: { ok: false, ...(robot ? { robot: robot.view() } : {}), error, next: next(tool, error) },
+const fail = (tool: string, error: ToolError, robot?: LocalRobot, afterMove = false): Out => ({
+  envelope: { ok: false, ...(robot ? { robot: robot.view() } : {}), error, next: next(tool, error, afterMove) },
 });
 
-export async function callTool(robots: readonly LocalRobot[], name: string, args: unknown): Promise<Out> {
+/** `cancel`: the client's cancellation of this call (MCP notifications/cancelled). */
+export async function callTool(
+  robots: readonly LocalRobot[],
+  name: string,
+  args: unknown,
+  cancel?: AbortSignal,
+): Promise<Out> {
   const def = TOOL.get(name);
   if (!def)
     return fail(name, {
@@ -85,7 +93,7 @@ export async function callTool(robots: readonly LocalRobot[], name: string, args
     });
   try {
     const { robot_id: _robot, request_id: _label, ...rest } = input;
-    const result = await robot.call(name, rest);
+    const result = await robot.call(name, rest, cancel);
     return {
       envelope: { ok: true, robot: robot.view(), data: result.data, next: next(name) },
       ...(result.image ? { image: result.image } : {}),
@@ -105,7 +113,7 @@ export async function callTool(robots: readonly LocalRobot[], name: string, args
             message: `${name} failed unexpectedly: ${String((e as Error)?.message ?? e)}`,
             retryable: false,
           };
-    return fail(name, error, robot);
+    return fail(name, error, robot, e instanceof LocalError && e.afterMove);
   }
 }
 

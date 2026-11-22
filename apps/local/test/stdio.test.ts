@@ -1,7 +1,8 @@
 // The server as Claude Code runs it: a spawned `bun apps/local/main.ts`, MCP over its stdio, a twin inside.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { LOCAL_TOOLS } from "../../../packages/protocol/tools";
-import { startServer, until, wheelSpeeds, wheelsTurning, type TestServer } from "./client";
+import { EXAMPLE } from "../src/config";
+import { MAIN, startServer, until, wheelSpeeds, wheelsTurning, type TestServer } from "./client";
 
 const R = "r1-sim";
 const jsonRpcOnly = (s: TestServer) => {
@@ -122,6 +123,74 @@ describe("a twin behind stdio", () => {
   });
 });
 
+describe("the client cancels a call", () => {
+  test("notifications/cancelled mid-move stops the robot: wheels at 0, activity idle", async () => {
+    const s = await startServer();
+    const move = s.request("tools/call", { name: "drive", arguments: { robot_id: R, distance_cm: 80, speed_pct: 20 } });
+    await until("the wheels to turn", () => wheelsTurning(s, R));
+    const t0 = performance.now();
+    s.notify("notifications/cancelled", { requestId: move.id, reason: "the script was interrupted" });
+    await until("the robot to be idle", async () => {
+      const robots = await s.tool("list_robots");
+      return robots.envelope.ok && robots.envelope.data[0].activity === "idle";
+    });
+    expect(performance.now() - t0).toBeLessThan(2000); // the 80 cm would take 19 s
+    expect(await wheelSpeeds(s, R)).toEqual([0, 0, 0]);
+    expect(s.events("cancelled")).toEqual([{ ev: "cancelled", robot_id: R, tool: "drive", action: "stop" }]);
+    // the robot takes the next move
+    expect((await s.tool("drive", { robot_id: R, distance_cm: 2, speed_pct: 50 })).envelope.ok).toBe(true);
+    expect(await s.closeStdin()).toBe(0);
+    jsonRpcOnly(s);
+  });
+
+  test("a cancelled wait ends at once and moves nothing", async () => {
+    const s = await startServer();
+    const wait = s.request("tools/call", {
+      name: "wait_until",
+      arguments: {
+        robot_id: R,
+        condition: { device: "touch", channel: "pressed", op: "eq", value: true },
+        timeout_ms: 10000,
+      },
+    });
+    await until("the wait to be under way", async () => (await s.tool("read_all", { robot_id: R })).envelope.ok);
+    s.notify("notifications/cancelled", { requestId: wait.id });
+    await until("the cancel to be logged", () => s.events("cancelled").length > 0, 2000);
+    expect(s.events("cancelled")).toEqual([{ ev: "cancelled", robot_id: R, tool: "wait_until", action: "abort" }]);
+    expect((await s.tool("list_robots")).envelope).toMatchObject({ data: [{ activity: "idle" }] });
+    expect(await s.closeStdin()).toBe(0);
+  });
+});
+
+describe("two processes, one port", () => {
+  test("the second one ends with a message that names the port, and prints nothing on stdout", async () => {
+    const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+    const port = probe.port!;
+    await probe.stop(true);
+    const args = ["--ev3", EXAMPLE.robot, "--port", String(port)];
+    const first = await startServer(args);
+    try {
+      expect(first.stderr.some((l) => l.includes(`http://127.0.0.1:${port}/`))).toBe(true);
+      const second = Bun.spawn([process.execPath, MAIN, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const [out, err, code] = await Promise.all([
+        new Response(second.stdout).text(),
+        new Response(second.stderr).text(),
+        second.exited,
+      ]);
+      expect(code).toBe(1);
+      expect(out).toBe("");
+      expect(err).toContain(`cannot listen on 127.0.0.1:${port}`);
+      // the first one is untouched
+      expect((await first.tool("list_robots")).envelope).toMatchObject({
+        ok: true,
+        data: [{ id: "r1", link: "offline" }],
+      });
+    } finally {
+      expect(await first.closeStdin()).toBe(0);
+    }
+  });
+});
+
 describe("the process ends", () => {
   test("stdin closed mid-move: the motors are stopped, then it exits 0", async () => {
     const s = await startServer();
@@ -146,7 +215,7 @@ describe("the process ends", () => {
   });
 
   test("a wrong flag exits 2 with the usage on stderr and nothing on stdout", async () => {
-    const child = Bun.spawn([process.execPath, (await import("./client")).MAIN, "--twin", "missing.json"], {
+    const child = Bun.spawn([process.execPath, MAIN, "--twin", "missing.json"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

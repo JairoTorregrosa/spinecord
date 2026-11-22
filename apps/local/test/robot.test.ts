@@ -103,6 +103,42 @@ describe("activity", () => {
     expect(await tool("read_all")).toMatchObject({ robot: { activity: "fault" } });
   });
 
+  for (const order of ["stop first", "reset_fault first"] as const) {
+    const both = (tool: (name: string) => Promise<any>) =>
+      order === "stop first"
+        ? Promise.all([tool("stop"), tool("reset_fault")]).then(([stop, reset]) => ({ stop, reset }))
+        : Promise.all([tool("reset_fault"), tool("stop")]).then(([reset, stop]) => ({ stop, reset }));
+
+    test(`reset_fault and stop in parallel, ${order}: reset_fault answers the state the robot ends in`, async () => {
+      const { mock, robot, tool } = await mockRobot();
+      mock.stopVerified = false;
+      await tool("stop");
+      mock.stopVerified = true;
+      mock.stopDelayMs = 30;
+      const { reset } = await both(tool);
+      expect(reset).toMatchObject({ ok: true, data: { activity: "idle" }, robot: { activity: "idle" } });
+      expect(robot.view().activity).toBe("idle");
+    });
+
+    test(`reset_fault and stop in parallel, ${order}, stop unverified: reset_fault fails and the robot is in fault`, async () => {
+      const { mock, robot, tool } = await mockRobot();
+      mock.stopVerified = false;
+      await tool("stop");
+      mock.stopDelayMs = 30;
+      const { stop, reset } = await both(tool);
+      expect(stop).toMatchObject({ ok: true, data: { motors_stopped: false, activity: "fault" } });
+      expect(reset).toMatchObject({ ok: false, error: { code: "stop_unverified" }, robot: { activity: "fault" } });
+      expect(robot.view().activity).toBe("fault");
+    });
+  }
+
+  test("reset_fault sent with a stop from idle answers illegal_state for idle", async () => {
+    const { tool } = await mockRobot();
+    const [, reset] = await Promise.all([tool("stop"), tool("reset_fault")]);
+    expect(reset).toMatchObject({ ok: false, error: { code: "illegal_state" }, robot: { activity: "idle" } });
+    expect(!reset.ok && reset.error.message).toContain("is idle");
+  });
+
   test("stops sent in parallel are one stop", async () => {
     const { mock, tool } = await mockRobot();
     const before = mock.stops;

@@ -3,6 +3,7 @@
 // the socket and WebHID; the runtime and the real Ev3Provider run in this process, so nothing on the path of an
 // `until` watch depends on a browser timer.
 // Bound to 127.0.0.1 by name: nothing listens on the network (and Windows shows no firewall prompt).
+import { CLOSE_TAKEN } from "../../robot-page/src/bridge";
 import { TransportError, type Transport } from "../../../packages/driver-ev3/transport";
 
 export interface BridgePageFiles {
@@ -109,7 +110,6 @@ export function serveBridge(page: BridgePageFiles, port: number, events: BridgeE
           const origin = req.headers.get("origin");
           if (!origin || !origins(srv.port ?? port).includes(origin))
             return new Response("forbidden: this socket is for the page served here", { status: 403 });
-          if (current) return new Response("another page already lends an EV3 to this process", { status: 409 });
           return srv.upgrade(req, { data: undefined })
             ? undefined
             : new Response("expected a WebSocket upgrade", { status: 426 });
@@ -123,7 +123,8 @@ export function serveBridge(page: BridgePageFiles, port: number, events: BridgeE
       },
       websocket: {
         open(ws) {
-          if (current) return ws.close(4009, "another page already lends an EV3 to this process");
+          // refused after the upgrade, so the page receives the code and the reason
+          if (current) return ws.close(CLOSE_TAKEN, "another tab already holds the robot");
           current = { socket: ws, transport: null };
         },
         message(ws, data) {

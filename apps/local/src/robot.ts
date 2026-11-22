@@ -25,6 +25,8 @@ export class LocalError extends RuntimeError {
     message: string,
     retryable = false,
     readonly retry_after_ms?: number,
+    /** The call had started to move the robot: it may have partly happened, so the next step is a read. */
+    readonly afterMove = false,
   ) {
     super(code, message, retryable);
   }
@@ -42,7 +44,17 @@ export interface RobotOptions {
   onTransition?: (fsm: "link" | "activity", from: string, to: string, why: string) => void;
   /** Default DEADLINE_MARGIN_MS. */
   deadlineMarginMs?: number;
+  /** The client cancelled a call in flight. */
+  onCancel?: (tool: string, moving: boolean) => void;
 }
+
+/** A moving call's hold on the robot. `ended` resolves when its runtime call has fully ended. */
+interface Claim {
+  ended: Promise<void>;
+  end: () => void;
+}
+const MAY_HAVE_MOVED =
+  "The move had started and may have partly happened: read the robot (read_all) before moving again.";
 
 export class LocalRobot {
   readonly id: string;
@@ -52,9 +64,11 @@ export class LocalRobot {
   private faultReason: string | null = null;
   private rt: LocalRuntime | null = null;
   /** The one moving call in flight: its identity and when it has fully ended. */
-  private move: { ended: Promise<void> } | null = null;
+  private move: Claim | null = null;
   private stopRun: Promise<{ motors_stopped: boolean; activity: RobotActivity }> | null = null;
   private resetRun: Promise<RuntimeResult> | null = null;
+  /** The verified stop a reset_fault is running in the runtime; a stop waits for it instead of running beside it. */
+  private resetVerify: Promise<unknown> | null = null;
 
   constructor(private readonly o: RobotOptions) {
     this.id = o.id;
@@ -170,7 +184,8 @@ export class LocalRobot {
     return moving ? limits.max_command_ms : 0;
   }
 
-  async call(tool: string, args: Record<string, unknown>): Promise<RuntimeResult> {
+  /** `cancel` is the client's cancellation of this call: a moving call is then stopped (verified), any other is aborted. */
+  async call(tool: string, args: Record<string, unknown>, cancel?: AbortSignal): Promise<RuntimeResult> {
     const rt = this.online();
     if (tool === "stop") return { data: await this.stop() };
     if (tool === "reset_fault") return this.resetFault(rt);
@@ -181,7 +196,7 @@ export class LocalRobot {
         "fault",
         `Robot ${this.id} is in fault (${this.faultReason ?? "unknown reason"}). Read it (read_all), then call reset_fault.`,
       );
-    if (!moving) return this.bounded(rt, tool, args, false);
+    if (!moving) return this.bounded(rt, tool, args, null, cancel);
     if (this.activity !== "idle")
       throw new LocalError(
         "busy",
@@ -194,29 +209,39 @@ export class LocalRobot {
     const ended = new Promise<void>((resolve) => {
       end = resolve;
     });
-    const claim = { ended };
+    const claim: Claim = { ended, end };
     this.move = claim;
     this.toActivity(tool === "run_program" ? "running_program" : "acting", tool);
     try {
-      return await this.bounded(rt, tool, args, true);
+      return await this.bounded(rt, tool, args, claim, cancel);
+    } catch (e) {
+      // a move that failed on the way (the link dropped) is never "send it again": the robot may be somewhere else
+      if (e instanceof RuntimeError && e.retryable && !(e instanceof LocalError && e.afterMove))
+        throw new LocalError(e.code, `${e.message} ${MAY_HAVE_MOVED}`, false, undefined, true);
+      throw e;
     } finally {
-      // a stop or a fault that came meanwhile owns the state now; only an undisturbed move goes back to idle
+      // a stop or a fault that came meanwhile owns the state; only an undisturbed move goes back to idle
       if (this.move === claim) {
         this.move = null;
-        const now = this.activity as RobotActivity; // other calls ran during the await
-        if (now === "acting" || now === "running_program") this.toActivity("idle", `${tool} ended`);
+        const state = this.activity as RobotActivity; // other calls ran during the await
+        if (state === "acting" || state === "running_program") this.toActivity("idle", `${tool} ended`);
       }
-      end();
     }
   }
 
-  /** Runs one runtime call under a backstop deadline. Past it the call is aborted, a moving one is stopped, and the answer is `timeout`. */
+  /**
+   * Runs one runtime call under a backstop deadline; `claim` is set for a moving call. Past the deadline the call
+   * is aborted, a moving one is stopped, and the answer is `timeout`. On `cancel` a moving call is stopped the way
+   * `stop` does it, any other call is aborted; the call then ends with what the runtime answers.
+   */
   private async bounded(
     rt: LocalRuntime,
     tool: string,
     args: Record<string, unknown>,
-    moving: boolean,
+    claim: Claim | null,
+    cancel?: AbortSignal,
   ): Promise<RuntimeResult> {
+    const moving = claim !== null;
     const abort = new AbortController();
     const deadline =
       this.budgetMs(rt, tool, args, moving) + (this.o.deadlineMarginMs ?? DEADLINE_MARGIN_MS) + rt.stop_worst_ms;
@@ -224,31 +249,48 @@ export class LocalRobot {
     const late = new Promise<"late">((resolve) => {
       timer = setTimeout(() => resolve("late"), deadline);
     });
+    let onCancel: (() => void) | undefined;
+    const cancelled = new Promise<"cancelled">((resolve) => {
+      onCancel = () => resolve("cancelled");
+      if (cancel?.aborted) onCancel();
+      else cancel?.addEventListener("abort", onCancel, { once: true });
+    });
     const work = rt.call(tool as RobotTool, args, abort.signal, { activity: this.activity });
-    work.catch(() => {}); // when the deadline wins, the call's own end is not awaited
+    // when the deadline wins, the call's own end is not awaited; the claim ends with the runtime call
+    work.then(claim?.end, claim?.end ?? (() => {}));
     try {
-      const first = await Promise.race([work, late]);
+      let first = await Promise.race([work, late, cancelled]);
+      if (first === "cancelled") {
+        this.o.onCancel?.(tool, moving);
+        abort.abort();
+        // the same verified stop a `stop` call runs; it waits for this call's runtime call to end
+        if (moving && this.move === claim) await this.stop().catch(() => {});
+        first = await Promise.race([work, late]);
+      }
       if (first !== "late") return first;
       abort.abort();
       if (moving) {
-        // this call gives its claim up: the stop verifies the motors and does not wait for a call that hangs
-        this.move = null;
+        // this call gives its own claim up: the stop verifies the motors and does not wait for a call that hangs
+        if (this.move === claim) this.move = null;
         try {
           await this.stop();
         } catch {
           // no link to stop through (the robot went offline meanwhile): the move is over all the same
-          const now = this.activity as RobotActivity;
-          if (now === "acting" || now === "running_program")
+          const state = this.activity as RobotActivity;
+          if (state === "acting" || state === "running_program")
             this.toActivity("idle", `${tool} timed out, robot offline`);
         }
       }
       throw new LocalError(
         "timeout",
-        `${tool} did not end within ${deadline} ms; it was aborted${moving ? " and the robot was stopped. It may have moved: read the robot (read_all) before moving again" : ""}.`,
+        `${tool} did not end within ${deadline} ms; it was aborted${moving ? ` and the robot was stopped. ${MAY_HAVE_MOVED}` : "."}`,
         !moving,
+        undefined,
+        moving,
       );
     } finally {
       clearTimeout(timer);
+      if (onCancel) cancel?.removeEventListener("abort", onCancel);
     }
   }
 
@@ -264,6 +306,8 @@ export class LocalRobot {
       let stopped = false;
       let why = "the stop could not be verified: not every motor reads speed 0";
       try {
+        // one stop at a time on the hardware: reset_fault's own is a stop too, bounded like this one
+        await this.resetVerify?.catch(() => {});
         stopped = (await rt.stop()).motors_stopped;
       } catch (e) {
         why = `the stop failed: ${(e as Error).message}`;
@@ -294,31 +338,51 @@ export class LocalRobot {
     return this.stopRun;
   }
 
-  private resetFault(rt: LocalRuntime): Promise<RuntimeResult> {
+  /** Answers from the state the robot is really in: a stop running at the same time is awaited first and again after. */
+  private async resetFault(rt: LocalRuntime): Promise<RuntimeResult> {
+    // no await when no stop is running: the check below and the claim of resetRun stay in the caller's turn
+    if (this.stopRun) await this.stopRun.catch(() => {});
     if (this.resetRun) return this.resetRun;
     if (this.activity !== "fault")
       throw new LocalError(
         "illegal_state",
-        `reset_fault is only valid in fault; robot ${this.id} is ${this.activity}. Allowed now: every other tool.`,
+        `reset_fault is only valid in fault; robot ${this.id} is ${this.activity}. Allowed in ${this.activity}: every other tool.`,
       );
     this.resetRun = (async () => {
       // the runtime verifies the stop and throws stop_unverified when it cannot
-      const out = await rt.call("reset_fault", {}, new AbortController().signal, { activity: "fault" });
+      this.resetVerify = rt.call("reset_fault", {}, new AbortController().signal, { activity: "fault" });
+      try {
+        await this.resetVerify;
+      } catch (e) {
+        // answered once a stop sent at the same time has settled, so the envelope shows the state the robot ends in
+        this.resetVerify = null;
+        if (this.stopRun) await this.stopRun.catch(() => {});
+        throw e;
+      } finally {
+        this.resetVerify = null;
+      }
+      // a stop that came meanwhile has the last word on whether the motors are stopped
+      const stop = await this.stopRun?.catch(() => null);
+      if (stop && !stop.motors_stopped)
+        throw new LocalError(
+          "stop_unverified",
+          "A stop sent at the same time could not verify that every motor is stopped, so the fault stays. Check the brick's connection and power, then call stop and reset_fault again.",
+        );
       if (this.activity === "fault") this.toActivity("idle", "reset_fault verified the stop");
-      return out;
+      return { data: { activity: this.activity } };
     })().finally(() => {
       this.resetRun = null;
     });
     return this.resetRun;
   }
 
-  /** Process exit: stop the motors whatever the state, then let the runtime go. null = there was no link to stop through. */
+  /** Process exit: the same verified stop, joined with one already running, then the runtime is let go. null = there was no link to stop through. */
   async shutdown(): Promise<boolean | null> {
     const rt = this.rt;
     if (!rt || this.link !== "online") return null;
     let stopped = false;
     try {
-      stopped = (await rt.stop()).motors_stopped;
+      stopped = (await this.stop()).motors_stopped;
     } catch {
       /* reported as not stopped */
     }

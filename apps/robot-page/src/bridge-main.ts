@@ -11,7 +11,13 @@ const button = el<HTMLButtonElement>("choose");
 function draw(s: BridgeStatus): void {
   el("s-device").textContent = s.device === "ready" ? `connected (${s.deviceName || "EV3"})` : "not connected";
   el("s-socket").textContent =
-    s.socket === "open" ? "connected" : s.socket === "connecting" ? "connecting…" : "not running (retrying)";
+    s.socket === "open"
+      ? "connected"
+      : s.taken
+        ? "another tab already holds the robot"
+        : s.socket === "connecting"
+          ? "connecting…"
+          : "not running (retrying)";
   el("s-packets").textContent = String(s.packets);
   el("s-detail").textContent = s.detail;
   button.hidden = s.device === "ready";

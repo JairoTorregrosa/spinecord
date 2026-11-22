@@ -31,7 +31,11 @@ export const SOCKET_TRANSITIONS: Record<SocketState, readonly SocketState[]> = {
   open: ["closed"],
   closed: ["connecting"],
 };
+/** Close code of a socket the process refuses because another page already lends an EV3 to it. */
+export const CLOSE_TAKEN = 4009;
 export interface BridgeStatus {
+  /** The process answered that another tab already holds the robot; this page keeps asking. */
+  taken: boolean;
   device: DeviceState;
   deviceName: string | null;
   socket: SocketState;
@@ -69,6 +73,7 @@ export function startBridge(env: BridgeEnv): Bridge {
   let socket: BridgeSocket | null = null;
   let detail = env.hid ? "" : "WebHID is not available: use Chrome or Edge on a desktop";
   let packets = 0;
+  let taken = false;
   let disposed = false;
   let retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -76,6 +81,7 @@ export function startBridge(env: BridgeEnv): Bridge {
     device: deviceState,
     deviceName: device?.productName ?? null,
     socket: socketState,
+    taken,
     detail,
     packets,
   });
@@ -183,6 +189,7 @@ export function startBridge(env: BridgeEnv): Bridge {
       socket = null;
       const wasOpen = socketState === "open";
       toSocket("closed");
+      taken = ev.code === CLOSE_TAKEN;
       if (ev.reason) detail = ev.reason;
       // nobody is at the other end any more: whatever was moving stops here
       if (wasOpen && deviceState === "ready" && device) {

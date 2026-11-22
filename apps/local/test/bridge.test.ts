@@ -78,7 +78,12 @@ describe("a stock EV3 lent by the page", () => {
     const move = r.tool("drive", { distance_cm: 60, speed_pct: 20 });
     await until("the wheels to turn", () => r.usb.brick.motors[1]!.speedPct !== 0);
     await r.entry.page.dispose();
-    expect((await move).ok).toBe(false);
+    const dropped = await move;
+    // the move had started: it is not to be sent again blindly
+    expect(dropped).toMatchObject({ ok: false, error: { retryable: false } });
+    expect(dropped.next[0]).toBe("read_all");
+    expect(dropped.next).not.toContain("drive");
+    expect(!dropped.ok && dropped.error.message).toContain("may have partly happened");
     await until("the robot to be offline", () => r.fleet.robots[0]!.view().link === "offline");
     expect(r.fleet.robots[0]!.view().activity).toBe("idle");
     r.entry.page = r.openPage();
@@ -133,7 +138,9 @@ describe("a stock EV3 lent by the page", () => {
     r.entry.page = r.openPage();
     await r.online();
     const second = r.openPage();
-    await new Promise((res) => setTimeout(res, 200));
+    await until("the second tab to be refused", () => second.status().taken);
+    // refused after the upgrade, with a code and a reason the page shows
+    expect(second.status()).toMatchObject({ taken: true, detail: "another tab already holds the robot" });
     expect(second.status().socket).not.toBe("open");
     expect(r.fleet.robots[0]!.view().link).toBe("online");
     await second.dispose();

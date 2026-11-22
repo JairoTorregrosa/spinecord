@@ -69,10 +69,12 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
   let bridge: BridgeServer | null = null;
   const transitions = (id: string) => (fsm: string, from: string, to: string, why: string) =>
     o.log(fsm, { robot_id: id, from, to, why });
+  const cancels = (id: string) => (tool: string, moving: boolean) =>
+    o.log("cancelled", { robot_id: id, tool, action: moving ? "stop" : "abort" });
 
   for (const s of config.robots) {
     if (s.source === "twin") {
-      const robot = new LocalRobot({ id: s.id, onTransition: transitions(s.id) });
+      const robot = new LocalRobot({ id: s.id, onTransition: transitions(s.id), onCancel: cancels(s.id) });
       const { runtime, brick } = twinRuntime(s);
       await robot.attach(runtime);
       bricks.set(s.id, brick);
@@ -82,6 +84,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         id: s.id,
         connect: `Check that the brick is on and that ssh ${s.ssh.user}@${s.ssh.host} works, then restart this server.`,
         onTransition: transitions(s.id),
+        onCancel: cancels(s.id),
       });
       if (s.installBridge) o.log("bridge_installed", { robot_id: s.id, ...(await installBridge(s.ssh)) });
       const { pair } = s.robot;
@@ -133,6 +136,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         id: s.id,
         connect: `Ask the person at this computer to open ${b.url} in Chrome or Edge, plug the EV3 in over USB, turn it on and press "Connect EV3".`,
         onTransition: transitions(s.id),
+        onCancel: cancels(s.id),
       });
       closers.push(() => b.stop());
       robots.push(robot);

@@ -21,9 +21,10 @@ export function buildServer(robots: readonly LocalRobot[]): Server {
     { capabilities: { tools: {} }, instructions: LOCAL_SERVER_INSTRUCTIONS },
   );
   server.setRequestHandler("tools/list", async () => ({ tools: LISTED_TOOLS as never }));
-  server.setRequestHandler("tools/call", async (request) => {
+  server.setRequestHandler("tools/call", async (request, ctx) => {
     const name = request.params.name;
-    const out = await callTool(robots, name, request.params.arguments);
+    // the client's notifications/cancelled aborts this signal: a moving call is then stopped, any other aborted
+    const out = await callTool(robots, name, request.params.arguments, ctx.mcpReq.signal);
     const output = TOOL.get(name)?.output;
     // what leaves this process matches what tools/list advertised, or the call fails here, loudly
     const mismatch = output ? firstViolation(output, out.envelope) : null;
