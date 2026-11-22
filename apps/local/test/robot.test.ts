@@ -1,7 +1,7 @@
 // The per-robot state machine, in-process: a mock provider whose stop can be made to fail, and a twin whose
 // simulated brick is read directly.
 import { describe, expect, test } from "bun:test";
-import { ACTIVITY_TRANSITIONS, type RobotProfile } from "../../../packages/protocol/types";
+import { ACTIVITY_TRANSITIONS, RuntimeError, type RobotProfile } from "../../../packages/protocol/types";
 import { TOOLS } from "../../../packages/protocol/tools";
 import { realClock } from "../../../packages/runtime/clock";
 import { MockProvider } from "../../../packages/runtime/mock";
@@ -402,6 +402,43 @@ describe("a link that can close", () => {
       expect(robot.listing()).toMatchObject({ link: "offline", connect: "check the link" });
       await until("the robot is online again", () => robot.listing().link === "online");
       expect(events).toEqual(["gone", "ready"]);
+    } finally {
+      link.end();
+    }
+  });
+
+  test("why an attempt failed shows in list_robots until an attempt succeeds", async () => {
+    const robot = new LocalRobot({ id: "m1", connect: "check the link" });
+    const closers: ((reason: string) => void)[] = [];
+    let refuse = false;
+    const link = keepAttached(
+      robot,
+      () => {
+        const mock = new MockProvider({ clock: realClock });
+        if (refuse)
+          mock.devices = async () => {
+            throw new RuntimeError("misconfigured", "the bridge is version 2, this driver expects 3; reinstall it");
+          };
+        return {
+          runtime: createRuntime({ profile: PROFILE, providers: [mock], clock: realClock }),
+          onClose: (cb) => void closers.push(cb),
+          close: async () => {},
+        };
+      },
+      { log: () => {}, reconnectMs: 10 },
+    );
+    try {
+      await link.connect();
+      refuse = true;
+      closers[0]!("the peer went away");
+      await until("a failed attempt", () => (robot.listing().connect ?? "").includes("last attempt failed"));
+      expect(robot.listing()).toMatchObject({
+        link: "offline",
+        connect: "check the link The last attempt failed: the bridge is version 2, this driver expects 3; reinstall it",
+      });
+      refuse = false;
+      await until("the robot is online again", () => robot.listing().link === "online");
+      expect(robot.listing().connect).toBeNull();
     } finally {
       link.end();
     }

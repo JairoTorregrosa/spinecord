@@ -6,7 +6,7 @@
 //
 // Link: closed -> opening -> ready -> closed. Opening sends `hello` with the config; a transport
 // close or 3 s without a line from the bridge moves to closed and fails every pending request with
-// robot_offline. The next call opens again.
+// robot_offline. The next call opens again, until close(): a closed provider opens nothing.
 //
 // The provider never chunks and never retries a motion: the runtime does the first, nobody the second.
 import { RuntimeError } from "../../protocol/types";
@@ -382,6 +382,7 @@ export class Ev3devProvider implements Provider {
   private readonly roles: Record<string, string>;
   private state: LinkState = "closed";
   private opening: Promise<void> | null = null;
+  private ended = false; // close() was called: this provider opens no link again
   private fresh = false; // the inventory comes from the hello that just opened the link
   private inv: BridgeInventory | null = null;
   private specs: Map<string, DeviceSpec> | null = null;
@@ -558,6 +559,7 @@ export class Ev3devProvider implements Provider {
 
   /** Opens the link if it is closed: start the transport, start the heartbeat, send hello. */
   private ensure(): Promise<void> {
+    if (this.ended) return Promise.reject(this.closedForGood());
     if (this.state === "ready") return Promise.resolve();
     if (this.opening) return this.opening;
     this.state = "opening";
@@ -572,6 +574,7 @@ export class Ev3devProvider implements Provider {
             ? e
             : err("robot_offline", `ev3dev: cannot open the link to the brick: ${(e as Error)?.message ?? String(e)}`);
         }
+        if (this.ended) throw this.closedForGood(); // closed while the transport was starting
         this.lastRx = Date.now();
         this.heartbeat = setInterval(() => this.beat(), this.o.heartbeatMs);
         await this.hello(Math.max(1000, this.o.helloTimeoutMs - (Date.now() - t0)));
@@ -602,8 +605,16 @@ export class Ev3devProvider implements Provider {
     }
   }
 
-  /** Stops the heartbeat and closes the transport. The bridge brakes every motor when its input closes. */
+  private closedForGood(): RuntimeError {
+    return err("robot_offline", "ev3dev: this link to the brick was closed; a new link needs a new provider");
+  }
+
+  /**
+   * Stops the heartbeat and closes the transport, for good: every later call answers robot_offline at once and
+   * opens nothing. The bridge brakes every motor when its input closes.
+   */
   async close(): Promise<void> {
+    this.ended = true;
     this.teardown("closed by the caller");
     await this.transport.close();
   }

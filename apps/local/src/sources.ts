@@ -91,6 +91,7 @@ export function keepAttached(
       connect().then(
         () => o.log("ready"),
         (e: unknown) => {
+          robot.attachFailed((e as Error).message);
           o.log("attach_failed", { error: (e as Error).message });
           again();
         },
