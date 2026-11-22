@@ -1,7 +1,11 @@
 // Serial command queue over a Transport. The brick ignores a command that arrives
 // while it is still handling the previous one, so: one command at a time, always
 // with reply (type 0x00), matched by counter, and a timeout that rejects (fail loud).
-import { decodeReply, frame } from "./encode";
+//
+// Round trips are what a slow link (USB HID: about 2 ms per packet) charges for, so reads that are
+// queued together travel together: read() takes a builder instead of bytes, and the queue places
+// every waiting read in one direct command, each with its own slice of the reply.
+import { MAX_GLOBALS, MAX_MESSAGE, decodeReply, frame } from "./encode";
 import type { Transport } from "./transport";
 
 export type Ev3ErrorCode =
@@ -23,8 +27,15 @@ export class Ev3Error extends Error {
   }
 }
 
+/** Bytecodes of one read whose reply bytes start at global offset `base`. Must change nothing on the brick. */
+export type ReadBuilder = (base: number) => number[];
+
 interface Job {
   bytecodes: number[];
+  /** Set on a read: it may share a packet with other reads (see read()). */
+  build?: ReadBuilder;
+  /** A read that already failed inside a shared packet: it goes alone, so only the one at fault fails. */
+  alone?: boolean;
   globals: number;
   droppable: boolean;
   timeoutMs: number;
@@ -47,7 +58,10 @@ export class Ev3Link {
   private readonly urgent: Job[] = [];
   private running = false;
   private held = 0;
+  private rtt: number | null = null;
   readonly timeoutMs: number;
+  /** Direct commands sent so far (a shared packet counts once). */
+  packets = 0;
 
   constructor(
     private readonly transport: Transport,
@@ -71,6 +85,26 @@ export class Ev3Link {
       (opts.urgent ? this.urgent : this.normal).push(job);
       void this.pump();
     });
+  }
+
+  /**
+   * Queue a read that has no side effect on the brick. Reads waiting in the queue at the same time are sent
+   * as ONE direct command (their bytecodes one after the other, their replies side by side in the global
+   * buffer), split only where a packet would pass the firmware's limits. Resolves with this read's own
+   * `globals` bytes. If the brick rejects a shared packet, each of its reads is sent again alone, so a read
+   * the brick cannot answer fails by itself and the others still succeed.
+   */
+  read(build: ReadBuilder, globals: number): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+      this.normal.push({ bytecodes: [], build, globals, droppable: false, timeoutMs: this.timeoutMs, resolve, reject });
+      // One microtask later: reads issued in the same turn (a read of every device) are all queued by then.
+      queueMicrotask(() => void this.pump());
+    });
+  }
+
+  /** Smoothed round trip of one packet, ms (0 until the first reply). Slow commands (own timeout) are left out. */
+  get rttMs(): number {
+    return this.rtt ?? 0;
   }
 
   /**
@@ -113,6 +147,10 @@ export class Ev3Link {
       for (;;) {
         const job = this.urgent.shift() ?? (this.held > 0 ? undefined : this.normal.shift());
         if (!job) return;
+        if (job.build) {
+          await this.readTogether(job);
+          continue;
+        }
         try {
           job.resolve(await this.exchange(job));
         } catch (e) {
@@ -122,6 +160,48 @@ export class Ev3Link {
     } finally {
       this.running = false;
     }
+  }
+
+  /** Sends `first` and every read queued right behind it that fits in the same packet. */
+  private async readTogether(first: Job): Promise<void> {
+    const batch: Job[] = [];
+    const bases: number[] = [];
+    const bytecodes: number[] = [];
+    let globals = 0;
+    for (let job: Job | undefined = first; job; job = this.normal[0]) {
+      let bc: number[];
+      try {
+        // Past the reply buffer the builder cannot even address its bytes (GV is range checked): same as not fitting.
+        if (globals + job.globals > MAX_GLOBALS) throw new RangeError("reply buffer full");
+        bc = job.build!(globals);
+        if (7 + bytecodes.length + bc.length > MAX_MESSAGE) throw new RangeError("packet full");
+      } catch (e) {
+        if (batch.length) break; // it opens the next packet
+        if (job !== first) this.normal.shift();
+        job.reject(e instanceof RangeError ? new Ev3Error("bad_param", e.message) : (e as Error));
+        return;
+      }
+      if (job !== first) this.normal.shift();
+      batch.push(job);
+      bases.push(globals);
+      bytecodes.push(...bc);
+      globals += job.globals;
+      if (job.alone || !this.normal[0]?.build || this.normal[0].alone) break;
+    }
+    let reply: Uint8Array;
+    try {
+      reply = await this.exchange({ ...first, bytecodes, globals });
+    } catch (e) {
+      if (batch.length > 1 && e instanceof Ev3Error && e.code === "brick_error") {
+        // One of them is at fault, and the brick does not say which: each goes again, alone, ahead of the queue.
+        for (const job of batch) job.alone = true;
+        this.normal.unshift(...batch);
+        return;
+      }
+      for (const job of batch) job.reject(e as Error);
+      return;
+    }
+    batch.forEach((job, i) => job.resolve(reply.subarray(bases[i], bases[i] + job.globals)));
   }
 
   private async exchange(job: Job): Promise<Uint8Array> {
@@ -143,6 +223,8 @@ export class Ev3Link {
       );
     });
     let raw: Uint8Array;
+    this.packets++;
+    const t0 = performance.now();
     try {
       const sent = this.transport.send(packet);
       sent.catch(() => {}); // a late failure after the timeout must not become an unhandled rejection
@@ -152,6 +234,10 @@ export class Ev3Link {
       throw new Ev3Error("transport", `transport failed: ${(e as Error).message}`);
     } finally {
       clearTimeout(timer);
+    }
+    if (job.timeoutMs === this.timeoutMs) {
+      const ms = performance.now() - t0;
+      this.rtt = this.rtt === null ? ms : this.rtt + 0.25 * (ms - this.rtt);
     }
     let reply;
     try {

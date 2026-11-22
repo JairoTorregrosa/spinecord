@@ -53,6 +53,7 @@ import {
   uiLed,
 } from "./encode";
 import { Ev3Error, Ev3Link } from "./link";
+import { nextPollDelay, observedRate } from "./schedule";
 import type { Transport } from "./transport";
 
 /** No motion operation lasts longer than this on the brick (CONTRACT.md 0.8). */
@@ -105,9 +106,15 @@ export interface Ev3ProviderOptions {
   modeSwitchTimeoutMs?: number;
   /** How long stop() waits for the motors to read speed 0 after the brake, ms. Default 300. */
   stopSettleMs?: number;
-  /** Pause between polls while an operation runs, ms. Default 10. */
+  /**
+   * Shortest pause between two questions to the brick, ms. Default 10. A running operation is asked about
+   * when the answer can matter (schedule.ts) and at this tick near a degree target; stop() checks at this tick.
+   */
   pollMs?: number;
+  /** Clock, ms. Default performance.now. A clock that does not run at real speed needs `sleep` as well. */
   now?: () => number;
+  /** Waits `ms` of the same clock as `now`. Default: a real timer. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 // ---------------------------------------------------------------- device catalogue
@@ -379,6 +386,8 @@ interface Operation {
   opMs: number;
   /** Degrees the lead motor is expected to cover in opMs at the commanded speed. */
   expectDeg: number;
+  /** Commanded speed of the lead motor, deg/s (> 0). */
+  rate: number;
   brake: boolean;
   start: number[];
   measure: (deltas: number[], positions: number[]) => Record<string, Value>;
@@ -414,6 +423,7 @@ export class Ev3Provider implements Provider {
     stopSettleMs: number;
     pollMs: number;
     now: () => number;
+    sleep: (ms: number) => Promise<void>;
   };
   private readonly roles: Record<string, string>;
   private specs: Map<string, DeviceSpec> | null = null;
@@ -459,6 +469,7 @@ export class Ev3Provider implements Provider {
       stopSettleMs: opts.stopSettleMs ?? 300,
       pollMs: opts.pollMs ?? 10,
       now: opts.now ?? (() => performance.now()),
+      sleep: opts.sleep ?? sleep,
     };
     if (
       !(this.o.pair.left in OUTPUT_MASK) ||
@@ -903,7 +914,8 @@ export class Ev3Provider implements Provider {
   // ------------------------------------------------------------- read
 
   /**
-   * One Reading per channel, without changing anything on the brick. A channel that cannot be read has
+   * One Reading per channel, without changing anything on the brick. Reads issued together (a read of every
+   * device) share one packet: see Ev3Link.read(). A channel that cannot be read has
    * value null and an error, never a default. Sensor channels of a mode other than the current one come
    * back as null + "mode_switch_required" unless they are named in `channels` AND opts.allow_mode_switch is true.
    */
@@ -941,7 +953,7 @@ export class Ev3Provider implements Provider {
       case "motor": {
         const i = outputIndex(local as OutputPort);
         return group(async () => {
-          const g = await this.link.command(outputRead(i, 4, 0), 5);
+          const g = await this.link.read((b) => outputRead(i, b + 4, b), 5);
           return {
             position_deg: { value: readI32(g, 0) },
             speed_deg_s: { value: Math.round((readI8(g, 4) / 100) * this.o.degPerSecAt100) },
@@ -951,15 +963,14 @@ export class Ev3Provider implements Provider {
       }
       case "motor_pair":
         return group(async () => {
-          const g = await this.link.command(
-            [...outputGetCount(outputIndex(this.o.pair.left), 0), ...outputGetCount(outputIndex(this.o.pair.right), 4)],
-            8,
-          );
+          const li = outputIndex(this.o.pair.left),
+            ri = outputIndex(this.o.pair.right);
+          const g = await this.link.read((b) => [...outputGetCount(li, b), ...outputGetCount(ri, b + 4)], 8);
           return { left_deg: { value: readI32(g, 0) }, right_deg: { value: readI32(g, 4) } };
         });
       case "battery":
         return group(async () => {
-          const v = readF32(await this.link.command(uiBatteryVolts(0), 4), 0);
+          const v = readF32(await this.link.read(uiBatteryVolts, 4), 0);
           if (!Number.isFinite(v)) {
             const none = { value: null, error: "the brick returned no battery voltage" };
             return { voltage_v: none, low: none };
@@ -968,8 +979,8 @@ export class Ev3Provider implements Provider {
         });
       case "buttons":
         return group(async () => {
-          const g = await this.link.command(
-            BUTTON_NAMES.flatMap((_, i) => uiButtonPressed(i + 1, i)),
+          const g = await this.link.read(
+            (b) => BUTTON_NAMES.flatMap((_, i) => uiButtonPressed(i + 1, b + i)),
             BUTTON_NAMES.length,
           );
           return { pressed: { value: BUTTON_NAMES.filter((_, i) => g[i] !== 0) } };
@@ -1004,8 +1015,8 @@ export class Ev3Provider implements Provider {
     const current = names.filter((n) => chan(n).mode === this.modes[port]);
     if (current.length) {
       const count = Math.max(...current.map((n) => chan(n).count));
-      const g = await this.link.command(
-        [...inputReadySi(port, 0, -1, count, 0), ...inputGetTypeMode(port, count * 4, count * 4 + 1)],
+      const g = await this.link.read(
+        (b) => [...inputReadySi(port, 0, -1, count, b), ...inputGetTypeMode(port, b + count * 4, b + count * 4 + 1)],
         count * 4 + 2,
       );
       const nowType = g[count * 4],
@@ -1131,6 +1142,7 @@ export class Ev3Provider implements Provider {
               targetDeg: total,
               opMs,
               expectDeg: (rate * opMs) / 1000,
+              rate,
               brake,
               start: total < 0.5 ? [] : outputTimeSpeed(mask, dir * s.v, 0, opMs, 0, brake),
               measure: (d, at): Record<string, Value> =>
@@ -1164,6 +1176,7 @@ export class Ev3Provider implements Provider {
               targetDeg: null,
               opMs,
               expectDeg: ((Math.abs(v) / 100) * o.degPerSecAt100 * opMs) / 1000,
+              rate: (Math.abs(v) / 100) * o.degPerSecAt100,
               brake,
               start: outputTimeSpeed(mask, v, 0, opMs, 0, brake),
               measure: (d) => ({ degrees: d[0] }),
@@ -1216,6 +1229,7 @@ export class Ev3Provider implements Provider {
               targetDeg: total,
               opMs,
               expectDeg: (rate * opMs) / 1000,
+              rate,
               brake,
               start: total < 0.5 ? [] : outputTimeSync(mask, dir * s.v, turn, opMs, brake),
               measure: (d) => ({ left_deg: d[0], right_deg: d[1] }),
@@ -1373,42 +1387,73 @@ export class Ev3Provider implements Provider {
     for (const i of op.ports) this.running.set(i, entry);
     signal.addEventListener("abort", abort, { once: true });
     const n = op.ports.length;
-    const pollBc = [...op.ports.flatMap((p, i) => outputGetCount(p, i * 4)), ...outputTest(op.mask, n * 4)];
+    // Positions and busy flag travel together, and with whatever else the operation has to say: the
+    // start goes out behind the read of where it starts from, the early stop ahead of the read of where it ended.
+    const countsBc = op.ports.flatMap((p, i) => outputGetCount(p, i * 4));
+    const pollBc = [...countsBc, ...outputTest(op.mask, n * 4)];
     let at: number[] = [];
     let start: number[] = [];
-    const poll = async (droppable: boolean): Promise<boolean> => {
-      const g = await this.link.command(pollBc, n * 4 + 1, { droppable });
+    const ask = async (bc: number[], opts: { droppable?: boolean; urgent?: boolean }): Promise<boolean> => {
+      const g = await this.link.command(bc, n * 4 + 1, opts);
       at = op.ports.map((_, i) => readI32(g, i * 4));
       return g[n * 4] !== 0;
     };
+    const poll = (droppable: boolean) => ask(pollBc, { droppable });
     const moved = () => op.leadDir * (at[op.lead] - start[op.lead]);
     let reason: StopReason | null = null;
     let sent = false;
+    /** `at` is already the operation's last word: it ended coasting, so there is no rest position to wait for. */
+    let settled = false;
     try {
       try {
         if (preempted) reason = "preempted";
-        else {
+        else if (!op.start.length) {
           await poll(true);
           start = at.slice();
-          if (!op.start.length) reason = "completed"; // nothing to do: a zero-degree target
-          else if (preempted) reason = "preempted";
+          reason = "completed"; // nothing to do: a zero-degree target
         }
         if (reason === null) {
-          await this.link.command(op.start, 0, { droppable: true });
+          // One packet: where the motors are, then the time-bounded start.
+          const g = await this.link.command([...countsBc, ...op.start], n * 4, { droppable: true });
+          start = op.ports.map((_, i) => readI32(g, i * 4));
+          at = start.slice();
           sent = true;
+          const started = this.o.now();
           // The brick ends the operation by itself at opMs; past this, something is wrong with the brick.
-          const giveUp = this.o.now() + op.opMs + 2 * this.o.timeoutMs + 100;
+          const giveUp = started + op.opMs + 2 * this.o.timeoutMs + 100;
+          let seenAt = started;
+          let rate = op.rate;
+          let rateSeen = false;
           while (reason === null) {
-            await Promise.race([sleep(this.o.pollMs), woken]);
+            const wait = nextPollDelay({
+              pollMs: this.o.pollMs,
+              rttMs: this.link.rttMs,
+              endInMs: started + op.opMs - seenAt,
+              ...(op.targetDeg === null ? {} : { remainingDeg: op.targetDeg - moved(), rateDegS: rate, rateSeen }),
+            });
+            await Promise.race([this.o.sleep(wait - (this.o.now() - seenAt)), woken]);
             if (preempted) {
               reason = "preempted";
               break;
             }
+            const before = moved();
             const busy = await poll(true);
+            const t = this.o.now();
+            // A motor that turns faster than its calibration says is approached at the speed it shows.
+            const seen = observedRate(moved() - before, t - seenAt);
+            if (seen !== null) {
+              rate = Math.max(rate, seen);
+              rateSeen = true;
+            }
+            seenAt = t;
             if (op.targetDeg !== null && moved() >= op.targetDeg) {
-              await this.link.command(outputStop(op.mask, op.brake), 0, { urgent: true });
+              // One packet: the stop, then where the motors are.
+              await ask([...outputStop(op.mask, op.brake), ...pollBc], { urgent: true });
+              // Coasting on: the next operation reads its own start. Braked: read once more below, at rest.
+              settled = !op.brake;
               reason = "completed";
             } else if (!busy) {
+              settled = !op.brake;
               // Ended at the time bound.
               // "stalled" needs a window long enough for a real motor to get going from rest.
               if (op.opMs >= MIN_STALL_WINDOW_MS && op.expectDeg >= 5 && moved() < Math.max(1, 0.1 * op.expectDeg))
@@ -1430,7 +1475,7 @@ export class Ev3Provider implements Provider {
       }
       if (reason === "preempted" && sent && !byStop)
         await this.link.command(outputStop(op.mask, true), 0, { urgent: true });
-      if (sent) await poll(false);
+      if (sent && !settled) await poll(false);
     } finally {
       signal.removeEventListener("abort", abort);
       for (const i of op.ports) if (this.running.get(i) === entry) this.running.delete(i);
@@ -1477,7 +1522,7 @@ export class Ev3Provider implements Provider {
       for (;;) {
         if (still(await check)) return true;
         if (this.o.now() >= deadline) return false;
-        await sleep(this.o.pollMs); // a real pause: the shaft (or a simulated one driven by timers) needs time to stop
+        await this.o.sleep(this.o.pollMs); // a real pause: the shaft (or a simulated one driven by timers) needs time to stop
         check = ask();
       }
     } finally {
