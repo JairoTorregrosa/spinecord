@@ -141,8 +141,10 @@ export const LOOP_CAPS = {
 
 const PARTS = ["value", "integral", "derivative"] as const;
 const GUARD_OPS = ["gt", "lt", "abs_gt"] as const;
-// A name is a key of the report's trace and of a JSON object whose order must hold in every language.
-const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// A name is a key of the report's trace and of plain objects: an identifier, and never the one key an object
+// does not hold as its own.
+const NAME = /^(?!__proto__$)[A-Za-z_][A-Za-z0-9_]*$/;
+const NAME_RULE = "a name is letters, digits and _, not starting with a digit, and not __proto__";
 const TRACE_KEY = /^(t_ms|out\d+)$/;
 const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 const isText = (x: unknown): x is string => typeof x === "string" && x.length > 0;
@@ -176,8 +178,7 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
       const names = Object.keys(spec.params);
       if (names.length > LOOP_CAPS.max_params) out.push({ path: p, message: `at most ${LOOP_CAPS.max_params} params` });
       for (const name of names) {
-        if (!NAME.test(name))
-          out.push({ path: `${p}.${name}`, message: "a name is letters, digits and _, not starting with a digit" });
+        if (!NAME.test(name)) out.push({ path: `${p}.${name}`, message: NAME_RULE });
         else {
           params.add(name);
           if (!isNum(spec.params[name])) out.push({ path: `${p}.${name}`, message: "must be a finite number" });
@@ -203,8 +204,7 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
     for (const name of names) {
       const p = `${sp}.${name}`;
       const s = spec.signals[name];
-      if (!NAME.test(name))
-        out.push({ path: p, message: "a name is letters, digits and _, not starting with a digit" });
+      if (!NAME.test(name)) out.push({ path: p, message: NAME_RULE });
       else if (TRACE_KEY.test(name))
         out.push({ path: p, message: "t_ms and out<i> are keys of the trace; use another name" });
       else signals.add(name);

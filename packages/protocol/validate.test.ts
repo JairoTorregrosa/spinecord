@@ -114,12 +114,25 @@ const REFUSALS: [rule: string, path: string, mutate: (s: Record<string, any>) =>
   ["params that is no object", "loop.params", (s) => void (s.params = [1])],
   ["17 params", "loop.params", (s) => void (s.params = { ...s.params, ...named(14, (i) => i) })],
   ["a param name starting with a digit", "loop.params.1st", (s) => void (s.params["1st"] = 1)],
+  [
+    "a param named __proto__",
+    "loop.params.__proto__",
+    (s) => void (s.params = JSON.parse('{"edge":35,"speed":20,"k":0.5,"__proto__":1}')),
+  ],
   ["a param that is no number", "loop.params.edge", (s) => void (s.params.edge = "35")],
   ["a param that is not finite", "loop.params.edge", (s) => void (s.params.edge = Number.POSITIVE_INFINITY)],
   ["signals missing", "loop.signals", (s) => void delete s.signals],
   ["no signal", "loop.signals", (s) => void (s.signals = {})],
   ["9 signals", "loop.signals", (s) => void Object.assign(s.signals, named(6, signal))],
   ["a signal name with a dash", "loop.signals.left-wheel", (s) => void (s.signals["left-wheel"] = signal())],
+  [
+    "a signal named __proto__",
+    "loop.signals.__proto__",
+    (s) =>
+      void (s.signals = JSON.parse(
+        JSON.stringify(s.signals).replace(/}$/, ',"__proto__":{"device":"d","channel":"c"}}'),
+      )),
+  ],
   ["a signal named t_ms", "loop.signals.t_ms", (s) => void (s.signals.t_ms = signal())],
   ["a signal named out0", "loop.signals.out0", (s) => void (s.signals.out0 = signal())],
   ["a signal that is no object", "loop.signals.light", (s) => void (s.signals.light = "color")],

@@ -74,7 +74,7 @@ export function planLoop(spec: unknown, ctx: LoopContext): LoopPlan {
   const signals: LoopPlan["signals"] = Object.entries(loop.signals).map(([name, s]) => {
     const path = `loop.signals.${name}`;
     const where = `channel ${s.channel} of ${s.device}`;
-    const ch = ctx.signals[name];
+    const ch = Object.hasOwn(ctx.signals, name) ? ctx.signals[name] : undefined;
     if (!ch) throw new RuntimeError("unknown_channel", `${path}: ${where} is not a channel of the robot`);
     if (ch.active === false)
       throw refuse(
@@ -175,6 +175,7 @@ export interface LoopState {
   plan: LoopPlan;
   phase: "settling" | "running" | "ended";
   ticks: number;
+  law_ticks: number; // ticks on which the law ran: 0 while settling
   t_ms: number; // the sum of dt after the first tick
   params: Record<string, number>;
   ramps: Record<string, { from: number; to: number; ramp_ms: number; t_ms: number }>;
@@ -200,6 +201,7 @@ export function startLoop(plan: LoopPlan): LoopState {
     plan,
     phase: "settling",
     ticks: 0,
+    law_ticks: 0,
     t_ms: 0,
     params: { ...plan.params },
     ramps: {},
@@ -331,6 +333,7 @@ export function stepLoop(state: LoopState, inputs: readonly (number | null)[], d
   // signals: zero, detrend, smooth, then the derivative and the integral of the value
   const first = s.phase === "settling";
   s.phase = "running";
+  s.law_ticks++;
   for (let i = 0; i < plan.signals.length; i++) {
     const p = plan.signals[i]!;
     const sig = s.signals[i]!;
@@ -438,9 +441,13 @@ const add = (w: Window, x: number, weight: number): void => {
   w.sum += weight;
   w.n++;
 };
-/** Takes in the tick that produced `state`. Settling ticks are not counted. */
+/**
+ * Takes in the tick that produced `state`, once per tick. Settling ticks are not counted. The tick that ends a
+ * loop is, with its outputs at 0, and it always has a point in the trace: a report shows the reading that
+ * ended the loop.
+ */
 export function recordTick(stats: LoopStats, state: LoopState): void {
-  if (state.phase !== "running") return;
+  if (state.law_ticks === 0) return;
   const { plan, trace } = stats;
   state.signals.forEach((sig, i) => {
     const w = stats.signals[i]!;
@@ -455,7 +462,7 @@ export function recordTick(stats: LoopStats, state: LoopState): void {
     w.last = u;
     if (state.cut[i]) w.cut++;
   });
-  if (state.t_ms < stats.next_trace_ms) return;
+  if (state.t_ms < stats.next_trace_ms && state.phase !== "ended") return;
   const every_ms = 1000 / plan.trace_hz;
   while (stats.next_trace_ms <= state.t_ms) stats.next_trace_ms += every_ms;
   trace.t_ms.push(state.t_ms);

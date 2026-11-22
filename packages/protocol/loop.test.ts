@@ -177,6 +177,11 @@ describe("planLoop", () => {
   });
   test("a channel the robot does not have is unknown_channel", () => {
     expect(refusal(() => planLoop(base(), ctx({ signals: {} }))).code).toBe("unknown_channel");
+    const inherited = base({
+      signals: { constructor: { device: "s", channel: "c" } },
+      outputs: [{ device: "m", command: "power", terms: [{ feed: 1 }] }],
+    });
+    expect(refusal(() => planLoop(inherited, ctx({ signals: {} }))).code).toBe("unknown_channel");
   });
   test("a command without drives, or without a range for its argument, is unsupported", () => {
     for (const outputs of [[{}], [], [{ drives: POWER.drives }]]) {
@@ -417,6 +422,31 @@ describe("report statistics", () => {
     for (const key of Object.keys(long)) expect(long[key]!.length).toBe(200);
     expect(long.t_ms[199]).toBe(state.t_ms);
     expect(long.t_ms[199]! - long.t_ms[0]!).toBe(199 * 50);
+  });
+  test("the tick that ends a loop is counted, with its reading, outputs at 0 and a point in the trace", () => {
+    const plan = planLoop({ ...spec, guards: [{ name: "high", signal: "x", op: "gt", value: 5 }] }, ctx());
+    const stats = startStats(plan);
+    let state = startLoop(plan);
+    for (const x of [2, 2, 10]) {
+      state = stepLoop(state, [x], 10).state;
+      recordTick(stats, state);
+    }
+    expect(state.end).toEqual({ reason: "guard", guard: "high" });
+    const report = takeStats(stats);
+    expect(report.signals.x).toMatchObject({ last: 10, max: 10, derivative: 800 });
+    expect(report.outputs[0]).toMatchObject({ last: 0, min: 0, max: 2 });
+    expect(report.trace).toEqual({ t_ms: [0, 20], x: [2, 10], out0: [2, 0] });
+  });
+  test("a loop that ends while it settles leaves the statistics empty", () => {
+    const plan = planLoop(base({ signals: { x: { device: "s", channel: "c", zero: { mean_ms: 40 } } } }), ctx());
+    const stats = startStats(plan);
+    let state = startLoop(plan);
+    for (const x of [0, 50, 0]) {
+      state = stepLoop(state, [x], 20).state;
+      recordTick(stats, state);
+    }
+    expect(state.end).toEqual({ reason: "not_still" });
+    expect(takeStats(stats).trace.t_ms).toEqual([]);
   });
   test("ticks earlier than the law's first are not counted", () => {
     const plan = planLoop(base({ signals: { x: { device: "s", channel: "c", zero: { mean_ms: 40 } } } }), ctx());
