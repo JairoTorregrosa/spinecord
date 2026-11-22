@@ -191,8 +191,9 @@ export function startBridge(env: BridgeEnv): Bridge {
       toSocket("closed");
       taken = ev.code === CLOSE_TAKEN;
       if (ev.reason) detail = ev.reason;
-      // nobody is at the other end any more: whatever was moving stops here
-      if (wasOpen && deviceState === "ready" && device) {
+      // nobody is at the other end any more: whatever was moving stops here. A refused tab never held the robot:
+      // the tab that does is still lending it, so this one sends nothing
+      if (wasOpen && !taken && deviceState === "ready" && device) {
         const report = new Uint8Array(reportBytes);
         report.set(BRAKE_ALL);
         void device.sendReport(0, report).catch(() => {});

@@ -143,6 +143,10 @@ describe("a stock EV3 lent by the page", () => {
     expect(second.status()).toMatchObject({ taken: true, detail: "another tab already holds the robot" });
     expect(second.status().socket).not.toBe("open");
     expect(r.fleet.robots[0]!.view().link).toBe("online");
+    // the refused tab has the same EV3 open and keeps asking: it sends the brick nothing, and a move runs through
+    const move = await r.tool("drive", { distance_cm: 6, speed_pct: 30 });
+    expect(move).toMatchObject({ ok: true, data: { reason: "completed" } });
+    expect(r.usb.brick.sent.filter((p) => p.type === 0x80)).toEqual([]);
     await second.dispose();
   });
 
