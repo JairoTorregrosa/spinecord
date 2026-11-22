@@ -9,7 +9,7 @@
 import { ACTIVITY_TRANSITIONS, type BackendKind, type ErrorCode, LINK_TRANSITIONS, type StopReason } from "./types";
 
 export const SERVER_NAME = "spinecord";
-export const SERVER_VERSION = "2.1.0";
+export const SERVER_VERSION = "3.0.0";
 
 export const SERVER_INSTRUCTIONS = `Controls the robots this process runs on this computer: physical robots (for example LEGO EV3 bricks) and simulated twins. The tool set is fixed and generic: a robot is a set of devices; each device describes its readable channels and its bounded commands.
 

@@ -15,8 +15,9 @@ export const DEFAULT_REMOTE_PATH = "~/spinecord/ev3dev_bridge.py";
 
 /**
  * What a process's stderr adds to the reason its link closed, for a model and a person: the bridge's own lines
- * (`ev3dev_bridge: ...`) when it wrote any, else what was written (ssh's own message), without the dump an
- * interpreter prints when it aborts (a fatal error and its thread list, a traceback).
+ * (`ev3dev_bridge: ...`) when it wrote any, else what was written (ssh's own message). Of what an interpreter
+ * prints when it ends by itself only the line that says why is kept: the first line of a fatal error, the last
+ * line of a traceback (the exception: `ImportError: ...`). The thread list and the frames are dropped.
  */
 export function closeDetail(stderr: string): string {
   const lines = stderr
@@ -26,7 +27,16 @@ export function closeDetail(stderr: string): string {
   const own = lines.filter((l) => l.startsWith("ev3dev_bridge:"));
   if (own.length) return own.join(" ");
   const dump = lines.findIndex((l) => /^(Fatal Python error|Traceback \(most recent call last\))/.test(l));
-  return (dump < 0 ? lines : lines.slice(0, dump)).join(" ").trim();
+  if (dump < 0) return lines.join(" ").trim();
+  const rest = lines.slice(dump);
+  // a fatal error names itself on its first line; a traceback ends with the exception, its last unindented line
+  const why = rest[0]!.startsWith("Fatal Python error")
+    ? rest[0]!
+    : (rest
+        .slice(1)
+        .filter((l) => !/^\s/.test(l))
+        .pop() ?? "");
+  return [...lines.slice(0, dump), why].join(" ").trim();
 }
 
 /** Runs a command and exchanges text lines with it over stdin/stdout. stderr is kept for the close reason. */

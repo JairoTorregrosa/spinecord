@@ -726,11 +726,26 @@ describe("fake brick", () => {
       "  <no Python frame>",
     ].join("\n");
     expect(closeDetail(`${own}\n${dump}\n`)).toBe(own);
-    expect(closeDetail(dump)).toBe("");
+    // alone, a fatal error keeps its first line and loses the thread list
+    expect(closeDetail(dump)).toBe(
+      "Fatal Python error: _enter_buffered_busy: could not acquire lock for <_io.BufferedReader name='<stdin>'>",
+    );
+    // a bridge that cannot start (a module missing on the brick) says which error ended it
+    const importTime = [
+      "Traceback (most recent call last):",
+      '  File "/home/robot/.spinecord/ev3dev_bridge.py", line 60, in <module>',
+      "    import json",
+      "ImportError: No module named 'json'",
+    ].join("\n");
+    expect(closeDetail(importTime)).toBe("ImportError: No module named 'json'");
+    expect(closeDetail(`Warning: Permanently added 'brick' to known hosts.\n${importTime}\n`)).toBe(
+      "Warning: Permanently added 'brick' to known hosts. ImportError: No module named 'json'",
+    );
+    expect(closeDetail('Traceback (most recent call last):\n  File "x.py", line 1\nMemoryError\n')).toBe("MemoryError");
     expect(closeDetail("ssh: connect to host brick port 22: Connection refused\n")).toBe(
       "ssh: connect to host brick port 22: Connection refused",
     );
-    expect(closeDetail('Traceback (most recent call last):\n  File "x.py", line 1\nValueError: x\n')).toBe("");
+    expect(closeDetail('Traceback (most recent call last):\n  File "x.py", line 1\n')).toBe("");
     expect(closeDetail("")).toBe("");
   });
 

@@ -1,4 +1,4 @@
-# Contract v2 (2026-11-21): spinecord MCP
+# Contract v3 (2026-11-22): spinecord MCP
 
 Audience: the model (Claude Fable 5.2) and the people who extend the robot. English only on the MCP surface.
 

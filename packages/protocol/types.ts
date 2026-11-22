@@ -1,4 +1,4 @@
-// Mirrors CONTRACT.md v2. Change CONTRACT.md first.
+// Mirrors CONTRACT.md v3. Change CONTRACT.md first.
 // Nothing here names a use case. Robots are bags of devices; devices describe themselves.
 
 // ---------- Values and conditions ----------

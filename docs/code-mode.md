@@ -205,13 +205,13 @@ One run per row (n=1), 2026-11-22. Claude Code 2.1.330, interactive in tmux, mod
 |---|---|---|---|---|---|---|---|
 | 2.0.0 | off | 58 s | 15 | 14 | 2,596 | — | 4 legs, stops at 15.0 / 15.1 / 15.3 / 15.6 cm, turns 89° |
 | 2.0.0 | on | 134 s | 6 | 53 (40 `read_device`) | 3,565 | 1 | 4 legs, stops at 15.0 / 14.7 / 14.9 / 14.9 cm, turns 88–89° |
-| 2.1.0 | on | 74 s | 3 | 27 (16 `read_device`) | 2,386 | 0 | 4 legs, stops at 14.9 / 14.7 / 14.6 / 14.9 cm, turns 88–90° |
+| 3.0.0 | on | 74 s | 3 | 27 (16 `read_device`) | 2,386 | 0 | 4 legs, stops at 14.9 / 14.7 / 14.6 / 14.9 cm, turns 88–90° |
 
 What the rows show:
 
 - For four legs with no decision between calls, plain calls are the faster way (§5). The eight calls of §4 take about 18 s on the twin; the rest of a Code Mode run is the model writing scripts and the reads it adds to them.
-- The script that threw in the 2.0.0 row read `data.readings` from `read_device`; server 2.0.0 answers `read_device` with a bare array. It ended with the robot still at its start and cost one model request. Server 2.1.0 answers every channel read as `{readings}` (§3.2), and its instructions carry the shapes and the helper of §3.1.
-- In both Code Mode rows the model used `drive` with `until`, not a polling loop of its own, and added reads around each move to cross-check it (pose, odometer, gyro). Those reads are most of the calls, and how many the model adds is its choice in each run. In the 2.1.0 row each leg is one `drive` and one `turn`: the reading that met the condition comes with the move (§3.4).
+- The script that threw in the 2.0.0 row read `data.readings` from `read_device`; server 2.0.0 answers `read_device` with a bare array. It ended with the robot still at its start and cost one model request. Server 3.0.0 answers every channel read as `{readings}` (§3.2), and its instructions carry the shapes and the helper of §3.1.
+- In both Code Mode rows the model used `drive` with `until`, not a polling loop of its own, and added reads around each move to cross-check it (pose, odometer, gyro). Those reads are most of the calls, and how many the model adds is its choice in each run. In the 3.0.0 row each leg is one `drive` and one `turn`: the reading that met the condition comes with the move (§3.4).
 - With n=1 per row, wall time and call count carry the spread of the model's choices. The row-to-row difference that does not depend on it is the script that threw on a shape.
 
 ## 7. Limits
