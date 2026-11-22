@@ -12,6 +12,8 @@ import { createRuntime } from "../packages/runtime/runtime";
 import { now, profileFor, ROOT } from "./rig";
 import { metric, skipped, type Metric } from "./stats";
 
+/** The ports of the motor pair of the fake brick: the pair the example twin profile (rig.ts) drives. */
+const PAIR = { left: "B", right: "C" } as const;
 const fakeBrick = () =>
   new FakeBrick({
     motors: [{ port: "B" }, { port: "C" }],
@@ -73,6 +75,7 @@ export async function benchEv3dev(n: number, cold: number): Promise<Record<strin
     const provider = new Ev3devProvider(brick.transport(python), {
       limits: profile.limits,
       hardware: EXAMPLE_EV3DEV_HARDWARE,
+      pair: PAIR,
       roles: profile.roles,
     });
     try {
@@ -118,6 +121,7 @@ export async function benchEv3dev(n: number, cold: number): Promise<Record<strin
           const p = new Ev3devProvider(new SshLineTransport(ssh), {
             limits: profile.limits,
             hardware: EXAMPLE_EV3DEV_HARDWARE,
+            pair: PAIR,
           });
           try {
             const devices = await p.devices();
