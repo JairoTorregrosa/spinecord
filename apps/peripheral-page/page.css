@@ -131,12 +131,19 @@ button.ghost {
 }
 .banner-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 .banner-actions button {
   background: rgba(255, 255, 255, 0.16);
   color: inherit;
   border-color: rgba(255, 255, 255, 0.5);
+}
+.banner-actions button.resume {
+  background: #ffffff;
+  color: #1b1d1f;
+  border-color: #ffffff;
+  font-weight: 600;
 }
 .banner-actions button.danger {
   background: #ffffff;

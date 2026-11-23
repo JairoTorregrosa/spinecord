@@ -103,6 +103,8 @@ export interface KitStatus {
   rejoin: { attempt: number; since: number; code: number; reason: string } | null;
   /** The person paused lending; a pause outlives a socket that closes and is said again after the welcome. */
   held: boolean;
+  /** Devices that are down, and why. */
+  down: Record<string, string>;
   /** Ids of the devices announced, and what could not be lent. */
   devices: string[];
   unavailable: PageUnavailable[];
@@ -140,7 +142,7 @@ export const REJOIN = {
   prepare_ms: 3000,
 } as const;
 /** Close codes after which a hello cannot be accepted again: the process ends, or it refused this page's hello. */
-const FINAL_CLOSE: ReadonlySet<number> = new Set([1001, 4000, 4001, 4004, 4010, 4029]);
+const FINAL_CLOSE: ReadonlySet<number> = new Set([1001, 4000, 4001, 4004, 4008, 4010, 4029]);
 
 const PUSHES_PER_S = 20;
 const STATE: Record<KitState, readonly KitState[]> = {
@@ -230,6 +232,7 @@ export function createKit(o: KitOptions): Kit {
     closed,
     rejoin: away ? { attempt: away.attempt, since: away.since, code: away.code, reason: away.reason } : null,
     held: held !== null,
+    down: Object.fromEntries(downs),
     devices: [...announced.keys()],
     unavailable: [...unavailable],
   });
@@ -548,10 +551,12 @@ export function createKit(o: KitOptions): Kit {
     down(id, why) {
       downs.set(id, why);
       if (joined() && announced.has(id)) send({ t: "down", device: id, why });
+      o.onStatus?.(status());
     },
     up(id) {
       downs.delete(id);
       if (joined() && announced.has(id)) send({ t: "up", device: id });
+      o.onStatus?.(status());
     },
     pause(why) {
       if (state === "lending") {

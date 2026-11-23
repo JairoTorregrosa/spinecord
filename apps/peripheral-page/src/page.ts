@@ -58,6 +58,10 @@ export interface Page {
   stopLending(): void;
   /** Call on every visibilitychange. */
   visibilityChanged(): void;
+  /** The kinds whose permission the browser would prompt for again: the banner offers the tap that asks. */
+  needsTap(): ("camera" | "mic")[];
+  /** The person's tap on "Tap to resume camera and microphone": asks the browser again, inside that gesture. */
+  resumeMedia(): Promise<void>;
   wake(): WakeState;
 }
 
@@ -148,5 +152,15 @@ export function createPage(o: PageOptions): Page {
       void mic?.reacquire();
     },
     wake: () => wake.state(),
+    needsTap: () => [...(cam?.needsTap() ? ["camera" as const] : []), ...(mic?.needsTap() ? ["mic" as const] : [])],
+    async resumeMedia() {
+      wake.acquire(); // in the tap, before any await
+      // each getUserMedia is called before the first await, so both are inside the gesture
+      await Promise.all([
+        cam?.needsTap() ? cam.reacquire({ tap: true }) : undefined,
+        mic?.needsTap() ? mic.reacquire({ tap: true }) : undefined,
+      ]);
+      o.onStatus?.(kit.status());
+    },
   };
 }

@@ -129,7 +129,7 @@ describe("joining again after the socket closed", () => {
   });
 
   test("an unknown robot, a refused manifest, too many pages and the process ending stop it too", async () => {
-    for (const code of [4000, 4004, 4010, 4029, 1001]) {
+    for (const code of [4000, 4004, 4008, 4010, 4029, 1001]) {
       const r = rig();
       await r.join();
       r.sock().closeFromServer(code, "refused");
@@ -139,17 +139,13 @@ describe("joining again after the socket closed", () => {
     }
   });
 
-  test("a name still held by the dead socket is tried again: the process lets it go when it sees the close", async () => {
+  test("a socket another hello under its name replaced (4008) stops: the newer page holds the place", async () => {
     const r = rig();
     await r.join();
-    r.sock().closeFromServer(1006, "");
-    await r.opened(2);
-    r.sock().open();
-    r.sock().closeFromServer(4009, "the name desk is taken");
-    expect(r.page.kit.status().state).toBe("reconnecting");
-    await r.opened(3);
-    r.welcome();
-    expect(r.page.kit.status().state).toBe("lending");
+    r.sock().closeFromServer(4008, "a page joined under the name desk; this one does not join again");
+    expect(r.page.kit.status()).toMatchObject({ state: "closed", closed: { code: 4008 } });
+    await tick(60);
+    expect(r.sockets.length).toBe(1);
   });
 
   test("away longer than the process keeps its place, it stops and says why", async () => {

@@ -386,9 +386,43 @@ describe("peripheral pages", () => {
     const d = await r.twin("describe_robot");
     expect(d.data.pages.length).toBe(1);
     expect((await r.twin("read_device", { device: "desk.touch" })).ok).toBe(true);
-    // a second page under a name that is held is refused
-    const twin = await r.page();
-    expect(await twin.closed).toMatchObject({ code: 4009 });
+  });
+
+  test("a socket dropped without a close frame: the page joins again under its name and takes its place at once", async () => {
+    const r = await rig();
+    const p = await r.joined();
+    // the phone's socket is gone, and the process never saw it close: no close frame, no answer to a ping
+    p.silence();
+    const t0 = Date.now();
+    const again = await r.joined();
+    expect(Date.now() - t0).toBeLessThan(1000);
+    // the old socket is closed with a code a page does not retry
+    expect(await p.closed).toMatchObject({ code: 4008 });
+    const d = await r.twin("describe_robot");
+    expect(d.data.pages).toEqual([expect.objectContaining({ name: "desk", state: "active" })]);
+    expect(d.data.devices.map((x: { id: string }) => x.id)).toContain("desk.touch");
+    const waiting = r.twin("wait_until", {
+      condition: { device: "desk.touch", channel: "b1", op: "eq", value: true },
+      timeout_ms: 3000,
+    });
+    setTimeout(() => again.press(), 100);
+    expect((await waiting).data).toMatchObject({ met: true });
+    expect(r.pageEvents().map((e) => e.to)).toEqual(["announced", "active", "asleep", "announced", "active"]);
+  });
+
+  test("a hello under a page's name with a wrong token displaces nothing", async () => {
+    const r = await rig();
+    const p = await r.joined();
+    const stranger = await r.page({ token: "not-the-token" });
+    expect(await stranger.closed).toMatchObject({ code: 4001 });
+    const d = await r.twin("describe_robot");
+    expect(d.data.pages).toEqual([expect.objectContaining({ name: "desk", state: "active" })]);
+    const waiting = r.twin("wait_until", {
+      condition: { device: "desk.touch", channel: "b1", op: "eq", value: true },
+      timeout_ms: 3000,
+    });
+    setTimeout(() => p.press(), 100);
+    expect((await waiting).data).toMatchObject({ met: true });
   });
 
   test("a runtime built again finds the page's devices where they were", async () => {

@@ -1041,37 +1041,92 @@ describe("sleep and waking up", () => {
     expect(track.stopped).toBe(true);
   });
 
-  test("a permission the browser says is gone is never asked for outside the tap", async () => {
+  test("a permission the browser took back (denied) is never asked for: the device leaves for unavailable", async () => {
     const { join, sock, browser, setVisible } = rig({ ...PHONE, permissions: true });
     await join("phone");
     browser.video.end();
-    browser.audioTrack.end();
     browser.permission("camera", "denied");
-    browser.permission("microphone", "prompt");
     const asked = browser.asked.length;
     setVisible(true);
     await tick(5);
-    // no getUserMedia: no prompt the person did not tap for
     expect(browser.asked.length).toBe(asked);
-    expect(browser.permissionAsks).toEqual(expect.arrayContaining(["query camera", "query microphone"]));
     const last = sock
       .json()
       .filter((m) => m.t === "devices")
       .at(-1)!;
     expect(ids(last.devices)).not.toContain("camera");
-    expect(ids(last.devices)).not.toContain("mic");
-    expect(last.unavailable).toEqual(
-      expect.arrayContaining([
-        {
-          kind: "camera",
-          why: "camera: the page could not get the camera back: the browser took back the permission for the camera; reload the page and tap Lend this device to lend it again",
-        },
-        {
-          kind: "microphone",
-          why: "microphone: the page could not get the microphone back: the browser would ask the person for the microphone again, and the page asks only in the tap; reload the page and tap Lend this device to lend it again",
-        },
-      ]),
-    );
+    expect(last.unavailable).toContainEqual({
+      kind: "camera",
+      why: "camera: the page could not get the camera back: the browser took back the permission for the camera; reload the page and tap Lend this device to lend it again",
+    });
+    expect(browser.permissionAsks).toContain("query camera");
+  });
+
+  test("a permission the browser would prompt for again: down with tap the page to resume, then one tap asks and it is up", async () => {
+    const { join, sock, browser, setVisible, page } = rig({ ...PHONE, permissions: true });
+    await join("phone");
+    const camera = browser.video;
+    const microphone = browser.audioTrack;
+    setVisible(false);
+    camera.end();
+    microphone.end();
+    // Safari on iOS after a lock: asking would show the person a prompt
+    browser.permission("camera", "prompt");
+    browser.permission("microphone", "prompt");
+    const asked = browser.asked.length;
+    setVisible(true);
+    await tick(5);
+    // nothing asked outside a tap; both stay in the manifest, down, with what to do
+    expect(browser.asked.length).toBe(asked);
+    expect(sock.json()).toContainEqual({
+      t: "down",
+      device: "camera",
+      why: "the browser asks for the camera again: tap the page to resume",
+    });
+    expect(sock.json()).toContainEqual({
+      t: "down",
+      device: "mic",
+      why: "the browser asks for the microphone again: tap the page to resume",
+    });
+    expect(page.kit.status().devices).toEqual(expect.arrayContaining(["camera", "mic"]));
+    expect(page.kit.status().down).toMatchObject({ camera: expect.stringContaining("tap the page to resume") });
+    expect(page.needsTap()).toEqual(["camera", "mic"]);
+    // the tap on the banner's button: getUserMedia for both, inside the gesture (called before any await)
+    const tapped = page.resumeMedia();
+    expect(browser.asked.slice(asked)).toEqual(["camera", "microphone"]);
+    await tapped;
+    await tick(5);
+    expect(browser.video).not.toBe(camera);
+    expect(browser.audioTrack).not.toBe(microphone);
+    expect(page.needsTap()).toEqual([]);
+    expect(
+      sock
+        .json()
+        .filter((m) => m.t === "up")
+        .map((m) => m.device),
+    ).toEqual(expect.arrayContaining(["camera", "mic"]));
+    expect(page.kit.status().down).toEqual({});
+  });
+
+  test("the person refuses in that tap: the device leaves for unavailable", async () => {
+    const { join, sock, browser, setVisible, page } = rig({ ...PHONE, permissions: true });
+    await join("phone");
+    browser.video.end();
+    browser.permission("camera", "prompt");
+    setVisible(true);
+    await tick(5);
+    browser.refuseAgain();
+    await page.resumeMedia();
+    const last = sock
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!;
+    expect(ids(last.devices)).not.toContain("camera");
+    expect(last.unavailable).toContainEqual({
+      kind: "camera",
+      why: "camera: the page could not get the camera back: the person did not allow it; reload the page and tap Lend this device to lend it again",
+    });
+    expect(page.needsTap()).toEqual([]);
   });
 
   test("a permission still granted is taken back without a prompt", async () => {

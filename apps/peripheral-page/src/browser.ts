@@ -174,22 +174,23 @@ export function denied(e: unknown): boolean {
 }
 
 /**
- * Why the page may not ask for the camera or the microphone again outside the person's tap: the browser took the
- * permission back ("denied") or would ask the person again ("prompt"). null when it says granted, or cannot say (no
- * Permissions API, or one that does not know the name): the page then asks, and a refusal is said the same way.
+ * What the browser says of the camera's or the microphone's permission, without a prompt: "denied" (taken back),
+ * "prompt" (asking would show the person a prompt: Safari on iOS answers so after a lock), or null when it says
+ * granted or cannot say (no Permissions API, or one that does not know the name). The page asks outside a tap only on
+ * null, and a refusal then is said the same way as "denied".
  */
-export async function permissionGone(win: Win, what: "camera" | "microphone"): Promise<string | null> {
+export async function permissionState(win: Win, what: "camera" | "microphone"): Promise<"denied" | "prompt" | null> {
   let state: string | undefined;
   try {
     state = (await win.navigator.permissions?.query({ name: what }))?.state;
   } catch {
     return null;
   }
-  if (state === "denied") return `the browser took back the permission for the ${what}`;
-  if (state === "prompt")
-    return `the browser would ask the person for the ${what} again, and the page asks only in the tap`;
-  return null;
+  return state === "denied" || state === "prompt" ? state : null;
 }
+/** Why a device whose permission the browser would ask for again is down: the banner's button is that tap. */
+export const tapToResume = (what: "camera" | "microphone") =>
+  `the browser asks for the ${what} again: tap the page to resume`;
 /** The end of the reason a device left the manifest for: what the person does to lend it again. */
 export const LEND_AGAIN = "reload the page and tap Lend this device to lend it again";
 

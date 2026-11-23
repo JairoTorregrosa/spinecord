@@ -122,6 +122,8 @@ pause.addEventListener("click", () => {
   else page.kit.pause("the person pressed pause");
 });
 el("stop-lending").addEventListener("click", () => page.stopLending());
+// the browser asks again for the camera or the microphone only in a tap: this one
+el("resume-media").addEventListener("click", () => void page.resumeMedia().then(() => draw()));
 el("reload").addEventListener("click", () => location.reload());
 
 const KIND_NAMES: Record<string, string> = {
@@ -174,6 +176,9 @@ function draw(s: KitStatus = page.kit.status()): void {
     .manifest()
     .devices.some((d) => d.id === "mic" && d.commands.some((c) => c.name === "listen"));
   pause.textContent = s.held ? "Resume" : "Pause";
+  const waiting = page.needsTap();
+  el("resume-media").hidden = waiting.length === 0;
+  if (waiting.length) banner.hidden = false;
   el("status").textContent = STATUS_TEXT[s.state](s);
   el("status").dataset.state = s.state;
   const list = el("lent-list");

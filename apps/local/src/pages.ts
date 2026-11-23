@@ -267,13 +267,10 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
       typeof name === "string"
         ? pages.find((p) => p.robot === robot && p.link.name === name && p.link.state !== "gone")
         : undefined;
-    // a page whose socket closed gives its name to the one that joins under it
-    const taken = pages
-      .filter((p) => p.robot === robot && p.link.state !== "gone" && p.socket !== null)
-      .map((p) => p.link.name);
-    const nameIssue = pageNameIssue(name, taken);
-    if (nameIssue)
-      return refuse(ws, taken.includes(name as string) ? PAGE_CLOSE.name_taken : PAGE_CLOSE.bad_message, nameIssue);
+    // the token is checked above: a hello under a page's name is that page joining again, and it takes its place,
+    // whether or not its old socket was seen to close (a phone drops one without a close frame)
+    const nameIssue = pageNameIssue(name);
+    if (nameIssue) return refuse(ws, PAGE_CLOSE.bad_message, nameIssue);
     if (size > PAGE_CAPS.max_hello_bytes)
       return refuse(
         ws,
@@ -291,6 +288,13 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
     if (conn.helloTimer) clearTimeout(conn.helloTimer);
     conn.helloTimer = null;
     let page: Page;
+    if (old?.socket) {
+      const prev = old.socket;
+      old.socket = null;
+      old.link.closed();
+      to(old, "asleep", "a page joined under its name with the token, in place of its socket");
+      refuse(prev, PAGE_CLOSE.replaced, `a page joined under the name ${old.link.name}; this one does not join again`);
+    }
     if (old) {
       old.hub.join(old.link.name, socket, devices, unavailable);
       old.socket = ws;

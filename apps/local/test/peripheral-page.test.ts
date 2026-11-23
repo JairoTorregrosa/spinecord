@@ -48,6 +48,8 @@ async function rig(pageTimes: Partial<PageTimes> = {}, args: string[] = []) {
     // a locked phone: its page runs no script, so the process's messages wait unanswered
     const life = { frozen: false, visible: true };
     const sockets: WebSocket[] = [];
+    const vanishers = new Map<WebSocket, () => void>();
+    const vanished = new Set<WebSocket>();
     const page = createPage({
       win: browser.win,
       url: `ws://${host}/page`,
@@ -56,8 +58,10 @@ async function rig(pageTimes: Partial<PageTimes> = {}, args: string[] = []) {
         const ws = new WebSocket(u, { headers: { Origin: `http://${host}` } } as unknown as string[]);
         sockets.push(ws);
         const add = ws.addEventListener.bind(ws) as (t: string, cb: (ev: unknown) => void) => void;
-        (ws as unknown as { addEventListener: typeof add }).addEventListener = (t, cb) =>
-          add(t, (ev) => (t === "message" && life.frozen ? undefined : cb(ev)));
+        (ws as unknown as { addEventListener: typeof add }).addEventListener = (t, cb) => {
+          if (t === "close") vanishers.set(ws, () => cb({ code: 1006, reason: "" }));
+          add(t, (ev) => (t === "message" && (life.frozen || vanished.has(ws)) ? undefined : cb(ev)));
+        };
         return ws as never;
       },
       visible: () => life.visible,
@@ -84,7 +88,13 @@ async function rig(pageTimes: Partial<PageTimes> = {}, args: string[] = []) {
     };
     /** The browser closes the page's socket (a phone puts the page in the background). */
     const drop = () => sockets.at(-1)!.close(4999, "the browser closed the socket");
-    return { page, browser, lock, drop, sockets };
+    /** The page sees its socket close and the process does not: no close frame reaches it (iOS drops sockets so). */
+    const vanish = () => {
+      const ws = sockets.at(-1)!;
+      vanished.add(ws);
+      vanishers.get(ws)!();
+    };
+    return { page, browser, lock, drop, vanish, sockets };
   };
   return { call, url, lend };
 }
@@ -227,6 +237,22 @@ describe("the peripheral page against the listener and the hub", () => {
     });
     setTimeout(() => page.touch.press(0), 100);
     expect((await waiting).data).toMatchObject({ met: true });
+  });
+
+  test("a socket the process never saw close: the page joins again and takes its place in under 1 s", async () => {
+    const r = await rig();
+    const { page, vanish, sockets } = await r.lend();
+    const t0 = Date.now();
+    vanish();
+    await until(
+      "the page to be lending again",
+      async () => page.kit.status().state === "lending" && sockets.length >= 2,
+    );
+    expect(Date.now() - t0).toBeLessThan(1000);
+    const d = await r.call("describe_robot");
+    expect(d.data.pages).toEqual([expect.objectContaining({ name: "desk", state: "active" })]);
+    expect(d.data.devices.map((x: { id: string }) => x.id)).toContain("desk.camera");
+    expect(page.kit.status().state).toBe("lending");
   });
 
   test("a page whose token the process refuses stops at once: one socket, closed with the reason", async () => {

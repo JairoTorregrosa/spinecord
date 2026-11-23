@@ -1,6 +1,6 @@
 {
   "schema": "spinecord/ext-page@1",
-  "at": "2026-11-23T20:43:12.200Z",
+  "at": "2026-11-23T21:07:57.514Z",
   "browser": "Google Chrome",
   "headless": true,
   "os": "darwin arm64",
@@ -28,26 +28,26 @@
     "wait_until_closed_true": {
       "met": true,
       "reason": "condition_met",
-      "ms": 308,
+      "ms": 310,
       "readings": [
         {
           "device": "desk.door",
           "channel": "closed",
           "value": true,
-          "ts": 1795466588347
+          "ts": 1795468073659
         }
       ]
     },
     "wait_until_closed_false": {
       "met": true,
       "reason": "condition_met",
-      "ms": 311,
+      "ms": 305,
       "readings": [
         {
           "device": "desk.door",
           "channel": "closed",
           "value": false,
-          "ts": 1795466588658
+          "ts": 1795468073969
         }
       ]
     },
