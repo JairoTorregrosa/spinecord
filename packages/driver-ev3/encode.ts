@@ -62,15 +62,37 @@ export const SUB = {
   UI_DRAW_FILLWINDOW: 0x13,
   SOUND_BREAK: 0x00,
   SOUND_TONE: 0x01,
+  // opINPUT_DEVICE subcodes, lms2012 bytecodes.h (enum INPUT_DEVICE_SUBCODE); reply layouts from c_input.c
+  INPUT_GET_FORMAT: 0x02,
   INPUT_GET_TYPEMODE: 0x05,
+  INPUT_GET_SYMBOL: 0x06,
+  INPUT_GET_MODENAME: 0x16,
+  INPUT_GET_FIGURES: 0x18,
   INPUT_STOP_ALL: 0x0d,
   INPUT_READY_RAW: 0x1c,
   INPUT_READY_SI: 0x1d,
 } as const;
 
-export const SENSOR_TYPE = { touch: 16, color: 29, ultrasonic: 30, gyro: 32, ir: 33 } as const;
+export const SENSOR_TYPE = {
+  nxt_touch: 1,
+  nxt_light: 2,
+  nxt_sound: 3,
+  nxt_ultrasonic: 5,
+  nxt_temperature: 6,
+  touch: 16,
+  color: 29,
+  ultrasonic: 30,
+  gyro: 32,
+  ir: 33,
+} as const;
 export const TYPE_NONE = 126;
 export const DEVICE_NAMES: Record<number, string> = {
+  1: "nxt-touch",
+  2: "nxt-light",
+  3: "nxt-sound",
+  4: "nxt-color",
+  5: "nxt-ultrasonic",
+  6: "nxt-temperature",
   7: "large-motor",
   8: "medium-motor",
   16: "touch",
@@ -445,6 +467,52 @@ export const inputGetTypeMode = (port: number, gType: number, gMode: number) => 
   ...gv(gType),
   ...gv(gMode),
 ];
+/** 99 02: the current mode's number of values, its data format, the type's number of modes and views: 1 byte each. */
+export const inputGetFormat = (port: number, g: number) => [
+  OP.INPUT_DEVICE,
+  SUB.INPUT_GET_FORMAT,
+  0,
+  ...sensorPort(port),
+  ...gv(g),
+  ...gv(g + 1),
+  ...gv(g + 2),
+  ...gv(g + 3),
+];
+/** 99 18: the current mode's figures and decimals, 1 byte each. */
+export const inputGetFigures = (port: number, g: number) => [
+  OP.INPUT_DEVICE,
+  SUB.INPUT_GET_FIGURES,
+  0,
+  ...sensorPort(port),
+  ...gv(g),
+  ...gv(g + 1),
+];
+/** 99 06: the current mode's unit symbol, `length` bytes from `g`, space-padded and zero-terminated. */
+export const inputGetSymbol = (port: number, length: number, g: number) => [
+  OP.INPUT_DEVICE,
+  SUB.INPUT_GET_SYMBOL,
+  0,
+  ...sensorPort(port),
+  ...lc(range(length, 2, 127, "length")),
+  ...gv(g),
+];
+/** 99 16: the name of `mode` of the port's type, `length` bytes from `g`; empty for a mode the type lacks. */
+export const inputGetModeName = (port: number, mode: number, length: number, g: number) => [
+  OP.INPUT_DEVICE,
+  SUB.INPUT_GET_MODENAME,
+  0,
+  ...sensorPort(port),
+  ...lc0(range(mode, 0, 7, "mode")),
+  ...lc(range(length, 2, 127, "length")),
+  ...gv(g),
+];
+/** A string the firmware wrote into the reply: up to its zero, without the space padding. */
+export function readText(g: Uint8Array, at: number, length: number): string {
+  if (at + length > g.length) throw new RangeError("reply too short for text");
+  let s = "";
+  for (let i = at; i < at + length && g[i] !== 0; i++) s += String.fromCharCode(g[i]);
+  return s.trimEnd();
+}
 /** 99 0D: stop all input devices. */
 export const inputStopAll = () => [OP.INPUT_DEVICE, SUB.INPUT_STOP_ALL, 0];
 

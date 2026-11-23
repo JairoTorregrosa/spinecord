@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { RuntimeError } from "../protocol/types";
-import type { CommandSpec, DeviceSpec } from "../protocol/types";
+import type { CommandSpec, DeviceSpec, LoopRead } from "../protocol/types";
 import * as E from "./encode";
 import { EmulatedClock, FakeEV3 } from "./fake";
 import {
@@ -29,6 +29,11 @@ function rig(opts: { fake?: ConstructorParameters<typeof FakeEV3>[0]; provider?:
   return { fake, ev3 };
 }
 const never = () => new AbortController().signal;
+/** One tick of a stock brick's host loop that only reads. */
+const hostTick = (ev3: Ev3Provider, reads: LoopRead[], hold_ms: number) => {
+  if (ev3.loop.runs_on !== "host") throw new Error("a stock brick runs its loops on the host");
+  return ev3.loop.tick([], reads, hold_ms);
+};
 const code = (p: Promise<unknown>) =>
   p.then(
     () => "resolved",
@@ -320,7 +325,7 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
     a.fake.motors[2].type = 126;
     expect((await a.ev3.devices()).map((d) => d.id)).not.toContain("ev3.pair");
     const b = rig();
-    b.fake.setSensor(2, 5, 0); // NXT ultrasonic: not supported
+    b.fake.setSensor(2, 127, 0); // a port error
     b.fake.setSensor(4, 125, 0); // the brick itself does not know it
     b.fake.motors[3].type = 14; // not a motor this provider drives
     const specs = await b.ev3.devices();
@@ -332,7 +337,7 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
     }
     expect(unknown[0].description).toContain("type id 14");
     expect(unknown[0].description).toContain("output port D");
-    expect(unknown[1].description).toContain("type id 5");
+    expect(unknown[1].description).toContain("type id 127");
     expect(unknown[1].description).toContain("input port 2");
     expect(unknown[2].description).toContain("type id 125");
     expect(await b.ev3.read("ev3.S2")).toEqual([]);
@@ -588,6 +593,159 @@ describe("read(): no side effects", () => {
     await expect(ev3.read("ev3.Z")).rejects.toThrow(/ev3\.B, ev3\.C, ev3\.pair/);
     await expect(ev3.read("ev3.B", ["rpm"])).rejects.toThrow(/position_deg, speed_deg_s, stalled/);
     expect((await ev3.read("left_wheel", ["position_deg"]))[0].device).toBe("ev3.B");
+  });
+});
+
+describe("sensors from discovery (G7, G8, G9)", () => {
+  test("an NXT light sensor (type 2) is read through its entry", async () => {
+    const { fake, ev3 } = rig();
+    fake.setSensor(1, E.SENSOR_TYPE.nxt_light, 37);
+    fake.setSensor(1, E.SENSOR_TYPE.nxt_light, 12, 1);
+    const s1 = (await ev3.devices()).find((d) => d.id === "ev3.S1")!;
+    expect(s1.kind).toBe("light");
+    expect(s1.channels.map((c) => [c.name, c.unit, c.active])).toEqual([
+      ["reflected_pct", "pct", true],
+      ["ambient_pct", "pct", false],
+    ]);
+    expect(fake.sent.length).toBe(1); // a sensor with an entry costs no question beyond the scan
+    expect((await ev3.read("ev3.S1")).map((r) => r.value)).toEqual([37, null]);
+    expect((await ev3.read("ev3.S1", ["ambient_pct"], { allow_mode_switch: true }))[0].value).toBe(12);
+    expect(fake.modeSwitches).toBe(1);
+  });
+
+  test("the other NXT sensors have entries: touch, sound, ultrasonic, temperature", async () => {
+    const { fake, ev3 } = rig();
+    fake.setSensor(1, E.SENSOR_TYPE.nxt_touch, 1);
+    fake.setSensor(2, E.SENSOR_TYPE.nxt_sound, 64);
+    fake.setSensor(3, E.SENSOR_TYPE.nxt_ultrasonic, 42);
+    fake.setSensor(4, E.SENSOR_TYPE.nxt_temperature, 21.5);
+    const specs = await ev3.devices();
+    expect(specs.filter((d) => /\.S\d$/.test(d.id)).map((d) => [d.id, d.kind])).toEqual([
+      ["ev3.S1", "touch"],
+      ["ev3.S2", "sound"],
+      ["ev3.S3", "ultrasonic"],
+      ["ev3.S4", "temperature"],
+    ]);
+    expect(specs.find((d) => d.id === "ev3.S3")!.description).toContain("NXT");
+    const first = async (id: string) => (await ev3.read(id))[0].value;
+    expect([await first("ev3.S1"), await first("ev3.S2"), await first("ev3.S3"), await first("ev3.S4")]).toEqual([
+      true,
+      64,
+      42,
+      21.5,
+    ]);
+  });
+
+  test("a type without an entry gets the generic manifest of the modes the firmware reports", async () => {
+    const { fake, ev3 } = rig();
+    fake.setSensor(2, 99, 7.4); // the energy meter: no entry in this provider
+    fake.setSensor(2, 99, [7.4, 0.12, 7.3, 0.1, 40, 0.9, 0.7], 7);
+    fake.describeSensor(2, [
+      { name: "ES-IN-VOLT", symbol: "V", decimals: 1 },
+      { name: "ES-IN-AMP", symbol: "A", decimals: 3 },
+      { name: "ES-OUT-VOLT", symbol: "V", decimals: 1 },
+      { name: "ES-OUT-AMP", symbol: "A", decimals: 3 },
+      { name: "ES-JOULE", symbol: "J" },
+      { name: "ES-IN-WATT", symbol: "W", decimals: 3 },
+      { name: "ES-OUT-WATT", symbol: "W", decimals: 3 },
+      { name: "ES-ALL", symbol: "_", decimals: 3 },
+    ]);
+    const s2 = (await ev3.devices()).find((d) => d.id === "ev3.S2")!;
+    expect(s2.kind).toBe("sensor");
+    expect(s2.description).toContain("type id 99");
+    expect(s2.channels.map((c) => [c.name, c.type, c.length, c.unit, c.active])).toEqual([
+      ["values", "vector", 1, "v", true],
+      ["mode", "string", undefined, undefined, true],
+    ]);
+    expect(s2.commands.map((c) => c.name)).toEqual(["set_mode"]);
+    const setMode = s2.commands[0]!;
+    expect(setMode).toMatchObject({ moves: false, bound: { kind: "instant", max: 0 } });
+    expect((setMode.params.properties.mode as { enum: string[] }).enum).toEqual([
+      "ES-IN-VOLT",
+      "ES-IN-AMP",
+      "ES-OUT-VOLT",
+      "ES-OUT-AMP",
+      "ES-JOULE",
+      "ES-IN-WATT",
+      "ES-OUT-WATT",
+      "ES-ALL",
+    ]);
+    const asked = fake.sent.length;
+    await ev3.devices();
+    expect(fake.sent.length).toBe(asked + 1); // described once per type and mode: the next scan asks nothing more
+    expect((await ev3.read("ev3.S2")).map((r) => [r.value, r.unit])).toEqual([
+      [[7.4], "v"],
+      ["ES-IN-VOLT", undefined],
+    ]);
+    let told = 0;
+    ev3.onDevicesChanged(() => told++);
+    const r = await ev3.command("ev3.S2", "set_mode", { mode: "ES-ALL" }, never());
+    expect(r).toMatchObject({ reason: "completed", measured: { mode: "ES-ALL" } });
+    expect(told).toBe(1);
+    expect(fake.sensors[1]!.mode).toBe(7);
+    const after = (await ev3.devices()).find((d) => d.id === "ev3.S2")!;
+    const values = after.channels.find((c) => c.name === "values")!;
+    expect([values.length, values.unit]).toEqual([7, undefined]);
+    expect((await ev3.read("ev3.S2")).map((x) => x.value)).toEqual([[7.4, 0.12, 7.3, 0.1, 40, 0.9, 0.7], "ES-ALL"]);
+    // one value of a generic vector is a loop input, read in the tick's packet
+    expect(await hostTick(ev3, [{ device: "ev3.S2", channel: "values", index: 4 }], 60)).toEqual([40]);
+    expect(await code(ev3.command("ev3.S2", "set_mode", { mode: "ES-NOPE" }, never()))).toBe("invalid_argument");
+    // a mode switched behind the provider's back: the read carries the new mode's values and unit
+    fake.setSensor(2, 99, 0.25, 1);
+    fake.sensors[1]!.mode = 1;
+    expect((await ev3.read("ev3.S2")).map((x) => [x.value, x.unit])).toEqual([
+      [[0.25], "a"],
+      ["ES-IN-AMP", undefined],
+    ]);
+    expect(fake.errors).toEqual([]);
+  });
+
+  test("a sensor the firmware will not describe is unknown with the reason; the scan still succeeds", async () => {
+    const fake = new FakeEV3({ degPerSecAt100: RATE });
+    let refuse = true;
+    const transport = {
+      send: (bytes: Uint8Array) => {
+        const cmd = E.decodeCommand(bytes);
+        const describes = cmd.bytecodes.some(
+          (b, i) => b === E.OP.INPUT_DEVICE && cmd.bytecodes[i + 1] === E.SUB.INPUT_GET_FORMAT,
+        );
+        return refuse && describes ? Promise.resolve(E.encodeReply(cmd.counter, false)) : fake.send(bytes);
+      },
+    };
+    const ev3 = new Ev3Provider(transport, { ...CONFIG, degPerSecAt100: RATE, pollMs: 2, timeoutMs: 200 });
+    fake.setSensor(3, 4, 30); // NXT color: no entry
+    const s3 = (await ev3.devices()).find((d) => d.id === "ev3.S3")!;
+    expect(s3.kind).toBe("unknown");
+    expect(s3.description).toContain("did not describe it");
+    refuse = false;
+    const again = (await ev3.devices()).find((d) => d.id === "ev3.S3")!;
+    expect(again.kind).toBe("sensor");
+    expect(again.channels.find((c) => c.name === "mode")!).toBeDefined();
+    expect((await ev3.read("ev3.S3"))[1].value).toBe("MODE-0"); // a mode the firmware gives no name
+  });
+
+  test("the infrared remote and beacon are read on the robot file's channel", async () => {
+    const { fake, ev3 } = rig({ provider: { hardware: { ...EXAMPLE_EV3_HARDWARE, ir_channel: 3 } } });
+    fake.setSensor(4, 33, 48);
+    // IR-SEEK: heading and distance of channels 1-4 in turn; channel 1 sees a beacon, channel 3 another
+    fake.setSensor(4, 33, [-7, 33, 0, -128, 5, 60, 0, -128], 1);
+    fake.setSensor(4, 33, [1, 0, 4, 0], 2); // IR-REMOTE: one button code per channel
+    const s4 = (await ev3.devices()).find((d) => d.id === "ev3.S4")!;
+    expect(s4.description).toContain("channel 3");
+    expect(s4.channels.find((c) => c.name === "remote_buttons")!.description).toContain("channel 3");
+    const beacon = await ev3.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"], { allow_mode_switch: true });
+    expect(beacon.map((r) => r.value)).toEqual([-5, 60]);
+    expect((await ev3.read("ev3.S4", ["remote_buttons"], { allow_mode_switch: true }))[0].value).toBe(4);
+    fake.setSensor(4, 33, [-7, 33, 0, -128, 0, -128, 0, -128], 1);
+    const none = await ev3.read("ev3.S4", ["beacon_heading"], { allow_mode_switch: true });
+    expect([none[0].value, none[0].absent, none[0].error]).toEqual([null, true, "no beacon in view on channel 3"]);
+    // a loop reads the same channel
+    await ev3.read("ev3.S4", ["remote_buttons"], { allow_mode_switch: true });
+    expect(await hostTick(ev3, [{ device: "ev3.S4", channel: "remote_buttons" }], 60)).toEqual([4]);
+    for (const bad of [0, 5, 1.5])
+      expect(() => rig({ provider: { hardware: { ...EXAMPLE_EV3_HARDWARE, ir_channel: bad as 1 } } })).toThrow(
+        "ir_channel must be 1, 2, 3 or 4",
+      );
   });
 });
 

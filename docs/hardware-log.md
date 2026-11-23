@@ -8,7 +8,9 @@ Runs on real robots. A row counts for the commit it names: a check passes for a 
 | --- | --- |
 | Stock EV3 over USB through the bridge page (`apps/local --ev3`) | not run |
 | Loops on the stock path (`run_loop` through the bridge page, host executor) | not run: the declared `max_rate_hz` of 50 is a conservative figure, not a measurement; the tick round trip over real USB, and whether a refreshed timed command runs smoothly on the firmware, are unmeasured |
-| EV3 on ev3dev, bridge version 5 (`apps/local --ev3dev`): version 4 plus a hello that may leave out `pair` | not run |
+| Sensors from discovery on the stock path: an NXT sensor (type 2 light), a type without an entry, the infrared channel | not run: the firmware's GET_FORMAT, GET_FIGURES, GET_SYMBOL and GET_MODENAME answers are taken from the lms2012 sources and tested against the emulator only |
+| EV3 on ev3dev, bridge version 6 (`apps/local --ev3dev`): version 5 plus NXT sensors, generic sensors from sysfs and `hardware.ir_channel` | not run |
+| EV3 on ev3dev, bridge version 5: version 4 plus a hello that may leave out `pair` | not run |
 | EV3 on ev3dev, bridge version 4 | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard (log below); direction by eye, `until`, the watchdog and brick off at start not yet |
 | EV3 on ev3dev, a bridge before version 4 | run on 2026-11-21 (log below) |
 
@@ -16,7 +18,7 @@ Everything else about these paths is tested without a brick: the stock driver ag
 
 ## To run
 
-One pass per path (USB through the bridge page; ev3dev with the bridge in this repository, version 5; a tick carries the date it ran and the log names the commit). For each check add a row to the log with the date, the commit (`git rev-parse --short HEAD`), the robot and what was measured. Robot on the floor, a hand near it.
+One pass per path (USB through the bridge page; ev3dev with the bridge in this repository, version 6; a tick carries the date it ran and the log names the commit). For each check add a row to the log with the date, the commit (`git rev-parse --short HEAD`), the robot and what was measured. Robot on the floor, a hand near it.
 
 | Check | How | Passes when | USB | ev3dev |
 | --- | --- | --- | --- | --- |
@@ -34,6 +36,9 @@ One pass per path (USB through the bridge page; ev3dev with the bridge in this r
 | loop rate | `run_loop` C4 on a free motor at 50 Hz for 10 s; time each tick's round trip | the report's `overruns` is 0 and `period_ms.p95` stays under 20 ms; the declared 50 Hz holds | ☐ | n/a |
 | a loop's cable | pull USB during `run_loop` | the motors end within `hold_ms` (60 ms at 50 Hz); `list_robots` shows `offline` | ☐ | n/a |
 | brick off at start | start the server with the brick off, then turn it on | the server starts; the robot is `offline` with its hint, then `online` | n/a | ☐ |
+| an NXT sensor | plug an NXT light sensor (USB) or an NXT ultrasonic sensor (ev3dev); `describe_robot`, then `read_device` on its port | kind `light` (USB) or `ultrasonic` (ev3dev); the reading follows a hand in front of it | ☐ | ☐ |
+| a sensor without an entry | plug a sensor neither driver has an entry for (an NXT color sensor on USB, a HiTechnic one on ev3dev); `describe_device`, `read_device`, `command_device` `set_mode` | kind `sensor`; `values` has the length and unit the brick reports and follows the sensor; after `set_mode` the next `describe_device` shows the new length | ☐ | ☐ |
+| an infrared remote on channel 2 | `hardware.ir_channel: 2` in the robot file, the remote's switch on 2; `read_device` `remote_buttons` with `allow_mode_switch` while a button is held | the button's code; with the switch on 1 the reading is 0 | ☐ | ☐ |
 
 ## Log
 

@@ -30,6 +30,11 @@ export interface FakeSensor {
   type: number;
   mode: number;
   byMode: Record<number, number[]>;
+  /**
+   * What the firmware's type table says of each mode (typedata.rcf): its name, unit symbol ("_" = none) and
+   * decimals. Answers GET_FORMAT, GET_FIGURES, GET_SYMBOL and GET_MODENAME; absent = a type with one unnamed mode.
+   */
+  modes?: { name: string; symbol?: string; decimals?: number }[];
 }
 
 export interface FakeOptions {
@@ -148,6 +153,12 @@ export class FakeEV3 implements Transport {
     const s = old && old.type === type ? old : { type, mode: 0, byMode: {} as Record<number, number[]> };
     s.byMode[mode] = Array.isArray(values) ? values : [values];
     this.sensors[port - 1] = s;
+  }
+  /** Give the sensor on input port 1..4 its firmware type table rows (see FakeSensor.modes). */
+  describeSensor(port: 1 | 2 | 3 | 4, modes: NonNullable<FakeSensor["modes"]>): void {
+    const s = this.sensors[port - 1];
+    if (!s) throw new Error(`no sensor on input port ${port}`);
+    s.modes = modes;
   }
   unplugSensor(port: 1 | 2 | 3 | 4): void {
     this.sensors[port - 1] = null;
@@ -438,6 +449,38 @@ export class FakeEV3 implements Transport {
               g[gt] = this.motors[port - 16].type;
               g[gm] = 0;
             } else throw new Error(`bad port ${port}`);
+            break;
+          }
+          if (
+            sub === SUB.INPUT_GET_FORMAT ||
+            sub === SUB.INPUT_GET_FIGURES ||
+            sub === SUB.INPUT_GET_SYMBOL ||
+            sub === SUB.INPUT_GET_MODENAME
+          ) {
+            // c_input.c: every answer is about the current mode of the port's type, except GET_MODENAME's
+            layer();
+            const port = num();
+            if (port < 0 || port > 3) throw new Error(`bad sensor port ${port}`);
+            const s = this.sensors[port];
+            const rows = s?.modes ?? [{ name: "" }];
+            const row = s ? rows[s.mode] : undefined;
+            const text = (length: number, t: string) => {
+              const at = out(length);
+              for (let i = 0; i < length - 1; i++) g[at + i] = i < t.length ? t.charCodeAt(i) : 0x20;
+              g[at + length - 1] = 0;
+            };
+            if (sub === SUB.INPUT_GET_FORMAT) {
+              const v = [s ? (s.byMode[s.mode] ?? []).length : 0, 0, s ? rows.length : 0, 1];
+              for (const x of v) g[out(1)] = x;
+            } else if (sub === SUB.INPUT_GET_FIGURES) {
+              g[out(1)] = 4;
+              g[out(1)] = row?.decimals ?? 0;
+            } else if (sub === SUB.INPUT_GET_SYMBOL) {
+              text(num(), row ? (row.symbol ?? "_") : "");
+            } else {
+              const mode = num();
+              text(num(), s ? (rows[mode]?.name ?? "") : "");
+            }
             break;
           }
           if (sub === SUB.INPUT_READY_SI || sub === SUB.INPUT_READY_RAW) {

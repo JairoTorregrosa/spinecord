@@ -165,7 +165,8 @@ Keep a hand near the robot on a first run. These paths are tested against the tw
 | Path | On a real brick |
 |---|---|
 | Stock EV3 over USB through the bridge page (`--ev3`) | not run |
-| EV3 on ev3dev with bridge version 5, the one in this repository (`--ev3dev`): version 4 plus a hello that may leave out `pair`. A robot without a `pair` needs it; a robot with one runs on version 4 too | not run |
+| EV3 on ev3dev with bridge version 6, the one in this repository (`--ev3dev`): version 5 plus NXT sensors, generic sensors from sysfs and `hardware.ir_channel`. A robot file whose `ir_channel` is not 1 needs it; the other sensors show as `unknown` on an older bridge | not run |
+| EV3 on ev3dev with bridge version 5: version 4 plus a hello that may leave out `pair`. A robot without a `pair` needs it; a robot with one runs on version 4 too | not run |
 | EV3 on ev3dev with bridge version 4 | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard |
 | EV3 on ev3dev with a bridge before version 4 | run on 2026-11-21 |
 

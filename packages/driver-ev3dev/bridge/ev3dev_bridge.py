@@ -8,8 +8,10 @@ the kernel drivers through sysfs. No f-strings, no dataclasses, no asyncio.
 Requests (one JSON object per line; every reply echoes "id"):
   {"op":"hello","id":1,"config":{"bounds":{"max_speed_pct":..,"max_op_ms":..,"low_battery_v":..,"max_tone_ms":..,
                                            "speech_volume_pct":..},
-                                 "pair":{"left":"B","right":"C"}}}
+                                 "pair":{"left":"B","right":"C"},"ir_channel":1}}
                                        "pair" is optional: without it there is no "pair" device.
+                                       "ir_channel" (1-4) is optional: the remote channel the infrared
+                                       sensors read; without it, channel 1.
   {"op":"read","id":2,"device":"S4","channels":["proximity_pct"],"allow_mode_switch":false}
   {"op":"read_many","id":5,"reads":[{"device":"B"},{"device":"S4","channels":["proximity_pct"]}]}
                                        several reads, one answer: {"results":[<what each read alone answers>]}.
@@ -82,10 +84,7 @@ EXIT_OK = 0              # stdin closed or a signal: the link was closed
 EXIT_CRASH = 1           # an unexpected error
 EXIT_USAGE = 2           # bad arguments, or not an ev3dev brick
 EXIT_GUARD_LOST = 3      # the guard process ended: every motor was braked and the bridge ended itself
-VERSION = "5"            # sent in hello as "bridge"; the provider refuses a bridge older than the one it needs
-# What a beacon channel answers while the sensor sees no beacon. A reading with this error is sent with
-# "absent": true: the sensor answered, the read did not fail.
-NO_BEACON = "no beacon in view on channel 1"
+VERSION = "6"            # sent in hello as "bridge"; the provider refuses a bridge older than the one it needs
 # The guard process (see the safety rules above): waits for its stdin to close, then brakes every motor.
 GUARD_SOURCE = """
 import glob, os, sys
@@ -122,16 +121,32 @@ LED_COLORS = {"off": (0, 0), "green": (0, 255), "red": (255, 0), "orange": (255,
 # Linux input key codes of the brick buttons, in the contract's order.
 BUTTON_KEYS = [("up", 103), ("enter", 28), ("down", 108), ("right", 106), ("left", 105), ("back", 14)]
 
-# driver_name -> (kind, {channel: (mode, number of values)})
+# The sensor entries: driver_name -> (kind, ((channel, (mode, index, count, form, stride)), ...)), channels in the
+# order a read lists them. A channel is the `count`
+# values of `mode` from `index` + `stride` * (ir_channel - 1), decoded by `form` (see decode). `stride` is the number
+# of values per remote channel (infrared only, else 0). Both `read` and the inventory in hello are built from this
+# table. A lego-sensor whose driver has no entry is a generic sensor: kind "sensor", channels values and mode.
 SENSORS = {
-    "lego-ev3-touch": ("touch", {"pressed": ("TOUCH", 1)}),
-    "lego-ev3-color": ("color", {"reflected_pct": ("COL-REFLECT", 1), "ambient_pct": ("COL-AMBIENT", 1),
-                                 "color": ("COL-COLOR", 1), "rgb": ("RGB-RAW", 3)}),
-    "lego-ev3-us": ("ultrasonic", {"distance_cm": ("US-DIST-CM", 1)}),
-    "lego-ev3-gyro": ("gyro", {"angle_deg": ("GYRO-ANG", 1), "rate_deg_s": ("GYRO-RATE", 1)}),
-    "lego-ev3-ir": ("infrared", {"proximity_pct": ("IR-PROX", 1), "beacon_heading": ("IR-SEEK", 2),
-                                 "beacon_distance_pct": ("IR-SEEK", 2), "remote_buttons": ("IR-REMOTE", 1)}),
+    "lego-ev3-touch": ("touch", (("pressed", ("TOUCH", 0, 1, "bool", 0)),)),
+    "lego-ev3-color": ("color", (("reflected_pct", ("COL-REFLECT", 0, 1, "int", 0)),
+                                 ("ambient_pct", ("COL-AMBIENT", 0, 1, "int", 0)),
+                                 ("color", ("COL-COLOR", 0, 1, "int", 0)), ("rgb", ("RGB-RAW", 0, 3, "ints", 0)),)),
+    "lego-ev3-us": ("ultrasonic", (("distance_cm", ("US-DIST-CM", 0, 1, "num", 0)),)),
+    "lego-ev3-gyro": ("gyro", (("angle_deg", ("GYRO-ANG", 0, 1, "ccw", 0)), ("rate_deg_s", ("GYRO-RATE", 0, 1, "ccw", 0)),)),
+    "lego-ev3-ir": ("infrared", (("proximity_pct", ("IR-PROX", 0, 1, "int", 0)),
+                                 ("beacon_heading", ("IR-SEEK", 0, 2, "heading", 2)),
+                                 ("beacon_distance_pct", ("IR-SEEK", 0, 2, "distance", 2)),
+                                 ("remote_buttons", ("IR-REMOTE", 0, 1, "int", 1)),)),
+    # NXT sensors (S2: ev3dev sensor_data)
+    "lego-nxt-touch": ("touch", (("pressed", ("TOUCH", 0, 1, "bool", 0)),)),
+    "lego-nxt-light": ("light", (("reflected_pct", ("REFLECT", 0, 1, "num", 0)), ("ambient_pct", ("AMBIENT", 0, 1, "num", 0)),)),
+    "lego-nxt-sound": ("sound", (("sound_db_pct", ("DB", 0, 1, "num", 0)), ("sound_dba_pct", ("DBA", 0, 1, "num", 0)),)),
+    "lego-nxt-us": ("ultrasonic", (("distance_cm", ("US-DIST-CM", 0, 1, "num", 0)),)),
+    "lego-nxt-temp": ("temperature", (("temperature_c", ("NXT-TEMP-C", 0, 1, "num", 0)),)),
 }
+GENERIC = "sensor"
+GENERIC_CHANNELS = ["values", "mode"]
+IR_CHANNELS = (1, 2, 3, 4)
 # Used only when the sensor has no `decimals` attribute.
 DEFAULT_DECIMALS = {"US-DIST-CM": 1}
 
@@ -282,9 +297,13 @@ class Sensor(object):
         self.port = port
         self.address = read_attr(os.path.join(directory, "address"))
         self.driver = read_attr(os.path.join(directory, "driver_name"))
-        self.kind = SENSORS[self.driver][0]
-        self.channels = SENSORS[self.driver][1]
+        entry = SENSORS.get(self.driver)
+        self.kind = entry[0] if entry is not None else GENERIC
+        self.order = [c[0] for c in entry[1]] if entry is not None else []
+        self.channels = dict(entry[1]) if entry is not None else {}
         self.modes = read_list(os.path.join(directory, "modes"))
+        # the commands the driver takes (a calibration, a reset); only a generic sensor sends them
+        self.commands = read_list(os.path.join(directory, "commands")) if entry is None else None
         self.decimals = {}     # mode -> its `decimals` attribute, once read
         self.mode_seen = None  # the mode the read in progress found this sensor in (None: read it again)
         self.presses = 0       # touch only: bumps counted by this process
@@ -308,9 +327,26 @@ class Sensor(object):
             mode = self.get("mode")
         except (OSError, IOError):
             pass
-        return {"port": self.port, "address": self.address, "driver_name": self.driver,
-                "kind": self.kind, "mode": mode, "modes": self.modes,
-                "channel_modes": dict((c, self.channels[c][0]) for c in self.channels)}
+        out = {"port": self.port, "address": self.address, "driver_name": self.driver,
+               "kind": self.kind, "mode": mode, "modes": self.modes,
+               "channel_modes": dict((c, self.channels[c][0]) for c in self.channels)}
+        if self.kind == GENERIC:
+            out.update(self.describe())
+            out["commands"] = self.commands
+        return out
+
+    def describe(self):
+        """What the driver says of the current mode: its number of values and their unit (generic sensors)."""
+        out = {"num_values": None, "units": None}
+        try:
+            out["num_values"] = self.get_int("num_values")
+        except (OSError, IOError, ValueError):
+            pass
+        try:
+            out["units"] = self.get("units") or None
+        except (OSError, IOError):
+            pass
+        return out
 
 
 def start_guard(root):
@@ -357,6 +393,7 @@ class Bridge(object):
         self.bounds = None
         self.op_ms = MAX_OP_MS
         self.pair = None
+        self.ir_channel = 1
         self.motors = {}
         self.sensors = {}
         self.ignored = []
@@ -496,7 +533,7 @@ class Bridge(object):
                 address = read_attr(os.path.join(d, "address"))
                 driver = read_attr(os.path.join(d, "driver_name"))
                 m = re.search(r"in([1-4])$", address)
-                if not m or driver not in SENSORS:
+                if not m:
                     ignored.append({"local": ("S" + m.group(1)) if m else os.path.basename(d), "class": "lego-sensor",
                                     "address": address, "driver_name": driver, "modes": read_list(os.path.join(d, "modes"))})
                     continue
@@ -528,6 +565,10 @@ class Bridge(object):
             if left not in list("ABCD") or right not in list("ABCD") or left == right:
                 raise BridgeError("misconfigured", "config.pair, when given, needs two different ports A-D as left and right")
             pair = (left, right)
+        ir = config.get("ir_channel", 1)
+        if isinstance(ir, bool) or ir not in IR_CHANNELS:
+            raise BridgeError("misconfigured", "config.ir_channel, when given, must be 1, 2, 3 or 4, got %s" % json.dumps(ir))
+        self.ir_channel = ir
         self.bounds = dict((k, b[k]) for k in BOUND_KEYS)
         self.op_ms = int(max(1, min(MAX_OP_MS, b["max_op_ms"])))   # never above MAX_OP_MS, whatever the config says
         self.pair = pair                                           # None: this robot has no motor pair
@@ -550,6 +591,7 @@ class Bridge(object):
             "no_guard": None if self.guard is not None and self.guard.poll() is None else self.no_guard,
             "python": "%d.%d.%d" % tuple(sys.version_info[:3]),
             "watchdog_ms": WATCHDOG_MS,
+            "ir_channel": self.ir_channel,
             "motors": [self.motors[k].info() for k in sorted(self.motors)],
             "sensors": [self.sensors[k].info() for k in sorted(self.sensors)],
             "ports": ports,
@@ -632,10 +674,10 @@ class Bridge(object):
             known = ["voltage_v", "low"]
         elif kind == "buttons":
             known = ["pressed"]
+        elif obj is not None and kind == GENERIC:
+            known = GENERIC_CHANNELS
         elif obj is not None:
-            known = [c for c in ["pressed", "presses", "reflected_pct", "ambient_pct", "color", "rgb", "distance_cm",
-                                 "angle_deg", "rate_deg_s", "proximity_pct", "beacon_heading", "beacon_distance_pct",
-                                 "remote_buttons"] if c in obj.channels or (kind == "touch" and c == "presses")]
+            known = obj.order + (["presses"] if kind == "touch" else [])
         else:
             known = []
         names = known if asked is None else asked
@@ -707,11 +749,11 @@ class Bridge(object):
     def reply_readings(self, rid, names, values, extra=None):
         out = []
         for n in names:
-            value, error = values[n]
+            value, error = values[n][0], values[n][1]
             item = {"channel": n, "value": value}
             if value is None:
                 item["error"] = error or "no value"
-                if error == NO_BEACON:
+                if len(values[n]) > 2 and values[n][2] is True:
                     item["absent"] = True
             out.append(item)
         reply = {"readings": out}
@@ -741,24 +783,33 @@ class Bridge(object):
         return held
 
     def decode(self, sensor, channel, vals):
-        k = sensor.kind
-        if k == "touch":
-            return (vals[0] >= 0.5, None)
-        if k == "gyro":
-            r = int(round(vals[0]))
+        """-> (value, error[, absent]) of one channel from the values of its mode, by the form its entry names."""
+        mode, index, count, form, stride = sensor.channels[channel]
+        at = index + stride * (self.ir_channel - 1)
+        mine = vals[at:at + count]
+        if form == "bool":
+            return (mine[0] >= 0.5, None)
+        if form == "ccw":
+            r = int(round(mine[0]))
             return (0 if r == 0 else -r, None)   # native clockwise-positive -> contract counter-clockwise-positive
-        if channel == "rgb":
-            return ([int(round(v)) for v in vals[:3]], None)
-        if channel == "distance_cm":
-            return (tidy(vals[0]), None)
-        if channel in ("beacon_heading", "beacon_distance_pct"):
-            if vals[1] < 0 or vals[1] > 100:
-                return (None, NO_BEACON)
-            if channel == "beacon_distance_pct":
-                return (int(round(vals[1])), None)
-            h = int(round(vals[0]))
+        if form == "ints":
+            return ([int(round(v)) for v in mine], None)
+        if form == "num":
+            return (tidy(mine[0]), None)
+        if form in ("heading", "distance"):
+            if mine[1] < 0 or mine[1] > 100:
+                # the sensor's answer, not a failed read: sent with "absent": true
+                return (None, "no beacon in view on channel %d" % self.ir_channel, True)
+            if form == "distance":
+                return (int(round(mine[1])), None)
+            h = int(round(mine[0]))
             return (0 if h == 0 else -h, None)   # native negative = left -> contract counter-clockwise-positive
-        return (int(round(vals[0])), None)
+        return (int(round(mine[0])), None)
+
+    def fetch_count(self, sensor, channel):
+        """How many values of its mode a channel needs read: up to its last one on this robot's ir_channel."""
+        mode, index, count, form, stride = sensor.channels[channel]
+        return index + stride * (self.ir_channel - 1) + count
 
     def sensor_values(self, sensor, mode, count, switch):
         """Generator: leaves the values of `mode` in self.got. Writes the mode only when `switch` is true."""
@@ -783,7 +834,37 @@ class Bridge(object):
         scale = float(10 ** decimals)
         self.got = [sensor.get_float("value%d" % i) / scale for i in range(count)]
 
+    def read_generic(self, rid, sensor, names):
+        """values and mode of a sensor without an entry: what the driver reports in its current mode, never a switch."""
+        values = {}
+        extra = sensor.describe()
+        mode = None
+        try:
+            mode = sensor.get("mode")
+        except (OSError, IOError) as e:
+            for n in names:
+                values[n] = (None, "sensor on port %d returned no mode (unplugged?): %s" % (sensor.port, e))
+        if mode is not None:
+            extra["mode"] = mode
+            values["mode"] = (mode, None)
+            if "values" in names:
+                try:
+                    if extra["num_values"] is None:
+                        raise IOError("no num_values attribute")
+                    for delay in self.sensor_values(sensor, mode, extra["num_values"], False):
+                        yield delay
+                    values["values"] = ([tidy(v) for v in self.got], None)
+                except (OSError, IOError, ValueError) as e:
+                    values["values"] = (None, "sensor on port %d returned no value (unplugged?): %s" % (sensor.port, e))
+                except BridgeError as e:
+                    values["values"] = (None, "%s: %s" % (e.code, e.message))
+        self.reply_readings(rid, names, values, extra)
+
     def read_sensor(self, rid, sensor, names, switch):
+        if sensor.kind == GENERIC:
+            for delay in self.read_generic(rid, sensor, names):
+                yield delay
+            return
         values = {}
         sensor.mode_seen = None
         for n in names:
@@ -794,7 +875,7 @@ class Bridge(object):
                 continue
             mode = sensor.channels[n][0]
             same = [m for m in names if m in sensor.channels and sensor.channels[m][0] == mode]
-            count = max(sensor.channels[m][1] for m in same)
+            count = max(self.fetch_count(sensor, m) for m in same)
             try:
                 for delay in self.sensor_values(sensor, mode, count, switch):
                     yield delay
@@ -915,6 +996,17 @@ class Bridge(object):
             self.motion(rid, moves, None, clamped, {"applied_speed_pct": pct}, "pair", brake)
         elif key == "gyro.reset":
             self.spawn(Task(rid, self.gyro_reset(rid, obj, t0)))
+        elif key == "sensor.set_mode":
+            mode = args.get("mode")
+            if not isinstance(mode, str) or obj.modes is None or mode not in obj.modes:
+                raise BridgeError("invalid_argument", "%s: mode must be one of %s, got %s" % (where, ", ".join(obj.modes or []), json.dumps(mode)))
+            self.spawn(Task(rid, self.set_mode(rid, obj, mode, t0)))
+        elif key == "sensor.send" and obj.commands:
+            cmd = args.get("command")
+            if not isinstance(cmd, str) or cmd not in obj.commands:
+                raise BridgeError("invalid_argument", "%s: command must be one of %s, got %s" % (where, ", ".join(obj.commands), json.dumps(cmd)))
+            obj.set("command", cmd)
+            self.done(rid, {"command": cmd}, t0=t0)
         elif key == "speaker.tone" or key == "speaker.beep":
             if key == "speaker.beep":
                 hz, ms = 1000, int(min(200, b["max_tone_ms"]))
@@ -1042,12 +1134,19 @@ class Bridge(object):
                     write_attr(self.led_path(side, color, "delay_on"), blink[0])
                     write_attr(self.led_path(side, color, "delay_off"), blink[1])
 
+    def set_mode(self, rid, sensor, mode, t0):
+        sensor.set("mode", mode)
+        yield MODE_SWITCH_S
+        extra = sensor.describe()
+        extra["mode"] = sensor.get("mode")
+        self.done(rid, {"mode": extra["mode"]}, t0=t0, extra=extra)
+
     def gyro_reset(self, rid, sensor, t0):
         # Leaving angle mode and coming back zeroes the angle (the sensor has no reset command).
         for mode in ("GYRO-RATE", "GYRO-ANG"):
             for delay in self.sensor_values(sensor, mode, 1, True):
                 yield delay
-        value, _ = self.decode(sensor, "angle_deg", self.got)
+        value = self.decode(sensor, "angle_deg", self.got)[0]
         self.done(rid, {"angle_deg": value}, t0=t0, extra={"mode": "GYRO-ANG"})
 
     def verify_brake(self, rid, motors, t0):
