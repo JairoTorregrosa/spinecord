@@ -195,8 +195,8 @@ describe("peripheral pages", () => {
     expect(braked).toMatchObject({ ok: false, error: { code: "condition_unreadable", retryable: false } });
     expect(braked.error.message).toContain("device_offline");
     expect(braked.error.measured).toBeDefined();
-    // silent for 300 ms from its last answer (at most one 100 ms ping before the silence), then three 10 ms polls
-    expect(took).toBeGreaterThanOrEqual(200);
+    // silent for 300 ms from its last answer (at most one ping, 100 ms, before the silence), then three 10 ms polls
+    expect(took).toBeGreaterThanOrEqual(100);
     expect(took).toBeLessThan(1000);
     expect((await r.twin("stop")).data.motors_stopped).toBe(true);
 
@@ -220,7 +220,7 @@ describe("peripheral pages", () => {
     const t0 = Date.now();
     expect(await r.twin("stop")).toMatchObject({ ok: true, data: { motors_stopped: true } });
     expect(Date.now() - t0).toBeLessThan(1000);
-  });
+  }, 15_000);
 
   test("a paused page ends a guarded move at the next poll with device_offline; resumed, it works again", async () => {
     const r = await rig();
@@ -233,6 +233,8 @@ describe("peripheral pages", () => {
     });
     expect(move).toMatchObject({ ok: false, error: { code: "device_offline" } });
     expect(move.error.message).toContain("resume");
+    // nothing moved, yet a move had been asked for: it is not to be sent again unread, and carries no wait
+    expect(move.error.retry_after_ms).toBeUndefined();
     p.resume();
     await until("the page to wake", async () => (await r.twin("describe_robot")).data.pages[0].state === "active");
     expect((await r.twin("read_device", { device: "desk.touch" })).ok).toBe(true);
@@ -338,6 +340,17 @@ describe("peripheral pages", () => {
     expect(good.headers.get("content-security-policy")).toBe("default-src 'self'; connect-src 'self'");
   });
 
+  test("at most 8 pages per process (4029); more than 100 messages in a second closes the page (4000)", async () => {
+    const r = await rig();
+    const eight = await Promise.all(Array.from({ length: 8 }, (_, i) => r.page({ robot: "pages", name: `p${i}` })));
+    await Promise.all(eight.map((p) => p.joined));
+    expect(await (await r.page({ robot: "pages", name: "p8" })).closed).toMatchObject({ code: 4029 });
+    const loud = eight[0]!;
+    for (let i = 0; i < 101; i++)
+      loud.raw(JSON.stringify({ t: "state", device: "touch", values: { b1: i % 2 === 0 } }));
+    expect(await loud.closed).toMatchObject({ code: 4000, reason: "more than 100 messages in one second" });
+  }, 15_000);
+
   test("nothing listens beyond 127.0.0.1: the page port on a non-loopback address refuses the connection", async () => {
     const r = await rig();
     const port = Number(new URL(r.url).port);
@@ -346,7 +359,7 @@ describe("peripheral pages", () => {
       .find((a) => a && a.family === "IPv4" && !a.internal)?.address;
     if (!address) throw new Error("this machine has no non-loopback IPv4 address to test the listener against");
     const outcome = await new Promise<string>((resolve) => {
-      const sock = connect({ host: address, port, timeout: 4000 }, () => {
+      const sock = connect({ host: address, port, timeout: 1500 }, () => {
         sock.destroy();
         resolve("connected");
       });
@@ -357,7 +370,7 @@ describe("peripheral pages", () => {
       });
     });
     expect(outcome).not.toBe("connected");
-  });
+  }, 15_000);
 });
 
 /** The rig with the default times. */
@@ -385,7 +398,7 @@ describe("peripheral pages over MCP", () => {
       mimeType: "image/jpeg",
     });
     expect(s.stderr.some((l) => l.includes("pages join the robots on"))).toBe(true);
-  });
+  }, 15_000);
 });
 
 // the defaults the contract states

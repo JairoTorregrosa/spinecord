@@ -133,6 +133,8 @@ export interface FakePage {
   pause(): void;
   resume(): void;
   down(device: string, why: string): void;
+  /** Sends a text message as it is. */
+  raw(text: string): void;
   up(device: string): void;
   close(): void;
 }
@@ -258,6 +260,9 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
     },
     up(device) {
       send({ t: "up", device });
+    },
+    raw(text) {
+      ws.send(text);
     },
     close() {
       ws.close();

@@ -132,6 +132,25 @@ describe("PageHub", () => {
     expect(r.link.silentMs()).toBe(0);
   });
 
+  test("silence: none while no ping waits; the first ping after a quiet second has 200 ms for its answer", async () => {
+    const r = rig();
+    r.link.ping();
+    r.link.receive({ t: "pong", n: 1 });
+    r.advance(1000); // a quiet second: no ping waits, nothing is silent
+    expect(r.link.silentMs()).toBe(0);
+    r.link.ping();
+    r.advance(PAGE_LIMITS.stale_ms - PAGE_LIMITS.answer_ms - 1);
+    expect(r.link.silentMs()).toBe(PAGE_LIMITS.stale_ms - 1);
+    r.advance(1);
+    expect(r.link.silentMs()).toBe(PAGE_LIMITS.stale_ms);
+    r.link.receive({ t: "pong", n: 2 });
+    // in a watch, a ping every 100 ms: silence counts from the last answer
+    r.advance(100);
+    r.link.ping();
+    r.advance(200);
+    expect(r.link.silentMs()).toBe(300);
+  });
+
   test("an asleep page, or a device that is down, throws device_offline: retryable, after 2000 ms, describe_robot first", async () => {
     const r = rig();
     r.link.paused = true;

@@ -357,7 +357,7 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
     url,
     port: bound,
     join: (robotId) =>
-      `On this computer open ${url} in Chrome or Edge, and lend robot ${robotId} the devices of that page; a page that joins another robot of this server names it.`,
+      `On this computer open ${url} in Chrome or Edge and lend robot ${robotId} the devices of that page.`,
     view: (robotId) =>
       pages
         .filter((p) => p.robot === robotId)

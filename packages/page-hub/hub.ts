@@ -156,13 +156,14 @@ export class PageLink {
     this.socket.send({ t: "ping", n });
   }
   /**
-   * How long the page has been silent: since its last answer, while a ping it has not answered has waited
-   * PAGE_LIMITS.answer_ms or more; 0 otherwise. Between two slow pings nothing waits, and nothing is silent.
+   * How long the page has been silent: 0 while no ping waits for its answer; else since its last answer, or since
+   * PAGE_LIMITS.answer_ms before the oldest waiting ping was sent when that is later. In a watch (a ping every
+   * 100 ms) that is the time since the last answer; the first ping after a quiet second has stale_ms - answer_ms for its answer.
    */
   silentMs(): number {
     const oldest = this.pings[0];
-    const now = this.hub.now();
-    return oldest && now - oldest.at >= PAGE_LIMITS.answer_ms ? now - this.seenAt : 0;
+    if (!oldest) return 0;
+    return Math.max(0, this.hub.now() - Math.max(this.seenAt, oldest.at - PAGE_LIMITS.answer_ms));
   }
   /** True while a read of pushed values came in the last PAGE_LIMITS.watched_ms. */
   watched(): boolean {
@@ -188,6 +189,7 @@ export class PageLink {
   replace(socket: PageSocket, devices: PageDevice[], unavailable: PageUnavailable[]): void {
     this.socket = socket;
     this.pings = [];
+    this.seenAt = this.hub.now();
     this.down.clear();
     this.values.clear();
     this.frames.clear();

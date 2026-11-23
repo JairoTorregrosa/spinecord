@@ -403,7 +403,8 @@ export class RuntimeError extends Error {
       this.next ??= from.next;
       this.trace_id ??= from.trace_id;
       this.moved ??= from.moved;
-      this.retry_after_ms ??= from.retry_after_ms;
+      // a wait before sending again belongs to an error that may be sent again
+      if (this.retryable) this.retry_after_ms ??= from.retry_after_ms;
       this.cause ??= from.cause ?? from;
     } else this.cause ??= from;
     return this;
