@@ -432,6 +432,7 @@ describe("pages", () => {
     const where = "test";
     const profile = JSON.parse(readFileSync(EXAMPLE.pages, "utf8")).profile;
     expect(parsePagesRobot({ profile }, where).id).toBe("pages");
+    expect(parsePagesRobot({ profile }, where).limits).toMatchObject({ max_loop_ms: 60000 });
     expect(() => parsePagesRobot({ profile, hardware: {} }, where)).toThrow(
       "hardware is not part of a robot without a body",
     );
