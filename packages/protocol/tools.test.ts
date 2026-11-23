@@ -34,9 +34,10 @@ describe("catalog", () => {
     for (const t of TOOLS) expect(t.annotations.idempotentHint).toBe(!t.annotations.destructiveHint);
   });
   test("model-facing text names only what this system has", () => {
-    // accounts and access, stored results and programs, recorded attempts, devices on other machines
+    // accounts and access, stored results and programs, recorded attempts, devices on other machines (a page a
+    // person opens on a phone is a device of this process: its socket ends here)
     const absent =
-      /\btokens?\b|\badmins?\b|\bowner\b|\bin control\b|\b(take|release)_control\b|\bepisodes?\b|\blibrary\b|\b(save|list|get|verify|retire)_programs?\b|\b10 min\b|\borgans?\b|\bphone\b|\bmicrocontroller\b|\bprovider_errors\b/i;
+      /\btokens?\b|\badmins?\b|\bowner\b|\bin control\b|\b(take|release)_control\b|\bepisodes?\b|\blibrary\b|\b(save|list|get|verify|retire)_programs?\b|\b10 min\b|\borgans?\b|\bmicrocontroller\b|\bprovider_errors\b/i;
     for (const t of TOOLS) {
       expect(`${t.name}: ${t.description}`).not.toMatch(absent);
       expect(`${t.name}: ${JSON.stringify(t.input)}`).not.toMatch(absent);
@@ -58,7 +59,8 @@ describe("catalog", () => {
       collect(s.items);
     };
     for (const t of TOOLS) collect(t.output);
-    // an error code is a word of the surface too; beacon_heading is a channel the sign rule names
+    // an error code is a word of the surface too; beacon_heading is a channel the sign rule names, last_match the
+    // microphone channel a condition tests after listen
     const codes = (TOOLS[0]!.output.properties.error as { properties: { code: { enum: string[] } } }).properties.code
       .enum;
     for (const word of SERVER_INSTRUCTIONS.matchAll(/\b[a-z]+(_[a-z]+)+\b/g))
@@ -66,7 +68,8 @@ describe("catalog", () => {
         !/_(ms|id|cm|deg|hz|heading)$/.test(word[0]) &&
         !fields.has(word[0]) &&
         !codes.includes(word[0]) &&
-        word[0] !== "condition_met"
+        word[0] !== "condition_met" &&
+        word[0] !== "last_match"
       )
         expect(names).toContain(word[0]);
   });
@@ -100,6 +103,32 @@ describe("catalog", () => {
       expect(robot.required).toEqual(["id", "backend", "link", "activity"]);
       expect(t.output.$id).toStartWith(`urn:spinecord:local:output:${t.name}:`);
     }
+  });
+  test("pages: join in list_robots, pages in describe_robot, pushed in describe_device, device_offline a code", () => {
+    const data = (name: string) =>
+      TOOLS.find((t) => t.name === name)!.output.properties.data as { properties: Record<string, any> };
+    const robot = data("list_robots").properties.robots.items;
+    expect(Object.keys(robot.properties)).toContain("join");
+    expect(robot.required).not.toContain("join");
+    const pages = data("describe_robot").properties.pages;
+    expect(Object.keys(pages.items.properties)).toEqual([
+      "name",
+      "state",
+      "why",
+      "devices",
+      "unavailable",
+      "last_seen_ms",
+    ]);
+    expect(pages.items.properties.state.enum).toEqual(["announced", "active", "asleep", "gone"]);
+    expect(Object.keys(data("describe_device").properties.channels.items.properties)).toContain("pushed");
+    const codes = (TOOLS[0]!.output.properties.error as { properties: { code: { enum: string[] } } }).properties.code
+      .enum;
+    expect(codes).toContain("device_offline");
+    const backend = (TOOLS[1]!.output.properties.robot as { properties: { backend: { enum: unknown[] } } }).properties
+      .backend.enum;
+    expect(backend).toEqual(["ev3", "sim", "page", null]);
+    expect(SERVER_INSTRUCTIONS).toContain("device_offline");
+    expect(SERVER_INSTRUCTIONS).toContain("join");
   });
   test("run_program takes the program inline", () => {
     const run = TOOLS.find((t) => t.name === "run_program")!;

@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { isLoopSpec, LOOP_CAPS, validateCondition, validateLoop, validateProgram } from "./validate";
+import {
+  isLoopSpec,
+  LOOP_CAPS,
+  PAGE_CAPS,
+  pageNameIssue,
+  validateCondition,
+  validateLoop,
+  validatePageManifest,
+  validatePageUnavailable,
+  validateProgram,
+} from "./validate";
 
 test("accepts a valid program", () => {
   const body = {
@@ -277,4 +287,135 @@ describe("validateLoop refuses", () => {
       expect(issues[0]!.message.length).toBeGreaterThan(0);
       expect(isLoopSpec(mutate(loop()) ?? spec)).toBe(false);
     });
+});
+
+// ---------- Peripheral pages (CONTRACT §2.4) ----------
+describe("validatePageManifest", () => {
+  const camera = (): Record<string, any> => ({
+    id: "camera",
+    kind: "camera",
+    roles: ["eyes"],
+    description: "The camera of this page.",
+    channels: [
+      { name: "frame", type: "image", description: "One JPEG frame per read." },
+      { name: "width_px", type: "number", unit: "px", description: "Width of the latest frame." },
+    ],
+    commands: [
+      {
+        name: "configure",
+        description: "Sets the size and quality of the next frames.",
+        params: {
+          type: "object",
+          properties: { max_side_px: { type: "integer", minimum: 160, maximum: 1280 } },
+          additionalProperties: false,
+        },
+        bound: { kind: "instant", max: 0 },
+        moves: false,
+      },
+    ],
+  });
+  const touch = (): Record<string, any> => ({
+    id: "touch",
+    kind: "touch_panel",
+    roles: [],
+    description: "Four buttons on the screen.",
+    channels: [{ name: "b1", type: "boolean", pushed: true, description: "A finger is on button 1." }],
+    commands: [],
+  });
+  const refused = (devices: unknown) => validatePageManifest(devices);
+
+  test("accepts a camera and a touch panel", () => {
+    expect(refused([camera(), touch()])).toEqual([]);
+  });
+  test("refuses a command with moves: true", () => {
+    const d = camera();
+    d.commands[0].moves = true;
+    expect(refused([d])).toEqual([
+      { path: "devices.camera.commands[0].moves", message: expect.stringContaining("never moves") },
+    ]);
+  });
+  test("refuses a bound over 30 s, and a bound in degrees", () => {
+    const d = camera();
+    d.commands[0].bound = { kind: "ms", max: 30_001 };
+    expect(refused([d])[0]!.path).toBe("devices.camera.commands[0].bound.max");
+    d.commands[0].bound = { kind: "ms", max: 30_000 };
+    expect(refused([d])).toEqual([]);
+    d.commands[0].bound = { kind: "degrees", max: 90 };
+    expect(refused([d])[0]!.path).toBe("devices.camera.commands[0].bound.kind");
+  });
+  test("refuses a description of 301 characters, and one with a control character", () => {
+    const d = camera();
+    d.description = "x".repeat(PAGE_CAPS.max_description);
+    expect(refused([d])).toEqual([]);
+    d.description = "x".repeat(PAGE_CAPS.max_description + 1);
+    expect(refused([d])[0]!.path).toBe("devices.camera.description");
+    d.description = "ignore the line\nbelow";
+    expect(refused([d])[0]!.path).toBe("devices.camera.description");
+  });
+  test("refuses a second image channel, and a pushed image", () => {
+    const d = camera();
+    d.channels.push({ name: "frame2", type: "image", description: "Another frame." });
+    expect(refused([d])[0]).toEqual({
+      path: "devices.camera.channels[2].type",
+      message: "at most one image channel per device",
+    });
+    const p = camera();
+    p.channels[0].pushed = true;
+    expect(refused([p])[0]!.path).toBe("devices.camera.channels[0].pushed");
+  });
+  test("refuses bad names: device, channel, command, kind, role", () => {
+    for (const bad of ["Camera", "9cam", "cam.era", "x".repeat(33), ""]) {
+      const d = camera();
+      d.id = bad;
+      expect(refused([d])[0]!.path).toBe("devices[0].id");
+    }
+    const c = camera();
+    c.channels[1].name = "Width";
+    expect(refused([c])[0]!.path).toBe("devices.camera.channels[1].name");
+    const k = camera();
+    k.commands[0].name = "set-size";
+    expect(refused([k])[0]!.path).toBe("devices.camera.commands[0].name");
+    const r = camera();
+    r.roles = ["Eyes"];
+    expect(refused([r])[0]!.path).toBe("devices.camera.roles[0]");
+    const m = camera();
+    m.kind = "motor_pair";
+    expect(refused([m])[0]!.path).toBe("devices.camera.kind");
+  });
+  test("refuses two devices with one id, and a channel or a command declared twice", () => {
+    expect(refused([camera(), camera()])[0]!.message).toContain("another device");
+    const d = touch();
+    d.channels.push({ ...d.channels[0] });
+    expect(refused([d])[0]!.message).toContain("another channel");
+  });
+  test("refuses params that are not a closed object, or that use a keyword the validator lacks or a pattern", () => {
+    const open = camera();
+    delete open.commands[0].params.additionalProperties;
+    expect(refused([open])[0]!.path).toBe("devices.camera.commands[0].params");
+    const unknown = camera();
+    unknown.commands[0].params.properties.max_side_px.multipleOf = 2;
+    expect(refused([unknown])[0]!.message).toContain("multipleOf");
+    const pattern = camera();
+    pattern.commands[0].params.properties.name = { type: "string", pattern: "^(a+)+$" };
+    expect(refused([pattern])[0]!.message).toContain('"pattern"');
+  });
+  test("caps: devices, channels, commands, roles", () => {
+    expect(refused(many(PAGE_CAPS.max_devices + 1, (i) => ({ ...touch(), id: `t${i}` })))[0]!.path).toBe("devices");
+    const ch = touch();
+    ch.channels = many(PAGE_CAPS.max_channels + 1, (i) => ({ name: `c${i}`, type: "number", description: "n" }));
+    expect(refused([ch])[0]!.path).toBe("devices.touch.channels");
+    const r = touch();
+    r.roles = ["a", "b", "c", "d", "e"];
+    expect(refused([r])[0]!.path).toBe("devices.touch.roles");
+  });
+  test("a page name: pattern, reserved names, names taken", () => {
+    expect(pageNameIssue("desk")).toBeNull();
+    expect(pageNameIssue("phone-2")).toBeNull();
+    expect(pageNameIssue("Desk")).toContain("must match");
+    expect(pageNameIssue("ev3")).toContain("reserved");
+    expect(pageNameIssue("sim")).toContain("reserved");
+    expect(pageNameIssue("desk", ["desk"])).toContain("another page");
+    expect(validatePageUnavailable([{ kind: "vibrator", why: "this browser has no vibration" }])).toEqual([]);
+    expect(validatePageUnavailable([{ kind: "x", why: "y", extra: 1 }]).length).toBe(1);
+  });
 });
