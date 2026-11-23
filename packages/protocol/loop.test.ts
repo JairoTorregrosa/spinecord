@@ -13,12 +13,24 @@ import {
   stepLoop,
   takeStats,
 } from "./loop";
-import { type LoopEnd, type LoopSpec, RuntimeError } from "./types";
+import { type LoopEnd, type LoopPlan, type LoopSpec, RuntimeError } from "./types";
 import { validateLoop } from "./validate";
 
-const NUM = { type: "number" } as const;
-const POWER = { drives: { arg: "power_pct", max_hold_ms: 250 }, range: [-100, 100] as [number, number] };
-const SPEED = { drives: { arg: "speed_pct", max_hold_ms: 250 }, range: [-100, 100] as [number, number] };
+// What a context carries: channels and commands with the ids of their devices, whatever the spec called them.
+const NUM = { type: "number", device: "ev3.S1" } as const;
+const BOOL = { type: "boolean", device: "ev3.S2" } as const;
+const POWER = {
+  device: "ev3.A",
+  drives: { arg: "power_pct", max_hold_ms: 250 },
+  range: [-100, 100] as [number, number],
+};
+const POWER2 = { ...POWER, device: "ev3.B" };
+const SPEED = {
+  device: "ev3.B",
+  drives: { arg: "speed_pct", max_hold_ms: 250 },
+  range: [-100, 100] as [number, number],
+};
+const SPEED2 = { ...SPEED, device: "ev3.C" };
 const base = (over: Partial<LoopSpec> = {}): LoopSpec => ({
   rate_hz: 50,
   duration_ms: 10_000,
@@ -53,11 +65,17 @@ interface GoldenCase {
   name: string;
   spec: unknown;
   ctx: LoopContext;
+  plan: LoopPlan;
   ticks: {
     set?: { params: Record<string, number>; ramp_ms?: number };
     inputs: Record<string, number | null>;
     dt: number;
-    expect: { outputs: number[]; guard?: string; end?: LoopEnd };
+    expect: {
+      outputs: number[];
+      guard?: string;
+      end?: LoopEnd;
+      signals: Record<string, { value: number; integral: number; derivative: number }>;
+    };
   }[];
 }
 const golden = JSON.parse(readFileSync(join(import.meta.dir, "loop-golden.json"), "utf8")) as { cases: GoldenCase[] };
@@ -66,7 +84,8 @@ describe("golden vectors", () => {
   for (const c of golden.cases)
     test(c.name, () => {
       const plan = planLoop(c.spec, c.ctx);
-      let state = startLoop(plan);
+      expect(plan).toEqual(c.plan);
+      let state = startLoop(c.plan);
       c.ticks.forEach((tick, k) => {
         if (tick.set) state = setParams(state, tick.set.params, tick.set.ramp_ms ?? 0);
         const step = stepLoop(
@@ -79,6 +98,15 @@ describe("golden vectors", () => {
         step.outputs.forEach((u, i) => {
           if (Math.abs(u - tick.expect.outputs[i]!) > 1e-9)
             throw new Error(`tick ${k} output ${i}: ${u}, expected ${tick.expect.outputs[i]}`);
+        });
+        expect(Object.keys(tick.expect.signals)).toEqual(plan.signals.map((p) => p.name));
+        plan.signals.forEach((p, i) => {
+          for (const part of ["value", "integral", "derivative"] as const) {
+            const got = state.signals[i]![part];
+            const want = tick.expect.signals[p.name]![part];
+            if (Math.abs(got - want) > 1e-9 * Math.max(1, Math.abs(want)))
+              throw new Error(`tick ${k} signal ${p.name} ${part}: ${got}, expected ${want}`);
+          }
         });
         expect({ tick: k, guard: step.guard, end: step.end }).toEqual({
           tick: k,
@@ -106,7 +134,8 @@ describe("golden vectors", () => {
     for (const op of ["gt", "lt", "abs_gt"]) expect(guards.some((g) => g.op === op)).toBe(true);
     expect(guards.some((g) => g.for_ms !== undefined)).toBe(true);
     expect(specs.some((s) => s.outputs.some((o) => o.limit))).toBe(true);
-    for (const reason of ["guard", "input_lost", "not_still"] as const) expect(ends).toContain(reason);
+    for (const reason of ["guard", "input_lost", "not_still", "overrun"] as const) expect(ends).toContain(reason);
+    expect(golden.cases.some((c) => c.ticks.some((t, k) => k > 0 && t.dt === 0))).toBe(true);
     expect(golden.cases.some((c) => c.ticks.some((t) => t.set?.ramp_ms))).toBe(true);
   });
 });
@@ -116,7 +145,7 @@ describe("planLoop", () => {
   test("fills in the defaults and keeps the spec's order", () => {
     const plan = planLoop(C1, {
       signals: { pitch_rate: { ...NUM, noise: 1 }, left: NUM, right: NUM },
-      outputs: [POWER, POWER],
+      outputs: [POWER, POWER2],
       max_rate_hz: 100,
       max_loop_ms: 120_000,
     });
@@ -156,14 +185,14 @@ describe("planLoop", () => {
   });
   test("a channel that is not numeric is refused", () => {
     for (const type of ["string", "image"] as const) {
-      const e = refusal(() => planLoop(base(), ctx({ signals: { x: { type } } })));
+      const e = refusal(() => planLoop(base(), ctx({ signals: { x: { type, device: "ev3.S1" } } })));
       expect(e.code).toBe("invalid_argument");
       expect(e.message).toContain("loop.signals.x.channel");
     }
-    expect(planLoop(base(), ctx({ signals: { x: { type: "boolean" } } })).signals.length).toBe(1);
+    expect(planLoop(base(), ctx({ signals: { x: BOOL } })).signals.length).toBe(1);
   });
   test("a vector channel takes an index inside its length, and only a vector does", () => {
-    const vector = { signals: { x: { type: "vector" as const, length: 3 } } };
+    const vector = { signals: { x: { type: "vector" as const, length: 3, device: "ev3.S1" } } };
     const indexed = (index: number) => base({ signals: { x: { device: "s", channel: "c", index } } });
     expect(planLoop(indexed(2), ctx(vector)).signals[0]!.index).toBe(2);
     for (const e of [
@@ -184,7 +213,7 @@ describe("planLoop", () => {
     expect(refusal(() => planLoop(inherited, ctx({ signals: {} }))).code).toBe("unknown_channel");
   });
   test("a command without drives, or without a range for its argument, is unsupported", () => {
-    for (const outputs of [[{}], [], [{ drives: POWER.drives }]]) {
+    for (const outputs of [[{ device: "ev3.A" }], [], [{ device: "ev3.A", drives: POWER.drives }]]) {
       const e = refusal(() => planLoop(base(), ctx({ outputs })));
       expect(e.code).toBe("unsupported");
       expect(e.message).toContain("loop.outputs[0].command");
@@ -200,7 +229,7 @@ describe("planLoop", () => {
   });
   test("hold_ms is 3 periods, at least 30 ms, at most max_hold_ms", () => {
     const hold = (rate_hz: number, max_hold_ms: number) =>
-      planLoop(base({ rate_hz }), ctx({ outputs: [{ drives: { arg: "power_pct", max_hold_ms }, range: [-100, 100] }] }))
+      planLoop(base({ rate_hz }), ctx({ outputs: [{ ...POWER, drives: { arg: "power_pct", max_hold_ms } }] }))
         .outputs[0]!.hold_ms;
     expect(hold(50, 250)).toBe(60);
     expect(hold(100, 250)).toBe(30);
@@ -232,7 +261,63 @@ describe("planLoop", () => {
     expect(bounds(undefined)).toEqual([-100, 100]);
     expect(bounds([-40, 40])).toEqual([-40, 40]);
     expect(bounds([-400, 40])).toEqual([-100, 40]);
-    expect(bounds([200, 300])).toEqual([100, 100]);
+    expect(bounds([100, 300])).toEqual([100, 100]);
+    const e = refusal(() => bounds([200, 300]));
+    expect(e.code).toBe("invalid_argument");
+    expect(e.message).toContain("loop.outputs[0].limit");
+  });
+  test("a driven argument whose range leaves out 0 is unsupported: 0 is where an output rests", () => {
+    for (const range of [
+      [10, 100],
+      [-100, -10],
+    ] as [number, number][]) {
+      const e = refusal(() => planLoop(base(), ctx({ outputs: [{ ...POWER, range }] })));
+      expect(e.code).toBe("unsupported");
+      expect(e.message).toContain("loop.outputs[0].command");
+    }
+    expect(planLoop(base(), ctx({ outputs: [{ ...POWER, range: [0, 100] }] })).outputs[0]).toMatchObject({
+      min: 0,
+      max: 100,
+    });
+  });
+  test("two outputs that name one device by different names are refused", () => {
+    const spec = base({
+      outputs: [
+        { device: "ev3.B", command: "power", terms: [{ feed: 1 }] },
+        { device: "left_wheel", command: "power", terms: [{ feed: 1 }] },
+      ],
+    });
+    expect(validateLoop(spec)).toEqual([]);
+    const e = refusal(() => planLoop(spec, ctx({ outputs: [POWER2, POWER2] })));
+    expect(e.code).toBe("invalid_argument");
+    expect(e.message).toContain("loop.outputs[1].device");
+    expect(e.message).toContain("ev3.B");
+    expect(planLoop(spec, ctx({ outputs: [POWER, POWER2] })).outputs.map((o) => o.device)).toEqual(["ev3.A", "ev3.B"]);
+  });
+  test("a plan names devices by their ids", () => {
+    const plan = planLoop(base(), ctx());
+    expect(plan.signals[0]!.device).toBe("ev3.S1");
+    expect(plan.outputs[0]!.device).toBe("ev3.A");
+  });
+  test("args are looked up as own keys", () => {
+    const spec = base({ outputs: [{ device: "m", command: "power", args: { ms: 100 }, terms: [{ feed: 1 }] }] });
+    const drives = { arg: "toString", max_hold_ms: 250 };
+    expect(planLoop(spec, ctx({ outputs: [{ ...POWER, drives }] })).outputs[0]!.arg).toBe("toString");
+  });
+  test("a context with a number that is none, or without a device id, is misconfigured", () => {
+    const bad: Partial<LoopContext>[] = [
+      { max_rate_hz: Number.NaN },
+      { max_loop_ms: -1 },
+      { signals: { x: { ...NUM, noise: -1 } } },
+      { signals: { x: { ...NUM, noise: Number.NaN } } },
+      { signals: { x: { ...NUM, max_rate_hz: 0 } } },
+      { signals: { x: { type: "vector", length: 0, device: "ev3.S1" } } },
+      { signals: { x: { ...NUM, device: "" } } },
+      { outputs: [{ ...POWER, device: "" }] },
+      { outputs: [{ ...POWER, drives: { arg: "power_pct", max_hold_ms: -1 } }] },
+      { outputs: [{ ...POWER, drives: { arg: "power_pct", max_hold_ms: Number.POSITIVE_INFINITY } }] },
+    ];
+    for (const over of bad) expect(refusal(() => planLoop(base(), ctx(over))).code).toBe("misconfigured");
   });
   test("a channel slower than the loop is named in notes", () => {
     const plan = planLoop(base(), ctx({ signals: { x: { ...NUM, max_rate_hz: 20 } } }));
@@ -293,11 +378,12 @@ describe("stepLoop", () => {
     const again = stepLoop(first!.state, [0], 20);
     expect(again.outputs).toEqual([0]);
     expect(again.end).toEqual({ reason: "guard", guard: "high" });
+    expect(again.guard).toBe("high");
     expect(again.state).toBe(first!.state);
   });
   test("a boolean channel arrives as 0 or 1 and a guard reads it", () => {
     const spec = base({ guards: [{ name: "pressed", signal: "x", op: "gt", value: 0.5 }] });
-    expect(run(spec, [[0], [0], [1]], 20, ctx({ signals: { x: { type: "boolean" } } })).map((s) => s.guard)).toEqual([
+    expect(run(spec, [[0], [0], [1]], 20, ctx({ signals: { x: BOOL } })).map((s) => s.guard)).toEqual([
       undefined,
       undefined,
       "pressed",
@@ -308,20 +394,75 @@ describe("stepLoop", () => {
     expect(refusal(() => stepLoop(state, [0], -1)).code).toBe("invalid_argument");
     expect(refusal(() => stepLoop(state, [0], Number.NaN)).code).toBe("invalid_argument");
   });
-  test("an output that is not a finite number is an internal error, never a value", () => {
+  test("a reading on a tick with dt 0 is taken; only the derivative keeps its value", () => {
+    const spec = base({ guards: [{ name: "high", signal: "x", op: "gt", value: 0.5 }] });
+    const plan = planLoop(spec, ctx());
+    let state = startLoop(plan);
+    const guards: (string | undefined)[] = [];
+    for (const [x, dt] of [
+      [0, 20],
+      [1, 0],
+      [0, 20],
+    ] as const) {
+      const step = stepLoop(state, [x], dt);
+      state = step.state;
+      guards.push(step.guard);
+    }
+    expect(guards).toEqual([undefined, "high", "high"]);
+  });
+  test("a tick later than 10 periods ends the loop with overrun", () => {
+    const plan = planLoop(base({ rate_hz: 50 }), ctx());
+    const first = stepLoop(startLoop(plan), [1], 9999).state;
+    expect(stepLoop(first, [1], 200).end).toBeUndefined();
+    const late = stepLoop(first, [1], 200.5);
+    expect(late.end).toEqual({ reason: "overrun" });
+    expect(late.outputs).toEqual([0]);
+  });
+  test("a reading beyond ±1e9 counts as no value", () => {
+    const steps = run(base(), [[1], [1e10], [-1e10], [1e9]]);
+    expect(steps.map((s) => s.outputs)).toEqual([[1], [1], [1], [100]]);
+    expect(steps[3]!.state.signals[0]!.missed).toBe(0);
+  });
+  test("a loop at every cap of magnitude, fed the largest readings at the shortest and longest dt, stays finite", () => {
+    const BIG = 1e6;
+    const terms = [
+      ...(["value", "integral", "derivative"] as const).flatMap((of) => [
+        { signal: "x", of, setpoint: -BIG, gain: BIG },
+        { signal: "x", of, setpoint: "p", gain: "p" },
+        { signal: "y", of, setpoint: BIG, gain: -BIG },
+      ]),
+      { feed: "p", gain: "p" },
+      { feed: BIG, gain: BIG },
+    ];
     const spec = base({
-      outputs: [
-        {
-          device: "m",
-          command: "power",
-          terms: [
-            { signal: "x", gain: 1e308 },
-            { signal: "x", gain: -1e308 },
-          ],
-        },
-      ],
+      rate_hz: 0.1,
+      duration_ms: 1_000_000_000,
+      signals: {
+        x: { device: "s", channel: "c", detrend_s: BIG, smooth_ms: BIG },
+        y: { device: "t", channel: "c", zero: "start", detrend_s: 1e-9, smooth_ms: 1e-9 },
+      },
+      params: { p: BIG },
+      outputs: [{ device: "m", command: "power", terms }],
+      guards: [{ name: "far", signal: "y", of: "integral", op: "abs_gt", value: BIG, for_ms: 1_000_000_000 }],
     });
-    expect(refusal(() => run(spec, [[1e10]])).code).toBe("internal");
+    expect(validateLoop(spec)).toEqual([]);
+    const plan = planLoop(spec, ctx({ signals: { x: NUM, y: NUM }, max_loop_ms: 2_000_000_000 }));
+    let state = startLoop(plan);
+    let steepest = 0;
+    for (let k = 0; k < 400; k++) {
+      if (k === 100) state = setParams(state, { p: -BIG }, 3_600_000);
+      const sign = k % 2 === 0 ? 1 : -1;
+      const dt = [1e-300, 100_000, 5e-324, 0][k % 4]!;
+      const step = stepLoop(state, [sign * 1e9, -sign * 1e9], dt);
+      state = step.state;
+      expect(step.end).toBeUndefined();
+      expect(Number.isFinite(step.outputs[0])).toBe(true);
+      for (const sig of state.signals)
+        for (const v of [sig.value, sig.integral, sig.derivative, sig.trend]) expect(Number.isFinite(v)).toBe(true);
+      for (const acc of state.integrals[0]!) expect(Math.abs(acc)).toBeLessThanOrEqual(1e12);
+      steepest = Math.max(steepest, Math.abs(state.signals[1]!.derivative));
+    }
+    expect(steepest).toBe(1e12);
   });
 });
 
@@ -365,6 +506,9 @@ describe("setParams", () => {
       () => setParams(first(), { constructor: 1 }),
       () => setParams(first(), { a: Number.NaN }),
       () => setParams(first(), { a: 1 }, -5),
+      () => setParams(first(), { a: 1e6 + 1 }),
+      () => setParams(first(), { a: -1e7 }, 100),
+      () => setParams(first(), { a: 1 }, 3_600_001),
     ])
       expect(refusal(fn).code).toBe("invalid_argument");
     expect(refusal(() => setParams(first(), { c: 1 })).message).toContain("params.c");
@@ -391,7 +535,7 @@ describe("report statistics", () => {
     expect(report.signals.x).toMatchObject({ last: 4, min: -5, max: 4, mean: 0.5, derivative: 900 });
     expect(report.signals.x!.integral).toBeCloseTo(0.01, 12);
     expect(report.outputs).toEqual([
-      { device: "m", command: "power", last: 3, min: -3, max: 3, mean_abs: 2.25, saturated_pct: 50 },
+      { device: "ev3.A", command: "power", last: 3, min: -3, max: 3, mean_abs: 2.25, saturated_pct: 50 },
     ]);
     // a window without a tick repeats the latest values
     expect(takeStats(stats).signals.x).toMatchObject({ last: 4, min: 4, max: 4, mean: 4, derivative: 900 });
@@ -468,7 +612,7 @@ describe("docs/loops.md", () => {
   test("every example is a valid loop", () => {
     expect(examples.length).toBe(4);
     for (const spec of examples) expect(validateLoop(spec)).toEqual([]);
-    const wheels = { outputs: [SPEED, SPEED], max_rate_hz: 50, max_loop_ms: 60_000 };
+    const wheels = { outputs: [SPEED, SPEED2], max_rate_hz: 50, max_loop_ms: 60_000 };
     expect(planLoop(C3, { ...wheels, signals: { wall: NUM } }).outputs.map((o) => [o.min, o.max, o.hold_ms])).toEqual([
       [0, 40, 150],
       [0, 40, 150],
@@ -514,19 +658,11 @@ function pendulum() {
 }
 
 describe("balancing: C1 on an inverted pendulum on wheels", () => {
-  // C1 with the gains of this plant (docs/loops.md): the printed ones are starting points for a real robot.
-  const TUNED = { rate: 0.4, angle: 14, wheel: 0.1, wheel_speed: 0.1 };
-  const withGains = (g: typeof TUNED): LoopSpec => ({
+  /** C1 with every feedback gain at 0: the same law with nothing to hold the robot. */
+  const zeroed: LoopSpec = {
     ...C1,
-    outputs: C1.outputs.map((o) => ({
-      ...o,
-      terms: o.terms.map((t) => {
-        if ("feed" in t) return t;
-        if (t.signal === "pitch_rate") return { ...t, gain: t.of === "integral" ? g.angle : g.rate };
-        return { ...t, gain: t.of === "derivative" ? g.wheel_speed : g.wheel };
-      }),
-    })),
-  });
+    outputs: C1.outputs.map((o) => ({ ...o, terms: o.terms.map((t) => ("signal" in t ? { ...t, gain: 0 } : t)) })),
+  };
   /**
    * The robot is held still for the gyro's second of zeroing, then let go with a shove of 20 deg/s, and pushed
    * again at 6 s. The gyro has an offset of 1.5 deg/s, the encoders count whole degrees from arbitrary values.
@@ -534,7 +670,7 @@ describe("balancing: C1 on an inverted pendulum on wheels", () => {
   function balance(spec: LoopSpec, travel?: { deg: number; at_ms: number; ramp_ms: number }) {
     const plan = planLoop(spec, {
       signals: { pitch_rate: { ...NUM, noise: 1 }, left: NUM, right: NUM },
-      outputs: [POWER, POWER],
+      outputs: [POWER, POWER2],
       max_rate_hz: 100,
       max_loop_ms: 120_000,
     });
@@ -573,8 +709,8 @@ describe("balancing: C1 on an inverted pendulum on wheels", () => {
     return { ...out, angle_deg: robot.s.angle * DEG, x_cm: robot.s.x * 100, encoder_deg: robot.encoder() };
   }
 
-  test("the law holds the robot upright for 10 s through a shove and a push", () => {
-    const run = balance(withGains(TUNED));
+  test("C1 as printed holds the robot upright for 10 s through a shove and a push", () => {
+    const run = balance(C1);
     if (process.env.LOOP_TRACE) console.log("balancer", JSON.stringify(run));
     expect(run.end).toBeUndefined();
     expect(run.max_angle_deg).toBeLessThan(5);
@@ -583,12 +719,12 @@ describe("balancing: C1 on an inverted pendulum on wheels", () => {
     expect(run.saturated).toBe(0);
   });
   test("with its gains zeroed the same robot falls and the guard says so", () => {
-    const run = balance(withGains({ rate: 0, angle: 0, wheel: 0, wheel_speed: 0 }));
+    const run = balance(zeroed);
     expect(run.end).toEqual({ reason: "guard", guard: "fallen" });
     expect(Math.abs(run.angle_deg)).toBeGreaterThan(40);
   });
   test("a ramp of travel rolls the balanced robot there", () => {
-    const run = balance(withGains(TUNED), { deg: 360, at_ms: 2000, ramp_ms: 3000 });
+    const run = balance(C1, { deg: 360, at_ms: 2000, ramp_ms: 3000 });
     expect(run.end).toBeUndefined();
     expect(run.max_angle_deg).toBeLessThan(8);
     expect(Math.abs(run.encoder_deg - 360)).toBeLessThan(20);
@@ -610,8 +746,8 @@ describe("line following: C2 on a robot at the edge of a line", () => {
       CM_S_PER_PCT = 0.4,
       PCT_PER_CM = 12; // cm, cm, wheel speed, edge gradient
     const plan = planLoop(spec, {
-      signals: { light: { ...NUM, range: [0, 100] }, bumper: { type: "boolean" } },
-      outputs: [SPEED, SPEED],
+      signals: { light: { ...NUM, range: [0, 100] }, bumper: BOOL },
+      outputs: [SPEED, SPEED2],
       max_rate_hz: 50,
       max_loop_ms: 60_000,
     });

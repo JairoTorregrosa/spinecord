@@ -137,17 +137,26 @@ export const LOOP_CAPS = {
   max_guards: 8,
   max_params: 16,
   max_trace_hz: 20,
+  min_rate_hz: 0.1,
+  /** The largest magnitude of a gain, a setpoint, a feed, a param, a clamp, a guard value and a filter constant. */
+  max_magnitude: 1e6,
+  max_ramp_ms: 3_600_000,
+  max_name: 32, // characters of a signal, param or guard name
+  max_text: 64, // characters of a device, channel or command string
 } as const;
 
 const PARTS = ["value", "integral", "derivative"] as const;
 const GUARD_OPS = ["gt", "lt", "abs_gt"] as const;
 // A name is a key of the report's trace and of plain objects: an identifier, and never the one key an object
 // does not hold as its own.
-const NAME = /^(?!__proto__$)[A-Za-z_][A-Za-z0-9_]*$/;
-const NAME_RULE = "a name is letters, digits and _, not starting with a digit, and not __proto__";
+const NAME = new RegExp(`^(?!__proto__$)[A-Za-z_][A-Za-z0-9_]{0,${LOOP_CAPS.max_name - 1}}$`);
+const NAME_RULE = `a name is 1 to ${LOOP_CAPS.max_name} letters, digits and _, not starting with a digit, and not __proto__`;
+const TEXT_RULE = `required string of at most ${LOOP_CAPS.max_text} characters`;
 const TRACE_KEY = /^(t_ms|out\d+)$/;
 const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
-const isText = (x: unknown): x is string => typeof x === "string" && x.length > 0;
+const isText = (x: unknown): x is string => typeof x === "string" && x.length > 0 && x.length <= LOOP_CAPS.max_text;
+const isCapped = (x: unknown): x is number => isNum(x) && x >= -LOOP_CAPS.max_magnitude && x <= LOOP_CAPS.max_magnitude;
+const CAPPED = `a number within ±${LOOP_CAPS.max_magnitude}`;
 const unknownKeys = (o: Record<string, unknown>, known: readonly string[], path: string): ValidationIssue[] => {
   const extra = Object.keys(o).filter((k) => !known.includes(k));
   return extra.length ? [{ path, message: `unknown keys: ${extra.join(", ")}` }] : [];
@@ -161,7 +170,8 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
     ["rate_hz", "duration_ms", "attention_ms", "signals", "params", "outputs", "guards", "trace_hz"],
     path,
   );
-  if (!isNum(spec.rate_hz) || spec.rate_hz <= 0) out.push({ path: `${path}.rate_hz`, message: "number above 0" });
+  if (!isNum(spec.rate_hz) || spec.rate_hz < LOOP_CAPS.min_rate_hz)
+    out.push({ path: `${path}.rate_hz`, message: `number of at least ${LOOP_CAPS.min_rate_hz}` });
   if (!isInt(spec.duration_ms) || spec.duration_ms < 1)
     out.push({ path: `${path}.duration_ms`, message: "integer of at least 1" });
   if ("attention_ms" in spec && (!isInt(spec.attention_ms) || spec.attention_ms < 1))
@@ -181,15 +191,15 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
         if (!NAME.test(name)) out.push({ path: `${p}.${name}`, message: NAME_RULE });
         else {
           params.add(name);
-          if (!isNum(spec.params[name])) out.push({ path: `${p}.${name}`, message: "must be a finite number" });
+          if (!isCapped(spec.params[name])) out.push({ path: `${p}.${name}`, message: `must be ${CAPPED}` });
         }
       }
     }
   }
   /** A number, or the name of a param. */
   const numberOrParam = (x: unknown, p: string): ValidationIssue[] => {
-    if (isNum(x)) return [];
-    if (typeof x !== "string") return [{ path: p, message: "must be a finite number or the name of a param" }];
+    if (isCapped(x)) return [];
+    if (typeof x !== "string") return [{ path: p, message: `must be ${CAPPED} or the name of a param` }];
     return params.has(x) ? [] : [{ path: p, message: `no param "${x}"; params: ${[...params].join(", ") || "none"}` }];
   };
 
@@ -213,8 +223,8 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
         continue;
       }
       out.push(...unknownKeys(s, ["device", "channel", "index", "zero", "detrend_s", "smooth_ms"], p));
-      if (!isText(s.device)) out.push({ path: `${p}.device`, message: "required string (device id or role)" });
-      if (!isText(s.channel)) out.push({ path: `${p}.channel`, message: "required string" });
+      if (!isText(s.device)) out.push({ path: `${p}.device`, message: `${TEXT_RULE} (device id or role)` });
+      if (!isText(s.channel)) out.push({ path: `${p}.channel`, message: TEXT_RULE });
       if ("index" in s && (!isInt(s.index) || s.index < 0))
         out.push({ path: `${p}.index`, message: "integer of at least 0" });
       if ("zero" in s && s.zero !== "start") {
@@ -227,7 +237,8 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
           out.push({ path: `${p}.zero.mean_ms`, message: "must be under duration_ms" });
       }
       for (const k of ["detrend_s", "smooth_ms"] as const)
-        if (k in s && (!isNum(s[k]) || s[k] <= 0)) out.push({ path: `${p}.${k}`, message: "number above 0" });
+        if (k in s && (!isCapped(s[k]) || s[k] <= 0))
+          out.push({ path: `${p}.${k}`, message: `number above 0, at most ${LOOP_CAPS.max_magnitude}` });
     }
   }
   const signalRef = (x: unknown, p: string): ValidationIssue[] =>
@@ -250,11 +261,11 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
       const p = `${op}[${i}]`;
       if (!isObj(o)) return void out.push({ path: p, message: "must be {device, command, args?, terms, limit?}" });
       out.push(...unknownKeys(o, ["device", "command", "args", "terms", "limit"], p));
-      if (!isText(o.device)) out.push({ path: `${p}.device`, message: "required string (device id or role)" });
+      if (!isText(o.device)) out.push({ path: `${p}.device`, message: `${TEXT_RULE} (device id or role)` });
       else if (devices.has(o.device))
         out.push({ path: `${p}.device`, message: `"${o.device}" is driven by another output` });
       devices.add(o.device);
-      if (!isText(o.command)) out.push({ path: `${p}.command`, message: "required string" });
+      if (!isText(o.command)) out.push({ path: `${p}.command`, message: TEXT_RULE });
       if ("args" in o && !isObj(o.args)) out.push({ path: `${p}.args`, message: "must be an object" });
       if ("limit" in o) {
         const l = o.limit;
@@ -286,7 +297,8 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
         if ("setpoint" in t) out.push(...numberOrParam(t.setpoint, `${tp}.setpoint`));
         if ("clamp" in t) {
           if (t.of !== "integral") out.push({ path: `${tp}.clamp`, message: "only a term of integral has a clamp" });
-          else if (!isNum(t.clamp) || t.clamp <= 0) out.push({ path: `${tp}.clamp`, message: "number above 0" });
+          else if (!isCapped(t.clamp) || t.clamp <= 0)
+            out.push({ path: `${tp}.clamp`, message: `number above 0, at most ${LOOP_CAPS.max_magnitude}` });
         }
       });
     });
@@ -303,13 +315,13 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
         const p = `${gp}[${i}]`;
         if (!isObj(g)) return void out.push({ path: p, message: "must be {name, signal, of?, op, value, for_ms?}" });
         out.push(...unknownKeys(g, ["name", "signal", "of", "op", "value", "for_ms"], p));
-        if (!isText(g.name)) out.push({ path: `${p}.name`, message: "required string" });
+        if (typeof g.name !== "string" || !NAME.test(g.name)) out.push({ path: `${p}.name`, message: NAME_RULE });
         else if (names.has(g.name)) out.push({ path: `${p}.name`, message: `"${g.name}" names another guard` });
         names.add(g.name);
         out.push(...signalRef(g.signal, `${p}.signal`), ...partOf(g, p));
         if (!GUARD_OPS.includes(g.op as (typeof GUARD_OPS)[number]))
           out.push({ path: `${p}.op`, message: `must be one of ${GUARD_OPS.join(", ")}` });
-        if (!isNum(g.value)) out.push({ path: `${p}.value`, message: "must be a finite number" });
+        if (!isCapped(g.value)) out.push({ path: `${p}.value`, message: `must be ${CAPPED}` });
         if ("for_ms" in g && (!isInt(g.for_ms) || g.for_ms < 1))
           out.push({ path: `${p}.for_ms`, message: "integer of at least 1" });
       });

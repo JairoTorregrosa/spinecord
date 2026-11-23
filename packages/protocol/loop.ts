@@ -16,17 +16,22 @@ import {
   RuntimeError,
   type SignalPart,
 } from "./types";
-import { validateLoop } from "./validate";
+import { LOOP_CAPS, validateLoop } from "./validate";
 
 // ---------- Planning ----------
-/** What a plan needs to know of a channel. */
-export type LoopChannel = Pick<ChannelSpec, "type" | "range" | "active" | "noise" | "length" | "max_rate_hz">;
+/** What a plan needs to know of a channel: its manifest entry, and the id of the device that has it. */
+export type LoopChannel = Pick<ChannelSpec, "type" | "range" | "active" | "noise" | "length" | "max_rate_hz"> & {
+  device: string;
+};
 /** What a plan needs from the robot. Whoever holds the devices fills it in. */
 export interface LoopContext {
   /** By signal name: the channel the signal reads. */
   signals: Record<string, LoopChannel>;
-  /** By output index: what the command declares for loops, and the schema range of the argument it names. */
-  outputs: { drives?: LoopDrives; range?: [number, number] }[];
+  /**
+   * By output index: the id of the device the output names, what its command declares for loops, and the schema
+   * range of the argument that names.
+   */
+  outputs: { device: string; drives?: LoopDrives; range?: [number, number] }[];
   /** The fastest rate of the executor this loop runs on. */
   max_rate_hz: number;
   /** The robot's limit on the life of a loop. */
@@ -40,6 +45,13 @@ export const LOOP_LOST_TICKS = 3;
 /** A `zero: {mean_ms}` measurement saw motion when its readings spread more than this many times the channel's noise. */
 export const LOOP_STILL_NOISES = 4;
 export const LOOP_TRACE_POINTS = 200;
+/** A tick that comes later than this many periods after the previous one ends the loop with `overrun`. */
+export const LOOP_LATE_PERIODS = 10;
+/**
+ * Magnitudes the law works within, so that no output can leave the finite numbers: a reading beyond `reading`
+ * counts as no value, and every derivative, integral and accumulator is held within ±`state`.
+ */
+export const LOOP_MAGNITUDE = { reading: 1e9, state: 1e12 } as const;
 
 const refuse = (message: string, next?: string[]): RuntimeError => {
   const e = new RuntimeError("invalid_argument", message);
@@ -48,6 +60,9 @@ const refuse = (message: string, next?: string[]): RuntimeError => {
 };
 const cut = (x: number, lo: number, hi: number): number => (x < lo ? lo : x > hi ? hi : x);
 const finite = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+const reading = (x: unknown): x is number => finite(x) && x >= -LOOP_MAGNITUDE.reading && x <= LOOP_MAGNITUDE.reading;
+const held = (x: number): number => cut(x, -LOOP_MAGNITUDE.state, LOOP_MAGNITUDE.state);
+const misconfigured = (message: string): RuntimeError => new RuntimeError("misconfigured", message);
 
 /**
  * Checks a loop against the robot and returns it ready to run. Throws a RuntimeError for everything the
@@ -55,7 +70,7 @@ const finite = (x: unknown): x is number => typeof x === "number" && Number.isFi
  */
 export function planLoop(spec: unknown, ctx: LoopContext): LoopPlan {
   if (!finite(ctx.max_rate_hz) || ctx.max_rate_hz <= 0 || !finite(ctx.max_loop_ms) || ctx.max_loop_ms < 1)
-    throw new RuntimeError("misconfigured", "a loop needs max_rate_hz above 0 and max_loop_ms of at least 1");
+    throw misconfigured("a loop needs max_rate_hz above 0 and max_loop_ms of at least 1");
   const issues = validateLoop(spec);
   if (issues.length) throw refuse(issues.map((i) => `${i.path}: ${i.message}`).join("; "));
   const loop = spec as LoopSpec;
@@ -76,6 +91,13 @@ export function planLoop(spec: unknown, ctx: LoopContext): LoopPlan {
     const where = `channel ${s.channel} of ${s.device}`;
     const ch = Object.hasOwn(ctx.signals, name) ? ctx.signals[name] : undefined;
     if (!ch) throw new RuntimeError("unknown_channel", `${path}: ${where} is not a channel of the robot`);
+    if (typeof ch.device !== "string" || !ch.device) throw misconfigured(`${path}: ${where} came without a device id`);
+    if (ch.noise !== undefined && (!finite(ch.noise) || ch.noise < 0))
+      throw misconfigured(`${path}: the noise of ${where} must be a number of at least 0`);
+    if (ch.length !== undefined && (!Number.isInteger(ch.length) || ch.length < 1))
+      throw misconfigured(`${path}: the length of ${where} must be an integer of at least 1`);
+    if (ch.max_rate_hz !== undefined && (!finite(ch.max_rate_hz) || ch.max_rate_hz <= 0))
+      throw misconfigured(`${path}: the max_rate_hz of ${where} must be a number above 0`);
     if (ch.active === false)
       throw refuse(
         `${path}: ${where} is not active and a loop never switches a sensor mode. Nothing was sent. ` +
@@ -98,35 +120,54 @@ export function planLoop(spec: unknown, ctx: LoopContext): LoopPlan {
       );
     return {
       name,
-      device: s.device,
+      device: ch.device,
       channel: s.channel,
       ...(s.index === undefined ? {} : { index: s.index }),
       zero: s.zero === undefined ? "none" : s.zero === "start" ? "start" : "mean",
       mean_ms,
-      noise: finite(ch.noise) ? ch.noise : 0,
+      noise: ch.noise ?? 0,
       detrend_s: s.detrend_s ?? 0,
       smooth_ms: s.smooth_ms ?? 0,
     };
   });
 
+  const driven = new Map<string, number>();
   const outputs: LoopPlan["outputs"] = loop.outputs.map((o, i) => {
     const path = `loop.outputs[${i}]`;
     const where = `command ${o.command} of ${o.device}`;
+    const device = ctx.outputs[i]?.device;
     const drives = ctx.outputs[i]?.drives;
     const range = ctx.outputs[i]?.range;
     if (!drives)
       throw new RuntimeError("unsupported", `${path}.command: ${where} declares no drives, so no loop can refresh it`);
+    if (typeof device !== "string" || !device) throw misconfigured(`${path}: ${where} came without a device id`);
+    if (typeof drives.arg !== "string" || !drives.arg || !finite(drives.max_hold_ms) || drives.max_hold_ms < 0)
+      throw misconfigured(`${path}: the drives of ${where} need an arg and a max_hold_ms of at least 0`);
     if (!range || !finite(range[0]) || !finite(range[1]) || range[0] > range[1])
       throw new RuntimeError(
         "unsupported",
         `${path}.command: ${where} declares no minimum and maximum for ${drives.arg}, so a loop output has no range`,
       );
+    if (range[0] > 0 || range[1] < 0)
+      throw new RuntimeError(
+        "unsupported",
+        `${path}.command: ${drives.arg} of ${where} ranges from ${range[0]} to ${range[1]}, which leaves out 0, ` +
+          `the value an output rests at`,
+      );
+    const other = driven.get(device);
+    if (other !== undefined)
+      throw refuse(
+        `${path}.device: ${o.device} is ${device}, which loop.outputs[${other}] drives; one output per device`,
+      );
+    driven.set(device, i);
     const args = o.args ?? {};
-    if (drives.arg in args)
+    if (Object.hasOwn(args, drives.arg))
       throw refuse(`${path}.args.${drives.arg}: the loop computes ${drives.arg} every tick; leave it out of args`);
     const [lo, hi] = o.limit ?? range;
+    if (lo > range[1] || hi < range[0])
+      throw refuse(`${path}.limit: [${lo}, ${hi}] lies outside the range of ${drives.arg}, ${range[0]} to ${range[1]}`);
     return {
-      device: o.device,
+      device,
       command: o.command,
       arg: drives.arg,
       args,
@@ -192,7 +233,7 @@ export interface LoopStep {
   outputs: number[];
   /** The name of the guard that ended the loop on this tick. */
   guard?: string;
-  /** Present on the tick that ends the loop: reason guard, input_lost or not_still. */
+  /** Present on the tick that ends the loop: reason guard, input_lost, not_still or overrun. */
   end?: LoopEnd;
 }
 
@@ -230,13 +271,15 @@ export function startLoop(plan: LoopPlan): LoopState {
  * that much loop time. Integrals and filters keep their state.
  */
 export function setParams(state: LoopState, params: Record<string, number>, ramp_ms = 0): LoopState {
-  if (!finite(ramp_ms) || ramp_ms < 0) throw refuse("ramp_ms: number of at least 0");
+  if (!finite(ramp_ms) || ramp_ms < 0 || ramp_ms > LOOP_CAPS.max_ramp_ms)
+    throw refuse(`ramp_ms: number from 0 to ${LOOP_CAPS.max_ramp_ms}`);
   const next = { ...state, params: { ...state.params }, ramps: { ...state.ramps } };
   for (const [name, to] of Object.entries(params)) {
     const from = next.params[name];
     if (!Object.hasOwn(next.params, name) || from === undefined)
       throw refuse(`params.${name}: no param "${name}"; params: ${Object.keys(state.params).join(", ") || "none"}`);
-    if (!finite(to)) throw refuse(`params.${name}: must be a finite number`);
+    if (!finite(to) || to < -LOOP_CAPS.max_magnitude || to > LOOP_CAPS.max_magnitude)
+      throw refuse(`params.${name}: must be a number within ±${LOOP_CAPS.max_magnitude}`);
     if (ramp_ms > 0) next.ramps[name] = { from, to, ramp_ms, t_ms: 0 };
     else {
       next.params[name] = to;
@@ -259,7 +302,15 @@ const holds = (g: Guard, x: number): boolean =>
 export function stepLoop(state: LoopState, inputs: readonly (number | null)[], dt_ms: number): LoopStep {
   const plan = state.plan;
   const zeros = plan.outputs.map(() => 0);
-  if (state.phase === "ended") return { state, outputs: zeros, ...(state.end ? { end: state.end } : {}) };
+  if (state.phase === "ended") {
+    const end = state.end;
+    return {
+      state,
+      outputs: zeros,
+      ...(end?.guard === undefined ? {} : { guard: end.guard }),
+      ...(end ? { end } : {}),
+    };
+  }
   if (!finite(dt_ms) || dt_ms < 0) throw refuse("dt_ms: number of at least 0");
   const dt = state.ticks === 0 ? 0 : dt_ms;
   const s: LoopState = {
@@ -282,6 +333,8 @@ export function stepLoop(state: LoopState, inputs: readonly (number | null)[], d
     return { state: s, outputs: zeros, ...(end.guard === undefined ? {} : { guard: end.guard }), end };
   };
 
+  if (dt > LOOP_LATE_PERIODS * plan.period_ms) return ended({ reason: "overrun" });
+
   // params on their way to a new value
   for (const [name, r] of Object.entries(state.ramps)) {
     const t = r.t_ms + dt;
@@ -298,8 +351,8 @@ export function stepLoop(state: LoopState, inputs: readonly (number | null)[], d
     const p = plan.signals[i]!;
     const sig = s.signals[i]!;
     const x = inputs[i];
-    fresh[i] = finite(x);
-    if (!finite(x)) {
+    fresh[i] = reading(x);
+    if (!reading(x)) {
       sig.missed++;
       if (sig.missed >= LOOP_LOST_TICKS) return ended({ reason: "input_lost" });
     } else {
@@ -308,14 +361,14 @@ export function stepLoop(state: LoopState, inputs: readonly (number | null)[], d
       if (!sig.seen && p.zero === "start") sig.offset = x;
     }
     if (sig.zeroed) {
-      if (finite(x)) sig.seen = true;
+      if (reading(x)) sig.seen = true;
       continue;
     }
     // zero mean: readings count from the signal's first one until mean_ms have passed
     const m = sig.mean;
     if (sig.seen) m.t_ms += dt;
     if (m.t_ms < p.mean_ms) {
-      if (finite(x)) {
+      if (reading(x)) {
         m.min = m.n === 0 || x < m.min ? x : m.min;
         m.max = m.n === 0 || x > m.max ? x : m.max;
         m.sum += x;
@@ -348,18 +401,19 @@ export function stepLoop(state: LoopState, inputs: readonly (number | null)[], d
       continue;
     }
     sig.gap_ms += dt;
-    if (fresh[i] && sig.gap_ms > 0) {
+    if (fresh[i]) {
+      // a reading on a tick with no time since the previous reading is taken; only the derivative keeps its value
       const gap = sig.gap_ms;
       if (p.detrend_s > 0) {
         sig.trend += ((v - sig.trend) * gap) / (p.detrend_s * 1000 + gap);
         v -= sig.trend;
       }
       if (p.smooth_ms > 0) v = sig.value + ((v - sig.value) * gap) / (p.smooth_ms + gap);
-      sig.derivative = ((v - sig.value) * 1000) / gap;
+      if (gap > 0) sig.derivative = held(((v - sig.value) * 1000) / gap);
       sig.value = v;
       sig.gap_ms = 0;
     }
-    sig.integral += (sig.value * dt) / 1000;
+    sig.integral = held(sig.integral + (sig.value * dt) / 1000);
   }
   const law_dt = first ? 0 : dt;
   const signalOf = (name: string): SignalState => s.signals[plan.signals.findIndex((x) => x.name === name)]!;
@@ -379,12 +433,13 @@ export function stepLoop(state: LoopState, inputs: readonly (number | null)[], d
       const sig = signalOf(t.signal);
       const setpoint = num(t.setpoint, 0);
       if (t.of === "integral") {
-        let acc = s.integrals[i]![j]! + ((sig.value - setpoint) * law_dt) / 1000;
+        let acc = held(s.integrals[i]![j]! + ((sig.value - setpoint) * law_dt) / 1000);
         if (t.clamp !== undefined) acc = cut(acc, -t.clamp, t.clamp);
         s.integrals[i]![j] = acc;
         u += num(t.gain, 0) * acc;
       } else u += num(t.gain, 0) * (part(sig, t.of) - setpoint);
     }
+    // the caps of validateLoop and LOOP_MAGNITUDE keep every sum finite; a value that is not never leaves here
     if (!Number.isFinite(u))
       throw new RuntimeError("internal", `loop output ${i} (${o.command} of ${o.device}) is not a finite number`);
     s.cut[i] = u < o.min || u > o.max;

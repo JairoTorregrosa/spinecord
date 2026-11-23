@@ -4,7 +4,7 @@ A loop (CONTRACT §5a) is a control law given as data: signals to read, outputs 
 
 Every gain here is a plausible starting point of the right order of magnitude, not a measured one. Each must be tuned on the robot: read the trace of a short run, change one param, look again. Signs depend on how a sensor and a motor are mounted; the first run of any law uses a short `duration_ms`, a low `limit` and a hand near the robot.
 
-`packages/protocol/loop.test.ts` runs these specs as they are printed here through `validateLoop`, and runs C1, C2 and C4 against small simulated plants.
+`packages/protocol/loop.test.ts` runs these specs as they are printed here through `validateLoop`, and runs C1, C2 and C4, as printed, against small simulated plants.
 
 ## C1. Balancing on two wheels (100 Hz)
 
@@ -20,20 +20,20 @@ Preparation, robot held upright and still: read the gyro's `rate_deg_s` by name 
   "params": { "travel": 0, "steer": 0 },
   "outputs": [
     { "device": "ev3.B", "command": "power", "limit": [-100, 100], "terms": [
-        { "signal": "pitch_rate", "gain": 0.8 },
-        { "signal": "pitch_rate", "of": "integral", "gain": 15 },
-        { "signal": "left",  "setpoint": "travel", "gain": 0.06 },
-        { "signal": "right", "setpoint": "travel", "gain": 0.06 },
-        { "signal": "left",  "of": "derivative", "gain": 0.04 },
-        { "signal": "right", "of": "derivative", "gain": 0.04 },
+        { "signal": "pitch_rate", "gain": 0.4 },
+        { "signal": "pitch_rate", "of": "integral", "gain": 14 },
+        { "signal": "left",  "setpoint": "travel", "gain": 0.1 },
+        { "signal": "right", "setpoint": "travel", "gain": 0.1 },
+        { "signal": "left",  "of": "derivative", "gain": 0.1 },
+        { "signal": "right", "of": "derivative", "gain": 0.1 },
         { "feed": "steer", "gain": 1 } ] },
     { "device": "ev3.C", "command": "power", "limit": [-100, 100], "terms": [
-        { "signal": "pitch_rate", "gain": 0.8 },
-        { "signal": "pitch_rate", "of": "integral", "gain": 15 },
-        { "signal": "left",  "setpoint": "travel", "gain": 0.06 },
-        { "signal": "right", "setpoint": "travel", "gain": 0.06 },
-        { "signal": "left",  "of": "derivative", "gain": 0.04 },
-        { "signal": "right", "of": "derivative", "gain": 0.04 },
+        { "signal": "pitch_rate", "gain": 0.4 },
+        { "signal": "pitch_rate", "of": "integral", "gain": 14 },
+        { "signal": "left",  "setpoint": "travel", "gain": 0.1 },
+        { "signal": "right", "setpoint": "travel", "gain": 0.1 },
+        { "signal": "left",  "of": "derivative", "gain": 0.1 },
+        { "signal": "right", "of": "derivative", "gain": 0.1 },
         { "feed": "steer", "gain": -1 } ] }
   ],
   "guards": [
@@ -46,7 +46,7 @@ The law is state feedback on four states: body rate (the gyro's value), body ang
 
 Params steer it while it balances: `{travel: 720}` over a ramp of 4000 ms rolls the robot two wheel turns forward in 4 s; `{steer: 10}` turns it.
 
-The four gains interact, so they are tuned together on the robot. For the plant of the test (a 0.6 kg body with its mass 9 cm above the axle, 5.6 cm wheels, two motors) the set that holds it is rate 0.4, integral 14, wheel angle 0.1 and wheel speed 0.1, found by a search over simulated runs: gains belong to one robot.
+The four gains interact, so they are tuned together. The ones printed are the set that holds the plant of the test (a 0.6 kg body with its mass 9 cm above the axle, 5.6 cm wheels, two motors), found by a search over simulated runs. Gains belong to one robot: a real one starts from these and is tuned on the floor.
 
 ## C2. Line following (50 Hz)
 

@@ -360,7 +360,7 @@ export interface LoopDrives {
 }
 /**
  * A loop checked against the robot and ready to run: every default filled in, each output with the argument it
- * drives, its hold time and its bounds. Devices are named as the spec names them (id or role).
+ * drives, its hold time and its bounds. Devices are named by their ids, whatever the spec called them.
  * It is plain JSON (finite numbers, arrays in a stated order), so an executor on a device takes it as it is.
  */
 export interface LoopPlan {

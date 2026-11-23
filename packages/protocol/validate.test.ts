@@ -94,6 +94,15 @@ test("accepts a loop at every cap", () => {
   }));
   spec.guards = many(LOOP_CAPS.max_guards, guard);
   spec.trace_hz = LOOP_CAPS.max_trace_hz;
+  spec.rate_hz = LOOP_CAPS.min_rate_hz;
+  spec.params.n0 = -LOOP_CAPS.max_magnitude;
+  spec.outputs[0].terms[0] = { signal: "light", of: "integral", setpoint: 1e6, gain: -1e6, clamp: 1e6 };
+  spec.guards[0] = { name: "g".repeat(LOOP_CAPS.max_name), signal: "light", op: "lt", value: -1e6 };
+  spec.signals.light = {
+    device: "d".repeat(LOOP_CAPS.max_text),
+    channel: "c".repeat(LOOP_CAPS.max_text),
+    smooth_ms: 1e6,
+  };
   expect(validateLoop(spec)).toEqual([]);
 });
 
@@ -216,6 +225,32 @@ const REFUSALS: [rule: string, path: string, mutate: (s: Record<string, any>) =>
     "loop.outputs[0].terms[2].clamp",
     (s) => void (s.outputs[0].terms[2].clamp = 10),
   ],
+  ["rate_hz under 0.1", "loop.rate_hz", (s) => void (s.rate_hz = 0.05)],
+  ["a param beyond ±1e6", "loop.params.edge", (s) => void (s.params.edge = -1e6 - 1)],
+  ["a gain beyond ±1e6", "loop.outputs[0].terms[4].gain", (s) => void (s.outputs[0].terms[4].gain = 1e308)],
+  ["a setpoint beyond ±1e6", "loop.outputs[0].terms[3].setpoint", (s) => void (s.outputs[0].terms[3].setpoint = 2e6)],
+  ["a feed beyond ±1e6", "loop.outputs[0].terms[1].feed", (s) => void (s.outputs[0].terms[1].feed = -2e6)],
+  ["a clamp beyond 1e6", "loop.outputs[0].terms[3].clamp", (s) => void (s.outputs[0].terms[3].clamp = 2e6)],
+  ["a guard value beyond ±1e6", "loop.guards[0].value", (s) => void (s.guards[0].value = 1e7)],
+  ["detrend_s beyond 1e6", "loop.signals.light.detrend_s", (s) => void (s.signals.light.detrend_s = 1e7)],
+  ["smooth_ms beyond 1e6", "loop.signals.light.smooth_ms", (s) => void (s.signals.light.smooth_ms = 1e7)],
+  [
+    "a signal name of 33 characters",
+    `loop.signals.${"s".repeat(33)}`,
+    (s) => void (s.signals["s".repeat(33)] = signal()),
+  ],
+  [
+    "a signal device of 65 characters",
+    "loop.signals.light.device",
+    (s) => void (s.signals.light.device = "d".repeat(65)),
+  ],
+  ["a channel of 65 characters", "loop.signals.light.channel", (s) => void (s.signals.light.channel = "c".repeat(65))],
+  ["an output device of 65 characters", "loop.outputs[0].device", (s) => void (s.outputs[0].device = "d".repeat(65))],
+  ["a command of 65 characters", "loop.outputs[0].command", (s) => void (s.outputs[0].command = "c".repeat(65))],
+  ["a guard name with a space", "loop.guards[0].name", (s) => void (s.guards[0].name = "line lost")],
+  ["a guard name of 33 characters", "loop.guards[0].name", (s) => void (s.guards[0].name = "g".repeat(33))],
+  ["a guard named __proto__", "loop.guards[0].name", (s) => void (s.guards[0].name = "__proto__")],
+  ["a guard name that is no string", "loop.guards[0].name", (s) => void (s.guards[0].name = 7)],
   ["guards that is no array", "loop.guards", (s) => void (s.guards = { lost: {} })],
   ["9 guards", "loop.guards", (s) => void (s.guards = many(9, guard))],
   ["a guard that is no object", "loop.guards[0]", (s) => void (s.guards[0] = "lost")],
