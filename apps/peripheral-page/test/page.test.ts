@@ -1,0 +1,653 @@
+// The peripheral page against a fake browser and a fake socket: the manifest built from feature detection, the
+// refusals that land in `unavailable`, listen matching `expect`, speak and tone, the screen and the buttons, the
+// extension API, and the wire protocol the kit speaks (CONTRACT §2.4). Every manifest passes validatePageManifest.
+import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join as joinPath } from "node:path";
+import { validatePageManifest } from "../../../packages/protocol/validate";
+import type { PageDevice } from "../../../packages/protocol/types";
+import { matchPhrase, norm } from "../src/devices/microphone";
+import { fit } from "../src/devices/camera";
+import { voiceFor } from "../src/devices/speaker";
+import { createPage } from "../src/page";
+import type { View } from "../src/devices/display";
+import { fakeBrowser, fakeSocket, tick, VOICES, type FakeBrowserOptions } from "./fakes";
+
+function rig(o: FakeBrowserOptions = {}) {
+  const browser = fakeBrowser(o);
+  const sock = fakeSocket();
+  const views: View[] = [];
+  let labels: string[] = [];
+  const page = createPage({
+    win: browser.win,
+    url: "ws://127.0.0.1:1/page",
+    token: "tok",
+    openSocket: () => {
+      sock.socket.opened++;
+      return sock.socket;
+    },
+    visible: () => true,
+    lang: "es-ES",
+    workletUrl: "level.js",
+    render: (v) => void views.push(v),
+    onLabels: (l) => void (labels = l),
+  });
+  /** Taps "Lend", opens the socket, welcomes the page. Resolves with the hello. */
+  const join = async (name = "desk") => {
+    await page.lend({ name });
+    sock.open();
+    const hello = sock.json().find((m) => m.t === "hello")!;
+    sock.receive({ t: "welcome", name, robot: "r1" });
+    return hello as {
+      devices: PageDevice[];
+      unavailable: { kind: string; why: string }[];
+      name: string;
+      token: string;
+    };
+  };
+  let nextId = 0;
+  /** Sends a request as the process does and resolves with the page's res (and the binary after it, if any). */
+  const req = async (m: Record<string, unknown>, waitMs = 50) => {
+    const id = ++nextId;
+    const before = sock.sent.length;
+    sock.receive({ t: "req", id, ...m });
+    for (let i = 0; i < waitMs / 5 + 400; i++) {
+      const i0 = sock.sent.slice(before).findIndex((x: any) => x && x.t === "res" && x.id === id);
+      if (i0 >= 0) {
+        const res = sock.sent[before + i0] as any;
+        const bin = sock.sent[before + i0 + 1];
+        return { res, binary: bin instanceof Uint8Array ? bin : undefined };
+      }
+      await tick(5);
+    }
+    throw new Error(`no answer to request ${id}`);
+  };
+  return { browser, sock, page, views, labels: () => labels, join, req };
+}
+const ids = (devices: PageDevice[]) => devices.map((d) => d.id);
+const cmds = (devices: PageDevice[], id: string) => devices.find((d) => d.id === id)?.commands.map((c) => c.name);
+const chans = (devices: PageDevice[], id: string) => devices.find((d) => d.id === id)?.channels.map((c) => c.name);
+
+describe("the manifest, from feature detection", () => {
+  test("a browser with everything lends every kind, and the manifest passes the process's check", async () => {
+    const { join } = rig();
+    const hello = await join();
+    expect(validatePageManifest(hello.devices)).toEqual([]);
+    expect(ids(hello.devices).sort()).toEqual(["camera", "mic", "screen", "speaker", "touch"]);
+    expect(hello.unavailable).toEqual([]);
+    expect(cmds(hello.devices, "mic")).toEqual(["listen"]);
+    expect(chans(hello.devices, "mic")).toContain("level_pct");
+    expect(cmds(hello.devices, "speaker")).toEqual(["speak", "tone"]);
+    expect(cmds(hello.devices, "screen")).toEqual(["text", "clear", "face", "color"]);
+    expect(hello.token).toBe("tok");
+    const roles = Object.fromEntries(hello.devices.map((d) => [d.id, d.roles]));
+    expect(roles).toMatchObject({
+      camera: ["eyes"],
+      mic: ["ears"],
+      speaker: ["voice"],
+      screen: ["face"],
+      touch: ["touch"],
+    });
+  });
+
+  test("without speech recognition the microphone has no listen and keeps level_pct", async () => {
+    const hello = await rig({ recognition: false }).join();
+    expect(validatePageManifest(hello.devices)).toEqual([]);
+    expect(cmds(hello.devices, "mic")).toEqual([]);
+    expect(chans(hello.devices, "mic")).toContain("level_pct");
+    expect(hello.devices.find((d) => d.id === "mic")!.description).toContain("no speech recognition");
+  });
+
+  test("the unprefixed SpeechRecognition is found too", async () => {
+    const hello = await rig({ recognition: "SpeechRecognition" }).join();
+    expect(cmds(hello.devices, "mic")).toEqual(["listen"]);
+  });
+
+  test("a microphone with neither recognition nor a level meter is not lent, with its reason", async () => {
+    const hello = await rig({ recognition: false, worklet: false }).join();
+    expect(ids(hello.devices)).not.toContain("mic");
+    expect(hello.unavailable).toEqual([
+      { kind: "microphone", why: "microphone: this browser has neither speech recognition nor an audio level meter" },
+    ]);
+  });
+
+  test("a refused camera and a refused microphone land in unavailable with their reasons", async () => {
+    const { join, browser } = rig({ camera: "NotAllowedError", microphone: "NotAllowedError" });
+    const hello = await join();
+    expect(browser.asked.sort()).toEqual(["camera", "microphone"]);
+    expect(ids(hello.devices).sort()).toEqual(["screen", "speaker", "touch"]);
+    expect(hello.unavailable).toEqual([
+      { kind: "camera", why: "camera: the person did not allow it" },
+      { kind: "microphone", why: "microphone: the person did not allow it" },
+    ]);
+    expect(validatePageManifest(hello.devices)).toEqual([]);
+  });
+
+  test("a computer with no camera says so", async () => {
+    const hello = await rig({ camera: "NotFoundError" }).join();
+    expect(hello.unavailable).toEqual([{ kind: "camera", why: "camera: this computer has no camera" }]);
+  });
+
+  test("a browser without media devices, synthesis or audio lends the screen and the buttons only", async () => {
+    const hello = await rig({ media: false, synthesis: false, audio: false }).join();
+    expect(ids(hello.devices).sort()).toEqual(["screen", "touch"]);
+    expect(hello.unavailable.map((u) => u.kind).sort()).toEqual(["camera", "microphone", "speaker"]);
+    expect(hello.unavailable.find((u) => u.kind === "camera")!.why).toContain("mediaDevices.getUserMedia");
+  });
+
+  test("a camera without ImageCapture is not lent", async () => {
+    const hello = await rig({ imageCapture: false }).join();
+    expect(hello.unavailable).toEqual([
+      { kind: "camera", why: "camera: this browser cannot take a frame from the camera" },
+    ]);
+  });
+
+  test("speak lists only the voices and languages the browser has; tone needs Web Audio", async () => {
+    const hello = await rig({ audio: false }).join();
+    const speak = hello.devices.find((d) => d.id === "speaker")!.commands.find((c) => c.name === "speak")!;
+    const p = speak.params.properties as Record<string, { enum?: string[] }>;
+    expect(p.voice!.enum).toEqual(["Mónica", "Paulina", "Samantha"]);
+    expect(p.lang!.enum).toEqual(["en-US", "es-ES", "es-MX"]);
+    expect(speak.description).toContain("Mónica (es-ES)");
+    expect(cmds(hello.devices, "speaker")).toEqual(["speak"]);
+  });
+
+  test("a browser that lists no voice has no speak", async () => {
+    const hello = await rig({ voices: [] }).join();
+    expect(cmds(hello.devices, "speaker")).toEqual(["tone"]);
+  });
+
+  test("configure offers facing only where there is more than one camera", async () => {
+    const one = await rig().join();
+    const two = await rig({ cameras: 2 }).join();
+    const facing = (h: typeof one) =>
+      "facing" in (h.devices.find((d) => d.id === "camera")!.commands[0]!.params.properties as object);
+    expect(facing(one)).toBe(false);
+    expect(facing(two)).toBe(true);
+    expect(validatePageManifest(two.devices)).toEqual([]);
+  });
+});
+
+describe("nothing is lent without a tap", () => {
+  test("no socket, no camera and no microphone before lend()", async () => {
+    const { sock, browser, page } = rig();
+    await tick(10);
+    expect(sock.socket.opened).toBe(0);
+    expect(browser.asked).toEqual([]);
+    expect(page.kit.status().state).toBe("idle");
+  });
+
+  test("the page's source uses no storage", () => {
+    const dir = joinPath(import.meta.dir, "..", "src");
+    const files = readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith(".ts"));
+    for (const f of files) {
+      const text = readFileSync(joinPath(dir, String(f)), "utf8");
+      expect(text).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie|caches\./);
+    }
+  });
+});
+
+describe("the wire protocol", () => {
+  test("the page answers pings with its visibility, from the message handler", async () => {
+    const { join, sock } = rig();
+    await join();
+    sock.receive({ t: "ping", n: 7 });
+    expect(sock.json().at(-1)).toEqual({ t: "pong", n: 7, visible: true });
+  });
+
+  test("after the welcome every pushed channel has a value", async () => {
+    const { join, sock } = rig();
+    const hello = await join();
+    const pushed = new Map<string, Set<string>>();
+    for (const m of sock.json().filter((x) => x.t === "state"))
+      for (const k of Object.keys(m.values))
+        (pushed.get(m.device) ?? pushed.set(m.device, new Set()).get(m.device)!).add(k);
+    for (const d of hello.devices)
+      for (const c of d.channels.filter((c) => c.pushed)) expect(pushed.get(d.id)?.has(c.name)).toBe(true);
+  });
+
+  test("a frame is a res with image, then its bytes", async () => {
+    const { join, req } = rig();
+    await join();
+    const { res, binary } = await req({ op: "read", device: "camera", channels: ["frame", "width_px", "facing"] });
+    expect(res.ok).toBe(true);
+    expect(res.image).toMatchObject({ channel: "frame", mime: "image/jpeg" });
+    expect(res.image.bytes).toBe(binary!.length);
+    expect(res.image.age_ms).toBeGreaterThanOrEqual(0);
+    expect(res.readings).toEqual({ width_px: 640, facing: "user" });
+    // the bytes are a JPEG of the configured size
+    expect([binary![9]! * 256 + binary![10]!, binary![7]! * 256 + binary![8]!]).toEqual([640, 360]);
+  });
+
+  test("configure changes the size of the next frames", async () => {
+    const { join, req } = rig();
+    await join();
+    const c = await req({
+      op: "command",
+      device: "camera",
+      command: "configure",
+      args: { max_side_px: 320, quality: 0.5 },
+      deadline_ms: 2000,
+    });
+    expect(c.res.result).toEqual({
+      measured: { max_side_px: 320, quality: 0.5, width_px: 320, height_px: 180, facing: "user" },
+      reason: "completed",
+    });
+    const { res } = await req({ op: "read", device: "camera", channels: ["width_px", "height_px"] });
+    expect(res.readings).toMatchObject({ width_px: 320, height_px: 180 });
+  });
+
+  test("a muted camera track is down, unmuted it is up", async () => {
+    const { join, sock, browser } = rig();
+    await join();
+    browser.video.fire("mute");
+    expect(sock.json().at(-1)).toEqual({ t: "down", device: "camera", why: "the camera stopped sending pictures" });
+    browser.video.fire("unmute");
+    expect(sock.json().at(-1)).toEqual({ t: "up", device: "camera" });
+  });
+
+  test("an unknown command answers unknown_command, an unknown device device_offline", async () => {
+    const { join, req } = rig();
+    await join();
+    expect(
+      (await req({ op: "command", device: "camera", command: "zoom", args: {}, deadline_ms: 1 })).res.error.code,
+    ).toBe("unknown_command");
+    expect((await req({ op: "read", device: "door", channels: ["x"] })).res.error.code).toBe("device_offline");
+  });
+
+  test("pause says paused and answers requests with device_offline; resume says resumed", async () => {
+    const { join, sock, page, req } = rig();
+    await join();
+    page.kit.pause("test");
+    expect(sock.json().at(-1)).toEqual({ t: "paused", why: "test" });
+    expect((await req({ op: "read", device: "camera", channels: ["frame"] })).res.error.code).toBe("device_offline");
+    page.kit.resume();
+    expect(sock.json().at(-1)).toEqual({ t: "resumed" });
+  });
+
+  test("stop lending: the camera and microphone leave the manifest, their tracks stop, their pushes stop", async () => {
+    const { join, sock, page, browser } = rig();
+    await join();
+    page.stopLending();
+    expect(browser.video.stopped).toBe(true);
+    expect(browser.audioTrack.stopped).toBe(true);
+    const devices = sock
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!;
+    expect(ids(devices.devices).sort()).toEqual(["screen", "speaker", "touch"]);
+    expect(devices.unavailable).toEqual([
+      { kind: "camera", why: "camera: the person stopped lending it" },
+      { kind: "microphone", why: "microphone: the person stopped lending it" },
+    ]);
+    const n = sock.sent.length;
+    browser.level(80);
+    expect(sock.sent.length).toBe(n);
+  });
+
+  test("the process's stop ends a speak in flight and is answered at once", async () => {
+    const { join, req, browser } = rig();
+    await join();
+    browser.synth.hold = true;
+    const speaking = req({
+      op: "command",
+      device: "speaker",
+      command: "speak",
+      args: { text: "hola" },
+      deadline_ms: 15000,
+    });
+    await tick(10);
+    const stop = await req({ op: "stop" });
+    expect(stop.res).toEqual({ t: "res", id: stop.res.id, ok: true });
+    expect((await speaking).res.result).toEqual({ measured: { spoken: false }, reason: "preempted" });
+  });
+
+  test("an abort ends the command it names", async () => {
+    const { join, sock, browser } = rig();
+    await join();
+    browser.hear("silence");
+    sock.receive({
+      t: "req",
+      id: 50,
+      op: "command",
+      device: "mic",
+      command: "listen",
+      args: { max_ms: 5000 },
+      deadline_ms: 5000,
+    });
+    await tick(30);
+    sock.receive({ t: "req", id: 51, op: "abort", of: 50 });
+    for (let i = 0; i < 50 && !sock.json().some((m) => m.t === "res" && m.id === 50); i++) await tick(5);
+    expect(sock.json().find((m) => m.t === "res" && m.id === 50)!.result.reason).toBe("preempted");
+  });
+
+  test("a close from the process ends the lending and says why", async () => {
+    const { join, sock, page } = rig();
+    await join();
+    sock.closeFromServer(4009, "the name is held by another page");
+    expect(page.kit.status()).toMatchObject({
+      state: "closed",
+      closed: { code: 4009, reason: "the name is held by another page" },
+    });
+  });
+});
+
+describe("microphone", () => {
+  test("phrases match with case, accents and spacing ignored, as a substring", () => {
+    expect(norm("  Ya me  la TOMÉ ")).toBe("ya me la tome");
+    expect(matchPhrase("Sí, ya me la tomé hoy", ["no", "ya me la tome"])).toBe("ya me la tome");
+    expect(matchPhrase("Buenos días", ["ya me la tome", ""])).toBe("");
+  });
+
+  test("listen hears one phrase, matches expect and pushes last_match", async () => {
+    const { join, req, browser, sock } = rig();
+    await join();
+    browser.hear({ transcript: "Ya me la TOMÉ", confidence: 0.92 });
+    const { res } = await req({
+      op: "command",
+      device: "mic",
+      command: "listen",
+      args: { max_ms: 3000, expect: ["no", "ya me la tome"] },
+      deadline_ms: 3000,
+    });
+    expect(res.result).toEqual({
+      measured: { heard: true, transcript: "Ya me la TOMÉ", confidence: 0.92, match: "ya me la tome" },
+      reason: "completed",
+    });
+    expect(browser.recognizers.at(-1)!.lang).toBe("es-ES");
+    expect(browser.recognizers.at(-1)!.continuous).toBe(false);
+    const states = sock.json().filter((m) => m.t === "state" && m.device === "mic");
+    expect(states.some((m) => m.values.listening === true)).toBe(true);
+    expect(states.at(-1)!.values).toEqual({ listening: false });
+    expect(states.some((m) => m.values.last_match === "ya me la tome" && m.values.heard_count === 1)).toBe(true);
+  });
+
+  test("lang of the command wins over the page's", async () => {
+    const { join, req, browser } = rig();
+    await join();
+    browser.hear({ transcript: "take it", confidence: 0.5 });
+    await req({
+      op: "command",
+      device: "mic",
+      command: "listen",
+      args: { max_ms: 1000, lang: "en-GB" },
+      deadline_ms: 1000,
+    });
+    expect(browser.recognizers.at(-1)!.lang).toBe("en-GB");
+  });
+
+  test("silence until max_ms ends with reason timeout, the recognizer started again meanwhile", async () => {
+    const { join, req, browser } = rig();
+    await join();
+    browser.hear("silence");
+    const { res } = await req(
+      { op: "command", device: "mic", command: "listen", args: { max_ms: 800 }, deadline_ms: 800 },
+      900,
+    );
+    expect(res.result).toEqual({
+      measured: { heard: false, transcript: "", confidence: 0, match: "" },
+      reason: "timeout",
+    });
+    expect(browser.recognizers.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a recognizer error is the command's error", async () => {
+    const { join, req, browser } = rig();
+    await join();
+    browser.hear({ error: "not-allowed" });
+    const { res } = await req({
+      op: "command",
+      device: "mic",
+      command: "listen",
+      args: { max_ms: 1000 },
+      deadline_ms: 1000,
+    });
+    expect(res.error.code).toBe("unsupported");
+    browser.hear({ error: "network" });
+    const net = await req({
+      op: "command",
+      device: "mic",
+      command: "listen",
+      args: { max_ms: 1000 },
+      deadline_ms: 1000,
+    });
+    expect(net.res.error).toEqual({
+      code: "timeout",
+      message: "speech recognition: the browser's speech service could not be reached",
+    });
+  });
+
+  test("level_pct is pushed from the worklet, at most 20 messages per second per device", async () => {
+    const { join, sock, browser } = rig();
+    await join();
+    const before = sock.json().length;
+    for (let i = 0; i < 30; i++) browser.level(i * 3);
+    const states = sock
+      .json()
+      .slice(before)
+      .filter((m) => m.t === "state" && m.device === "mic");
+    expect(states.length).toBeLessThanOrEqual(20);
+    expect(states[0]!.values).toEqual({ level_pct: 0 });
+  });
+});
+
+describe("speaker", () => {
+  test("speak uses the page's language by default, a named voice when asked, and counts what it said", async () => {
+    const { join, req, browser, sock } = rig();
+    await join();
+    const a = await req({
+      op: "command",
+      device: "speaker",
+      command: "speak",
+      args: { text: "hola" },
+      deadline_ms: 15000,
+    });
+    expect(a.res.result).toEqual({ measured: { spoken: true }, reason: "completed" });
+    expect(browser.spoken.at(-1)!.voice!.name).toBe("Mónica");
+    await req({
+      op: "command",
+      device: "speaker",
+      command: "speak",
+      args: { text: "hi", voice: "Samantha", rate_wpm: 360 },
+      deadline_ms: 15000,
+    });
+    expect(browser.spoken.at(-1)!.voice!.name).toBe("Samantha");
+    expect(browser.spoken.at(-1)!.rate).toBe(2);
+    await req({
+      op: "command",
+      device: "speaker",
+      command: "speak",
+      args: { text: "hola", lang: "es-MX" },
+      deadline_ms: 15000,
+    });
+    expect(browser.spoken.at(-1)!.voice!.name).toBe("Paulina");
+    const last = sock
+      .json()
+      .filter((m) => m.t === "state" && m.device === "speaker" && "spoken_count" in m.values)
+      .at(-1)!;
+    expect(last.values).toEqual({ last_spoken: "hola", spoken_count: 3 });
+  });
+
+  test("voiceFor: exact tag, then base language, else none", () => {
+    expect(voiceFor(VOICES, "es-ES")!.name).toBe("Mónica");
+    expect(voiceFor(VOICES, "es-AR")!.name).toBe("Mónica");
+    expect(voiceFor(VOICES, "fr-FR")).toBeNull();
+  });
+
+  test("tone plays and returns when it has ended", async () => {
+    const { join, req } = rig();
+    await join();
+    const { res } = await req({
+      op: "command",
+      device: "speaker",
+      command: "tone",
+      args: { frequency_hz: 440, duration_ms: 20 },
+      deadline_ms: 20,
+    });
+    expect(res.result).toEqual({ measured: { played: true }, reason: "completed" });
+  });
+});
+
+describe("screen and buttons", () => {
+  test("text, face, color and clear show on the page and in showing", async () => {
+    const { join, req, views, sock } = rig();
+    await join();
+    await req({
+      op: "command",
+      device: "screen",
+      command: "text",
+      args: { lines: ["hola", "mundo"] },
+      deadline_ms: 2000,
+    });
+    expect(views.at(-1)).toEqual({ t: "text", lines: ["hola", "mundo"] });
+    await req({ op: "command", device: "screen", command: "face", args: { expression: "happy" }, deadline_ms: 2000 });
+    expect(views.at(-1)).toMatchObject({ t: "face", name: "happy" });
+    const bad = await req({
+      op: "command",
+      device: "screen",
+      command: "color",
+      args: { color: "red", ms: 500 },
+      deadline_ms: 2000,
+    });
+    expect(bad.res.error.code).toBe("invalid_argument");
+    await req({
+      op: "command",
+      device: "screen",
+      command: "color",
+      args: { color: "#FF0000", ms: 100 },
+      deadline_ms: 2000,
+    });
+    expect(views.at(-1)).toEqual({ t: "color", color: "#ff0000" });
+    await tick(150);
+    expect(views.at(-1)).toMatchObject({ t: "face", name: "happy" });
+    await req({ op: "command", device: "screen", command: "clear", args: {}, deadline_ms: 2000 });
+    const shown = sock
+      .json()
+      .filter((m) => m.t === "state" && m.device === "screen")
+      .map((m) => m.values.showing);
+    expect(shown).toEqual(["face: neutral", "text: hola / mundo", "face: happy", "color: #ff0000", "face: happy", ""]);
+  });
+
+  test("buttons push a press, a release and a counter; set_labels draws only labelled buttons", async () => {
+    const { join, sock, page, req, labels } = rig();
+    await join();
+    page.touch.press(1);
+    page.touch.press(1); // a second pointerdown while down is the same press
+    page.touch.release(1);
+    const touch = sock
+      .json()
+      .filter((m) => m.t === "state" && m.device === "touch")
+      .slice(1);
+    expect(touch.map((m) => m.values)).toEqual([{ b2: true, b2_presses: 1 }, { b2: false }]);
+    expect(labels()).toEqual(["1", "2", "3", "4"]);
+    await req({
+      op: "command",
+      device: "touch",
+      command: "set_labels",
+      args: { labels: ["Sí", "No"] },
+      deadline_ms: 2000,
+    });
+    expect(labels()).toEqual(["Sí", "No", "", ""]);
+  });
+});
+
+describe("the extension API", () => {
+  test("the door example of docs/peripheral-pages.md, verbatim, joins the manifest and pushes", async () => {
+    const { join, page, sock } = rig();
+    await join();
+    const doc = readFileSync(joinPath(import.meta.dir, "..", "..", "..", "docs", "peripheral-pages.md"), "utf8");
+    const code = doc.match(/```js door\.js\n([\s\S]*?)```/)![1]!;
+    // a body with a pad element: the example's only use of the DOM
+    const listeners: Record<string, () => void> = {};
+    const pad = { className: "", addEventListener: (t: string, cb: () => void) => void (listeners[t] = cb) };
+    const document = { body: { appendChild: (el: unknown) => el }, createElement: () => pad };
+    new Function("spinecord", "document", code)(page.spinecord, document);
+    const devices = sock
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!.devices as PageDevice[];
+    expect(validatePageManifest(devices)).toEqual([]);
+    expect(devices.find((d) => d.id === "door")).toMatchObject({ kind: "contact", roles: [] });
+    listeners.pointerdown!();
+    listeners.pointerup!();
+    const door = sock.json().filter((m) => m.t === "state" && m.device === "door");
+    expect(door.map((m) => m.values)).toEqual([{ closed: true }, { closed: false, opened_count: 1 }]);
+  });
+
+  test("a screen an extension adds is a value of face", async () => {
+    const { join, page, sock, req, views } = rig();
+    await join();
+    let drawn = 0;
+    page.spinecord.screen("sleepy", () => void drawn++);
+    const screen = (
+      sock
+        .json()
+        .filter((m) => m.t === "devices")
+        .at(-1)!.devices as PageDevice[]
+    ).find((d) => d.id === "screen")!;
+    const face = screen.commands.find((c) => c.name === "face")!.params.properties as Record<
+      string,
+      { enum: string[] }
+    >;
+    expect(face.expression!.enum).toContain("sleepy");
+    await req({ op: "command", device: "screen", command: "face", args: { expression: "sleepy" }, deadline_ms: 2000 });
+    expect(views.at(-1)).toMatchObject({ t: "face", name: "sleepy" });
+  });
+
+  test("a device whose run throws a PageError answers with its code; ended() gives another reason", async () => {
+    const { join, page, req } = rig();
+    await join();
+    page.spinecord.device({
+      id: "thing",
+      kind: "thing",
+      description: "A test device.",
+      channels: [],
+      commands: [
+        {
+          name: "go",
+          description: "Goes.",
+          params: { type: "object", properties: {}, additionalProperties: false },
+          bound: { kind: "instant", max: 0 },
+          moves: false,
+        },
+      ],
+      run: (_c, args) => {
+        if (args.fail) throw new page.spinecord.PageError("busy", "busy now");
+        return page.spinecord.ended("timeout", { tries: 3 });
+      },
+    });
+    expect((await req({ op: "command", device: "thing", command: "go", args: {}, deadline_ms: 1 })).res.result).toEqual(
+      {
+        measured: { tries: 3 },
+        reason: "timeout",
+      },
+    );
+    expect(
+      (await req({ op: "command", device: "thing", command: "go", args: { fail: true }, deadline_ms: 1 })).res.error,
+    ).toEqual({
+      code: "busy",
+      message: "busy now",
+    });
+  });
+
+  test("push refuses a channel that is not pushed, and a value of the wrong type", async () => {
+    const { page } = rig();
+    expect(() => page.spinecord.push("touch", { b1: 3 })).toThrow("must be a boolean");
+    expect(() => page.spinecord.push("screen", { nope: "x" })).toThrow("not a pushed channel");
+    expect(() => page.spinecord.push("door", { x: 1 })).toThrow('no device "door"');
+  });
+
+  test("cameraFrame gives the lent camera's bitmap and rejects without one", async () => {
+    const lent = rig();
+    await lent.join();
+    expect((await lent.page.spinecord.cameraFrame()).width).toBe(1280);
+    const refused = rig({ camera: "NotAllowedError" });
+    await refused.join();
+    await expect(refused.page.spinecord.cameraFrame()).rejects.toThrow("no camera is lent");
+  });
+
+  test("fit keeps the aspect ratio under the longest side", () => {
+    expect(fit(1280, 720, 640)).toEqual({ width: 640, height: 360 });
+    expect(fit(480, 640, 1280)).toEqual({ width: 480, height: 640 });
+  });
+});

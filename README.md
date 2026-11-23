@@ -33,6 +33,7 @@ flowchart LR
 |---|---|
 | [`local`](apps/local) | the server: MCP over stdio, the runtime and the robots (twin, ev3dev, stock EV3) in one bun process |
 | [`robot-page`](apps/robot-page) | the bridge page a person opens in Chrome or Edge to lend a stock EV3 over USB; `local` serves it on `127.0.0.1` |
+| [`peripheral-page`](apps/peripheral-page) | the page a person opens to lend a robot this computer's camera, microphone, speaker, screen and buttons; `local --pages` serves it on `127.0.0.1` ([docs](docs/peripheral-pages.md)) |
 
 | Example | Does |
 |---|---|
@@ -131,7 +132,7 @@ A *peripheral page* is a browser page that joins a robot of the server and lends
 bun apps/local/main.ts --print-add --twin --pages
 ```
 
-The server then listens for pages on `http://127.0.0.1:8768/` (`--page-port <n>` for another port), on this computer only, and `list_robots` gives each robot a `join` sentence to tell the person. A page joins with the pairing token the server writes into the page it serves at that address; the token changes at every start. The page itself, which lends the camera, the microphone and the voice of the browser, comes next. Until then a page is any client that speaks the protocol of [`CONTRACT.md`](CONTRACT.md) §2.4, as the test client [`apps/local/test/pages.ts`](apps/local/test/pages.ts) does.
+The server then listens for pages on `http://127.0.0.1:8768/` (`--page-port <n>` for another port), on this computer only, and `list_robots` gives each robot a `join` sentence to tell the person. Open that address in Chrome or Edge on this computer, pick the page's name and tap **Lend this device**: the page ([`apps/peripheral-page`](apps/peripheral-page)) lends the robot this computer's camera, microphone, speaker, a screen for its face and four buttons, and shows a banner with Pause and Stop lending while the camera or the microphone is lent. It joins with the pairing token the server writes into the page it serves; the token changes at every start. What each device offers, the privacy rules, and how to add a device of your own in a few lines of JavaScript: [`docs/peripheral-pages.md`](docs/peripheral-pages.md). Any client that speaks the protocol of [`CONTRACT.md`](CONTRACT.md) §2.4 can join too, as the test client [`apps/local/test/pages.ts`](apps/local/test/pages.ts) does.
 
 ### An EV3 on ev3dev: the ssh key first
 

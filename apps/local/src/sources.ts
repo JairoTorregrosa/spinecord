@@ -18,6 +18,7 @@ import { createRuntime, type LocalRuntime } from "../../../packages/runtime/runt
 import { LARGE_DEG_S, SIM_BRICK_LOOP_RATE_HZ, SimBrick, drivetrainFromProfile } from "../../../packages/sim-ev3/brick";
 import { World, parseWorld } from "../../../packages/sim-world/world";
 import { SimWorldProvider } from "../../../packages/sim-world/world-provider";
+import { buildPeripheralPage } from "../../peripheral-page/page-build";
 import { buildBridgePage } from "../../robot-page/bridge-build";
 import type { LocalConfig, RobotSource } from "./config";
 import { serveBridge, type BridgePageFiles, type BridgeServer } from "./hid-bridge";
@@ -219,6 +220,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
   const byId = new Map<string, LocalRobot>();
   const pages = config.pages
     ? servePages(hubs, o.pagePort ?? config.pages.port, {
+        page: await buildPeripheralPage(),
         log: o.log,
         times: o.pageTimes,
         // the runtime scans again when a hub announces a change; a robot offline has no registry to wait for
