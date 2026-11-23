@@ -44,6 +44,9 @@ export interface CommandSpec {
   // (a speaker's speak): the runtime waits that long for its answer.
   bound: { kind: BoundKind; params?: string[]; max: number };
   moves: boolean; // true → one at a time per robot: it needs activity idle, and stop preempts it
+  // Present on a command a loop may refresh every tick (CONTRACT §2, Loop outputs): `arg` is the numeric argument
+  // the loop computes, `max_hold_ms` how long the device lets one refresh last before it ends the effect itself.
+  drives?: LoopDrives;
 }
 export interface DeviceSpec {
   id: string; // "<provider>.<local>", e.g. "ev3.B", "ev3.S3", "cam1.frame"
@@ -113,7 +116,54 @@ export interface Provider {
   // Optional: providers whose device set can change (hot-plug, a loaded world with other ports) call cb;
   // the runtime then re-reads devices().
   onDevicesChanged?(cb: () => void): () => void;
+  // Optional: how this provider runs a loop (CONTRACT §4, §5a). Absent → a loop that names its devices is refused.
+  readonly loop?: ProviderLoop;
 }
+/** One output refresh of a host loop's tick: the command with every argument but the one the loop computes, and that one. */
+export interface LoopWrite {
+  device: string;
+  command: string;
+  args: Record<string, Value>;
+}
+/** One input of a host loop's tick: a channel, and the component of a vector channel. */
+export interface LoopRead {
+  device: string;
+  channel: string;
+  index?: number;
+}
+/** What the device-side executor of a loop pushes while it runs. */
+export type LoopEvent = { t: "report"; report: Partial<LoopReport> } | { t: "end"; end: LoopEnd };
+/**
+ * How a provider runs a loop. `host`: the runtime's executor ticks it, one exchange per tick. `device`: the device
+ * runs the planned loop by itself and pushes telemetry and its end.
+ */
+export type ProviderLoop =
+  | {
+      runs_on: "host";
+      /** The fastest rate a tick can be held at on this provider's link. */
+      max_rate_hz: number;
+      /**
+       * One exchange with the hardware: refreshes every output, then reads every input, in that order, and resolves
+       * with one value per read (null = no value). A refresh supersedes the refresh in flight on its device and
+       * lasts on the device at most `hold_ms` (cut to the command's `drives.max_hold_ms`). The first tick claims the
+       * written devices: `command` on them answers busy until `end`.
+       */
+      tick(writes: LoopWrite[], reads: LoopRead[], hold_ms: number): Promise<(number | null)[]>;
+      /** Brakes the driven devices and releases them. */
+      end(devices: string[]): Promise<void>;
+    }
+  | {
+      runs_on: "device";
+      max_rate_hz: number;
+      start(
+        plan: LoopPlan,
+        on: (ev: LoopEvent) => void,
+      ): Promise<{
+        set(params: Record<string, number>, ramp_ms: number): Promise<void>;
+        end(): Promise<void>;
+        ended: Promise<LoopEnd>;
+      }>;
+    };
 export type BackendKind = "ev3" | "sim";
 
 // ---------- Robot profile (§3) ----------
@@ -135,6 +185,7 @@ export interface Limits {
   max_speed_pct: number;
   max_command_ms: number;
   max_program_ms: number;
+  max_loop_ms: number; // the longest life of one loop (CONTRACT §5a)
 }
 export interface RobotProfile {
   id: string;
@@ -146,16 +197,18 @@ export interface RobotProfile {
 
 // ---------- State machines (§1) ----------
 export type RobotLink = "offline" | "handshaking" | "online";
-export type RobotActivity = "idle" | "acting" | "stopping" | "running_program" | "fault";
+export type RobotActivity = "idle" | "acting" | "stopping" | "running_program" | "looping" | "fault";
 export const LINK_TRANSITIONS: Record<RobotLink, readonly RobotLink[]> = {
   offline: ["handshaking"],
   handshaking: ["online", "offline"],
   online: ["offline", "handshaking"],
 };
 export const ACTIVITY_TRANSITIONS: Record<RobotActivity, readonly RobotActivity[]> = {
-  idle: ["acting", "running_program", "stopping", "fault"],
+  idle: ["acting", "running_program", "looping", "stopping", "fault"],
   acting: ["idle", "stopping", "fault"],
   running_program: ["idle", "stopping", "fault"],
+  // a loop ends by the path of stop, whoever ends it (CONTRACT §1)
+  looping: ["stopping", "fault"],
   stopping: ["idle", "fault"],
   fault: ["idle", "stopping"],
 };
