@@ -3,7 +3,7 @@
 // (a twin, a stock EV3 behind the bridge page). Pure: no I/O.
 import type { Limits, RobotProfile } from "../protocol/types";
 import type { OutputPort } from "./encode";
-import type { Ev3Hardware } from "./provider";
+import { IR_CHANNELS, type Ev3Hardware, type IrChannel } from "./provider";
 
 export interface RobotFile {
   /** Ports of the synced motor pair `<id>.pair`. Absent: the robot has no pair, and no such device is announced. */
@@ -45,6 +45,14 @@ export function parseRobotFile(json: unknown, where: string): RobotFile {
     max_tone_ms: positive(hw.max_tone_ms, "hardware.max_tone_ms"),
     tone_volume_pct: positive(hw.tone_volume_pct, "hardware.tone_volume_pct"),
   };
+  if (hw.ir_channel !== undefined) {
+    if (!IR_CHANNELS.includes(hw.ir_channel as IrChannel))
+      fail(
+        "hardware.ir_channel",
+        `must be 1, 2, 3 or 4 (the channel switch of the remote), got ${JSON.stringify(hw.ir_channel)}`,
+      );
+    hardware.ir_channel = hw.ir_channel as IrChannel;
+  }
 
   const p = obj(root.profile, "profile");
   const roles = obj(p.roles, "profile.roles");

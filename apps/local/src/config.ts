@@ -148,6 +148,7 @@ function ev3devHardware(where: string, file: RobotFile, raw: unknown): Ev3devHar
     low_battery_v: file.hardware.low_battery_v,
     max_tone_ms: file.hardware.max_tone_ms,
     speech_volume_pct: speech,
+    ...(file.hardware.ir_channel === undefined ? {} : { ir_channel: file.hardware.ir_channel }),
   };
 }
 const twinId = (base: string): string => (base.endsWith("-sim") ? base : `${base}-sim`);

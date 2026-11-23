@@ -37,6 +37,10 @@ import {
   drawSelectFont,
   drawText,
   drawUpdate,
+  inputGetFigures,
+  inputGetFormat,
+  inputGetModeName,
+  inputGetSymbol,
   inputGetTypeMode,
   inputReadySi,
   outputClearCount,
@@ -51,6 +55,7 @@ import {
   readF32,
   readI32,
   readI8,
+  readText,
   soundTone,
   uiBatteryVolts,
   uiButtonPressed,
@@ -84,7 +89,7 @@ export const LED_PATTERNS = [
 export const BUTTON_NAMES = ["up", "enter", "down", "right", "left", "back"] as const; // firmware ids 1..6
 export const COLOR_NAMES = ["none", "black", "blue", "green", "yellow", "red", "white", "brown"] as const;
 
-/** Facts about this brick that are not motion limits. Every field is required. */
+/** Facts about this brick that are not motion limits. Every field is required, except `ir_channel`. */
 export interface Ev3Hardware {
   /** battery.low is true under this voltage. */
   low_battery_v: number;
@@ -92,6 +97,11 @@ export interface Ev3Hardware {
   max_tone_ms: number;
   /** Speaker volume for tone and beep, 1..100. */
   tone_volume_pct: number;
+  /**
+   * The remote and beacon channel (1-4, the switch on the remote) that every infrared sensor's beacon_heading,
+   * beacon_distance_pct and remote_buttons read. Absent: channel 1.
+   */
+  ir_channel?: IrChannel;
 }
 /** Documented example, NOT a default: a stock brick with its rechargeable battery. */
 export const EXAMPLE_EV3_HARDWARE: Ev3Hardware = { low_battery_v: 6.5, max_tone_ms: 5000, tone_volume_pct: 50 };
@@ -130,12 +140,26 @@ export interface Ev3ProviderOptions {
 
 // ---------------------------------------------------------------- device catalogue
 
-type Decode = (values: number[]) => { value: Value | null; error?: string };
+type Decode = (values: number[]) => { value: Value | null; error?: string; absent?: true };
+/**
+ * One named channel of a sensor entry: it is the `count` values of `mode` that start at `index` (the values the
+ * firmware returns in that mode), decoded. A read fetches `index + count` values.
+ */
 interface SensorChannel {
   spec: ChannelSpec;
   mode: number;
+  index: number;
   count: number;
   decode: Decode;
+}
+/** What the provider knows of one sensor type: the data both `read` and the manifest are built from. */
+interface SensorEntry {
+  kind: string;
+  description: string;
+  channels: SensorChannel[];
+  reset?: boolean;
+  /** Present on the generic manifest (G7): the mode names the firmware reports, in mode order. */
+  modes?: string[];
 }
 const num =
   (digits: number): Decode =>
@@ -145,89 +169,174 @@ const ccw: Decode = ([v]) => {
   const r = Math.round(v);
   return { value: r === 0 ? 0 : -r };
 };
+const pressed: Decode = ([v]) => ({ value: v >= 0.5 });
 const MODE_NOTE =
   "Shares the sensor with the other channels of its mode_group: only the channels of the current mode are active. Reading another one needs a mode switch, done only when a read names that channel while the robot is idle; it takes up to ~1 s.";
+/** The remote and beacon channels an EV3 infrared sensor tells apart; the robot file's hardware picks one. */
+export const IR_CHANNELS = [1, 2, 3, 4] as const;
+export type IrChannel = (typeof IR_CHANNELS)[number];
+/** What a beacon channel answers while the sensor sees no beacon: an answer of the sensor, not a failed read. */
+const noBeacon = (ch: IrChannel) => ({
+  value: null,
+  error: `no beacon in view on channel ${ch}`,
+  absent: true as const,
+});
+const ch = (mode: number, spec: ChannelSpec, decode: Decode = num(0), count = 1, index = 0): SensorChannel => ({
+  spec,
+  mode,
+  index,
+  count,
+  decode,
+});
 
-const SENSOR_KINDS: Record<number, { kind: string; description: string; channels: SensorChannel[]; reset?: boolean }> =
-  {
-    16: {
-      kind: "touch",
-      description: "EV3 touch sensor (a button).",
+const touchChannels = (what: string): SensorChannel[] => [
+  ch(
+    0,
+    { name: "pressed", type: "boolean", max_rate_hz: 20, description: `true while the ${what} is held in.` },
+    pressed,
+  ),
+  ch(1, {
+    name: "presses",
+    type: "number",
+    unit: "count",
+    range: [0, 9999],
+    max_rate_hz: 5,
+    approx: MODE_NOTE,
+    description: "Number of press-and-release bumps counted by the sensor.",
+  }),
+];
+
+/**
+ * Sensor entries by firmware type id (S4: lms2012 typedata.rcf). `ir` is the remote channel the infrared
+ * entry reads. A type without an entry gets the generic manifest of the modes the firmware reports.
+ */
+function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
+  // IR-SEEK returns heading and distance for channels 1-4 in turn; IR-REMOTE one button code per channel
+  const seek = 2 * (ir - 1);
+  return {
+    1: { kind: "touch", description: "NXT touch sensor (a button).", channels: touchChannels("button") },
+    2: {
+      kind: "light",
+      description: "NXT light sensor: reflected light with its lamp on, ambient light with it off.",
       channels: [
-        {
-          mode: 0,
-          count: 1,
-          decode: ([v]) => ({ value: v >= 0.5 }),
-          spec: { name: "pressed", type: "boolean", max_rate_hz: 20, description: "true while the button is held in." },
-        },
-        {
-          mode: 1,
-          count: 1,
-          decode: num(0),
-          spec: {
-            name: "presses",
-            type: "number",
-            unit: "count",
-            range: [0, 9999],
-            max_rate_hz: 5,
-            approx: MODE_NOTE,
-            description: "Number of press-and-release bumps counted by the sensor.",
-          },
-        },
+        ch(0, {
+          name: "reflected_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 5,
+          max_rate_hz: 20,
+          approx: "Depends on distance and surface; calibrate on the actual floor.",
+          description: "Reflected light with the sensor's lamp on, 0 dark to 100 bright.",
+        }),
+        ch(1, {
+          name: "ambient_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 5,
+          max_rate_hz: 20,
+          approx: MODE_NOTE,
+          description: "Ambient light with the lamp off, 0 dark to 100 bright.",
+        }),
       ],
     },
+    3: {
+      kind: "sound",
+      description: "NXT sound sensor (a microphone that measures loudness).",
+      channels: [
+        ch(0, {
+          name: "sound_db_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 5,
+          max_rate_hz: 20,
+          description: "Sound pressure level, flat weighting, 0 quiet to 100 loud.",
+        }),
+        ch(1, {
+          name: "sound_dba_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 5,
+          max_rate_hz: 20,
+          approx: MODE_NOTE,
+          description: "Sound pressure level, A weighting (the ear's sensitivity), 0 quiet to 100 loud.",
+        }),
+      ],
+    },
+    5: {
+      kind: "ultrasonic",
+      description: "NXT ultrasonic distance sensor.",
+      channels: [
+        ch(0, {
+          name: "distance_cm",
+          type: "number",
+          unit: "cm",
+          range: [0, 255],
+          noise: 3,
+          max_rate_hz: 10,
+          approx: "Whole centimetres; 255 means nothing detected; soft or angled surfaces read long.",
+          description: "Distance to the nearest object in front.",
+        }),
+      ],
+    },
+    6: {
+      kind: "temperature",
+      description: "NXT temperature sensor.",
+      channels: [
+        ch(
+          0,
+          {
+            name: "temperature_c",
+            type: "number",
+            unit: "c",
+            range: [-55, 128],
+            noise: 0.5,
+            max_rate_hz: 2,
+            description: "Temperature at the sensor's tip, degrees Celsius.",
+          },
+          num(1),
+        ),
+      ],
+    },
+    16: { kind: "touch", description: "EV3 touch sensor (a button).", channels: touchChannels("button") },
     29: {
       kind: "color",
       description: "EV3 color sensor. Works at 0.5-2 cm from the surface.",
       channels: [
-        {
-          mode: 0,
-          count: 1,
-          decode: num(0),
-          spec: {
-            name: "reflected_pct",
-            type: "number",
-            unit: "pct",
-            range: [0, 100],
-            noise: 5,
-            max_rate_hz: 20,
-            approx: "Depends on distance and surface; calibrate on the actual floor.",
-            description: "Reflected red light, 0 dark to 100 bright.",
-          },
-        },
-        {
-          mode: 1,
-          count: 1,
-          decode: num(0),
-          spec: {
-            name: "ambient_pct",
-            type: "number",
-            unit: "pct",
-            range: [0, 100],
-            noise: 5,
-            max_rate_hz: 5,
-            approx: MODE_NOTE,
-            description: "Ambient light, 0 dark to 100 bright.",
-          },
-        },
-        {
-          mode: 2,
-          count: 1,
-          decode: num(0),
-          spec: {
-            name: "color",
-            type: "number",
-            range: [0, 7],
-            max_rate_hz: 5,
-            approx: `LEGO colors only, unreliable beyond 2 cm. ${MODE_NOTE}`,
-            description: "Color id: 0 none, 1 black, 2 blue, 3 green, 4 yellow, 5 red, 6 white, 7 brown.",
-          },
-        },
-        {
-          mode: 4,
-          count: 3,
-          decode: (v) => ({ value: v.map((x) => Math.round(x)) }),
-          spec: {
+        ch(0, {
+          name: "reflected_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 5,
+          max_rate_hz: 20,
+          approx: "Depends on distance and surface; calibrate on the actual floor.",
+          description: "Reflected red light, 0 dark to 100 bright.",
+        }),
+        ch(1, {
+          name: "ambient_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 5,
+          max_rate_hz: 5,
+          approx: MODE_NOTE,
+          description: "Ambient light, 0 dark to 100 bright.",
+        }),
+        ch(2, {
+          name: "color",
+          type: "number",
+          range: [0, 7],
+          max_rate_hz: 5,
+          approx: `LEGO colors only, unreliable beyond 2 cm. ${MODE_NOTE}`,
+          description: "Color id: 0 none, 1 black, 2 blue, 3 green, 4 yellow, 5 red, 6 white, 7 brown.",
+        }),
+        ch(
+          4,
+          {
             name: "rgb",
             type: "vector",
             length: 3,
@@ -237,18 +346,18 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
             approx: `Raw uncalibrated counts, not 0-255. ${MODE_NOTE}`,
             description: "Raw reflected red, green, blue.",
           },
-        },
+          (v) => ({ value: v.map((x) => Math.round(x)) }),
+          3,
+        ),
       ],
     },
     30: {
       kind: "ultrasonic",
       description: "EV3 ultrasonic distance sensor.",
       channels: [
-        {
-          mode: 0,
-          count: 1,
-          decode: num(1),
-          spec: {
+        ch(
+          0,
+          {
             name: "distance_cm",
             type: "number",
             unit: "cm",
@@ -258,7 +367,8 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
             approx: "About +-1 cm from 3 to 250 cm; 255 means nothing detected; soft or angled surfaces read long.",
             description: "Distance to the nearest object in front.",
           },
-        },
+          num(1),
+        ),
       ],
     },
     32: {
@@ -266,11 +376,9 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
       reset: true,
       description: "EV3 gyro sensor (single axis). Must be still when the brick powers it, or it drifts.",
       channels: [
-        {
-          mode: 0,
-          count: 1,
-          decode: ccw,
-          spec: {
+        ch(
+          0,
+          {
             name: "angle_deg",
             type: "number",
             unit: "deg",
@@ -281,12 +389,11 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
             description:
               "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the provider negates the sensor's native clockwise-positive value.",
           },
-        },
-        {
-          mode: 1,
-          count: 1,
-          decode: ccw,
-          spec: {
+          ccw,
+        ),
+        ch(
+          1,
+          {
             name: "rate_deg_s",
             type: "number",
             unit: "deg_s",
@@ -297,36 +404,28 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
             description:
               "Rotation speed. Positive = counter-clockwise (left) seen from above; the provider negates the sensor's native clockwise-positive value.",
           },
-        },
+          ccw,
+        ),
       ],
     },
     33: {
       kind: "infrared",
-      description: "EV3 infrared sensor: proximity, beacon seeking and remote buttons (beacon channel 1).",
+      description: `EV3 infrared sensor: proximity, beacon seeking and remote buttons (beacon channel ${ir}, set by the robot file's hardware.ir_channel).`,
       channels: [
-        {
-          mode: 0,
-          count: 1,
-          decode: num(0),
-          spec: {
-            name: "proximity_pct",
-            type: "number",
-            unit: "pct",
-            range: [0, 100],
-            noise: 3,
-            max_rate_hz: 20,
-            approx:
-              "Not a distance: roughly 0.7 cm per unit, depends strongly on surface color; 100 means nothing in range (~70 cm).",
-            description: "Proximity of the nearest object, 0 touching to 100 far.",
-          },
-        },
-        {
-          mode: 1,
-          count: 2,
-          decode: ([h, d]) =>
-            // native: negative = beacon to the left; the contract is counter-clockwise-positive (left = positive)
-            d < 0 || d > 100 ? NO_BEACON : { value: -Math.round(h) + 0 },
-          spec: {
+        ch(0, {
+          name: "proximity_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 3,
+          max_rate_hz: 20,
+          approx:
+            "Not a distance: roughly 0.7 cm per unit, depends strongly on surface color; 100 means nothing in range (~70 cm).",
+          description: "Proximity of the nearest object, 0 touching to 100 far.",
+        }),
+        ch(
+          1,
+          {
             name: "beacon_heading",
             null_when_absent: true,
             type: "number",
@@ -334,15 +433,16 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
             noise: 2,
             max_rate_hz: 5,
             approx: `Unitless, positive = beacon to the left (counter-clockwise), 0 = straight ahead. ${MODE_NOTE}`,
-            description:
-              "Direction of the remote beacon (channel 1). The provider negates the sensor's native value, which is negative to the left.",
+            description: `Direction of the remote beacon (channel ${ir}). The provider negates the sensor's native value, which is negative to the left.`,
           },
-        },
-        {
-          mode: 1,
-          count: 2,
-          decode: ([, d]) => (d < 0 || d > 100 ? NO_BEACON : { value: Math.round(d) }),
-          spec: {
+          // native: negative = beacon to the left; the contract is counter-clockwise-positive (left = positive)
+          ([h, d]) => (d < 0 || d > 100 ? noBeacon(ir) : { value: -Math.round(h) + 0 }),
+          2,
+          seek,
+        ),
+        ch(
+          1,
+          {
             name: "beacon_distance_pct",
             null_when_absent: true,
             type: "number",
@@ -351,26 +451,88 @@ const SENSOR_KINDS: Record<number, { kind: string; description: string; channels
             noise: 3,
             max_rate_hz: 5,
             approx: `Relative, not centimetres. ${MODE_NOTE}`,
-            description: "Closeness of the remote beacon (channel 1), 0 near to 100 far.",
+            description: `Closeness of the remote beacon (channel ${ir}), 0 near to 100 far.`,
           },
-        },
-        {
-          mode: 2,
-          count: 1,
-          decode: num(0),
-          spec: {
+          ([, d]) => (d < 0 || d > 100 ? noBeacon(ir) : { value: Math.round(d) }),
+          2,
+          seek,
+        ),
+        ch(
+          2,
+          {
             name: "remote_buttons",
             type: "number",
             range: [0, 11],
             max_rate_hz: 5,
             approx: MODE_NOTE,
-            description:
-              "Remote button code on channel 1: 0 none, 1 red up, 2 red down, 3 blue up, 4 blue down, 5-8 two-button combinations, 9 beacon on, 10-11 same-side pairs.",
+            description: `Remote button code on channel ${ir}: 0 none, 1 red up, 2 red down, 3 blue up, 4 blue down, 5-8 two-button combinations, 9 beacon on, 10-11 same-side pairs.`,
           },
-        },
+          num(0),
+          1,
+          ir - 1,
+        ),
       ],
     },
   };
+}
+/** Firmware types that are no sensor: nothing plugged in, a device the firmware cannot identify, a port error. */
+const NOT_A_SENSOR = new Set([125, TYPE_NONE, 127]);
+/** Longest mode name the firmware keeps (typedata.rcf), with its zero. */
+const NAME_BYTES = 12;
+const SYMBOL_BYTES = 5;
+/** What the firmware reports of one mode of a sensor without an entry. */
+interface GenericMode {
+  /** Values the mode returns (at most 8: READY_SI's limit). */
+  datasets: number;
+  decimals: number;
+  /** The firmware's unit symbol, lower case; absent when it has none ("_"). */
+  unit?: string;
+}
+/** A sensor without an entry, as the firmware described it. */
+interface GenericSensor {
+  type: number;
+  modes: string[];
+  byMode: Map<number, GenericMode>;
+}
+
+/** The generic manifest (CONTRACT §2.3, kind `sensor`): the values of the current mode as the firmware reports them. */
+function genericEntry(g: GenericSensor, mode: number): SensorEntry {
+  const m = g.byMode.get(mode);
+  const name = g.modes[mode] ?? `MODE-${mode}`;
+  const named = DEVICE_NAMES[g.type] ? ` (${DEVICE_NAMES[g.type]})` : "";
+  const values: SensorChannel = m
+    ? ch(
+        mode,
+        {
+          name: "values",
+          type: "vector",
+          length: m.datasets,
+          ...(m.unit ? { unit: m.unit } : {}),
+          description: `The ${m.datasets === 1 ? "value" : `${m.datasets} values`} of the current mode (${name}), in the firmware's scale${m.unit ? ` and unit (${m.unit})` : ""}. Another mode (set_mode) has its own values, number and unit.`,
+        },
+        (v) => ({ value: v.map((x) => Math.round(x * 10 ** m.decimals) / 10 ** m.decimals) }),
+        m.datasets,
+      )
+    : ch(mode, { name: "values", type: "vector", description: `The values of the current mode (${name}).` }, () => ({
+        value: null,
+        error: `the sensor is in mode ${name}, which is not described yet; list the devices again`,
+      }));
+  return {
+    kind: "sensor",
+    description: `Sensor of EV3 type id ${g.type}${named} that this provider has no entry for: values are what the firmware reports in the current mode. Modes: ${g.modes.join(", ")}.`,
+    modes: g.modes,
+    channels: [
+      values,
+      ch(
+        mode,
+        { name: "mode", type: "string", description: "The sensor's current mode: one of the modes set_mode takes." },
+        () => ({
+          value: name,
+        }),
+      ),
+    ],
+  };
+}
 const MOTOR_TYPES: Record<number, string> = { 7: "large", 8: "medium" };
 export const MODE_SWITCH_REQUIRED = "mode_switch_required";
 
@@ -388,8 +550,6 @@ const BRAKE_PARAM = {
 
 type Args = Record<string, Value>;
 type Got = { value: Value | null; error?: string; absent?: true };
-/** What a beacon channel answers while the sensor sees no beacon: an answer of the sensor, not a failed read. */
-const NO_BEACON: Got = { value: null, error: "no beacon in view on channel 1", absent: true };
 interface Lookup {
   spec: DeviceSpec;
   local: string;
@@ -454,6 +614,10 @@ export class Ev3Provider implements Provider {
   private specs: Map<string, DeviceSpec> | null = null;
   private types: number[] = []; // ports 1-4 then A-D
   private modes: number[] = [0, 0, 0, 0]; // current mode of sensor ports 1-4
+  /** Sensor entries by firmware type id, for this robot's infrared channel. */
+  private readonly entries: Record<number, SensorEntry>;
+  /** Ports 1-4: what the firmware reported of a sensor without an entry, or why it could not be asked. */
+  private readonly generic: (GenericSensor | { type: number; error: string } | null)[] = [null, null, null, null];
   private readonly running = new Map<number, { abort: (byStop?: boolean) => void }>(); // output index -> running operation
   private readonly stalled = [false, false, false, false];
   /** The power the latest power operation or loop refresh applies on each output, and until when (clock ms). */
@@ -491,6 +655,9 @@ export class Ev3Provider implements Provider {
     }
     if (hw.max_tone_ms > 32767) fail("config.hardware.max_tone_ms must be 1..32767");
     if (hw.tone_volume_pct > 100) fail("config.hardware.tone_volume_pct must be 1..100");
+    if (hw.ir_channel !== undefined && !IR_CHANNELS.includes(hw.ir_channel))
+      fail(`config.hardware.ir_channel must be 1, 2, 3 or 4, got ${JSON.stringify(hw.ir_channel)}`);
+    this.entries = sensorEntries(hw.ir_channel ?? 1);
     this.id = opts.id ?? "ev3";
     if (!/^[a-z0-9_-]+$/i.test(this.id)) fail(`id "${this.id}" must be letters, digits, _ or -`);
     this.roles = { ...opts.roles };
@@ -502,6 +669,7 @@ export class Ev3Provider implements Provider {
         low_battery_v: hw.low_battery_v,
         max_tone_ms: Math.round(hw.max_tone_ms),
         tone_volume_pct: Math.round(hw.tone_volume_pct),
+        ...(hw.ir_channel === undefined ? {} : { ir_channel: hw.ir_channel }),
       },
       degPerSecAt100: opts.degPerSecAt100 ?? 1050,
       timeoutMs: opts.timeoutMs ?? 300,
@@ -595,10 +763,72 @@ export class Ev3Provider implements Provider {
       );
       this.types = ports.map((_, i) => g[i * 2]);
       this.modes = [0, 1, 2, 3].map((i) => g[i * 2 + 1]);
+      for (let port = 0; port < 4; port++) await this.discover(port);
       const specs = this.build();
       this.specs = new Map(specs.map((s) => [s.id, s]));
       return specs.map((s) => structuredClone(s));
     });
+  }
+
+  /**
+   * Asks the firmware what a sensor without an entry is (G7): its modes' names, and the number of values, decimals
+   * and unit of its current mode. One packet per such port, asked once per type and mode. A port whose question
+   * fails is announced as `unknown` with the reason, and the next scan asks again; the scan itself never fails here.
+   */
+  private async discover(port: number): Promise<void> {
+    const type = this.types[port];
+    if (NOT_A_SENSOR.has(type) || this.entries[type]) {
+      this.generic[port] = null;
+      return;
+    }
+    const had = this.generic[port];
+    const known = had && "modes" in had && had.type === type ? had : null;
+    if (known?.byMode.has(this.modes[port])) return;
+    const NAMES = 2 + 4 + 2 + SYMBOL_BYTES;
+    try {
+      const g = await this.link.command(
+        [
+          ...inputGetTypeMode(port, 0, 1),
+          ...inputGetFormat(port, 2),
+          ...inputGetFigures(port, 6),
+          ...inputGetSymbol(port, SYMBOL_BYTES, 8),
+          ...(known
+            ? []
+            : [0, 1, 2, 3, 4, 5, 6, 7].flatMap((m) => inputGetModeName(port, m, NAME_BYTES, NAMES + m * NAME_BYTES))),
+        ],
+        NAMES + (known ? 0 : 8 * NAME_BYTES),
+      );
+      if (g[0] !== type) {
+        // another device on the port since the scan's first question: the next scan describes it
+        this.generic[port] = { type, error: `the device on input port ${port + 1} changed (type ${type} -> ${g[0]})` };
+        return;
+      }
+      this.modes[port] = g[1];
+      const modeCount = Math.max(1, Math.min(8, g[4]));
+      const modes = known
+        ? known.modes
+        : Array.from({ length: modeCount }, (_, m) => readText(g, NAMES + m * NAME_BYTES, NAME_BYTES) || `MODE-${m}`);
+      const symbol = readText(g, 8, SYMBOL_BYTES).toLowerCase();
+      const byMode = known ? known.byMode : new Map<number, GenericMode>();
+      byMode.set(g[1], {
+        datasets: Math.max(1, Math.min(8, g[2])),
+        decimals: Math.max(0, Math.min(6, g[7])),
+        ...(symbol && symbol !== "_" ? { unit: symbol } : {}),
+      });
+      this.generic[port] = { type, modes, byMode };
+    } catch (e) {
+      const err = this.toRuntime(e);
+      this.generic[port] = { type, error: `the firmware did not describe it (${err.code}: ${err.message})` };
+    }
+  }
+
+  /** The entry of the sensor on input port 0..3: its own, the generic manifest of what the firmware reported, or none. */
+  private entryOf(port: number): SensorEntry | undefined {
+    const type = this.types[port];
+    const own = this.entries[type];
+    if (own) return own;
+    const g = this.generic[port];
+    return g && "modes" in g && g.type === type ? genericEntry(g, this.modes[port]) : undefined;
   }
 
   private build(): DeviceSpec[] {
@@ -622,11 +852,11 @@ export class Ev3Provider implements Provider {
         description,
       };
     };
-    const unknown = (local: string, where: string, type: number) =>
+    const unknown = (local: string, where: string, type: number, why?: string) =>
       mk(
         local,
         "unknown",
-        `Unsupported device on ${where}: EV3 type id ${type}${DEVICE_NAMES[type] ? ` (${DEVICE_NAMES[type]})` : ""}. This provider cannot read or command it.`,
+        `Unsupported device on ${where}: EV3 type id ${type}${DEVICE_NAMES[type] ? ` (${DEVICE_NAMES[type]})` : ""}${why ? `; ${why}` : ""}. This provider cannot read or command it.`,
         [],
         [],
       );
@@ -836,9 +1066,10 @@ export class Ev3Provider implements Provider {
     for (let i = 0; i < 4; i++) {
       const type = this.types[i];
       if (type === TYPE_NONE) continue;
-      const k = SENSOR_KINDS[type];
+      const k = this.entryOf(i);
       if (!k) {
-        out.push(unknown(`S${i + 1}`, `input port ${i + 1}`, type));
+        const g = this.generic[i];
+        out.push(unknown(`S${i + 1}`, `input port ${i + 1}`, type, g && "error" in g ? g.error : undefined));
         continue;
       }
       out.push(
@@ -858,7 +1089,21 @@ export class Ev3Provider implements Provider {
                     "Sets angle_deg to 0 by switching the sensor mode and back; afterwards angle_deg is the active channel. Keep the robot still while it runs (up to ~2 s).",
                 },
               ]
-            : [],
+            : k.modes
+              ? [
+                  {
+                    name: "set_mode",
+                    moves: false,
+                    bound: { kind: "instant", max: 0 },
+                    params: obj(
+                      { mode: { type: "string", enum: [...k.modes], description: "A mode the firmware lists." } },
+                      ["mode"],
+                    ),
+                    description:
+                      "Switches the sensor to another of its modes (up to ~1 s); values then holds that mode's values, and describe_device shows their number and unit.",
+                  },
+                ]
+              : [],
         ),
       );
     }
@@ -1088,12 +1333,14 @@ export class Ev3Provider implements Provider {
     retried = false,
   ): Promise<Record<string, Got>> {
     const type = this.types[port];
-    const kind = SENSOR_KINDS[type];
+    const kind = this.entryOf(port)!;
     const chan = (n: string) => kind.channels.find((c) => c.spec.name === n)!;
     const res: Record<string, Got> = {};
+    const fetch = (ns: string[]) => Math.max(...ns.map((n) => chan(n).index + chan(n).count));
     const decodeInto = (ns: string[], values: number[]) => {
       for (const n of ns) {
-        const mine = values.slice(0, chan(n).count);
+        const c = chan(n);
+        const mine = values.slice(c.index, c.index + c.count);
         res[n] = mine.every(Number.isFinite)
           ? chan(n).decode(mine)
           : { value: null, error: `sensor on input port ${port + 1} returned no value (unplugged?)` };
@@ -1104,7 +1351,7 @@ export class Ev3Provider implements Provider {
     // (READY_SI with type 0 and mode -1 keeps both).
     const current = names.filter((n) => chan(n).mode === this.modes[port]);
     if (current.length) {
-      const count = Math.max(...current.map((n) => chan(n).count));
+      const count = fetch(current);
       const g = await this.link.read(
         (b) => [...inputReadySi(port, 0, -1, count, b), ...inputGetTypeMode(port, b + count * 4, b + count * 4 + 1)],
         count * 4 + 2,
@@ -1125,6 +1372,7 @@ export class Ev3Provider implements Provider {
       if (nowMode !== this.modes[port]) {
         // Something else switched the sensor: trust the brick, tell the listeners, and read again once.
         this.modes[port] = nowMode;
+        await this.discover(port);
         this.changed();
         if (!retried) return this.readSensor(port, names, allow, true);
         for (const n of names) res[n] = { value: null, error: "the sensor mode keeps changing" };
@@ -1142,7 +1390,7 @@ export class Ev3Provider implements Provider {
         continue;
       }
       const same = names.filter((m) => !(m in res) && chan(m).mode === mode);
-      const count = Math.max(...same.map((m) => chan(m).count));
+      const count = fetch(same);
       try {
         const g = await this.link.command(inputReadySi(port, type, mode, count, 0), count * 4, {
           timeoutMs: this.o.modeSwitchTimeoutMs,
@@ -1385,6 +1633,24 @@ export class Ev3Provider implements Provider {
             8,
           );
           return done({ left_deg: readI32(g1, 0) - readI32(g0, 0), right_deg: readI32(g1, 4) - readI32(g0, 4) });
+        }
+        case "sensor.set_mode": {
+          const port = Number(local.slice(1)) - 1;
+          const g = this.generic[port];
+          if (!g || !("modes" in g))
+            throw new RuntimeError("unknown_device", `${where}: the sensor is no longer there`);
+          const mode = g.modes.indexOf(String(args.mode));
+          if (mode < 0)
+            throw new RuntimeError(
+              "invalid_argument",
+              `${where}: mode must be one of ${g.modes.join(", ")}, got ${JSON.stringify(args.mode)}`,
+            );
+          if (signal.aborted) return preempted();
+          await this.link.command(inputReadySi(port, g.type, mode, 1, 0), 4, { timeoutMs: o.modeSwitchTimeoutMs });
+          this.modes[port] = mode;
+          await this.discover(port);
+          this.changed();
+          return done({ mode: g.modes[mode]! });
         }
         case "gyro.reset": {
           const port = Number(local.slice(1)) - 1;
@@ -1763,13 +2029,13 @@ export class Ev3Provider implements Provider {
       };
     }
     const port = /^S[1-4]$/.test(local) ? Number(local.slice(1)) - 1 : -1;
-    const kind = port < 0 ? undefined : SENSOR_KINDS[this.types[port]!];
+    const kind = port < 0 ? undefined : this.entryOf(port);
     const chan = kind?.channels.find((c) => c.spec.name === r.channel);
     // a loop never switches a mode: a channel of another mode has no value
     if (!chan || chan.mode !== this.modes[port]) return none;
     const type = this.types[port]!,
       mode = chan.mode,
-      count = chan.count;
+      count = chan.index + chan.count;
     return {
       size: count * 4 + 2,
       // the values of the current mode, and the type and mode they were read in (READY_SI keeps both)
@@ -1782,7 +2048,7 @@ export class Ev3Provider implements Provider {
           this.changed();
           return null;
         }
-        const values = floats(g, 0, count);
+        const values = floats(g, 0, count).slice(chan.index);
         return values.every(Number.isFinite) ? pick(chan.decode(values).value) : null;
       },
     };
