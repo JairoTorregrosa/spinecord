@@ -1,6 +1,7 @@
 // spinecord on one computer: an MCP server over stdio with the runtime and the robots inside this process.
 //   claude mcp add -s user spinecord -- bun <repo>/apps/local/main.ts [robots...]
 // `bun apps/local/main.ts --print-add [robots...]` prints that command for this computer and starts nothing.
+// `bun apps/local/main.ts --doctor [robots...] [--assistant]` checks this computer for those robots (src/doctor.ts).
 // stdout carries JSON-RPC and nothing else; every log line is one JSON object on stderr, and `--log-file <path>`
 // appends the same lines to a file.
 // When the client goes away (stdin closes) or the process is told to end, every motor is stopped first.
@@ -10,6 +11,14 @@ import { addCommand } from "./src/print-add";
 import { serve } from "./src/serve";
 
 const argv = process.argv.slice(2);
+if (argv.includes("--doctor") && !argv.includes("--help")) {
+  if (argv.includes("--print-add")) {
+    process.stderr.write("spinecord: --doctor and --print-add: run one at a time\n");
+    process.exit(2);
+  }
+  const { doctorMain } = await import("./src/doctor");
+  process.exit(await doctorMain(argv.filter((a) => a !== "--doctor")));
+}
 const printAdd = argv.includes("--print-add");
 const robotArgs = argv.filter((a) => a !== "--print-add");
 let config: LocalConfig;
