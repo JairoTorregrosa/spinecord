@@ -235,6 +235,37 @@ describe("the looping activity", () => {
     }
   }, 60_000);
 
+  test("power runs as a command too: one operation, or chunks for a longer ms; over max_speed_pct it is refused", async () => {
+    const t = await arm();
+    try {
+      const one = await t.tool("command_device", {
+        device: "ev3.A",
+        command: "power",
+        args: { power_pct: 30, ms: 100 },
+      });
+      expect(one).toMatchObject({ ok: true, data: { reason: "completed", chunks: 1 } });
+      expect(one.data.measured.degrees).toBeGreaterThan(0);
+      const long = await t.tool("command_device", {
+        device: "ev3.A",
+        command: "power",
+        args: { power_pct: -30, ms: 600 },
+      });
+      expect(long).toMatchObject({ ok: true, data: { reason: "completed", chunks: 3 } });
+      expect(long.data.measured.degrees).toBeLessThan(0);
+      expect(t.brick.busy()).toBe(false);
+      // the arm's max_speed_pct is 40: the schema's range, checked before anything is sent
+      const over = await t.tool("command_device", {
+        device: "ev3.A",
+        command: "power",
+        args: { power_pct: 80, ms: 100 },
+      });
+      expect(over).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+      expect(over.error.message).toContain("must be <= 40");
+    } finally {
+      await t.fleet.shutdown();
+    }
+  }, 60_000);
+
   test("Esc on run_loop (notifications/cancelled) ends the loop with a verified stop", async () => {
     const t = await arm();
     try {

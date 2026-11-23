@@ -399,7 +399,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Supervise the loop",
     annotations: act,
     description:
-      "Reads the robot's loop and optionally steers it. Returns the loop's report: {state: running | ended, reason and guard once ended, age_ms, remaining_ms, ticks, overruns, period_ms, signals:{name:{last, min, max, mean, integral, derivative}}, outputs:[{device, command, last, min, max, mean_abs, saturated_pct}], params, trace}. `params` sets named numbers of the law on one tick; with ramp_ms they move there linearly. wait_ms holds the call until the loop ends or the time passes. Each call renews the loop's attention window; a loop nobody supervises for attention_ms ends by itself. After the loop has ended it keeps returning the final report until the next run_loop. Cancelling this call stops the robot. Fails with illegal_state when the robot has run no loop.",
+      "Reads the robot's loop and optionally steers it. Returns the loop's report: {state: running | ended, reason and guard once ended, age_ms, remaining_ms, ticks, overruns, period_ms, signals:{name:{last, min, max, mean, integral}}, outputs:[{device, command, last, min, max, mean_abs, saturated_pct}], params, trace}. `params` sets named numbers of the law on one tick; with ramp_ms they move there linearly. wait_ms holds the call until the loop ends or the time passes. Each call renews the loop's attention window; a loop nobody supervises for attention_ms ends by itself. After the loop has ended it keeps returning the final report until the next run_loop. Cancelling this call stops the robot. Fails with illegal_state when the robot has run no loop.",
     input: {
       type: "object",
       properties: {
@@ -421,7 +421,6 @@ const CATALOG: Omit<ToolDef, "output">[] = [
           maximum: 30000,
           description: "Holds the call until the loop ends or this long passes, ms. Default 0: answers at once.",
         },
-        request_id: requestId,
       },
       required: ["robot_id"],
       additionalProperties: false,
