@@ -272,7 +272,7 @@ export function ownCertHost(x509: X509Certificate, address: string, given: strin
   if (given !== undefined) {
     const covered = /^\d+\.\d+\.\d+\.\d+$/.test(given) ? x509.checkIP(given) : x509.checkHost(given);
     if (!covered) throw new Error(`--lan-host ${given}: ${where} does not cover that name`);
-    return given;
+    return given.toLowerCase();
   }
   if (x509.checkIP(address)) return address;
   const names = (x509.subjectAltName ?? "")

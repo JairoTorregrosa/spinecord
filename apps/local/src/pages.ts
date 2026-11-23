@@ -161,7 +161,8 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
     loopback: true,
     attempts: new Map(),
   };
-  const lanHost = () => `${o.lan!.host}:${lanPort}`;
+  // the authority a browser sends: the name in lowercase, and no port when it is the default one of https
+  const lanHost = () => (lanPort === 443 ? o.lan!.host.toLowerCase() : `${o.lan!.host.toLowerCase()}:${lanPort}`);
   const lan: Listener | null = o.lan
     ? {
         name: "lan",

@@ -305,6 +305,8 @@ describe("--lan-cert: a certificate of the person's own", () => {
     const x = new X509Certificate(named.cert);
     expect(ownCertHost(x, ADDRESS, undefined, "cert.pem")).toBe("robot.home.example");
     expect(ownCertHost(x, ADDRESS, "robot.home.example", "cert.pem")).toBe("robot.home.example");
+    // a browser sends the name in lowercase
+    expect(ownCertHost(x, ADDRESS, "Robot.Home.example", "cert.pem")).toBe("robot.home.example");
     expect(() => ownCertHost(x, ADDRESS, "other.example", "cert.pem")).toThrow("does not cover");
     const two = new X509Certificate(testCert({ dns: ["a.example", "b.example"] }).cert);
     expect(() => ownCertHost(two, ADDRESS, undefined, "cert.pem")).toThrow("--lan-host <name>");
@@ -374,6 +376,17 @@ describe("--page-origin: a tunnel the person runs", () => {
     await expect(foreign.joined).rejects.toThrow();
     expect(() => loadConfig(["--twin", "--pages", "--page-origin", "http://tunnel.example"])).toThrow("https origin");
     expect(() => loadConfig(["--twin", "--pages", "--page-origin", "https://tunnel.example/x"])).toThrow("no path");
+    // the longest origin accepted still makes a join link that fits a QR code
+    const longest = `https://${"t".repeat(132 - "https://.example".length)}.example`;
+    expect(longest.length).toBe(132);
+    expect(
+      qrEncode(
+        `${loadConfig(["--twin", "--pages", "--page-origin", longest]).pages!.origin}/#t=${"A".repeat(22)}&robot=${"r".repeat(48)}`,
+      ).length,
+    ).toBe(57);
+    expect(() => loadConfig(["--twin", "--pages", "--page-origin", `https://x${longest.slice(8)}`])).toThrow(
+      "must fit a QR code",
+    );
   });
 });
 

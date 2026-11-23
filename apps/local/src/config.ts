@@ -167,6 +167,10 @@ export function parseOrigin(where: string, raw: string): string {
     (u.pathname !== "/" && u.pathname !== "")
   )
     throw new Error(`${where} must be an https origin such as https://name.example (no path), got ${raw}`);
+  // the join link (origin + "/#t=<22>&robot=<48>") must fit the QR code the person scans (qr.ts: 213 bytes)
+  const most = 213 - "/#t=&robot=".length - 22 - 48;
+  if (u.origin.length > most)
+    throw new Error(`${where} is ${u.origin.length} characters; its join link must fit a QR code: at most ${most}`);
   return u.origin;
 }
 /** A certificate and its key of the person's own, read at start: a file that is not there ends the start. */
