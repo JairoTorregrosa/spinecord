@@ -179,7 +179,7 @@ describe("--lan: the network listener", () => {
     expect(html.match(/<svg /g)?.length).toBe(2); // r1-sim and pages
     expect(html).toContain(`${NAME} resolves to ${ADDRESS} on this computer`);
     expect(html).not.toMatch(/<script|style=/);
-    // a foreign Host is refused on loopback as before
+    // a foreign Host is refused on loopback too
     const foreign = await fetch(pages.consoleUrl, { headers: { Host: `${NAME}:${pages.port}` } });
     expect(foreign.status).toBe(403);
   });
@@ -273,7 +273,7 @@ describe("--lan: the certificate of the LAN-name service", () => {
     }
   });
 
-  test("buildFleet throws before anything listens, so serve() exits 1", async () => {
+  test("buildFleet throws while nothing listens yet, so serve() exits 1", async () => {
     const e = await buildFleet(loadConfig(TWIN_LAN), {
       log: () => {},
       pagePort: 0,
@@ -406,7 +406,7 @@ describe("--lan: the interface", () => {
     ).toThrow("no private IPv4 address");
   });
 
-  test("a start with no private address exits before anything listens", async () => {
+  test("a start with no private address exits with nothing bound", async () => {
     const e = await buildFleet(loadConfig(TWIN_LAN), {
       log: () => {},
       pagePort: 0,

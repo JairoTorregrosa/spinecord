@@ -1,6 +1,6 @@
-// What the network listener of pages needs before it binds (CONTRACT §6, `--lan`): the address of one interface
+// What the network listener of pages needs to bind (CONTRACT §6, `--lan`): the address of one interface
 // of this computer on a private network, a name that resolves to it, and a certificate for that name. Everything
-// here runs once at start, before anything listens; every failure throws a message for the person at the
+// here runs once at start, ahead of any listener; every failure throws a message for the person at the
 // terminal, and serve() ends the start with exit code 1.
 import { createPrivateKey, X509Certificate } from "node:crypto";
 import { createSocket } from "node:dgram";
@@ -15,7 +15,7 @@ export const LAN_NAME_SERVICE = {
   cert: "https://local-ip.sh/server.pem",
   key: "https://local-ip.sh/server.key",
 } as const;
-/** A fetch of the certificate that takes longer ends the start: it runs before the MCP client is answered. */
+/** A fetch of the certificate that takes longer ends the start: the MCP client waits on it. */
 export const LAN_FETCH_MS = 8000;
 
 export interface LanCert {
@@ -46,7 +46,7 @@ export interface LanConfig {
   own?: { cert: string; key: string; certPath: string; keyPath: string };
   host?: string;
 }
-/** What a test replaces: the network, the clock and the disk. */
+/** What a test swaps out: the network, the clock and the disk. */
 export interface LanDeps {
   /** GET a URL, resolve with its text; reject on any failure. */
   fetchText?: (url: string) => Promise<string>;
@@ -56,7 +56,7 @@ export interface LanDeps {
   /** Folder of the certificate cache. */
   cacheDir?: string;
   now?: () => Date;
-  /** Binds this address instead of the chosen interface's (tests bind loopback); the name still follows it. */
+  /** The address to bind, when it is not the chosen interface's (tests bind loopback); the name still follows the interface. */
   bindAddress?: string;
   /** Resolves a name to its IPv4 address. */
   resolve?: (name: string) => Promise<string>;
