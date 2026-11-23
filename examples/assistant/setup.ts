@@ -1,7 +1,8 @@
 // The plumbing around the agent: the command line, assistant.md, and the numbers printed after each turn.
 // Nothing here talks to Claude or to the robot; agent.ts does that.
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
 // ---------------------------------------------------------------- the command line
 
@@ -179,18 +180,187 @@ export function costLine(turn: number, turnUsd: number, totalUsd: number, result
 }
 
 /** What a line typed in the chat is. */
-export type ChatLine = { kind: "empty" } | { kind: "bye" } | { kind: "command" } | { kind: "message"; text: string };
+export type ChatLine =
+  | { kind: "empty" }
+  | { kind: "bye" }
+  | { kind: "command" }
+  | { kind: "file-mention" }
+  | { kind: "message"; text: string };
 
 /**
  * Reads one chat line. A line that starts with / would be a Claude Code command (/clear, /model, ...): one of them
- * resets the SDK's budget, so no command reaches Claude.
+ * resets the SDK's budget, so no command reaches Claude. A word that starts with @ (@README.md, @/home/me/notes.txt)
+ * is a file mention for Claude Code. The guarantee that no file comes in is verbatimPrompts in agent.ts; this check
+ * only tells the person, in one line, that such a line is not passed on. An @ inside a word (a@b.com) passes.
  */
 export function readChatLine(line: string): ChatLine {
   const text = line.trim();
   if (!text) return { kind: "empty" };
   if (text.toLowerCase() === "bye") return { kind: "bye" };
   if (text.startsWith("/")) return { kind: "command" };
+  if (/(^|\s)@/.test(text)) return { kind: "file-mention" };
   return { kind: "message", text };
+}
+
+// ---------------------------------------------------------------- who pays
+//
+// Claude Code decides which credential pays; its accountInfo() says which one it took. The environment only names
+// it. When the two do not agree, the program does not start: someone else than the person expects would pay.
+
+/** The environment, as process.env gives it. A variable set to "" counts as not set. */
+export type Env = Record<string, string | undefined>;
+const value = (env: Env, name: string) => (env[name] ?? "").trim();
+const isSet = (env: Env, name: string) => value(env, name) !== "";
+/** A switch such as CLAUDE_CODE_USE_BEDROCK: on unless it is empty, 0, false, no or off, as Claude Code reads it. */
+const isOn = (env: Env, name: string) =>
+  isSet(env, name) && !["0", "false", "no", "off"].includes(value(env, name).toLowerCase());
+
+/** The switches that send Claude Code to a cloud provider in place of Anthropic's API. */
+export const CLOUD_SWITCHES = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_GATEWAY",
+];
+
+/** The Anthropic credentials that pay before an ant profile. */
+const ABOVE_PROFILE = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
+
+/** The names of accountInfo().apiProvider. */
+const PROVIDERS: Record<string, string> = {
+  bedrock: "Amazon Bedrock",
+  vertex: "Google Cloud Vertex AI",
+  foundry: "Microsoft Foundry",
+  anthropicAws: "Claude Platform on AWS",
+  anthropicGoogleCloud: "Claude Platform on Google Cloud",
+  mantle: "Mantle",
+  gateway: "an enterprise gateway",
+};
+
+/** The profile named in ANTHROPIC_PROFILE, or null. */
+const namedProfile = (env: Env): string | null =>
+  isSet(env, "ANTHROPIC_PROFILE") ? value(env, "ANTHROPIC_PROFILE") : null;
+
+/**
+ * Before Claude Code starts: a profile set together with a cloud switch, a key or a token never pays, because those
+ * come first. One line names both.
+ */
+export function checkEnv(env: Env): void {
+  const profile = namedProfile(env);
+  if (profile === null) return;
+  const first = CLOUD_SWITCHES.find((name) => isOn(env, name)) ?? ABOVE_PROFILE.find((name) => isSet(env, name));
+  if (first)
+    throw new Error(
+      `ANTHROPIC_PROFILE=${profile} is set, but ${first} is set too and would pay first. Unset one of the two (README, step 2).`,
+    );
+}
+
+/** Where the ant CLI keeps its profiles: ANTHROPIC_CONFIG_DIR, else $XDG_CONFIG_HOME/anthropic, else ~/.config/anthropic. */
+export function antConfigDir(env: Env, home: string = homedir()): string {
+  if (isSet(env, "ANTHROPIC_CONFIG_DIR")) return value(env, "ANTHROPIC_CONFIG_DIR");
+  if (isSet(env, "XDG_CONFIG_HOME")) return join(value(env, "XDG_CONFIG_HOME"), "anthropic");
+  return join(home, ".config", "anthropic");
+}
+
+/** The ant CLI's active profile (the file active_config in its folder), or null when there is none. */
+export function activeProfile(
+  configDir: string,
+  read: (path: string) => string = (path) => readFileSync(path, "utf8"),
+): string | null {
+  try {
+    return read(join(configDir, "active_config")).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The tokenSource and apiKeySource values of accountInfo() that paidBy names. */
+const KNOWN_SOURCES = [
+  "none",
+  "claude.ai",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "/login managed key",
+  "apiKeyHelper",
+];
+
+/** What the SDK's accountInfo() says about the login in use (the fields this example reads; none is a secret). */
+export type Account = { apiKeySource?: string; tokenSource?: string; subscriptionType?: string; apiProvider?: string };
+
+/**
+ * The line "paid by: ..." from Claude Code's answer, named with the environment. Throws when they disagree.
+ * `active` is the ant CLI's active profile, which Claude Code uses when nothing else is set.
+ */
+export function paidBy(account: Account, env: Env, active: string | null): string {
+  const profile = namedProfile(env);
+  const refuse = (why: string) => new Error(`${why} Nothing was sent (README, step 2)`);
+  const skipped = (payer: string) =>
+    refuse(
+      `ANTHROPIC_PROFILE=${profile} is set, but Claude Code skipped that profile and uses ${payer}. ` +
+        `Is the name right, and is it logged in? Check with: ant auth status.`,
+    );
+
+  // 1. a cloud provider
+  if (account.apiProvider !== undefined && account.apiProvider !== "firstParty") {
+    const provider = PROVIDERS[account.apiProvider] ?? account.apiProvider;
+    const unused = profile !== null ? "ANTHROPIC_PROFILE" : ABOVE_PROFILE.find((name) => isSet(env, name));
+    if (unused) throw refuse(`Claude Code uses ${provider}, so ${unused} would not pay.`);
+    return `paid by: ${provider}, through your cloud account`;
+  }
+  const cloud = CLOUD_SWITCHES.find((name) => isOn(env, name));
+  if (cloud) throw refuse(`${cloud} is on, but Claude Code uses Anthropic's API.`);
+
+  // every credential source this program can name; another one would get a wrong label, so it stops the start
+  const unknown = [account.tokenSource, account.apiKeySource].find(
+    (source) => source !== undefined && !KNOWN_SOURCES.includes(source),
+  );
+  if (unknown !== undefined)
+    throw refuse(`Claude Code pays with "${unknown}", a credential this program does not know.`);
+
+  // 2. no credential at all
+  if (account.tokenSource === "none" && account.apiKeySource === undefined)
+    throw refuse(
+      profile !== null
+        ? `ANTHROPIC_PROFILE=${profile}: Claude Code found no login in that profile. Check with: ant auth status.`
+        : "Claude Code has no login on this computer.",
+    );
+
+  // 3. the apiKeyHelper command of Claude Code's settings, which comes before a token and a profile
+  if (account.tokenSource === "apiKeyHelper" || account.apiKeySource === "apiKeyHelper") {
+    if (profile !== null) throw skipped("the apiKeyHelper command of Claude Code's settings");
+    return "paid by: the apiKeyHelper command of Claude Code's settings";
+  }
+
+  // 4. a Claude plan: a subscription token, or this computer's claude.ai login
+  if (account.tokenSource === "CLAUDE_CODE_OAUTH_TOKEN") {
+    if (profile !== null) throw skipped("a Claude subscription token");
+    return "paid by: Claude subscription token";
+  }
+  if (isSet(env, "CLAUDE_CODE_OAUTH_TOKEN"))
+    throw refuse("CLAUDE_CODE_OAUTH_TOKEN is set, but Claude Code does not use it.");
+  if (account.subscriptionType) {
+    if (profile !== null) throw skipped(`this computer's Claude Code login (${account.subscriptionType} plan)`);
+    return `paid by: this computer's Claude Code login (${account.subscriptionType} plan)`;
+  }
+
+  // 5. Console billing
+  if (account.apiKeySource === "ANTHROPIC_API_KEY") return "paid by: API key";
+  if (isSet(env, "ANTHROPIC_API_KEY")) throw refuse("ANTHROPIC_API_KEY is set, but Claude Code does not use it.");
+  if (account.tokenSource === "ANTHROPIC_AUTH_TOKEN") return "paid by: the bearer token in ANTHROPIC_AUTH_TOKEN";
+  if (isSet(env, "ANTHROPIC_AUTH_TOKEN")) throw refuse("ANTHROPIC_AUTH_TOKEN is set, but Claude Code does not use it.");
+  if (account.apiKeySource === "/login managed key") {
+    if (profile !== null) throw skipped("a Console API key saved by Claude Code's /login");
+    return "paid by: a Console API key saved by this computer's Claude Code (/login)";
+  }
+  if (profile !== null) return `paid by: Console login, ant profile ${profile}`;
+  if (isSet(env, "ANTHROPIC_FEDERATION_RULE_ID") && isSet(env, "ANTHROPIC_ORGANIZATION_ID"))
+    return "paid by: workload identity federation";
+  if (active !== null) return `paid by: Console login, ant profile ${active} (active profile)`;
+  return "paid by: a Console credential this program cannot name";
 }
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
