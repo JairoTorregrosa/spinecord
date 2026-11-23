@@ -498,6 +498,28 @@ describe("the bridge runs a loop", () => {
   );
 
   brickTest(
+    "a slow loop whose bridge is stopped longer than the deadman ends with overrun once it runs again",
+    async () => {
+      // at 2 Hz a stop of 350 ms is no late tick, but the guard has braked the motor under the loop
+      const { brick, bridge } = rig();
+      await bridge.hello();
+      const a = await bridge.call({
+        op: "loop_start",
+        plan: plan({ rate_hz: 2, period_ms: 500 }, { hold_ms: GUARD_DEADMAN_MS }),
+      });
+      expect(a).toMatchObject({ ok: true });
+      await bridge.next(() => commandOf(brick) === "run-direct", 3000);
+      await sleep(100);
+      bridge.proc.kill("SIGSTOP");
+      await sleep(350);
+      bridge.proc.kill("SIGCONT");
+      const end = await bridge.next((l) => l.ev === "loop_end" && l.loop === a.id, 3000);
+      expect(end).toMatchObject({ reason: "overrun", overruns: 0 });
+      expect(commandOf(brick)).toBe("stop");
+    },
+    30_000,
+  );
+  brickTest(
     "motor.power outside a loop is run-direct with the deadman armed: a stopped bridge is braked by the guard",
     async () => {
       const { brick, bridge } = rig();

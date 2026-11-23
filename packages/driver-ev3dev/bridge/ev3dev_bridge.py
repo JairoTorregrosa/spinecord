@@ -888,6 +888,8 @@ class Bridge(object):
         self.direct = {}           # port -> id of the operation that has run-direct live on it
         self.duty = {}             # port -> the duty cycle run-direct applies there now (power_pct)
         self.guard_armed = False   # the guard's deadman is armed (the last byte sent was "a")
+        self.guard_fed = 0.0       # when the guard last got a byte of an armed deadman
+        self.deadman_lapsed = False  # an armed deadman went unfed long enough that the guard may have braked
 
     # ------------------------------------------------------------ paths
 
@@ -1920,6 +1922,13 @@ class Bridge(object):
         want = bool(self.direct)
         if not want and not self.guard_armed:
             return
+        t = now()
+        # a bridge held off the processor (stopped, starved) for most of the deadman may have been braked by the
+        # guard: whatever runs on run-direct then has a braked motor under it, and a loop on it ends (run_loop)
+        if want and self.guard_armed and t - self.guard_fed >= 0.8 * GUARD_DEADMAN_MS / 1000.0:
+            self.deadman_lapsed = True
+        if not want:
+            self.deadman_lapsed = False
         self.guard_armed = want
         if self.guard is None or self.guard.stdin is None:
             return
@@ -1929,6 +1938,7 @@ class Bridge(object):
                 fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
                 self.guard_nonblocking = True
             os.write(fd, b"a" if want else b"d")
+            self.guard_fed = t
         except (OSError, IOError, ValueError):
             pass                                 # a full pipe is fed next pass; a gone guard is seen by run()
 
@@ -2182,6 +2192,10 @@ class Bridge(object):
                 if task.flag:
                     self.loop_finish(run, {"reason": "preempted" if task.flag == "preempted" else "timeout"})
                     return
+                if self.deadman_lapsed:
+                    # held off the processor however slow the loop's rate: the guard may have braked its motors
+                    self.loop_finish(run, {"reason": "overrun"})
+                    return
                 at = now()
                 if run.first is None:
                     run.first = at
@@ -2250,6 +2264,8 @@ class Bridge(object):
             if m.owner == run.id:
                 m.owner = None
             m.stalled = False
+        if not self.direct:
+            self.deadman_lapsed = False          # nothing runs on run-direct: the next arming starts afresh
         self.loop_close(run)
         if self.loop is run:
             self.loop = None

@@ -579,7 +579,23 @@ export class LocalRobot {
     l.attention?.abort();
     l.attention = null;
     try {
-      if (Object.keys(params).length && l.loop.running) await l.loop.set(params, ramp);
+      if (Object.keys(params).length && l.loop.running) {
+        // a cancel while the params cross the link ends the loop at once, whether the set lands or fails
+        const setting = Promise.resolve(l.loop.set(params, ramp));
+        const first = await Promise.race([setting.then(() => "set" as const), this.cancelled(cancel)]).catch(
+          (e: unknown) => {
+            if (!cancel?.aborted) throw e;
+            return "cancelled" as const;
+          },
+        );
+        if (first === "cancelled") {
+          setting.catch(() => {});
+          this.o.onCancel?.("supervise_loop", true);
+          if (this.loop === l && this.activity === "looping") await this.stop().catch(() => {});
+          if (!l.loop.running) await l.settled;
+          return { data: l.loop.report() };
+        }
+      }
       if (wait > 0 && l.loop.running) {
         const done = new AbortController();
         const first = await Promise.race([

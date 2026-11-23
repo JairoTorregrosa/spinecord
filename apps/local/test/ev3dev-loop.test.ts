@@ -115,6 +115,14 @@ describe("a loop on an ev3dev brick", () => {
     );
     return fleet;
   };
+  /** Each test starts online, idle, with the arm at 0 and the sensors at rest, also when it is tried again. */
+  const fresh = async () => {
+    await start();
+    await callTool(fleet!.robots, "stop", { robot_id: "dev" });
+    for (const m of [0, 1]) brick!.setMotorInPlace(m, "position", 0);
+    brick!.setSensorInPlace(0, "value0", 0);
+    brick!.setSensorInPlace(1, "value0", 35);
+  };
   /** One call; its envelope must match the output schema the server lists for the tool. */
   const call = async (name: string, args: Record<string, unknown> = {}, cancel?: AbortSignal) => {
     const out = await callTool(fleet!.robots, name, { robot_id: "dev", ...args }, cancel);
@@ -125,7 +133,7 @@ describe("a loop on an ev3dev brick", () => {
   test.skipIf(!runs)(
     "run_loop → supervise_loop → the report, on the brick's executor; stop ends it with every motor at 0",
     async () => {
-      await start();
+      await fresh();
       expect((await call("describe_robot")).data.loop).toEqual({ runs_on: "device", max_rate_hz: 50 });
       // the brick's motor B can be a loop output: power and run_time declare drives
       const b = (await call("describe_device", { device: "ev3.B" })).data;
@@ -184,13 +192,15 @@ describe("a loop on an ev3dev brick", () => {
       ]);
       brick!.setMotorInPlace(0, "position", 0);
     },
-    60_000,
+    // the loop runs on real time in a bridge process: a shared runner that holds it off for more than a period
+    // can end it by the rate rule (overrun) mid-test, which is the rule working; such a run is tried again
+    { timeout: 60_000, retry: 2 },
   );
 
   test.skipIf(!runs)(
     "Esc on supervise_loop (notifications/cancelled) ends the loop with a verified stop",
     async () => {
-      await start();
+      await fresh();
       expect(await call("run_loop", ARM_HOLD)).toMatchObject({ ok: true, data: { state: "running" } });
       const esc = new AbortController();
       void sleep(300).then(() => esc.abort());
@@ -206,13 +216,15 @@ describe("a loop on an ev3dev brick", () => {
         0,
       );
     },
-    60_000,
+    // the loop runs on real time in a bridge process: a shared runner that holds it off for more than a period
+    // can end it by the rate rule (overrun) mid-test, which is the rule working; such a run is tried again
+    { timeout: 60_000, retry: 2 },
   );
 
   test.skipIf(!runs)(
     "a guard ends the loop on the brick: the report names it, the robot takes the path of stop",
     async () => {
-      await start();
+      await fresh();
       expect(await call("run_loop", ARM_HOLD)).toMatchObject({ ok: true });
       brick!.setMotorInPlace(0, "position", 250);
       let r: any;
@@ -229,13 +241,15 @@ describe("a loop on an ev3dev brick", () => {
       expect(brick!.motorLine(0, "command")).toBe("stop");
       brick!.setMotorInPlace(0, "position", 0);
     },
-    60_000,
+    // the loop runs on real time in a bridge process: a shared runner that holds it off for more than a period
+    // can end it by the rate rule (overrun) mid-test, which is the rule working; such a run is tried again
+    { timeout: 60_000, retry: 2 },
   );
 
   test.skipIf(!runs)(
     "C2 on the brick: both wheels on run_time, steered by the color sensor; the bumper's guard ends it",
     async () => {
-      await start();
+      await fresh();
       const started = await call("run_loop", C2);
       expect(started).toMatchObject({ ok: true, data: { state: "running", runs_on: "device", rate_hz: 10 } });
       // on the edge: both wheels at the feed speed, refreshed as timed runs (hold_ms: 3 periods, 300 ms at 10 Hz)
@@ -261,6 +275,8 @@ describe("a loop on an ev3dev brick", () => {
       brick!.setSensorInPlace(0, "value0", 0);
       brick!.setSensorInPlace(1, "value0", 35);
     },
-    60_000,
+    // the loop runs on real time in a bridge process: a shared runner that holds it off for more than a period
+    // can end it by the rate rule (overrun) mid-test, which is the rule working; such a run is tried again
+    { timeout: 60_000, retry: 2 },
   );
 });

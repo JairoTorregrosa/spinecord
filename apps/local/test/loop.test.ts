@@ -8,7 +8,7 @@ import { validateSchema } from "../../../packages/protocol/schema";
 import type { LoopSpec } from "../../../packages/protocol/types";
 import { FakeClock } from "../../../packages/runtime/clock";
 import { createRuntime } from "../../../packages/runtime/runtime";
-import type { DeviceSpec, Provider, RobotProfile } from "../../../packages/protocol/types";
+import type { DeviceSpec, LoopEnd, LoopEvent, Provider, RobotProfile } from "../../../packages/protocol/types";
 import { LocalRobot } from "../src/robot";
 import { EXAMPLE, REPO, loadConfig } from "../src/config";
 import { callLine } from "../src/mcp";
@@ -784,4 +784,118 @@ describe("C5 on virtual time: a page's tilt steers the twin", () => {
     expect(run.error.message).toContain("pages");
     expect([starts, commands, t.sent.length - before]).toEqual([0, 0, 0]);
   }, 30_000);
+});
+
+/** A robot whose loops run on its device; the device answers a param change only when the test lets it. */
+async function deviceRobot() {
+  const clock = new FakeClock();
+  const motor: DeviceSpec = {
+    id: "d.m",
+    provider: "d",
+    kind: "motor",
+    roles: [],
+    description: "a motor whose loops run on its device",
+    channels: [{ name: "position_deg", type: "number", description: "encoder" }],
+    commands: [
+      {
+        name: "power",
+        description: "timed power",
+        moves: true,
+        bound: { kind: "ms", params: ["ms"], max: 250 },
+        params: { type: "object", properties: { power_pct: { type: "number", minimum: -100, maximum: 100 } } },
+        drives: { arg: "power_pct", max_hold_ms: 200 },
+      },
+    ],
+  };
+  const sets: { release: () => void }[] = [];
+  let finish: ((e: LoopEnd) => void) | null = null;
+  let on: ((ev: LoopEvent) => void) | null = null;
+  const end = (e: LoopEnd) => {
+    on?.({ t: "end", end: e });
+    finish?.(e);
+  };
+  const provider: Provider = {
+    id: "d",
+    backend: "ev3dev",
+    stop_worst_ms: 100,
+    devices: async () => [structuredClone(motor)],
+    read: async () => [],
+    command: async () => {
+      throw new Error("not used");
+    },
+    stop: async () => ({ motors_stopped: true }),
+    loop: {
+      runs_on: "device",
+      max_rate_hz: 50,
+      start: async (_plan, push) => {
+        on = push;
+        const ended = new Promise<LoopEnd>((resolve) => (finish = resolve));
+        // the device's 20th tick: run_loop answers
+        queueMicrotask(() =>
+          push({
+            t: "telemetry",
+            telemetry: {
+              ticks: 20,
+              overruns: 0,
+              age_ms: 400,
+              periods: [],
+              signals: [{ n: 0, min: 0, max: 0, sum: 0, last: 0, integral: 0, derivative: 0 }],
+              outputs: [{ n: 0, min: 0, max: 0, sum: 0, last: 0, cut: 0 }],
+              trace: { t_ms: [] },
+              params: { k: 1 },
+            },
+          }),
+        );
+        return {
+          set: () => new Promise<void>((release) => sets.push({ release })),
+          end: async () => end({ reason: "preempted" }),
+          ended,
+        };
+      },
+    },
+  };
+  const profile: RobotProfile = {
+    id: "d1",
+    roles: {},
+    notes: [],
+    limits: { max_speed_pct: 80, max_command_ms: 10000, max_program_ms: 20000, max_loop_ms: 60000 },
+  };
+  const robot = new LocalRobot({ id: "d1", clock });
+  await robot.attach(createRuntime({ profile, providers: [provider], clock }));
+  const tool = async (name: string, args: Record<string, unknown> = {}, cancel?: AbortSignal) =>
+    (await callTool([robot], name, { robot_id: "d1", ...args }, cancel)).envelope as any;
+  const spec = {
+    rate_hz: 50,
+    duration_ms: 50_000,
+    attention_ms: 1000,
+    signals: { x: { device: "d.m", channel: "position_deg" } },
+    params: { k: 1 },
+    outputs: [{ device: "d.m", command: "power", terms: [{ signal: "x", gain: "k" }] }],
+  };
+  return { clock, robot, tool, spec, sets };
+}
+
+describe("supervise_loop over a link to the device", () => {
+  test("a param change the device is slow to answer holds the attention window open", async () => {
+    const d = await deviceRobot();
+    expect(await d.tool("run_loop", d.spec)).toMatchObject({ ok: true, data: { state: "running", runs_on: "device" } });
+    // the device answers 2 s later, past attention_ms: the loop is supervised all that time
+    void d.clock.sleep(2000).then(() => d.sets[0]!.release());
+    const out = await d.tool("supervise_loop", { params: { k: 2 } });
+    expect(out).toMatchObject({ ok: true, robot: { activity: "looping" }, data: { state: "running" } });
+    expect(await d.tool("stop")).toMatchObject({ ok: true });
+  });
+
+  test("Esc while the device has not answered a param change ends the loop with a verified stop", async () => {
+    const d = await deviceRobot();
+    expect(await d.tool("run_loop", d.spec)).toMatchObject({ ok: true });
+    const esc = new AbortController();
+    void d.clock.sleep(100).then(() => esc.abort());
+    const out = await d.tool("supervise_loop", { params: { k: 2 } }, esc.signal);
+    expect(out).toMatchObject({
+      ok: true,
+      robot: { activity: "idle" },
+      data: { state: "ended", reason: "preempted" },
+    });
+  });
 });
