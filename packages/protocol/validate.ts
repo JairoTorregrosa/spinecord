@@ -1,7 +1,8 @@
 // Pure, dependency-free validators shared by every package (single owner of these rules).
 // They check shape, caps and the names a spec refers to within itself; what needs real devices is checked against them
 // by whoever holds them (the runtime for programs and conditions, planLoop in loop.ts for loops).
-import type { CompareOp, Condition, LoopSpec, ProgramNode } from "./types";
+import { assertSupported } from "./schema";
+import type { CompareOp, Condition, LoopSpec, PageDevice, ProgramNode } from "./types";
 
 export const PROGRAM_CAPS = {
   max_nodes: 500,
@@ -332,4 +333,234 @@ export function validateLoop(spec: unknown, path = "loop"): ValidationIssue[] {
 
 export function isLoopSpec(x: unknown): x is LoopSpec {
   return validateLoop(x).length === 0;
+}
+
+// ---------- Peripheral pages (CONTRACT §2.4) ----------
+export const PAGE_CAPS = {
+  max_devices: 16,
+  max_channels: 24, // per device
+  max_commands: 12, // per device
+  max_roles: 4, // per device
+  max_description: 300, // characters
+  max_bound_ms: 30_000,
+  max_hello_bytes: 64 * 1024,
+  max_unavailable: 32,
+  max_why: 300, // characters of one `unavailable` reason
+} as const;
+/** A page's name: the provider of its devices. */
+export const PAGE_NAME = /^[a-z][a-z0-9_-]{0,15}$/;
+/** Names a page never takes: the providers of a robot's body. */
+export const RESERVED_PAGE_NAMES: readonly string[] = ["ev3", "sim"];
+// device, channel, command and kind names, and proposed roles
+const PAGE_ID = /^[a-z][a-z0-9_]{0,31}$/;
+const PAGE_ID_RULE = "must match ^[a-z][a-z0-9_]{0,31}$";
+// printable text: no control characters (a line break or a tab included)
+const PRINTABLE = /^[^\p{Cc}\p{Cf}]*$/u;
+const CHANNEL_TYPES = ["number", "boolean", "string", "vector", "image"];
+const PUSHED_TYPES = ["number", "boolean", "string"];
+// The keywords a page may use in a command's params: the validator's, without `pattern` (a regular expression
+// written by a page would run in this process on every call).
+const PAGE_SCHEMA_REFUSED = ["pattern"];
+
+/** The rule a page name breaks, or null. `taken` are the names of the robot's other pages that are not gone. */
+export function pageNameIssue(name: unknown, taken: readonly string[] = []): string | null {
+  if (typeof name !== "string" || !PAGE_NAME.test(name)) return `name must match ${PAGE_NAME.source}`;
+  if (RESERVED_PAGE_NAMES.includes(name)) return `name "${name}" is reserved for the robot's own devices`;
+  if (taken.includes(name)) return `name "${name}" is held by another page of this robot`;
+  return null;
+}
+
+const text = (x: unknown, max: number): boolean => typeof x === "string" && x.length <= max && PRINTABLE.test(x);
+const findKeyword = (schema: unknown, banned: readonly string[]): string | null => {
+  if (!isObj(schema)) return null;
+  for (const [k, v] of Object.entries(schema)) {
+    if (banned.includes(k)) return k;
+    const inner =
+      k === "properties" && isObj(v)
+        ? Object.values(v)
+        : k === "items" || (k === "additionalProperties" && isObj(v))
+          ? [v]
+          : [];
+    for (const sub of inner) {
+      const hit = findKeyword(sub, banned);
+      if (hit) return hit;
+    }
+  }
+  return null;
+};
+
+/**
+ * Shape and bounds of the devices a page declares (`hello.devices`, `devices.devices`), never their meaning.
+ * Every failure names the device and the rule; a manifest with any failure is refused whole.
+ */
+export function validatePageManifest(devices: unknown, path = "devices"): ValidationIssue[] {
+  if (!Array.isArray(devices)) return [{ path, message: "must be an array of devices" }];
+  const out: ValidationIssue[] = [];
+  if (devices.length > PAGE_CAPS.max_devices) out.push({ path, message: `at most ${PAGE_CAPS.max_devices} devices` });
+  const ids = new Set<unknown>();
+  devices.forEach((d: unknown, i) => {
+    const p = `${path}[${i}]`;
+    if (!isObj(d))
+      return void out.push({ path: p, message: "must be {id, kind, roles, channels, commands, description}" });
+    out.push(...unknownKeys(d, ["id", "kind", "roles", "channels", "commands", "description"], p));
+    const dp = typeof d.id === "string" && PAGE_ID.test(d.id) ? `${path}.${d.id}` : p;
+    if (typeof d.id !== "string" || !PAGE_ID.test(d.id)) out.push({ path: `${p}.id`, message: PAGE_ID_RULE });
+    else if (ids.has(d.id)) out.push({ path: `${p}.id`, message: `"${d.id}" names another device of this page` });
+    ids.add(d.id);
+    if (typeof d.kind !== "string" || !PAGE_ID.test(d.kind)) out.push({ path: `${dp}.kind`, message: PAGE_ID_RULE });
+    else if (d.kind === "motor_pair")
+      out.push({ path: `${dp}.kind`, message: "a page device is never a motor_pair: a page moves nothing" });
+    if (!text(d.description, PAGE_CAPS.max_description))
+      out.push({
+        path: `${dp}.description`,
+        message: `must be printable text of at most ${PAGE_CAPS.max_description} characters`,
+      });
+    if (!Array.isArray(d.roles) || d.roles.length > PAGE_CAPS.max_roles)
+      out.push({ path: `${dp}.roles`, message: `must be an array of at most ${PAGE_CAPS.max_roles} roles` });
+    else
+      d.roles.forEach((r: unknown, j) => {
+        if (typeof r !== "string" || !PAGE_ID.test(r)) out.push({ path: `${dp}.roles[${j}]`, message: PAGE_ID_RULE });
+      });
+
+    if (!Array.isArray(d.channels)) out.push({ path: `${dp}.channels`, message: "must be an array" });
+    else {
+      if (d.channels.length > PAGE_CAPS.max_channels)
+        out.push({ path: `${dp}.channels`, message: `at most ${PAGE_CAPS.max_channels} channels per device` });
+      const names = new Set<unknown>();
+      let images = 0;
+      d.channels.forEach((c: unknown, j) => {
+        const cp = `${dp}.channels[${j}]`;
+        if (!isObj(c)) return void out.push({ path: cp, message: "must be a channel {name, type, description, ...}" });
+        out.push(
+          ...unknownKeys(
+            c,
+            [
+              "name",
+              "type",
+              "unit",
+              "range",
+              "length",
+              "max_rate_hz",
+              "null_when_absent",
+              "approx",
+              "noise",
+              "pushed",
+              "description",
+            ],
+            cp,
+          ),
+        );
+        if (typeof c.name !== "string" || !PAGE_ID.test(c.name))
+          out.push({ path: `${cp}.name`, message: PAGE_ID_RULE });
+        else if (names.has(c.name))
+          out.push({ path: `${cp}.name`, message: `"${c.name}" names another channel of this device` });
+        names.add(c.name);
+        if (!CHANNEL_TYPES.includes(c.type as string))
+          out.push({ path: `${cp}.type`, message: `must be one of ${CHANNEL_TYPES.join(", ")}` });
+        if (c.type === "image" && ++images > 1)
+          out.push({ path: `${cp}.type`, message: "at most one image channel per device" });
+        if ("pushed" in c && typeof c.pushed !== "boolean")
+          out.push({ path: `${cp}.pushed`, message: "must be true or false" });
+        if (c.pushed === true && !PUSHED_TYPES.includes(c.type as string))
+          out.push({ path: `${cp}.pushed`, message: `a pushed channel is of type ${PUSHED_TYPES.join(", ")}` });
+        if (!text(c.description, PAGE_CAPS.max_description))
+          out.push({
+            path: `${cp}.description`,
+            message: `must be printable text of at most ${PAGE_CAPS.max_description} characters`,
+          });
+        for (const k of ["unit", "approx"] as const)
+          if (k in c && !text(c[k], PAGE_CAPS.max_description))
+            out.push({ path: `${cp}.${k}`, message: "must be printable text" });
+        if ("range" in c) {
+          const r = c.range;
+          if (!Array.isArray(r) || r.length !== 2 || !isNum(r[0]) || !isNum(r[1]) || r[0] > r[1])
+            out.push({ path: `${cp}.range`, message: "must be [lo, hi], two finite numbers with lo <= hi" });
+        }
+        if ("length" in c && (!isInt(c.length) || c.length < 1))
+          out.push({ path: `${cp}.length`, message: "integer of at least 1" });
+        for (const k of ["max_rate_hz", "noise"] as const)
+          if (k in c && (!isNum(c[k]) || (c[k] as number) < 0))
+            out.push({ path: `${cp}.${k}`, message: "a finite number of at least 0" });
+        if ("null_when_absent" in c && typeof c.null_when_absent !== "boolean")
+          out.push({ path: `${cp}.null_when_absent`, message: "must be true or false" });
+      });
+    }
+
+    if (!Array.isArray(d.commands)) out.push({ path: `${dp}.commands`, message: "must be an array" });
+    else {
+      if (d.commands.length > PAGE_CAPS.max_commands)
+        out.push({ path: `${dp}.commands`, message: `at most ${PAGE_CAPS.max_commands} commands per device` });
+      const names = new Set<unknown>();
+      d.commands.forEach((c: unknown, j) => {
+        const cp = `${dp}.commands[${j}]`;
+        if (!isObj(c))
+          return void out.push({ path: cp, message: "must be a command {name, description, params, bound, moves}" });
+        out.push(...unknownKeys(c, ["name", "description", "params", "bound", "moves"], cp));
+        if (typeof c.name !== "string" || !PAGE_ID.test(c.name))
+          out.push({ path: `${cp}.name`, message: PAGE_ID_RULE });
+        else if (names.has(c.name))
+          out.push({ path: `${cp}.name`, message: `"${c.name}" names another command of this device` });
+        names.add(c.name);
+        if (!text(c.description, PAGE_CAPS.max_description))
+          out.push({
+            path: `${cp}.description`,
+            message: `must be printable text of at most ${PAGE_CAPS.max_description} characters`,
+          });
+        if (c.moves !== false)
+          out.push({ path: `${cp}.moves`, message: "must be false: a page device never moves the robot" });
+        const b = c.bound;
+        if (!isObj(b)) out.push({ path: `${cp}.bound`, message: '{kind: "instant" | "ms", params?, max}' });
+        else {
+          out.push(...unknownKeys(b, ["kind", "params", "max"], `${cp}.bound`));
+          if (b.kind !== "instant" && b.kind !== "ms")
+            out.push({ path: `${cp}.bound.kind`, message: 'must be "instant" or "ms": a page moves nothing' });
+          if (!isNum(b.max) || b.max < 0 || b.max > PAGE_CAPS.max_bound_ms)
+            out.push({ path: `${cp}.bound.max`, message: `a number from 0 to ${PAGE_CAPS.max_bound_ms} (ms)` });
+          if ("params" in b && (!Array.isArray(b.params) || b.params.some((x) => typeof x !== "string")))
+            out.push({ path: `${cp}.bound.params`, message: "must be an array of param names" });
+        }
+        const s = c.params;
+        if (!isObj(s) || s.type !== "object" || s.additionalProperties !== false || !isObj(s.properties))
+          out.push({
+            path: `${cp}.params`,
+            message: 'must be a JSON Schema {type: "object", properties, additionalProperties: false}',
+          });
+        else {
+          try {
+            assertSupported(s, `${cp}.params`);
+            const refused = findKeyword(s, PAGE_SCHEMA_REFUSED);
+            if (refused)
+              out.push({ path: `${cp}.params`, message: `keyword "${refused}" is not accepted from a page` });
+          } catch (e) {
+            out.push({ path: `${cp}.params`, message: (e as Error).message });
+          }
+        }
+      });
+    }
+  });
+  return out;
+}
+
+/** `unavailable` of a hello or a devices message: what the page could not offer, and why. */
+export function validatePageUnavailable(list: unknown, path = "unavailable"): ValidationIssue[] {
+  if (list === undefined) return [];
+  if (!Array.isArray(list) || list.length > PAGE_CAPS.max_unavailable)
+    return [{ path, message: `must be an array of at most ${PAGE_CAPS.max_unavailable} {kind, why}` }];
+  return list.flatMap((u: unknown, i): ValidationIssue[] =>
+    isObj(u) &&
+    Object.keys(u).every((k) => k === "kind" || k === "why") &&
+    text(u.kind, 64) &&
+    text(u.why, PAGE_CAPS.max_why)
+      ? []
+      : [
+          {
+            path: `${path}[${i}]`,
+            message: `must be {kind, why}, printable text of at most ${PAGE_CAPS.max_why} characters`,
+          },
+        ],
+  );
+}
+
+export function isPageManifest(x: unknown): x is PageDevice[] {
+  return validatePageManifest(x).length === 0;
 }

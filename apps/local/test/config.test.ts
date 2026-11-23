@@ -2,7 +2,18 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, posix, relative, win32 } from "node:path";
-import { DEFAULT_PORT, EXAMPLE, REPO, USAGE, loadConfig, parseSshTarget, pathFrom } from "../src/config";
+import {
+  DEFAULT_PORT,
+  EXAMPLE,
+  REPO,
+  USAGE,
+  loadConfig,
+  parsePagesRobot,
+  parseSshTarget,
+  pathFrom,
+  type RobotSource,
+} from "../src/config";
+import { DEFAULT_PAGE_PORT } from "../src/pages";
 import { addCommand } from "../src/print-add";
 
 const tmp = mkdtempSync(join(tmpdir(), "spinecord-local-"));
@@ -99,7 +110,7 @@ describe("robots without a robot file", () => {
         {
           source: "ev3dev",
           id: "r1",
-          robot: loadConfig(["--ev3"]).robots[0]!.robot,
+          robot: (loadConfig(["--ev3"]).robots[0] as Extract<RobotSource, { source: "ev3" }>).robot,
           hardware: { low_battery_v: 6.5, max_tone_ms: 5000, speech_volume_pct: 100 },
           ssh: { user: "robot", host: "ev3dev.local" },
           installBridge: true,
@@ -375,5 +386,63 @@ describe("config file", () => {
       }),
     ).toThrow("one stock-firmware EV3 per process");
     expect(() => loadConfig(["--config", join(tmp, "bad.json"), "--port", "1"])).toThrow("--config holds everything");
+  });
+});
+
+describe("pages", () => {
+  test("off unless asked: no robot of source pages and pages null", () => {
+    expect(loadConfig([]).pages ?? null).toBeNull();
+    expect(loadConfig(["--twin"]).pages ?? null).toBeNull();
+  });
+  test("--pages alone: the robot without a body from the example file, and the default page port", () => {
+    const c = loadConfig(["--pages"]);
+    expect(c.robots).toEqual([
+      {
+        source: "pages",
+        id: "pages",
+        profile: expect.objectContaining({ id: "pages", roles: {}, limits: expect.any(Object) }),
+      },
+    ]);
+    expect(c.pages).toEqual({ port: DEFAULT_PAGE_PORT });
+    expect(loadConfig(["--twin", "--pages", "--page-port", "9200"]).pages).toEqual({ port: 9200 });
+    expect(loadConfig(["--twin", "--pages", "--page-port", "0"]).robots.map((r) => r.id)).toEqual(["r1-sim", "pages"]);
+    expect(() => loadConfig(["--page-port", "9200"])).toThrow("--page-port needs --pages");
+  });
+  test("a config file: the pages key, and a robot of source pages that turns pages on", () => {
+    writeFileSync(join(tmp, "p.json"), readFileSync(EXAMPLE.pages, "utf8"));
+    const keyed = loadConfig([
+      "--config",
+      file("pk.json", { pages: { port: 9300 }, robots: [{ source: "ev3", robot: EXAMPLE.robot }] }),
+    ]);
+    expect(keyed.pages).toEqual({ port: 9300 });
+    const sourced = loadConfig([
+      "--config",
+      file("ps.json", { robots: [{ source: "pages", robot: "p.json", id: "lent" }] }),
+    ]);
+    expect(sourced.robots).toMatchObject([{ source: "pages", id: "lent" }]);
+    expect(sourced.pages).toEqual({ port: DEFAULT_PAGE_PORT });
+    expect(() =>
+      loadConfig([
+        "--config",
+        file("pb.json", { pages: { lan: true }, robots: [{ source: "ev3", robot: EXAMPLE.robot }] }),
+      ]),
+    ).toThrow('pages must be {"port"?: n}');
+  });
+  test("a robot file of source pages is {profile} alone: hardware, pair and drivetrain are refused", () => {
+    const where = "test";
+    const profile = JSON.parse(readFileSync(EXAMPLE.pages, "utf8")).profile;
+    expect(parsePagesRobot({ profile }, where).id).toBe("pages");
+    expect(parsePagesRobot({ profile }, where).limits).toMatchObject({ max_loop_ms: 60000 });
+    expect(() => parsePagesRobot({ profile, hardware: {} }, where)).toThrow(
+      "hardware is not part of a robot without a body",
+    );
+    expect(() => parsePagesRobot({ profile, pair: { left: "B", right: "C" } }, where)).toThrow("pair is not part");
+    expect(() => parsePagesRobot({ profile: { ...profile, drivetrain: {} } }, where)).toThrow(
+      "profile.drivetrain is not part",
+    );
+    expect(() =>
+      parsePagesRobot({ profile: { ...profile, limits: { ...profile.limits, max_command_ms: 0 } } }, where),
+    ).toThrow("profile.limits.max_command_ms must be a number > 0");
+    expect(() => parsePagesRobot({ profile: { ...profile, notes: [1] } }, where)).toThrow("profile.notes");
   });
 });

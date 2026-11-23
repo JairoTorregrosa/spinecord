@@ -55,6 +55,8 @@ export const NEXT_ERR: Partial<Record<ErrorCode, string[]>> = {
   stop_unverified: ["read_all", "reset_fault"],
   stale_image: ["describe_robot"],
   condition_unreadable: ["read_all", "describe_device"],
+  // describe_robot's pages say which page sleeps and why
+  device_offline: ["describe_robot"],
   internal: ["list_robots"],
 };
 function next(tool: string, error?: ToolError, afterMove = false, fix: string[] = []): string[] {
@@ -164,9 +166,7 @@ export async function callTool(
       code: typed.code,
       message: typed.message,
       retryable: typed.retryable,
-      ...(typed instanceof LocalError && typed.retry_after_ms !== undefined
-        ? { retry_after_ms: typed.retry_after_ms }
-        : {}),
+      ...(typed.retry_after_ms !== undefined ? { retry_after_ms: typed.retry_after_ms } : {}),
       ...(typed.measured ? { measured: typed.measured } : {}),
     };
     // a call the backstop ended never said what it sent: it counts as moved

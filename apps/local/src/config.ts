@@ -9,7 +9,9 @@ import { parseArgs } from "node:util";
 import { parseRobotFile, type RobotFile } from "../../../packages/driver-ev3/robot-file";
 import type { Ev3devHardware } from "../../../packages/driver-ev3dev/src/provider";
 import type { SshOptions } from "../../../packages/driver-ev3dev/src/ssh";
+import type { RobotProfile } from "../../../packages/protocol/types";
 import { parseWorld } from "../../../packages/sim-world/world";
+import { DEFAULT_PAGE_PORT } from "./pages";
 
 export const DEFAULT_PORT = 8767;
 /** The repository root: where a relative path on the command line is taken from. */
@@ -30,6 +32,8 @@ const fromRepo = (p: string): string => pathFrom(REPO, p);
 /** What a bare `bun apps/local/main.ts` runs: the example robot's twin in an empty walled room. */
 export const EXAMPLE = {
   robot: join(REPO, "deployments", "example", "robots", "r1.json"),
+  /** The robot of `--pages` without a file: no body, only the devices of the pages that join it. */
+  pages: join(REPO, "deployments", "example", "robots", "pages.json"),
   world: join(import.meta.dir, "..", "examples", "room.json"),
 };
 
@@ -53,16 +57,23 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  asking for a password or about the host key
     --ssh-key <file>             private key file, which must exist (default: ssh's own keys and agent)
     --install-bridge             copy the bridge to the brick before connecting
+  --pages [robot.json]           a robot with no body (default deployments/example/robots/pages.json),
+                                 id "<profile.id>", whose devices are lent by browser pages; with it
+                                 every robot of the process takes pages
+    --page-port <n>              port of the page listener on 127.0.0.1 (default ${DEFAULT_PAGE_PORT}; 0 takes
+                                 a free port, and list_robots' join names it)
   --log-file <path>              also append every JSON log line of stderr to this file; its folder is
                                  created, and a file that cannot be opened ends the start
   --config <file.json>           the robots and the port as a file, for more than one robot of a kind:
-                                 {"port"?: n, "robots": [
+                                 {"port"?: n, "pages"?: {"port"?: n}, "robots": [
                                    {"source": "twin", "robot": path, "world": path, "seed"?: n, "id"?: s},
                                    {"source": "ev3", "robot": path, "id"?: s},
                                    {"source": "ev3dev", "robot": path, "id"?: s, "install_bridge"?: bool,
-                                    "ssh": {"host": s, "user": s, "port"?: n, "identity_file"?: path}}]}
+                                    "ssh": {"host": s, "user": s, "port"?: n, "identity_file"?: path}},
+                                   {"source": "pages", "robot": path, "id"?: s}]}
+                                 "pages" or a robot of source "pages" makes every robot take pages
 
-A robot file is {hardware, profile, pair?}; for --ev3dev its hardware also needs speech_volume_pct. pair and
+A robot file is {hardware, profile, pair?}; one for --pages is {profile} alone. For --ev3dev its hardware also needs speech_volume_pct. pair and
 profile.drivetrain are for a robot with a synced pair of wheels: deployments/example/robots/arm.json has neither.
 --twin, --ev3 and --ev3dev without a file use the example robot, deployments/example/robots/r1.json.
 
@@ -84,13 +95,16 @@ export type RobotSource =
       hardware: Ev3devHardware;
       ssh: SshOptions;
       installBridge: boolean;
-    };
+    }
+  | { source: "pages"; id: string; profile: RobotProfile };
 export interface LocalConfig {
   robots: RobotSource[];
   /** Port of the page that lends a stock EV3. Bound only when a robot of source "ev3" exists. */
   port: number;
   /** `--log-file`, absolute: the file that gets every JSON log line of stderr too. */
   logFile?: string;
+  /** Peripheral pages (CONTRACT §2.4): null when off. On, every robot gets a page hub, and the page listener binds this port. */
+  pages?: { port: number } | null;
 }
 
 const ROBOT_ID = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -115,6 +129,45 @@ function int(where: string, raw: unknown, min: number, max: number): number {
     throw new Error(`${where} must be an integer ${min}..${max}, got ${JSON.stringify(raw)}`);
   return n;
 }
+/** The file of a robot of source "pages": {profile: {id, roles, limits, notes}}, with no hardware, pair or drivetrain. */
+export function parsePagesRobot(json: unknown, where: string): RobotProfile {
+  const fail = (field: string, why: string): never => {
+    throw new Error(`${where}: ${field} ${why}`);
+  };
+  if (!isObj(json)) return fail("the file", "must be an object {profile}");
+  const extra = Object.keys(json).filter((k) => k !== "profile" && k !== "description");
+  if (extra.length) fail(extra.join(", "), "is not part of a robot without a body: its file is {profile} alone");
+  const p = isObj(json.profile) ? json.profile : fail("profile", "must be an object");
+  const known = ["id", "roles", "limits", "notes"];
+  const more = Object.keys(p).filter((k) => !known.includes(k));
+  if (more.length)
+    fail(`profile.${more[0]}`, `is not part of a robot without a body; its profile is {${known.join(", ")}}`);
+  if (typeof p.id !== "string" || p.id === "") fail("profile.id", "must be a non-empty string");
+  const roles = isObj(p.roles) ? p.roles : fail("profile.roles", "must be an object");
+  for (const [role, device] of Object.entries(roles))
+    if (typeof device !== "string" || device === "") fail(`profile.roles.${role}`, "must be a device id");
+  const lim = isObj(p.limits) ? p.limits : fail("profile.limits", "must be an object");
+  const positive = (k: string): number => {
+    const v = lim[k];
+    return typeof v === "number" && Number.isFinite(v) && v > 0
+      ? v
+      : fail(`profile.limits.${k}`, "must be a number > 0");
+  };
+  if (!Array.isArray(p.notes) || p.notes.some((n) => typeof n !== "string"))
+    fail("profile.notes", "must be an array of strings");
+  return {
+    id: p.id as string,
+    roles: roles as Record<string, string>,
+    limits: {
+      max_speed_pct: positive("max_speed_pct"),
+      max_command_ms: positive("max_command_ms"),
+      max_program_ms: positive("max_program_ms"),
+      max_loop_ms: positive("max_loop_ms"),
+    },
+    notes: p.notes as string[],
+  };
+}
+
 function robotFile(where: string, path: string): { file: RobotFile; raw: unknown } {
   const raw = readJson(where, path);
   return { file: parseRobotFile(raw, `${where} ${path}`), raw };
@@ -164,8 +217,16 @@ function fromFile(file: string): LocalConfig {
   const where = `--config ${file}`;
   const json = readJson("--config", file);
   if (!isObj(json)) throw new Error(`${where}: must be an object {"robots": [...]}`);
-  const unknown = Object.keys(json).filter((k) => k !== "port" && k !== "robots");
-  if (unknown.length) throw new Error(`${where}: unknown field ${unknown.join(", ")}; allowed: port, robots`);
+  const unknown = Object.keys(json).filter((k) => k !== "port" && k !== "robots" && k !== "pages");
+  if (unknown.length) throw new Error(`${where}: unknown field ${unknown.join(", ")}; allowed: port, pages, robots`);
+  let pages: { port: number } | null = null;
+  if (json.pages !== undefined) {
+    if (!isObj(json.pages) || Object.keys(json.pages).some((k) => k !== "port"))
+      throw new Error(`${where}: pages must be {"port"?: n}`);
+    pages = {
+      port: json.pages.port === undefined ? DEFAULT_PAGE_PORT : int(`${where}: pages.port`, json.pages.port, 1, 65535),
+    };
+  }
   if (!Array.isArray(json.robots) || json.robots.length === 0)
     throw new Error(`${where}: robots must be a non-empty array`);
   const at = (p: unknown, field: string): string => {
@@ -176,8 +237,13 @@ function fromFile(file: string): LocalConfig {
     const f = `robots[${i}]`;
     if (!isObj(r)) throw new Error(`${where}: ${f} must be an object`);
     const robotPath = at(r.robot, `${f}.robot`);
-    const { file, raw } = robotFile(`${where}: ${f}.robot`, robotPath);
     if (r.id !== undefined && typeof r.id !== "string") throw new Error(`${where}: ${f}.id must be a string`);
+    if (r.source === "pages") {
+      const profile = parsePagesRobot(readJson(`${where}: ${f}.robot`, robotPath), `${where}: ${f}.robot ${robotPath}`);
+      pages ??= { port: DEFAULT_PAGE_PORT };
+      return { source: "pages", id: r.id ?? profile.id, profile };
+    }
+    const { file, raw } = robotFile(`${where}: ${f}.robot`, robotPath);
     switch (r.source) {
       case "twin":
         return {
@@ -216,21 +282,25 @@ function fromFile(file: string): LocalConfig {
         };
       }
       default:
-        throw new Error(`${where}: ${f}.source must be "twin", "ev3" or "ev3dev", got ${JSON.stringify(r.source)}`);
+        throw new Error(
+          `${where}: ${f}.source must be "twin", "ev3", "ev3dev" or "pages", got ${JSON.stringify(r.source)}`,
+        );
     }
   });
   return {
     robots,
     port: json.port === undefined ? DEFAULT_PORT : int(`${where}: port`, json.port, 1, 65535),
+    pages,
   };
 }
 
-const ROBOT_FLAGS = ["--twin", "--ev3", "--ev3dev"];
-/** `--twin`, `--ev3` and `--ev3dev` with no file after them get the example robot. */
+const ROBOT_FLAGS = ["--twin", "--ev3", "--ev3dev", "--pages"];
+/** `--twin`, `--ev3`, `--ev3dev` and `--pages` with no file after them get the example robot. */
 function withExampleRobot(argv: string[]): string[] {
   return argv.map((arg, i) => {
     const next = argv[i + 1];
-    return ROBOT_FLAGS.includes(arg) && (next === undefined || next.startsWith("-")) ? `${arg}=${EXAMPLE.robot}` : arg;
+    if (!ROBOT_FLAGS.includes(arg) || (next !== undefined && !next.startsWith("-"))) return arg;
+    return `${arg}=${arg === "--pages" ? EXAMPLE.pages : EXAMPLE.robot}`;
   });
 }
 
@@ -253,6 +323,8 @@ export function loadConfig(argv: string[]): LocalConfig {
       "ssh-key": { type: "string" },
       "install-bridge": { type: "boolean" },
       "log-file": { type: "string" },
+      pages: { type: "string" },
+      "page-port": { type: "string" },
     },
   });
   if (values.help) throw new HelpAsked();
@@ -277,6 +349,7 @@ export function loadConfig(argv: string[]): LocalConfig {
     if (values.world !== undefined) needs("world", "twin", values.twin !== undefined);
     if (values.seed !== undefined) needs("seed", "twin", values.twin !== undefined);
     if (values.port !== undefined) needs("port", "ev3", values.ev3 !== undefined);
+    if (values["page-port"] !== undefined) needs("page-port", "pages", values.pages !== undefined);
     for (const flag of ["ssh", "ssh-key", "install-bridge"] as const)
       if (values[flag] !== undefined) needs(flag, "ev3dev", values.ev3dev !== undefined);
     if (given.length === 0)
@@ -319,7 +392,24 @@ export function loadConfig(argv: string[]): LocalConfig {
         seed: values.seed === undefined ? 1 : int("--seed", values.seed, 0, 0xffffffff),
       });
     }
-    config = { robots, port: values.port === undefined ? DEFAULT_PORT : int("--port", values.port, 1, 65535) };
+    if (values.pages !== undefined) {
+      const path = fromRepo(values.pages);
+      const profile = parsePagesRobot(readJson("--pages", path), `--pages ${path}`);
+      robots.push({ source: "pages", id: profile.id, profile });
+    }
+    config = {
+      robots,
+      port: values.port === undefined ? DEFAULT_PORT : int("--port", values.port, 1, 65535),
+      pages:
+        values.pages === undefined
+          ? null
+          : {
+              port:
+                values["page-port"] === undefined
+                  ? DEFAULT_PAGE_PORT
+                  : int("--page-port", values["page-port"], 0, 65535),
+            },
+    };
   }
   const ids = config.robots.map((r) => r.id);
   for (const id of ids)

@@ -30,6 +30,9 @@
     "packages/driver-ev3dev": {
       "name": "@spinecord/driver-ev3dev",
     },
+    "packages/page-hub": {
+      "name": "@spinecord/page-hub",
+    },
     "packages/runtime": {
       "name": "@spinecord/runtime",
     },
@@ -156,6 +159,8 @@
     "@spinecord/driver-ev3dev": ["@spinecord/driver-ev3dev@workspace:packages/driver-ev3dev"],
 
     "@spinecord/local": ["@spinecord/local@workspace:apps/local"],
+
+    "@spinecord/page-hub": ["@spinecord/page-hub@workspace:packages/page-hub"],
 
     "@spinecord/runtime": ["@spinecord/runtime@workspace:packages/runtime"],
 

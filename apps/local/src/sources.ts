@@ -3,12 +3,17 @@
 //   ev3dev   Ev3devProvider over the system ssh client; the robot starts offline and is connected in the
 //            background, at start and each time the link closes, until a link holds
 //   ev3      the real Ev3Provider over the bridge page's socket, built each time the page opens an EV3
+//   pages    the page hub alone: a robot with no body, online from start
+// With pages enabled, every robot's runtime gets that robot's page hub as its last provider; the hub outlives the
+// runtimes, so a runtime built again (the bridge page opened the EV3 again) finds the pages' devices where they were.
 import { EV3_USB_LOOP_RATE_HZ, Ev3Provider } from "../../../packages/driver-ev3/provider";
 import type { Transport } from "../../../packages/driver-ev3/transport";
 import { RuntimeError } from "../../../packages/protocol/types";
 import { Ev3devProvider } from "../../../packages/driver-ev3dev/src/provider";
 import { SshLineTransport, installBridge } from "../../../packages/driver-ev3dev/src/ssh";
 import type { Clock } from "../../../packages/runtime/clock";
+import { PageHub, type PageHubOptions } from "../../../packages/page-hub/hub";
+import type { Provider } from "../../../packages/protocol/types";
 import { createRuntime, type LocalRuntime } from "../../../packages/runtime/runtime";
 import { LARGE_DEG_S, SIM_BRICK_LOOP_RATE_HZ, SimBrick, drivetrainFromProfile } from "../../../packages/sim-ev3/brick";
 import { World, parseWorld } from "../../../packages/sim-world/world";
@@ -16,6 +21,7 @@ import { SimWorldProvider } from "../../../packages/sim-world/world-provider";
 import { buildBridgePage } from "../../robot-page/bridge-build";
 import type { LocalConfig, RobotSource } from "./config";
 import { serveBridge, type BridgePageFiles, type BridgeServer } from "./hid-bridge";
+import { servePages, type PagesServer, type PageTimes } from "./pages";
 import { LocalRobot, type LoopEndLine } from "./robot";
 
 export type Log = (ev: string, fields?: Record<string, unknown>) => void;
@@ -24,14 +30,26 @@ export interface Fleet {
   /** Simulated bricks by robot id (tests read their motors). */
   bricks: Map<string, SimBrick>;
   bridge: BridgeServer | null;
+  /** The page listener; null when pages are off. */
+  pages: PagesServer | null;
+  /** The page hub of each robot, by robot id, when pages are on. */
+  hubs: Map<string, PageHub>;
   /** Stops every robot that can be reached, then closes links. One entry per robot: null = no link to stop through. */
   shutdown(): Promise<{ robot_id: string; motors_stopped: boolean | null }[]>;
 }
 
 type Source<K extends RobotSource["source"]> = Extract<RobotSource, { source: K }>;
 
-/** `clock`: the one time source of the twin's brick, providers and runtime. Default: each runs on real time. */
-export function twinRuntime(s: Source<"twin">, clock?: Clock): { runtime: LocalRuntime; brick: SimBrick } {
+/** The robot's page hub, last of its providers, when pages are on. */
+const last = (hub?: PageHub): Provider[] => (hub ? [hub] : []);
+
+/** `clock`: the one time source of the twin's brick, providers and runtime. Default: each runs on real time.
+ * `hub`: the robot's page hub, when pages are on. */
+export function twinRuntime(
+  s: Source<"twin">,
+  clock?: Clock,
+  hub?: PageHub,
+): { runtime: LocalRuntime; brick: SimBrick } {
   const { pair, hardware } = s.robot;
   const profile = { ...s.robot.profile, id: s.id };
   const config = parseWorld(s.world);
@@ -61,6 +79,7 @@ export function twinRuntime(s: Source<"twin">, clock?: Clock): { runtime: LocalR
           loopRateHz: SIM_BRICK_LOOP_RATE_HZ,
           ...time,
         }),
+      ...last(hub),
     ],
     ...(clock && { clock }),
   });
@@ -68,7 +87,7 @@ export function twinRuntime(s: Source<"twin">, clock?: Clock): { runtime: LocalR
 }
 
 /** The runtime of a stock-firmware EV3 reached through `transport` (the bridge page's socket, or a fake brick). */
-export function ev3Runtime(s: Source<"ev3">, transport: Transport): LocalRuntime {
+export function ev3Runtime(s: Source<"ev3">, transport: Transport, hub?: PageHub): LocalRuntime {
   const { pair, hardware } = s.robot;
   const profile = { ...s.robot.profile, id: s.id };
   return createRuntime({
@@ -76,6 +95,7 @@ export function ev3Runtime(s: Source<"ev3">, transport: Transport): LocalRuntime
     providers: [
       (limits) =>
         new Ev3Provider(transport, { limits, hardware, pair, roles: profile.roles, loopRateHz: EV3_USB_LOOP_RATE_HZ }),
+      ...last(hub),
     ],
   });
 }
@@ -90,6 +110,11 @@ export interface FleetOptions {
   reconnectMs?: number;
   /** Time source of every twin (see twinRuntime). Default: real time. */
   clock?: Clock;
+  /** Port of the page listener; 0 (tests) takes any free port. Default: the config's. */
+  pagePort?: number;
+  /** Shorter times of the page state machine and the hub (tests). */
+  pageTimes?: Partial<PageTimes>;
+  pageHub?: PageHubOptions;
 }
 
 /** One link to a robot's hardware: the runtime that talks through it, and the news that it closed. */
@@ -188,6 +213,20 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
   // run before anything else at shutdown: a source stops bringing its robot back
   const enders: (() => void)[] = [];
   let bridge: BridgeServer | null = null;
+  // pages: one hub per robot, and the listener the pages join through
+  const hubs = new Map<string, PageHub>();
+  if (config.pages) for (const s of config.robots) hubs.set(s.id, new PageHub(o.pageHub));
+  const byId = new Map<string, LocalRobot>();
+  const pages = config.pages
+    ? servePages(hubs, o.pagePort ?? config.pages.port, {
+        log: o.log,
+        times: o.pageTimes,
+        // the runtime scans again when a hub announces a change; a robot offline has no registry to wait for
+        scanned: async (id) => void (await byId.get(id)?.runtime()?.ready()),
+      })
+    : null;
+  if (pages) closers.push(() => pages.stop());
+  const pageHooks = (id: string) => (pages ? { join: () => pages.join(id), view: () => pages.view(id) } : undefined);
   const transitions = (id: string) => (fsm: string, from: string, to: string, why: string) =>
     o.log(fsm, { robot_id: id, from, to, why });
   const cancels = (id: string) => (tool: string, moving: boolean) =>
@@ -195,15 +234,27 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
   const loopEnds = (line: LoopEndLine) => o.log("loop_end", { ...line });
 
   for (const s of config.robots) {
-    if (s.source === "twin") {
+    if (s.source === "pages") {
       const robot = new LocalRobot({
         id: s.id,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
         onLoopEnd: loopEnds,
+        pages: pageHooks(s.id),
+      });
+      const profile = { ...s.profile, id: s.id };
+      await robot.attach(createRuntime({ profile, providers: [hubs.get(s.id)!] }));
+      robots.push(robot);
+    } else if (s.source === "twin") {
+      const robot = new LocalRobot({
+        id: s.id,
+        onTransition: transitions(s.id),
+        onCancel: cancels(s.id),
+        onLoopEnd: loopEnds,
+        pages: pageHooks(s.id),
         ...(o.clock && { clock: o.clock }),
       });
-      const { runtime, brick } = twinRuntime(s, o.clock);
+      const { runtime, brick } = twinRuntime(s, o.clock, hubs.get(s.id));
       await robot.attach(runtime);
       bricks.set(s.id, brick);
       robots.push(robot);
@@ -214,6 +265,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
         onLoopEnd: loopEnds,
+        pages: pageHooks(s.id),
       });
       // --install-bridge: part of every attempt until one copy has succeeded, so a brick that is off at start
       // gets its bridge when it answers
@@ -236,6 +288,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
                 provider = new Ev3devProvider(transport, { limits, hardware: s.hardware, pair, roles: profile.roles });
                 return provider;
               },
+              ...last(hubs.get(s.id)),
             ],
           });
           // the ssh process ended: the brick, the network or the bridge went away
@@ -257,7 +310,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
           chain = chain.then(async () => {
             robot.detach("the page opened an EV3 again");
             try {
-              await robot.attach(ev3Runtime(s, transport));
+              await robot.attach(ev3Runtime(s, transport, hubs.get(s.id)));
               o.log("ev3_ready", { robot_id: s.id, ...info });
             } catch (e) {
               o.log("ev3_attach_failed", { robot_id: s.id, error: (e as Error).message });
@@ -278,16 +331,20 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
         onLoopEnd: loopEnds,
+        pages: pageHooks(s.id),
       });
       closers.push(() => b.stop());
       robots.push(robot);
     }
   }
 
+  for (const r of robots) byId.set(r.id, r);
   return {
     robots,
     bricks,
     bridge,
+    pages,
+    hubs,
     async shutdown() {
       // every robot refuses calls before the first stop is issued
       for (const end of enders) end();

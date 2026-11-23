@@ -33,6 +33,9 @@ export interface ChannelSpec {
   // and each component of a numeric vector). A condition's `changed` takes a difference up to this as no change
   // (CONTRACT §4). Absent = the channel is exact: every difference is a change.
   noise?: number;
+  // true = the device reports every change of this channel by itself (a page's touch button); a read is answered
+  // from the latest value it reported, with that value's ts, at no round trip (CONTRACT §2.2).
+  pushed?: boolean;
   description: string;
 }
 export type BoundKind = "degrees" | "ms" | "instant";
@@ -164,7 +167,7 @@ export type ProviderLoop =
         ended: Promise<LoopEnd>;
       }>;
     };
-export type BackendKind = "ev3" | "sim";
+export type BackendKind = "ev3" | "sim" | "page";
 
 // ---------- Robot profile (§3) ----------
 export interface Drivetrain {
@@ -212,6 +215,83 @@ export const ACTIVITY_TRANSITIONS: Record<RobotActivity, readonly RobotActivity[
   stopping: ["idle", "fault"],
   fault: ["idle", "stopping"],
 };
+
+// ---------- Peripheral pages (§1 Page, §2.4) ----------
+/** The life of one peripheral page in its robot, owned by apps/local. */
+export type PageState = "announced" | "active" | "asleep" | "gone";
+export const PAGE_TRANSITIONS: Record<PageState, readonly PageState[]> = {
+  announced: ["active", "asleep"],
+  active: ["asleep"],
+  // announced again: a page joins under the name of one whose socket closed, and takes its place
+  asleep: ["active", "announced", "gone"],
+  gone: [],
+};
+/** A device as a page declares it: a DeviceSpec without `provider`, with an id local to the page. */
+export type PageDevice = Omit<DeviceSpec, "provider">;
+/** What a page tried to offer and could not, with the reason in plain words. */
+export interface PageUnavailable {
+  kind: string;
+  why: string;
+}
+/** The result of one command as a page reports it; the hub adds `requested` and `ms`. */
+export interface PageCommandResult {
+  measured: Record<string, Value>;
+  reason: StopReason;
+  clamped?: boolean;
+}
+/** Every message a page sends as text. An image reading's `res` is followed by one binary message of `image.bytes`. */
+export type PageToServer =
+  | {
+      t: "hello";
+      v: 1;
+      token: string;
+      robot?: string;
+      name: string;
+      devices: PageDevice[];
+      unavailable?: PageUnavailable[];
+    }
+  | { t: "devices"; devices: PageDevice[]; unavailable?: PageUnavailable[] }
+  | {
+      t: "res";
+      id: number;
+      ok: true;
+      readings?: Record<string, Value | null>;
+      result?: PageCommandResult;
+      image?: { channel: string; mime: ImagePayload["mime"]; bytes: number; age_ms: number };
+    }
+  | { t: "res"; id: number; ok: false; error: { code: ErrorCode; message: string } }
+  | { t: "state"; device: string; values: Record<string, Scalar | null>; ts?: number }
+  | { t: "pong"; n: number; visible?: boolean }
+  | { t: "down"; device: string; why: string }
+  | { t: "up"; device: string }
+  | { t: "paused"; why?: string }
+  | { t: "resumed" };
+/** Every message the process sends to a page. */
+export type ServerToPage =
+  | { t: "welcome"; name: string; robot: string }
+  | { t: "req"; id: number; op: "read"; device: string; channels: string[] }
+  | {
+      t: "req";
+      id: number;
+      op: "command";
+      device: string;
+      command: string;
+      args: Record<string, Value>;
+      deadline_ms: number;
+    }
+  | { t: "req"; id: number; op: "abort"; of: number }
+  | { t: "req"; id: number; op: "stop" }
+  | { t: "ping"; n: number };
+/** Close codes of the page socket (CONTRACT §2.4). */
+export const PAGE_CLOSE = {
+  bad_message: 4000,
+  bad_token: 4001,
+  unknown_robot: 4004,
+  name_taken: 4009,
+  manifest_refused: 4010,
+  too_many: 4029,
+} as const;
+
 export interface RobotStateView {
   id: string;
   backend: BackendKind | null;
@@ -247,10 +327,11 @@ export type ErrorCode =
   | "stop_unverified"
   | "stale_image"
   | "condition_unreadable"
+  | "device_offline"
   | "internal"
   | "misconfigured";
 /** The codes a caller may send again as they are (CONTRACT §7). The one list: the runtime and the drivers read it. */
-export const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image"];
+export const RETRYABLE: readonly ErrorCode[] = ["robot_offline", "busy", "timeout", "stale_image", "device_offline"];
 export interface ToolError {
   code: ErrorCode;
   message: string;
@@ -305,6 +386,8 @@ export class RuntimeError extends Error {
   trace_id?: string;
   /** A moving operation was sent to a device before the call failed. */
   moved?: boolean;
+  /** How long a caller should wait before sending the call again (a busy device, a page that sleeps). */
+  retry_after_ms?: number;
   constructor(
     public code: ErrorCode,
     message: string,
@@ -320,6 +403,8 @@ export class RuntimeError extends Error {
       this.next ??= from.next;
       this.trace_id ??= from.trace_id;
       this.moved ??= from.moved;
+      // a wait before sending again belongs to an error that may be sent again
+      if (this.retryable) this.retry_after_ms ??= from.retry_after_ms;
       this.cause ??= from.cause ?? from;
     } else this.cause ??= from;
     return this;

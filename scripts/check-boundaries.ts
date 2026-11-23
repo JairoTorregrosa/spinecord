@@ -22,12 +22,16 @@ const KINDS = ["packages", "apps"] as const;
 // unit → units it must not import (ARCHITECTURE.md dependency direction). A unit is `packages/<name>` or
 // `apps/<name>`. No package imports an app, whatever this table says.
 const FORBIDDEN: Record<string, string[]> = {
-  "packages/protocol": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
+  "packages/protocol": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime", "page-hub"].map(
+    (p) => `packages/${p}`,
+  ),
   "packages/driver-ev3": ["driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
   "packages/driver-ev3dev": ["driver-ev3", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
   "packages/sim-world": ["driver-ev3", "driver-ev3dev", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
   "packages/sim-ev3": ["driver-ev3dev", "runtime"].map((p) => `packages/${p}`),
-  "packages/runtime": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3"].map((p) => `packages/${p}`),
+  "packages/runtime": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "page-hub"].map((p) => `packages/${p}`),
+  // the page hub talks to pages and to the runtime only through protocol's types and the Provider interface
+  "packages/page-hub": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
   // the bridge page speaks EV3 bytes and nothing else; apps/local builds and serves it, not the other way round
   "apps/robot-page": [
     ...["protocol", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
