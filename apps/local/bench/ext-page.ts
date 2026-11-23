@@ -5,7 +5,9 @@
 // device" with a trusted input event, and asks through the tools, as a model would: whether the page lends `door`
 // and `qr` (the scripts ran under the page's Content Security Policy), a wait_until on door.closed met by a press
 // on the pad and another by its release, and a qr scan of the fake camera's picture (it holds no code: timeout) or
-// why qr is unavailable. Writes one JSON object to --out (default bench/results/ext-page.json next to this file).
+// why qr is unavailable. Then the browser closes the page's socket (as a phone does in the background): what the
+// banner and the status say while the page joins again by itself, and that the process lists one page, active,
+// with door met again. Writes one JSON object to --out (default bench/results/ext-page.json next to this file).
 // Not part of CI: it needs Chrome.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,7 +79,10 @@ cdp.onmessage = (ev) => {
   const m = JSON.parse(String(ev.data));
   if (m.id) pending.get(m.id)?.(m.error ? { error: m.error } : (m.result ?? {}));
   if (m.method === "Runtime.exceptionThrown") console_.push(String(m.params.exceptionDetails?.exception?.description));
-  if (m.method === "Log.entryAdded") console_.push(`${m.params.entry.level}: ${m.params.entry.text}`);
+  if (m.method === "Log.entryAdded")
+    console_.push(
+      `${m.params.entry.level}: ${m.params.entry.text}${m.params.entry.url ? ` (${new URL(m.params.entry.url).pathname})` : ""}`,
+    );
 };
 const send = (method: string, params: object = {}, sessionId?: string): Promise<any> =>
   new Promise((resolve) => {
@@ -95,6 +100,13 @@ const center = (selector: string, s: string) =>
 const mouse = (type: "mousePressed" | "mouseReleased", [x, y]: [number, number], s: string) =>
   send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, s);
 
+// Keeps every WebSocket the page opens, so the bench can close one as the browser would.
+const SOCKETS = `(() => {
+  const Native = window.WebSocket;
+  const all = (window.__spinecord_sockets = []);
+  window.WebSocket = class extends Native { constructor(...a) { super(...a); all.push(this); } };
+})()`;
+
 const steps: Record<string, unknown> = {};
 let offered: unknown = null;
 try {
@@ -103,6 +115,7 @@ try {
   await send("Runtime.enable", {}, s);
   await send("Log.enable", {}, s);
   await send("Page.enable", {}, s);
+  await send("Page.addScriptToEvaluateOnNewDocument", { source: SOCKETS }, s);
   await send("Page.navigate", { url: `${url}#name=desk` }, s);
   for (
     let i = 0;
@@ -150,6 +163,41 @@ try {
     const scan = await call("command_device", { device: "desk.qr", command: "scan", args: { max_ms: 1000 } });
     steps.qr_scan = scan.ok ? { reason: scan.data.reason, measured: scan.data.measured } : scan.error;
   } else steps.qr = desk.unavailable.find((u: any) => u.kind === "code_reader")?.why;
+
+  // the browser closes the socket: the page joins again under its name
+  await evaluate("window.__spinecord_sockets.at(-1).close(4999, 'the bench closed it')", s);
+  const seen = new Set<string>();
+  for (let i = 0; i < 40; i++) {
+    seen.add(
+      String(
+        await evaluate(
+          "`${document.getElementById('status').textContent} | ${document.getElementById('banner').hidden ? '(no banner)' : document.getElementById('banner-what').textContent}`",
+          s,
+        ),
+      ),
+    );
+    await sleep(50);
+  }
+  steps.while_rejoining = [...seen];
+  let again: any[] = [];
+  for (let i = 0; i < 100; i++) {
+    again = (await call("describe_robot")).data?.pages ?? [];
+    if (again.length === 1 && again[0].state === "active") break;
+    await sleep(100);
+  }
+  steps.pages_after_rejoin = again.map((p) => ({ name: p.name, state: p.state }));
+  steps.sockets_opened = await evaluate("window.__spinecord_sockets.length", s);
+  const shutAgain = call("wait_until", {
+    condition: { device: "desk.door", channel: "closed", op: "eq", value: true },
+    timeout_ms: 3000,
+  });
+  await sleep(300);
+  await mouse("mousePressed", pad, s);
+  const metAgain = await shutAgain;
+  steps.wait_until_after_rejoin = metAgain.ok
+    ? metAgain.data.reason
+    : `${metAgain.error.code}: ${metAgain.error.message}`;
+  await mouse("mouseReleased", pad, s);
   steps.console = console_;
 } finally {
   browser.kill();

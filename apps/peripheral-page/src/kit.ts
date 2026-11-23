@@ -125,7 +125,7 @@ export interface KitOptions {
   /** Runs before each try to join again; its hello goes once it settles (the page takes its media back first). */
   beforeRejoin?: () => Promise<void>;
   /** Overrides of REJOIN (tests). */
-  rejoin?: Partial<{ delays_ms: number[]; window_ms: number }>;
+  rejoin?: Partial<{ delays_ms: number[]; window_ms: number; prepare_ms: number }>;
 }
 
 /**
@@ -133,7 +133,12 @@ export interface KitOptions {
  * how long the process keeps a page's place after its socket closed (PAGE_TIMES.gone_ms in apps/local). The page
  * hears no `gone`: it counts that time on its own clock, from when it saw the close.
  */
-export const REJOIN = { delays_ms: [500, 1000, 2000, 5000], window_ms: 30_000 } as const;
+export const REJOIN = {
+  delays_ms: [500, 1000, 2000, 5000],
+  window_ms: 30_000,
+  /** At most this long for beforeRejoin (a getUserMedia that never settles): the hello then lends what there is. */
+  prepare_ms: 3000,
+} as const;
 /** Close codes after which a hello cannot be accepted again: the process ends, or it refused this page's hello. */
 const FINAL_CLOSE: ReadonlySet<number> = new Set([1001, 4000, 4001, 4004, 4010, 4029]);
 
@@ -202,6 +207,7 @@ export function createKit(o: KitOptions): Kit {
   const downs = new Map<string, string>(); // device → why it is down, said again after each welcome
   const delays = o.rejoin?.delays_ms ?? REJOIN.delays_ms;
   const windowMs = o.rejoin?.window_ms ?? REJOIN.window_ms;
+  const prepareMs = o.rejoin?.prepare_ms ?? REJOIN.prepare_ms;
   let ws: SocketLike | null = null;
   let state: KitState = "idle";
   let robot: string | null = null;
@@ -449,9 +455,15 @@ export function createKit(o: KitOptions): Kit {
     // a frozen page runs no timer: the window is counted on the clock, whenever this runs
     if (now() - away.since >= windowMs) return giveUp();
     trying = true;
+    let cap: ReturnType<typeof setTimeout> | undefined;
     try {
-      await o.beforeRejoin?.().catch(() => {});
+      const left = away.since + windowMs - now();
+      await Promise.race([
+        o.beforeRejoin?.().catch(() => {}),
+        new Promise((r) => (cap = setTimeout(r, Math.max(0, Math.min(prepareMs, left))))),
+      ]);
     } finally {
+      clearTimeout(cap);
       trying = false;
     }
     if (state !== "reconnecting" || !away) return;

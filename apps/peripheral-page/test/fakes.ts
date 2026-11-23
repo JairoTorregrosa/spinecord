@@ -142,6 +142,7 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
   let videoCalls = 0;
   let audioCalls = 0;
   let refuseAgain: string | null = null;
+  let holdMedia = false;
   const permissionStates: Record<string, string> = {};
   const winListeners: Partial<Record<MotionEventType, ((ev: any) => void)[]>> = {};
   const vibrations: (number | number[])[] = [];
@@ -286,6 +287,7 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
         : {
             mediaDevices: {
               async getUserMedia(c) {
+                if (holdMedia) return new Promise(() => {}); // a prompt nobody answers
                 if (c.video) {
                   asked.push("camera");
                   const how = refuseAgain && videoCalls > 0 ? refuseAgain : (o.camera ?? "allow");
@@ -408,6 +410,10 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
     /** Further getUserMedia calls are refused: NotAllowedError, the person or the browser took the permission back. */
     refuseAgain(name = "NotAllowedError") {
       refuseAgain = name;
+    },
+    /** Further getUserMedia calls never settle (a prompt nobody answers). */
+    holdMedia() {
+      holdMedia = true;
     },
     /** What navigator.permissions.query answers for a name from then on. */
     permission(name: "camera" | "microphone", state: "granted" | "denied" | "prompt") {

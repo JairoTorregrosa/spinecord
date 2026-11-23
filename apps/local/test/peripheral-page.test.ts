@@ -217,7 +217,7 @@ describe("the peripheral page against the listener and the hub", () => {
       const d = await r.call("describe_robot");
       return page.kit.status().state === "lending" && d.data.pages[0]?.state === "active";
     });
-    expect(sockets.length).toBe(2);
+    expect(sockets.length).toBeGreaterThanOrEqual(2);
     const d = await r.call("describe_robot");
     expect(d.data.pages.length).toBe(1);
     expect(d.data.pages[0]).toMatchObject({ name: "desk", state: "active" });

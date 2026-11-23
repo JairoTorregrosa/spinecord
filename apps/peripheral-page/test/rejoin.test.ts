@@ -8,7 +8,13 @@ import { fakeBrowser, fakeSocket, tick, type FakeBrowserOptions } from "./fakes"
 
 const PHONE: FakeBrowserOptions = { motion: "events", vibrate: true, pointer: "coarse", torch: true };
 
-function rig(o: FakeBrowserOptions = {}, rejoin = { delays_ms: [20, 40, 80, 100], window_ms: 1500 }) {
+function rig(
+  o: FakeBrowserOptions = {},
+  rejoin: { delays_ms: number[]; window_ms: number; prepare_ms?: number } = {
+    delays_ms: [20, 40, 80, 100],
+    window_ms: 1500,
+  },
+) {
   const browser = fakeBrowser(o);
   const sockets: ReturnType<typeof fakeSocket>[] = [];
   const openedAt: number[] = [];
@@ -101,10 +107,9 @@ describe("joining again after the socket closed", () => {
     await r.opened(7);
     r.welcome();
     expect(r.page.kit.status().rejoin).toBeNull();
-    const t0 = Date.now();
     r.sock().closeFromServer(1006, "");
+    expect(r.page.kit.status().rejoin?.attempt).toBe(0);
     await r.opened(8);
-    expect(Date.now() - t0).toBeLessThan(80);
   });
 
   test("a refused token stops it at once, with the process's reason: no loop", async () => {
@@ -235,6 +240,27 @@ describe("joining again after the socket closed", () => {
     r.welcome("phone");
     expect(r.page.kit.status().state).toBe("lending");
     expect(r.page.wake()).toEqual({ t: "held" });
+  });
+
+  test("a camera that never comes back does not hold the try: after prepare_ms the hello lends what there is", async () => {
+    const r = rig(PHONE, { delays_ms: [10_000], window_ms: 30_000, prepare_ms: 50 });
+    await r.join("phone");
+    r.setVisible(false);
+    r.browser.video.end();
+    r.sock().closeFromServer(1006, "");
+    r.browser.holdMedia();
+    r.setVisible(true);
+    await r.opened(2, 500);
+    r.sock().open();
+    expect(r.hello().name).toBe("phone");
+    r.welcome("phone");
+    expect(r.page.kit.status().state).toBe("lending");
+    // the camera's track is still ended: it is said down after the welcome
+    expect(r.sock().json()).toContainEqual({
+      t: "down",
+      device: "camera",
+      why: "the camera was turned off or unplugged",
+    });
   });
 
   test("the wake lock is kept while the page waits to join again", async () => {

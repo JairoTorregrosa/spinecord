@@ -268,6 +268,12 @@ describe("--print-add", () => {
       `claude mcp add -s user spinecord "--" bun ${main} --ev3dev --ssh robot@ev3dev.local ` +
         '--ssh-key "C:\\Users\\Ana Maria\\.ssh\\id_ed25519"',
     );
+    expect(
+      addCommand({ platform: "win32", repo, args: ["--pages", "--page-ext", "deployments/example/page-ext"] }),
+    ).toBe(
+      `claude mcp add -s user spinecord "--" bun ${main} --pages ` +
+        '--page-ext "C:\\Users\\Ana Maria\\my code\\spinecord\\deployments\\example\\page-ext"',
+    );
     // what PowerShell and cmd.exe read differently inside double quotes is refused, never printed
     expect(() => addCommand({ platform: "win32", repo: "C:\\Users\\$ana\\spinecord", args: [] })).toThrow("contains $");
     expect(() => addCommand({ platform: "win32", repo: "C:\\100%\\spinecord", args: [] })).toThrow("contains %");
