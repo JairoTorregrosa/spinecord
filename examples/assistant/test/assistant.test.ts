@@ -6,6 +6,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   autonomous,
   buildOptions,
+  endSession,
   BUILT_IN_TOOLS,
   DEFAULT_MISSION_FILE,
   instructions,
@@ -14,7 +15,17 @@ import {
   SPINECORD_MAIN,
   tickMessage,
 } from "../agent.ts";
-import { costLine, localTime, parseArgs, parseMission, readMission, SECTIONS, UsageError } from "../setup.ts";
+import {
+  costLine,
+  localTime,
+  parseArgs,
+  parseMission,
+  readChatLine,
+  readMission,
+  SECTIONS,
+  Spend,
+  UsageError,
+} from "../setup.ts";
 
 const HERE = resolve(import.meta.dir, "..");
 const MISSIONS = join(HERE, "missions");
@@ -201,14 +212,14 @@ describe("what is printed and sent", () => {
     );
   });
 
-  test("a turn's cost is the difference of the running total; its tokens are its own", () => {
+  test("a turn's cost and the session's total are printed with the turn's own tokens", () => {
     const usage = {
       input_tokens: 10,
       cache_creation_input_tokens: 200,
       cache_read_input_tokens: 9000,
       output_tokens: 55,
     };
-    expect(costLine(3, 0.05, { total_cost_usd: 0.0625, usage }, 1)).toBe(
+    expect(costLine(3, 0.0125, 0.0625, { usage }, 1)).toBe(
       "[turn 3: $0.0125, 9210 tokens read (9000 from cache), 55 written | total $0.0625 of $1.00]",
     );
   });
@@ -283,5 +294,95 @@ describe("the clock", () => {
     });
     expect(turns).toBe(1);
     expect(p.reasons).toEqual(["Ctrl+C"]);
+  });
+});
+
+describe("the budget", () => {
+  test("a turn costs the difference of the SDK's running total", () => {
+    const spend = new Spend();
+    expect(spend.add(0.05)).toBeCloseTo(0.05);
+    expect(spend.add(0.0625)).toBeCloseTo(0.0125);
+    expect(spend.total).toBeCloseTo(0.0625);
+  });
+
+  test("a reset of the SDK's running total never lowers what was spent", () => {
+    const spend = new Spend();
+    spend.add(0.3);
+    spend.reset(); // a conversation_reset message
+    expect(spend.add(0.02)).toBeCloseTo(0.02);
+    expect(spend.total).toBeCloseTo(0.32);
+  });
+
+  test("a lower running total without a reset message counts as a reset too", () => {
+    const spend = new Spend();
+    spend.add(0.3);
+    expect(spend.add(0.01)).toBeCloseTo(0.01);
+    expect(spend.add(0.04)).toBeCloseTo(0.03);
+    expect(spend.total).toBeCloseTo(0.34);
+  });
+
+  test("no slash command reaches Claude: /clear would reset the SDK's budget", () => {
+    for (const line of ["/clear", " /reset", "/new", "/model claude-haiku-5-5", "/compact", "/"])
+      expect(readChatLine(line)).toEqual({ kind: "command" });
+    expect(readChatLine("  do your mission now ")).toEqual({ kind: "message", text: "do your mission now" });
+    expect(readChatLine("what is 1/2 of 40 cm?")).toEqual({ kind: "message", text: "what is 1/2 of 40 cm?" });
+    expect(readChatLine("BYE")).toEqual({ kind: "bye" });
+    expect(readChatLine("   ")).toEqual({ kind: "empty" });
+  });
+});
+
+describe("the end", () => {
+  function fakeSession(interrupt: () => Promise<void> = async () => {}) {
+    const calls: string[] = [];
+    return {
+      calls,
+      session: {
+        interrupt: async () => {
+          calls.push("interrupt");
+          await interrupt();
+        },
+        close: () => {
+          calls.push("close");
+        },
+      },
+    };
+  }
+
+  test("a running turn is interrupted, then the input is closed, then the session", async () => {
+    const fake = fakeSession();
+    await endSession({
+      session: fake.session,
+      turnRunning: true,
+      closeInput: () => fake.calls.push("close input"),
+      reading: Promise.resolve(),
+      patienceMs: 1000,
+    });
+    expect(fake.calls).toEqual(["interrupt", "close input", "close"]);
+  });
+
+  test("without a running turn nothing is interrupted", async () => {
+    const fake = fakeSession();
+    await endSession({
+      session: fake.session,
+      turnRunning: false,
+      closeInput: () => fake.calls.push("close input"),
+      reading: Promise.resolve(),
+      patienceMs: 1000,
+    });
+    expect(fake.calls).toEqual(["close input", "close"]);
+  });
+
+  test("a session that never lets go is closed after the patience, and a failed read does not stop the end", async () => {
+    const fake = fakeSession(() => new Promise<void>(() => {}));
+    const started = Date.now();
+    await endSession({
+      session: fake.session,
+      turnRunning: true,
+      closeInput: () => fake.calls.push("close input"),
+      reading: Promise.reject(new Error("Claude Code died")),
+      patienceMs: 50,
+    });
+    expect(fake.calls).toEqual(["interrupt", "close input", "close"]);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });

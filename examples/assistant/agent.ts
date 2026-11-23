@@ -20,8 +20,10 @@ import {
   localTime,
   type Mission,
   parseArgs,
+  readChatLine,
   readMission,
   type Settings,
+  Spend,
   UsageError,
   USAGE,
 } from "./setup.ts";
@@ -97,8 +99,8 @@ export function buildOptions(mission: Mission, settings: Settings): Options {
     },
     strictMcpConfig: true, // only the server above, whatever else this computer has registered
 
-    tools: [], // none of Claude Code's built-in tools exist for this agent...
-    disallowedTools: BUILT_IN_TOOLS, // ...and a call to one would be denied anyway
+    tools: [], // none of Claude Code's built-in tools exist for this agent
+    disallowedTools: BUILT_IN_TOOLS, // a second fence for the built-ins it names; the guarantee is tools: [] and the init check below
     allowedTools: [`${TOOL_PREFIX}*`], // the robot's tools run without asking
     permissionMode: "dontAsk", // anything else is denied, never asked: nobody is there to click "yes"
 
@@ -106,7 +108,7 @@ export function buildOptions(mission: Mission, settings: Settings): Options {
     persistSession: false, // the conversation lives in memory while the program runs, not on disk
 
     maxTurns: MAX_STEPS_PER_TURN, // bound of one turn
-    maxBudgetUsd: settings.maxUsd, // bound of the whole session, checked by the SDK (the loop below checks it too)
+    maxBudgetUsd: settings.maxUsd, // the SDK's bound, counted since its last reset; the loop's own sum below holds for the whole session
   };
 }
 
@@ -164,6 +166,34 @@ export async function autonomous(clock: Clock): Promise<void> {
   }
 }
 
+/** The parts of an SDK session the end uses. */
+export type Session = { interrupt: () => Promise<unknown>; close: () => void };
+
+/**
+ * 5. THE END, the same for every way out. Each wait lasts patienceMs at most, so the program ends even when Claude
+ * does not let go.
+ */
+export async function endSession(end: {
+  session: Session;
+  turnRunning: boolean;
+  closeInput: () => void;
+  reading: Promise<unknown>;
+  patienceMs: number;
+}): Promise<void> {
+  const patiently = (work: Promise<unknown>) =>
+    Promise.race([work, new Promise((resolve) => setTimeout(resolve, end.patienceMs))]);
+  const reading = end.reading.catch(() => {}); // a session that failed has nothing left to end
+  // a. Claude is in the middle of a turn: interrupt it. The SDK cancels the tool call that is running, and
+  //    spinecord brakes a robot whose call is cancelled.
+  if (end.turnRunning) await patiently(end.session.interrupt().catch(() => {}));
+  // b. No more messages: the generator returns, and the SDK ends the conversation.
+  end.closeInput();
+  await patiently(reading);
+  // c. Close the SDK. It ends Claude Code, which ends the spinecord server, and spinecord stops every motor
+  //    of every robot before it exits (its log says "stopped" and "exit").
+  end.session.close();
+}
+
 // ---------------------------------------------------------------- 3, 4, 5: the program
 
 async function main(): Promise<number> {
@@ -209,12 +239,13 @@ async function main(): Promise<number> {
 
   // ---- messages out. 4. THE LOOP: everything Claude says and does arrives here, in order.
   let turn = 0;
-  let totalUsd = 0;
+  const spend = new Spend();
   let turnRunning = false;
   let turnDone = () => {};
   const reading = (async () => {
     for await (const message of session) {
-      if (message.type === "system" && message.subtype === "init") {
+      if (message.type === "conversation_reset") spend.reset();
+      else if (message.type === "system" && message.subtype === "init") {
         // the SDK says what it connected: fail loudly when the robot's server is not there
         const server = message.mcp_servers.find((s) => s.name === SERVER);
         if (server?.status !== "connected")
@@ -241,10 +272,11 @@ async function main(): Promise<number> {
       } else if (message.type === "result") {
         // one result per turn: the turn is over, and this is what it cost
         turn += 1;
-        console.log(costLine(turn, totalUsd, message, settings.maxUsd));
-        totalUsd = message.total_cost_usd;
+        const turnUsd = spend.add(message.total_cost_usd);
+        console.log(costLine(turn, turnUsd, spend.total, message, settings.maxUsd));
         if (message.subtype === "error_max_turns") console.log(`  (turn cut after ${MAX_STEPS_PER_TURN} steps)`);
-        if (message.subtype === "error_max_budget_usd" || totalUsd >= settings.maxUsd)
+        // the program's own sum, which never goes down: the SDK's budget counts only since its last reset
+        if (message.subtype === "error_max_budget_usd" || spend.total >= settings.maxUsd)
           stop(`the budget of $${settings.maxUsd.toFixed(2)} is spent`);
         turnRunning = false;
         turnDone();
@@ -277,9 +309,11 @@ async function main(): Promise<number> {
   const chat = async (): Promise<void> => {
     console.log(`Write to ${mission.name} and press Enter. Write bye to end.`);
     keyboard!.prompt();
-    for await (const line of keyboard!) {
-      if (line.trim().toLowerCase() === "bye") break;
-      if (line.trim()) await takeTurn(line.trim());
+    for await (const typed of keyboard!) {
+      const line = readChatLine(typed);
+      if (line.kind === "bye") break;
+      if (line.kind === "command") console.log("Commands that start with / are not passed on: write in plain words.");
+      if (line.kind === "message") await takeTurn(line.text);
       if (stopped) return;
       keyboard!.prompt();
     }
@@ -304,20 +338,18 @@ async function main(): Promise<number> {
   const { why, failed } = await untilStopped;
   console.log(`\nStopping: ${why}.`);
   keyboard?.close();
-  const patiently = (work: Promise<unknown>) =>
-    Promise.race([work.catch(() => {}), new Promise((resolve) => setTimeout(resolve, PATIENCE_MS))]);
-  // a. Claude is in the middle of a turn: interrupt it. The SDK cancels the tool call that is running, and
-  //    spinecord brakes a robot whose call is cancelled.
-  if (turnRunning) await patiently(session.interrupt());
-  // b. No more messages: the generator returns, and the SDK ends the conversation.
-  inputOpen = false;
-  wake();
-  await patiently(reading);
-  // c. Close the SDK. It ends Claude Code, which ends the spinecord server, and spinecord stops every motor
-  //    of every robot before it exits (its log says "stopped" and "exit").
-  session.close();
+  await endSession({
+    session,
+    turnRunning,
+    closeInput: () => {
+      inputOpen = false;
+      wake();
+    },
+    reading,
+    patienceMs: PATIENCE_MS,
+  });
   console.log(
-    `${mission.name} is off. ${turn} turn(s), $${totalUsd.toFixed(4)} in total (an estimate of the SDK, not a bill).`,
+    `${mission.name} is off. ${turn} turn(s), $${spend.total.toFixed(4)} in total (an estimate of the SDK, not a bill).`,
   );
   return failed ? 1 : 0;
 }

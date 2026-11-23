@@ -64,8 +64,10 @@ The SDK does not read `.env` files.
 bun agent.ts
 ```
 
+The run below was `bun agent.ts --max-usd 0.40`:
+
 ```text
-Pilar is waking up (model claude-opus-5-5, budget $1.00). Ctrl+C stops the robot and ends.
+Pilar is waking up (model claude-opus-5-5, budget $0.40). Ctrl+C stops the robot and ends.
 Write to Pilar and press Enter. Write bye to end.
 you> who are you and what robot do you have?
   -> list_robots
@@ -83,6 +85,7 @@ Pilar> I ran a practice reminder: Rosa's chair was 52 cm ahead, I drove 37 cm sl
 
 - A line that starts with `->` is the assistant using the robot: the tool and the robot.
 - A line in `[ ]` is what the turn cost, and the total of the session against its budget.
+- A line that starts with `/` is not passed on: Claude Code's commands (`/clear`, `/model`, ...) are not for this assistant.
 
 ## 4. Let it act on its own
 
@@ -91,6 +94,8 @@ bun agent.ts --every 60
 ```
 
 Every 60 seconds the program wakes the assistant up and tells it the time. The assistant reads the section "When I act on my own" of your file and decides: it acts, or it answers `nothing to do`. It is one conversation from start to end, so the assistant remembers what it already did (the pill was given, the alert was sent).
+
+The run below was `bun agent.ts --every 15 --for 1 --max-usd 0.40`:
 
 ```text
 Pilar wakes up every 15 s for 1 min.
@@ -115,7 +120,7 @@ Pilar> nothing to do
 |---|---|
 | `--every [seconds]` | wake up every N seconds: 60 without a number, 10 at least. A turn that takes longer than N is followed at once by the next one |
 | `--for <minutes>` | with `--every`: end after this many minutes |
-| `--max-usd <amount>` | end when the session has cost this much. Default 1 |
+| `--max-usd <amount>` | end at the first turn that brings the session to this amount. Default 1. The last turn can pass it by about the cost of one step |
 | `--mission <file>` | another assistant file, for example `--mission missions/guard.md` |
 | `--help` | every option |
 
@@ -145,7 +150,7 @@ The model is the line `export const MODEL = "claude-opus-5-5";` at the top of `a
 | Write `bye` in the chat | The program ends the same way as with `Ctrl+C` |
 | The budget or `--for` is reached | The same end |
 
-`Ctrl+C` is the way to stop when you are in a hurry: it does not wait for Claude. On a real robot keep a hand near it on a first run; what spinecord does when the cable or the network goes away is in [Stopping the robot](../../README.md#stopping-the-robot).
+`Ctrl+C` is the way to stop when you are in a hurry: the program waits for Claude about 10 s at most, and the robot stops at once, because the spinecord server stops every motor on `SIGINT` and when its input closes. On a real robot keep a hand near it on a first run; what spinecord does when the cable or the network goes away is in [Stopping the robot](../../README.md#stopping-the-robot).
 
 ## 7. A real robot
 
@@ -153,10 +158,10 @@ Everything after a lone `--` goes to the spinecord server and chooses the robot:
 
 ```sh
 bun agent.ts -- --ev3
-bun agent.ts --every 60 -- --ev3dev --ssh robot@<host>
+bun agent.ts --every 60 -- --ev3dev --ssh robot@HOST
 ```
 
-The flags are the server's own: [Choose the robots](../../README.md#choose-the-robots), or `bun ../../apps/local/main.ts --help`. To keep the server's log, add `--log-file robot.log` after the `--`. Try a mission on the twin first.
+Write the brick's address in place of `HOST`. The flags are the server's own: [Choose the robots](../../README.md#choose-the-robots), or `bun ../../apps/local/main.ts --help`. To keep the server's log, add `--log-file robot.log` after the `--`. Try a mission on the twin first.
 
 ## What it costs
 
@@ -169,7 +174,7 @@ Measured on 2026-11-22 with `claude-opus-5-5`, the pill assistant and the twin. 
 | A wake-up that does the mission from the start (8 tool calls) | $0.11 |
 | A wake-up that answers `nothing to do` | $0.004 to $0.005 |
 
-`--every 60` with nothing to do is about $0.30 an hour. Claude keeps what it has already read for a few minutes at a lower price; a wake-up that comes after a longer pause reads everything at full price and costs more (not measured here). The program ends by itself at `--max-usd`.
+`--every 60` with nothing to do is about $0.30 an hour, an estimate from the wake-ups above (60 an hour at $0.005). Claude keeps what it has already read in a cache at a lower price. These runs used a Claude Code login, whose cache lasts an hour; with an API key it lasts 5 minutes, so `--every` above 300 reads everything at full price at every wake-up and costs more (not measured here). The program ends at the first turn that reaches `--max-usd`, and that turn can pass it by about one step.
 
 ## What the agent may do
 

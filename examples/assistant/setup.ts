@@ -15,7 +15,8 @@ export const USAGE = `usage: bun agent.ts [options] [-- robot flags]
   --every [seconds]     autonomous: the assistant wakes up by itself every N seconds
                         (default ${DEFAULT_EVERY_SECONDS}, minimum ${MIN_EVERY_SECONDS})
   --for <minutes>       with --every: stop after this many minutes
-  --max-usd <amount>    stop when the session has cost this much (default ${DEFAULT_MAX_USD})
+  --max-usd <amount>    stop at the first turn that brings the session to this amount
+                        (default ${DEFAULT_MAX_USD})
   --mission <file>      the assistant's file (default assistant.md, next to agent.ts)
   --help                this text
 
@@ -132,10 +133,8 @@ export function readMission(file: string): Mission {
 
 // ---------------------------------------------------------------- the numbers after each turn
 
-/** What the SDK's result message says about money and tokens (the fields this example reads). */
+/** What the SDK's result message says about tokens (the fields this example reads). */
 export type TurnResult = {
-  /** USD of the whole session so far: a running total, not this turn's cost */
-  total_cost_usd: number;
   /** tokens of this turn alone */
   usage: {
     input_tokens: number;
@@ -145,15 +144,53 @@ export type TurnResult = {
   };
 };
 
-/** One line: this turn's cost and tokens, then the running total against the budget. */
-export function costLine(turn: number, totalBeforeUsd: number, result: TurnResult, maxUsd: number): string {
+/**
+ * What the session has spent, which never goes down. The SDK's running total (total_cost_usd) starts again at 0
+ * after a conversation reset, so the program keeps its own sum of what each turn cost.
+ */
+export class Spend {
+  /** Everything spent since the program started. */
+  total = 0;
+  /** The SDK's running total at the last result, since its last reset. */
+  private sdkTotal = 0;
+
+  /** A result arrived: returns what this turn cost. A running total lower than the last one is a reset. */
+  add(runningTotalUsd: number): number {
+    const turnUsd = runningTotalUsd >= this.sdkTotal ? runningTotalUsd - this.sdkTotal : runningTotalUsd;
+    this.sdkTotal = runningTotalUsd;
+    this.total += Math.max(0, turnUsd);
+    return Math.max(0, turnUsd);
+  }
+
+  /** The SDK said its conversation was reset: its next running total starts at 0 again. */
+  reset(): void {
+    this.sdkTotal = 0;
+  }
+}
+
+/** One line: this turn's cost and tokens, then what the session has spent against the budget. */
+export function costLine(turn: number, turnUsd: number, totalUsd: number, result: TurnResult, maxUsd: number): string {
   const u = result.usage;
   const read = u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens;
-  const turnUsd = result.total_cost_usd - totalBeforeUsd;
   return (
     `[turn ${turn}: $${turnUsd.toFixed(4)}, ${read} tokens read (${u.cache_read_input_tokens} from cache), ` +
-    `${u.output_tokens} written | total $${result.total_cost_usd.toFixed(4)} of $${maxUsd.toFixed(2)}]`
+    `${u.output_tokens} written | total $${totalUsd.toFixed(4)} of $${maxUsd.toFixed(2)}]`
   );
+}
+
+/** What a line typed in the chat is. */
+export type ChatLine = { kind: "empty" } | { kind: "bye" } | { kind: "command" } | { kind: "message"; text: string };
+
+/**
+ * Reads one chat line. A line that starts with / would be a Claude Code command (/clear, /model, ...): one of them
+ * resets the SDK's budget, so no command reaches Claude.
+ */
+export function readChatLine(line: string): ChatLine {
+  const text = line.trim();
+  if (!text) return { kind: "empty" };
+  if (text.toLowerCase() === "bye") return { kind: "bye" };
+  if (text.startsWith("/")) return { kind: "command" };
+  return { kind: "message", text };
 }
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
