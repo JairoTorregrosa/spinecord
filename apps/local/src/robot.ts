@@ -527,9 +527,15 @@ export class LocalRobot {
       runs_on: "host",
       ...l.loop.counts(),
     });
+    // every end takes the verified stop; a loop whose own brake failed leaves the robot in fault whatever it reads
     if (this.loop === l && this.activity === "looping" && this.rt === rt)
       void this.stop()
         .catch(() => {})
+        .then(() => {
+          const failed = l.loop.brakeFailed;
+          if (failed && this.loop === l && this.activity === "idle")
+            this.fault(`the brake at the end of the loop failed: ${failed}`);
+        })
         .then(l.settle);
     else void (this.stopRun ?? Promise.resolve()).catch(() => {}).then(l.settle);
   }

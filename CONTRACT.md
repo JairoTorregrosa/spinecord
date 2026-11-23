@@ -241,12 +241,13 @@ Why not a blocking call for the whole loop: a model reads a result only when its
 
 **Safety.**
 - Bounded: `duration_ms` ≤ `limits.max_loop_ms`, counted on the executor's own clock.
-- Every end brakes every device the loop drives, first, ahead of any bookkeeping or output, and is then verified by the path of `stop` (§1). A brake that fails is named in the report's `notes`.
+- Every end brakes every device the loop drives, first, ahead of any bookkeeping or output, and is then verified by the path of `stop` (§1). A brake that fails, or does not answer within `stop_worst_ms`, is named in the report's `notes`; the loop ends at that bound all the same, takes the verified stop, and leaves the robot in `fault` whatever the motors read.
 - `stop` preempts a loop like any move and is verified.
 - Guards run on the executor, on the tick that reads the signal.
 - Link silence. Stock and twin: a tick whose packet is not answered ends the loop; the brick ends the motion `hold_ms` after the latest refresh, and the bridge page brakes every motor when its socket closes.
 - `hold_ms` of a motor output is at most 250 ms on stock firmware (`max_hold_ms` of its motor commands), so a loop that dies leaves a motor running for at most that long.
-- No silent fallback anywhere: a rate, a device mix, a channel or a command the executor cannot honor is a typed refusal at planning time.
+- No silent fallback anywhere: a rate, a device mix, a channel or a command the executor cannot honor is a typed refusal at planning time, and so is an output's fixed `args` entry that is not a param of its command or breaks the param's schema (`invalid_argument`).
+- A stock provider's end brake overtakes every tick still waiting in the queue, and a tick planned while the loop ran carries no refresh once it has ended: the brake is the last command a driven port gets from the loop.
 
 A loop whose link closes leaves the robot `offline`; calls then answer `robot_offline`, and the report is gone with the link.
 

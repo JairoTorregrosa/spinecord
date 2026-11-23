@@ -462,6 +462,8 @@ export class Ev3Provider implements Provider {
   private readonly looped = new Set<number>();
   /** stop() or a brake preempted the loop: its ticks are refused until the runtime ends it. */
   private loopHalted = false;
+  /** Counts the ends of loops: a tick started under an earlier count belongs to a loop that has ended. */
+  private loopEpoch = 0;
   private readonly loopClaim = {
     abort: () => {
       this.loopHalted = true;
@@ -1654,8 +1656,10 @@ export class Ev3Provider implements Provider {
    * what it carries is decided when it is built, so a tick that a stop overtook carries no refresh.
    */
   private tick(writes: LoopWrite[], reads: LoopRead[], hold_ms: number): Promise<(number | null)[]> {
+    const epoch = this.loopEpoch;
+    const ended = () => this.loopHalted || epoch !== this.loopEpoch;
     return this.guard(async () => {
-      if (this.loopHalted)
+      if (ended())
         throw new RuntimeError("busy", "the loop was preempted by a stop or a brake; it takes no more ticks");
       if (!this.specs) await this.devices();
       const o = this.o;
@@ -1687,13 +1691,15 @@ export class Ev3Provider implements Provider {
                 : outputTimeSpeed(mask, v, 0, hold, 0, brake),
         });
       }
+      // each read: its bytecodes at a global offset, and how its bytes become a number (null = no value)
+      const parts: { size: number; bc: (base: number) => number[]; value: (g: Uint8Array) => number | null }[] = [];
+      for (const r of reads) parts.push(await this.loopRead(r));
+      // the loop ended while this tick was being planned: it claims nothing and refreshes nothing
+      if (ended()) throw new RuntimeError("busy", "the loop ended; it takes no more ticks");
       for (const r of refresh) {
         this.running.set(r.i, this.loopClaim);
         this.looped.add(r.i);
       }
-      // each read: its bytecodes at a global offset, and how its bytes become a number (null = no value)
-      const parts: { size: number; bc: (base: number) => number[]; value: (g: Uint8Array) => number | null }[] = [];
-      for (const r of reads) parts.push(await this.loopRead(r));
       let globals = 0;
       const bases = parts.map((p) => {
         const at = globals;
@@ -1702,12 +1708,12 @@ export class Ev3Provider implements Provider {
       });
       const readBc = parts.flatMap((p, k) => p.bc(bases[k]!));
       const g = await this.link.command(
-        () => (this.loopHalted ? readBc : [...refresh.flatMap((r) => r.bc), ...readBc]),
+        () => (ended() ? readBc : [...refresh.flatMap((r) => r.bc), ...readBc]),
         globals,
         { droppable: true },
       );
       const until = o.now() + hold;
-      for (const r of refresh) this.powered[r.i] = { pct: r.power, until: r.power === 0 ? 0 : until };
+      if (!ended()) for (const r of refresh) this.powered[r.i] = { pct: r.power, until: r.power === 0 ? 0 : until };
       return parts.map((p, k) => p.value(g.subarray(bases[k]!, bases[k]! + p.size)));
     });
   }
@@ -1781,6 +1787,10 @@ export class Ev3Provider implements Provider {
 
   /** The end of a loop: brakes every port it drove (and `devices`), ahead of the queue, and releases them. */
   private endLoop(devices: string[]): Promise<void> {
+    // No refresh may follow the brake: a tick still queued goes without its refreshes, or not at all.
+    this.loopEpoch++;
+    this.loopHalted = true;
+    this.link.dropQueued();
     return this.guard(async () => {
       const ports = new Set(this.looped);
       for (const d of devices) {

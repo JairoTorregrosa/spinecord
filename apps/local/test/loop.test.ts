@@ -85,12 +85,15 @@ describe("C2 on the twin: following the line of line-oval.json", () => {
         }
       })();
       const reports: any[] = [];
-      while (travel <= lap) {
-        const r = await t.tool("supervise_loop", { wait_ms: 2000 });
-        reports.push(r.data);
-        expect(r.data.state).toBe("running");
+      try {
+        while (travel <= lap) {
+          const r = await t.tool("supervise_loop", { wait_ms: 2000 });
+          reports.push(r.data);
+          expect(r.data.state).toBe("running");
+        }
+      } finally {
+        watching = false;
       }
-      watching = false;
       await watch;
       expect(travel).toBeGreaterThan(lap);
       expect(worst).toBeLessThan(4);
@@ -217,6 +220,13 @@ describe("the looping activity", () => {
         outputs: [{ ...C2.outputs[0]!, command: "run_degrees" }],
       });
       expect(noDrives).toMatchObject({ ok: false, error: { code: "unsupported" } });
+      // an argument the loop holds fixed is checked against the command's schema, as command_device checks it
+      const badArg = await t.tool("run_loop", { ...C2, outputs: [{ ...C2.outputs[0]!, args: { brake: "x" } }] });
+      expect(badArg).toMatchObject({ ok: false, error: { code: "invalid_argument" }, robot: { activity: "idle" } });
+      expect(badArg.error.message).toContain("loop.outputs[0].args.brake");
+      const noParam = await t.tool("run_loop", { ...C2, outputs: [{ ...C2.outputs[0]!, args: { degrees: 10 } }] });
+      expect(noParam).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+      expect(noParam.error.message).toContain('has no param "degrees"');
       expect(t.brick.log.length).toBe(sent);
       expect(t.robot.view().activity).toBe("idle");
       const none = await t.tool("supervise_loop");
@@ -386,6 +396,99 @@ describe("the looping activity", () => {
       await t.fleet.shutdown();
     }
   }, 60_000);
+});
+
+/** A robot of one motor on a host provider whose ticks and end brake the test decides, on a virtual clock. */
+async function hostRobot(loop: {
+  tick?: (n: number, reads: unknown[]) => Promise<(number | null)[]>;
+  end?: () => Promise<void>;
+}) {
+  const clock = new FakeClock();
+  let ticks = 0;
+  const motor: DeviceSpec = {
+    id: "h.m",
+    provider: "h",
+    kind: "motor",
+    roles: [],
+    description: "a motor",
+    channels: [{ name: "position_deg", type: "number", description: "encoder" }],
+    commands: [
+      {
+        name: "power",
+        description: "timed power",
+        moves: true,
+        bound: { kind: "ms", params: ["ms"], max: 250 },
+        params: { type: "object", properties: { power_pct: { type: "number", minimum: -100, maximum: 100 } } },
+        drives: { arg: "power_pct", max_hold_ms: 250 },
+      },
+    ],
+  };
+  const counts = { stops: 0, ticks: () => ticks };
+  const provider: Provider = {
+    id: "h",
+    backend: "sim",
+    stop_worst_ms: 100,
+    devices: async () => [structuredClone(motor)],
+    read: async () => [],
+    command: async () => {
+      throw new Error("not used");
+    },
+    stop: async () => {
+      counts.stops++;
+      return { motors_stopped: true };
+    },
+    loop: {
+      runs_on: "host",
+      max_rate_hz: 100,
+      tick: (_w, reads) => (loop.tick ? loop.tick(++ticks, reads) : (++ticks, Promise.resolve(reads.map(() => 0)))),
+      end: loop.end ?? (async () => {}),
+    },
+  };
+  const profile: RobotProfile = {
+    id: "h1",
+    roles: {},
+    notes: [],
+    limits: { max_speed_pct: 80, max_command_ms: 10000, max_program_ms: 20000, max_loop_ms: 30000 },
+  };
+  const ends: unknown[] = [];
+  const robot = new LocalRobot({ id: "h1", clock, onLoopEnd: (l) => ends.push(l) });
+  await robot.attach(createRuntime({ profile, providers: [provider], clock }));
+  const tool = async (name: string, args: Record<string, unknown> = {}) =>
+    (await callTool([robot], name, { robot_id: "h1", ...args })).envelope as any;
+  const spec = {
+    rate_hz: 50,
+    duration_ms: 1000,
+    signals: { x: { device: "h.m", channel: "position_deg" } },
+    outputs: [{ device: "h.m", command: "power", terms: [{ signal: "x", gain: 1 }] }],
+  };
+  return { clock, robot, tool, spec, counts, ends };
+}
+
+describe("every end of a loop takes the verified stop", () => {
+  test("a loop that ends by itself (completed) gets a verified stop of the robot", async () => {
+    const h = await hostRobot({});
+    const atAttach = h.counts.stops;
+    expect(await h.tool("run_loop", h.spec)).toMatchObject({ ok: true, data: { state: "running" } });
+    expect(h.counts.stops).toBe(atAttach);
+    const end = await h.tool("supervise_loop", { wait_ms: 10000 });
+    expect(end).toMatchObject({ robot: { activity: "idle" }, data: { state: "ended", reason: "completed" } });
+    expect(h.counts.stops).toBe(atAttach + 1);
+  }, 30_000);
+
+  test("an end brake that never answers: the loop still ends at stop_worst_ms, the robot is stopped and in fault", async () => {
+    const h = await hostRobot({ end: () => new Promise(() => {}) });
+    const atAttach = h.counts.stops;
+    expect(await h.tool("run_loop", { ...h.spec, duration_ms: 400 })).toMatchObject({ ok: true });
+    const t0 = h.clock.now();
+    const end = await h.tool("supervise_loop", { wait_ms: 10000 });
+    expect(end).toMatchObject({ robot: { activity: "fault" }, data: { state: "ended", reason: "completed" } });
+    expect(end.data.notes.join(" ")).toContain("the brake at the end of the loop failed: no answer within 150 ms");
+    expect(h.clock.now() - t0).toBeLessThan(400 + 2000);
+    expect(h.counts.stops).toBe(atAttach + 1);
+    expect(h.robot.listing().fault_reason).toContain("the brake at the end of the loop failed");
+    // a moving call is refused until reset_fault
+    expect(await h.tool("run_loop", h.spec)).toMatchObject({ ok: false });
+  }, 30_000);
 });
 
 describe("the backstop behind a loop", () => {

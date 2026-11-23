@@ -1647,6 +1647,20 @@ class RuntimeImpl implements LocalRuntime {
               .join(", ") || "(none)"
           }.`,
         );
+      // the arguments a loop holds fixed: each one a param of the command, valid by its schema, or nothing is sent
+      const props = cmd.params.properties as Record<string, unknown>;
+      for (const [k, v] of Object.entries(o.args ?? {})) {
+        if (cmd.drives && k === cmd.drives.arg) continue; // refused by validateLoop: the loop computes it
+        const where = `loop.outputs[${i}].args.${k}`;
+        if (!Object.hasOwn(props, k))
+          throw rerr(
+            "invalid_argument",
+            `${where}: ${e.spec.id} ${cmd.name} has no param "${k}". Params schema: ${JSON.stringify(cmd.params)}`,
+          );
+        const errs = validateSchema(props[k], v, where);
+        if (errs.length)
+          throw rerr("invalid_argument", `${errs.join("; ")}. Params schema: ${JSON.stringify(cmd.params)}`);
+      }
       const arg = cmd.drives ? (cmd.params.properties[cmd.drives.arg] as { minimum?: unknown; maximum?: unknown }) : {};
       const range: [number, number] | undefined =
         typeof arg?.minimum === "number" && typeof arg?.maximum === "number" ? [arg.minimum, arg.maximum] : undefined;
@@ -1683,6 +1697,7 @@ class RuntimeImpl implements LocalRuntime {
       parts: planned.parts,
       clock: this.clock,
       attached: (device) => this.entries.has(device),
+      endWithinMs: this.stop_worst_ms,
     });
     return this.loopRun;
   }

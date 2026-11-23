@@ -106,6 +106,15 @@ describe("Ev3Provider.loop: one packet per tick", () => {
     await loop.end([]);
   });
 
+  test("loop.end brakes: the driven port is at rest the moment it resolves", async () => {
+    const { fake, ev3, loop } = rig();
+    await ev3.devices();
+    await loop.tick([wheel(30), { device: "ev3.C", command: "power", args: { power_pct: 20 } }], [encoder], 250);
+    expect(fake.busy((1 << B) | (1 << C))).toBe(true);
+    await loop.end([]);
+    expect(fake.busy((1 << B) | (1 << C))).toBe(false);
+  });
+
   test("a driven port is claimed until the loop ends: a command on it answers busy", async () => {
     const { ev3, loop } = rig();
     await ev3.devices();
@@ -137,6 +146,27 @@ describe("Ev3Provider.loop: one packet per tick", () => {
     await expect(loop.tick([wheel(50)], [encoder], 60)).rejects.toMatchObject({ code: "busy" });
     await loop.end(["ev3.B"]);
     expect(fake.busy()).toBe(false);
+    expect(await loop.tick([wheel(10)], [encoder], 60)).toHaveLength(1);
+    await loop.end([]);
+  });
+
+  test("the end of a loop overtakes a tick queued behind a read: the brake is the last word, and loop.end brakes", async () => {
+    const { fake, ev3, loop } = rig();
+    await ev3.devices();
+    await loop.tick([wheel(30)], [encoder], 60);
+    expect(fake.busy(1 << B)).toBe(true);
+    const sent0 = fake.sent.length;
+    const read = ev3.read("ev3.B", ["position_deg"]); // in flight: the next tick waits behind it
+    const queued = loop.tick([wheel(50)], [encoder], 60);
+    await loop.end(["ev3.B"]);
+    expect(fake.busy(1 << B)).toBe(false); // braked the moment end resolves
+    await read;
+    await queued.catch(() => {});
+    expect(fake.busy(1 << B)).toBe(false);
+    const after = fake.sent.slice(sent0);
+    expect(after.filter((p) => p.opcodes.includes(E.OP.OUTPUT_TIME_SPEED))).toHaveLength(0);
+    expect(after.some((p) => p.opcodes.includes(E.OP.OUTPUT_STOP))).toBe(true);
+    // the next loop ticks again
     expect(await loop.tick([wheel(10)], [encoder], 60)).toHaveLength(1);
     await loop.end([]);
   });

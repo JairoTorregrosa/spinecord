@@ -4,7 +4,8 @@
 // the duration, the overrun rule and the report; the attention window and the backstop belong to apps/local.
 //   states  running → ended          the first end wins, whoever asks: the law, the duration, an overrun, a lost
 //                                    input, a stop, the attention window, the backstop
-//   every end brakes every driven device first, then resolves `ended`
+//   every end brakes every driven device first, then resolves `ended`; a brake that does not answer within
+//   endWithinMs is a failed brake (brakeFailed), and `ended` resolves at that bound
 import {
   recordTick,
   setParams,
@@ -47,6 +48,8 @@ export interface HostLoopOptions {
   clock: Clock;
   /** Is this device still in the registry? A signal whose device left it ends the loop with input_lost. */
   attached(device: string): boolean;
+  /** How long the providers' end brakes may take, ms (the runtime's stop_worst_ms); past it the loop ends all the same. */
+  endWithinMs: number;
 }
 
 const quantile = (sorted: number[], q: number): number =>
@@ -96,6 +99,10 @@ export class HostLoop {
   get end(): LoopEnd | null {
     return this.end_;
   }
+  /** Why the brake at the loop's end failed (no answer in time, or an error); null when it was done. */
+  get brakeFailed(): string | null {
+    return this.brakeError;
+  }
   /** The devices the loop drives, by id. */
   get driven(): string[] {
     return this.plan.outputs.map((o) => o.device);
@@ -118,11 +125,19 @@ export class HostLoop {
     this.wake.abort();
     this.resolveStarted();
     this.endRun = (async () => {
-      const results = await Promise.allSettled(
-        this.o.parts.map((p) => p.provider.loop.end(p.outputs.map((i) => this.plan.outputs[i]!.device))),
-      );
-      const failed = results.find((r) => r.status === "rejected");
-      if (failed) this.brakeError = String((failed.reason as Error)?.message ?? failed.reason);
+      const late = new AbortController();
+      const results = await Promise.race([
+        Promise.allSettled(
+          this.o.parts.map((p) => p.provider.loop.end(p.outputs.map((i) => this.plan.outputs[i]!.device))),
+        ),
+        this.o.clock.sleep(this.o.endWithinMs, late.signal).then(() => null),
+      ]);
+      late.abort();
+      if (results === null) this.brakeError = `no answer within ${this.o.endWithinMs} ms`;
+      else {
+        const failed = results.find((r) => r.status === "rejected");
+        if (failed) this.brakeError = String((failed.reason as Error)?.message ?? failed.reason);
+      }
       this.resolveEnded(end);
     })();
     return this.endRun;
