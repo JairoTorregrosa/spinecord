@@ -146,6 +146,12 @@ export type ProviderLoop =
       /** The fastest rate a tick can be held at on this provider's link. */
       max_rate_hz: number;
       /**
+       * "pushed": the provider's devices are loop inputs only, read from the latest value each channel pushed (a
+       * page's hub). Such a provider drives no output, gives no channel that is not pushed, and does not decide where
+       * a loop runs: `describe_robot`'s `loop` leaves it out.
+       */
+      inputs?: "pushed";
+      /**
        * One exchange with the hardware: refreshes every output, then reads every input, in that order, and resolves
        * with one value per read (null = no value). A refresh supersedes the refresh in flight on its device and
        * lasts on the device at most `hold_ms` (cut to the command's `drives.max_hold_ms`). The first tick claims the

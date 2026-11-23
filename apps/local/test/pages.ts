@@ -141,6 +141,46 @@ export const FAKE_SCREEN: PageDevice = {
   ],
 };
 
+/**
+ * A motion sensor for a fake that tilts: add it to `devices`. It is the imu of apps/peripheral-page on a phone
+ * whose browser has sent orientation samples only: the tilt channels, as that page declares them (no roles, 20 Hz,
+ * no compass). It pushes a flat phone on joining, then what `push` gives it.
+ */
+export const FAKE_IMU: PageDevice = {
+  id: "imu",
+  kind: "imu",
+  roles: [],
+  description: "The motion sensors of this test page; it tilts when the test says so.",
+  channels: [
+    {
+      name: "pitch_deg",
+      type: "number",
+      unit: "deg",
+      pushed: true,
+      max_rate_hz: 20,
+      description: "Front-to-back tilt: 0 lying flat, positive with the top edge raised, 90 upright.",
+    },
+    {
+      name: "roll_deg",
+      type: "number",
+      unit: "deg",
+      pushed: true,
+      max_rate_hz: 20,
+      description: "Left-to-right tilt: 0 lying flat, positive with the right edge lowered.",
+    },
+    {
+      name: "heading_deg",
+      type: "number",
+      unit: "deg",
+      pushed: true,
+      max_rate_hz: 20,
+      null_when_absent: true,
+      description: "Compass heading of the top edge; absent where the browser gives no compass.",
+    },
+  ],
+  commands: [],
+};
+
 export interface FakePageOptions {
   /** The page's address, as list_robots' join names it: http://127.0.0.1:<port>/, or a join link with the token in
    * its fragment (#t=<token>), as the network listener's QR code carries it. */
@@ -173,6 +213,8 @@ export interface FakePage {
   received: ServerToPage[];
   press(): void;
   release(): void;
+  /** Pushes values of a device's pushed channels, as the browser event that changed them would. */
+  push(device: string, values: Record<string, number | boolean>): void;
   /** Stops answering pings, reads and commands (a locked phone, a frozen tab). */
   silence(): void;
   pause(): void;
@@ -240,6 +282,8 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
     if (m.t === "welcome") {
       send({ t: "state", device: "touch", values: { b1: false, b1_presses: 0 } });
       send({ t: "state", device: "speaker", values: { spoken_count: 0 } });
+      if (devices.some((d) => d.id === "imu"))
+        send({ t: "state", device: "imu", values: { pitch_deg: 0, roll_deg: 0, heading_deg: null } });
       return onWelcome(m);
     }
     if (silent) return;
@@ -306,6 +350,9 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
     },
     release() {
       send({ t: "state", device: "touch", values: { b1: false } });
+    },
+    push(device, values) {
+      send({ t: "state", device, values });
     },
     silence() {
       silent = true;

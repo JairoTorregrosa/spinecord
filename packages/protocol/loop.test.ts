@@ -610,7 +610,7 @@ describe("report statistics", () => {
 // ---------- The examples of docs/loops.md ----------
 describe("docs/loops.md", () => {
   test("every example is a valid loop", () => {
-    expect(examples.length).toBe(4);
+    expect(examples.length).toBe(5);
     for (const spec of examples) expect(validateLoop(spec)).toEqual([]);
     const wheels = { outputs: [SPEED, SPEED2], max_rate_hz: 50, max_loop_ms: 60_000 };
     expect(planLoop(C3, { ...wheels, signals: { wall: NUM } }).outputs.map((o) => [o.min, o.max, o.hold_ms])).toEqual([

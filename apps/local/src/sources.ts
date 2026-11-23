@@ -38,6 +38,8 @@ export interface Fleet {
   lan: LanSetup | null;
   /** The page hub of each robot, by robot id, when pages are on. */
   hubs: Map<string, PageHub>;
+  /** The time source the twins were built on: "virtual" for an injected clock (tests), else "real". */
+  clock: "real" | "virtual";
   /** Stops every robot that can be reached, then closes links. One entry per robot: null = no link to stop through. */
   shutdown(): Promise<{ robot_id: string; motors_stopped: boolean | null }[]>;
 }
@@ -357,6 +359,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     pages,
     lan: lan ?? null,
     hubs,
+    clock: o.clock ? "virtual" : "real",
     async shutdown() {
       // every robot refuses calls before the first stop is issued
       for (const end of enders) end();

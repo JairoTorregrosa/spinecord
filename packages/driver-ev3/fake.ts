@@ -58,6 +58,7 @@ export interface SentRecord {
  * Time moves only to the earliest pending wait, one macrotask at a time, so every promise chain settles first and
  * a loaded machine cannot stretch a wait into extra travel. A wait that lost a race still fires later and only
  * moves the clock.
+ * It mirrors FakeClock of packages/runtime/clock.ts: the boundaries check forbids driver-ev3 to import runtime.
  */
 export class EmulatedClock {
   private t = 0;

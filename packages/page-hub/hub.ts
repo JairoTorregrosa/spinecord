@@ -9,9 +9,15 @@
 //               other reads and commands as requests to the page, each with a deadline
 //   announced, asleep, or the device down   device_offline, thrown (retryable, retry_after_ms 2000)
 // A page moves nothing: stop() asks every page to end its commands, waits at most stopWaitMs, and is verified.
+// In a loop (CONTRACT §5a) a page's pushed channels are inputs only: a tick answers each from the latest pushed
+// value, with the rule of a read above (null while the page is silent, asleep or the device down), and keeps the
+// page watched from its first tick to the loop's end, so apps/local pings it every 100 ms for the whole loop.
 import {
   RuntimeError,
   type CommandResult,
+  type LoopRead,
+  type LoopWrite,
+  type ProviderLoop,
   type CommandSpec,
   type DeviceSpec,
   type ErrorCode,
@@ -45,6 +51,11 @@ export const PAGE_LIMITS = {
   stop_wait_ms: 300,
   /** A read of pushed values keeps the page watched this long: apps/local pings it faster meanwhile. */
   watched_ms: 500,
+  /**
+   * The fastest rate of a loop that reads a page: a page sends at most 100 messages a second (CONTRACT §2.4), so
+   * no pushed value changes faster. A tick answers from memory; a channel's own max_rate_hz says how often it pushes.
+   */
+  loop_rate_hz: 100,
   max_frame_bytes: 512 * 1024,
   max_frame_side_px: 1280,
   frames_per_s: 2,
@@ -123,6 +134,8 @@ export class PageLink {
   private awaitingBinary: { id: number; bytes: number } | null = null;
   /** When a read last asked for this page's pushed values (a watch polls them). */
   watchedAt = -Infinity;
+  /** A running loop reads this page: it is watched until the loop ends, whatever the loop's rate. */
+  looped = false;
   /** When the page last answered a ping. */
   seenAt: number;
 
@@ -167,7 +180,7 @@ export class PageLink {
   }
   /** True while a read of pushed values came in the last PAGE_LIMITS.watched_ms. */
   watched(): boolean {
-    return this.hub.now() - this.watchedAt < PAGE_LIMITS.watched_ms;
+    return this.looped || this.hub.now() - this.watchedAt < PAGE_LIMITS.watched_ms;
   }
 
   /** The state apps/local's page machine is in. Leaving `active` ends every request in flight. */
@@ -360,6 +373,24 @@ export class PageLink {
     clearTimeout(p.timer);
     this.pending.delete(id);
     this.held.delete(id);
+  }
+
+  /**
+   * One input of a loop's tick: the latest value the device pushed on `channel`, a boolean as 0 or 1. null (a tick
+   * without a value) while the page is not active, the device is down, the page has been silent for stale_ms, the
+   * channel has pushed nothing yet or pushed null, or it is not a pushed number or boolean.
+   */
+  loopValue(device: PageDevice, channel: string): number | null {
+    this.watchedAt = this.hub.now();
+    this.looped = true;
+    if (this.state !== "active" || !this.socket || this.down.has(device.id)) return null;
+    if (this.silentMs() >= this.hub.limits.stale_ms) return null;
+    const c = device.channels.find((x) => x.name === channel);
+    if (c?.pushed !== true) return null;
+    const v = this.values.get(`${device.id}.${channel}`)?.value;
+    if (c.type === "number" && typeof v === "number") return v;
+    if (c.type === "boolean" && typeof v === "boolean") return v ? 1 : 0;
+    return null;
   }
 
   async read(device: PageDevice, channels: string[]): Promise<Reading[]> {
@@ -647,4 +678,29 @@ export class PageHub implements Provider {
     this.listeners.add(cb);
     return () => void this.listeners.delete(cb);
   }
+  /**
+   * A loop reads the pages' pushed channels and writes nothing (CONTRACT §5a): no command of a page declares
+   * `drives`, and the runtime refuses a page device as an output before anything is sent.
+   */
+  readonly loop: ProviderLoop = {
+    runs_on: "host",
+    max_rate_hz: PAGE_LIMITS.loop_rate_hz,
+    inputs: "pushed",
+    tick: async (writes: LoopWrite[], reads: LoopRead[]) => {
+      if (writes.length)
+        throw new RuntimeError(
+          "internal",
+          `a loop wrote to a page device (${writes[0]!.device}): a page moves nothing`,
+        );
+      return reads.map((r) => {
+        const dot = r.device.indexOf(".");
+        const link = this.pages.get(r.device.slice(0, dot));
+        const d = link?.devices.find((x) => x.id === r.device.slice(dot + 1));
+        return link && d ? link.loopValue(d, r.channel) : null;
+      });
+    },
+    end: async () => {
+      for (const l of this.links()) l.looped = false;
+    },
+  };
 }

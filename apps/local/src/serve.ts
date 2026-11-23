@@ -78,5 +78,5 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
   process.on("SIGINT", () => void end("SIGINT"));
   process.on("SIGTERM", () => void end("SIGTERM"));
   process.on("SIGHUP", () => void end("SIGHUP"));
-  log("ready", { robots: fleet.robots.map((r) => r.id), tools: LISTED_TOOLS.length });
+  log("ready", { robots: fleet.robots.map((r) => r.id), tools: LISTED_TOOLS.length, clock: fleet.clock });
 }

@@ -1610,7 +1610,11 @@ class RuntimeImpl implements LocalRuntime {
   // ---------- loops ----------
   private loopRun: HostLoop | null = null;
   loopInfo(): { runs_on: "host" | "device"; max_rate_hz: number } | null {
-    const loops = this.local.map((p) => p.loop).filter((l) => l !== undefined);
+    // a provider of inputs only (a page's hub) drives nothing, so it never says where a loop runs
+    const loops = this.local
+      .map((p) => p.loop)
+      .filter((l) => l !== undefined && !(l.runs_on === "host" && l.inputs === "pushed"))
+      .map((l) => l!);
     if (!loops.length) return null;
     const host = loops.filter((l) => l.runs_on === "host");
     if (host.length === loops.length)
@@ -1628,6 +1632,7 @@ class RuntimeImpl implements LocalRuntime {
       return u;
     };
     const ctx: LoopContext = { signals: {}, outputs: [], max_rate_hz: 0, max_loop_ms: this.prof.limits.max_loop_ms };
+    const pushed = new Set<number>(); // signals on a channel that pushes its values
     Object.entries(loop.signals).forEach(([name, s], i) => {
       const e = this.entry(s.device, `loop.signals.${name}.device`);
       const ch = e.spec.channels.find((c) => c.name === s.channel);
@@ -1646,6 +1651,7 @@ class RuntimeImpl implements LocalRuntime {
         ...(length === undefined ? {} : { length }),
         ...(max_rate_hz === undefined ? {} : { max_rate_hz }),
       };
+      if (ch.pushed === true) pushed.add(i);
       use(e).signals.push(i);
     });
     loop.outputs.forEach((o, i) => {
@@ -1686,6 +1692,31 @@ class RuntimeImpl implements LocalRuntime {
       use(e).outputs.push(i);
     });
     // the devices decide the executor: all on host providers → the runtime, at the slowest of their rates
+    const names = Object.keys(loop.signals);
+    const inputsOnly = [...used].filter(([p]) => p.loop?.runs_on === "host" && p.loop.inputs === "pushed");
+    for (const [p, u] of inputsOnly) {
+      // a page moves nothing: its devices are signals, never outputs
+      const o = u.outputs[0];
+      if (o !== undefined)
+        throw rerr(
+          "unsupported",
+          `loop.outputs[${o}].device: ${loop.outputs[o]!.device} belongs to provider ${p.id}, whose devices are loop inputs only: a loop reads them and drives nothing there. Nothing was sent.`,
+        );
+      const s = u.signals.find((i) => !pushed.has(i));
+      if (s !== undefined) {
+        const sig = loop.signals[names[s]!]!;
+        throw rerr(
+          "unsupported",
+          `loop.signals.${names[s]}.channel: channel ${sig.channel} of ${sig.device} is not pushed, and provider ${p.id} gives a loop only the values its channels push. Nothing was sent. Read it with read_device instead.`,
+        );
+      }
+    }
+    const onDevice = [...used].find(([p]) => p.loop?.runs_on === "device");
+    if (onDevice && inputsOnly.length)
+      throw rerr(
+        "unsupported",
+        `provider ${onDevice[0].id} runs loops on its device, and the loop also reads ${inputsOnly.map(([p]) => p.id).join(", ")}, whose values reach this computer and never that device. Nothing was sent.`,
+      );
     const parts: HostLoopPart[] = [];
     for (const [p, u] of used) {
       const l = p.loop;
