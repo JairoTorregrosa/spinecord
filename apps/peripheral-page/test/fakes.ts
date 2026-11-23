@@ -119,6 +119,8 @@ export interface FakeBrowserOptions {
   torch?: boolean;
   /** navigator.wakeLock: true grants, "denied" rejects, false absent. */
   wakeLock?: boolean | "denied";
+  /** navigator.permissions: present, answering "granted" for every name until a test changes one. */
+  permissions?: boolean;
 }
 
 export const VOICES: VoiceLike[] = [
@@ -139,7 +141,10 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
   };
   let videoCalls = 0;
   let audioCalls = 0;
-  let refuseAgain = false;
+  let refuseAgain: string | null = null;
+  let holdMedia = false;
+  const heldMedia: (() => void)[] = [];
+  const permissionStates: Record<string, string> = {};
   const winListeners: Partial<Record<MotionEventType, ((ev: any) => void)[]>> = {};
   const vibrations: (number | number[])[] = [];
   const wake = { requests: 0, sentinels: [] as (WakeLockSentinelLike & { fireRelease(): void })[] };
@@ -283,16 +288,18 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
         : {
             mediaDevices: {
               async getUserMedia(c) {
+                // a prompt nobody answers yet: the call goes on at releaseMedia()
+                if (holdMedia) await new Promise<void>((r) => heldMedia.push(r));
                 if (c.video) {
                   asked.push("camera");
-                  const how = refuseAgain && videoCalls > 0 ? "NotAllowedError" : (o.camera ?? "allow");
+                  const how = refuseAgain && videoCalls > 0 ? refuseAgain : (o.camera ?? "allow");
                   if (how !== "allow") return reject(how);
                   const facing = (c.video as { facingMode?: string | { exact: string } }).facingMode;
                   const f = typeof facing === "string" ? facing : (facing?.exact ?? "user");
                   return stream([videoCalls++ === 0 ? videos[0]! : nextVideo(f)]);
                 }
                 asked.push("microphone");
-                const how = refuseAgain && audioCalls > 0 ? "NotAllowedError" : (o.microphone ?? "allow");
+                const how = refuseAgain && audioCalls > 0 ? refuseAgain : (o.microphone ?? "allow");
                 if (how !== "allow") return reject(how);
                 if (audioCalls++ > 0) audios.push(fakeTrack("audio"));
                 return stream([audios.at(-1)!]);
@@ -306,6 +313,16 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
               if (this !== win.navigator) throw new TypeError("Illegal invocation");
               vibrations.push(pattern);
               return true;
+            },
+          }
+        : {}),
+      ...(o.permissions
+        ? {
+            permissions: {
+              async query(d: { name: string }) {
+                permissionAsks.push(`query ${d.name}`);
+                return { state: permissionStates[d.name] ?? "granted" };
+              },
             },
           }
         : {}),
@@ -392,9 +409,22 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
     vibrations,
     wake,
     permissionAsks,
-    /** Further getUserMedia calls are refused (the person revoked the permission). */
-    refuseAgain() {
-      refuseAgain = true;
+    /** Further getUserMedia calls are refused: NotAllowedError, the person or the browser took the permission back. */
+    refuseAgain(name = "NotAllowedError") {
+      refuseAgain = name;
+    },
+    /** Further getUserMedia calls wait, unsettled, until releaseMedia() (a prompt nobody answers yet). */
+    holdMedia() {
+      holdMedia = true;
+    },
+    /** The held getUserMedia calls go on. */
+    releaseMedia() {
+      holdMedia = false;
+      heldMedia.splice(0).forEach((r) => r());
+    },
+    /** What navigator.permissions.query answers for a name from then on. */
+    permission(name: "camera" | "microphone", state: "granted" | "denied" | "prompt") {
+      permissionStates[name] = state;
     },
     /** A deviceorientation (or deviceorientationabsolute) event. */
     orient(ev: OrientationEventLike, absolute = false) {

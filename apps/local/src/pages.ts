@@ -7,8 +7,11 @@
 //   loopback  127.0.0.1:<port>, always: the page with the token in it, and the pairing console
 //   lan       <interface address>:<port + 1>, TLS, with --lan only: the page without the token, and the socket
 //   tunnel    127.0.0.1:<port + 2>, with --page-origin only: the same as lan, for the person's tunnel program
-// Without --lan nothing of it listens beyond loopback.
+// Without --lan nothing of it listens beyond loopback. With --page-ext every listener also serves the `.js` files of
+// that folder at /ext/<name>, and the page it serves loads each after its kit.
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readdirSync } from "node:fs";
+import { join as joinPath } from "node:path";
 import type { PageHub, PageLink } from "../../../packages/page-hub/hub";
 import { META_PLACEHOLDER, type PeripheralPageFiles } from "../../peripheral-page/page-build";
 import {
@@ -96,6 +99,21 @@ export interface PagesOptions {
   lan?: LanSetup;
   /** `--page-origin`: the origin of the person's tunnel. */
   origin?: string;
+  /** `--page-ext`: an absolute folder whose `.js` files are the page's extensions. */
+  ext?: string;
+}
+
+/** A name an extension file may have: no separator, no encoding, nothing a path could climb out with. */
+const EXT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*\.js$/;
+/**
+ * The extension files: the `.js` files directly in the folder, listed at each request so an edit shows on a reload.
+ * A request is answered only with a name of this list, never with a path joined from the request.
+ */
+export function extFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && EXT_NAME.test(e.name))
+    .map((e) => e.name)
+    .sort();
 }
 
 /** What a listener answers to, and what it serves. */
@@ -249,13 +267,10 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
       typeof name === "string"
         ? pages.find((p) => p.robot === robot && p.link.name === name && p.link.state !== "gone")
         : undefined;
-    // a page whose socket closed gives its name to the one that joins under it
-    const taken = pages
-      .filter((p) => p.robot === robot && p.link.state !== "gone" && p.socket !== null)
-      .map((p) => p.link.name);
-    const nameIssue = pageNameIssue(name, taken);
-    if (nameIssue)
-      return refuse(ws, taken.includes(name as string) ? PAGE_CLOSE.name_taken : PAGE_CLOSE.bad_message, nameIssue);
+    // the token is checked above: a hello under a page's name is that page joining again, and it takes its place,
+    // whether or not its old socket was seen to close (a phone drops one without a close frame)
+    const nameIssue = pageNameIssue(name);
+    if (nameIssue) return refuse(ws, PAGE_CLOSE.bad_message, nameIssue);
     if (size > PAGE_CAPS.max_hello_bytes)
       return refuse(
         ws,
@@ -273,6 +288,13 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
     if (conn.helloTimer) clearTimeout(conn.helloTimer);
     conn.helloTimer = null;
     let page: Page;
+    if (old?.socket) {
+      const prev = old.socket;
+      old.socket = null;
+      old.link.closed();
+      to(old, "asleep", "a page joined under its name with the token, in place of its socket");
+      refuse(prev, PAGE_CLOSE.replaced, `a page joined under the name ${old.link.name}; this one does not join again`);
+    }
     if (old) {
       old.hub.join(old.link.name, socket, devices, unavailable);
       old.socket = ws;
@@ -448,9 +470,21 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
           : new Response("expected a WebSocket upgrade", { status: 426 });
       }
       if (url.pathname === "/")
-        return new Response(pageHtml(o.page.html, l.loopback ? token : null, [...hubs.keys()]), {
-          headers: pageHeaders,
+        return new Response(
+          pageHtml(o.page.html, l.loopback ? token : null, [...hubs.keys()], o.ext ? extFiles(o.ext) : []),
+          { headers: pageHeaders },
+        );
+      if (url.pathname.startsWith("/ext/")) {
+        const name = url.pathname.slice("/ext/".length);
+        if (!o.ext || !extFiles(o.ext).includes(name)) return new Response("not found", { status: 404 });
+        return new Response(Bun.file(joinPath(o.ext, name)), {
+          headers: {
+            "content-type": "text/javascript; charset=utf-8",
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+          },
         });
+      }
       if (url.pathname === "/console" && l.loopback)
         return new Response(
           consoleHtml(links(), (id) => view(id), o.lan ?? null),
@@ -565,10 +599,13 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
 
 /**
  * The page served at `/`. On loopback it carries the token: whoever reaches this loopback listener is on this
- * computer. On the network and tunnel listeners it carries none: the page takes it from its link's fragment.
+ * computer. On the network and tunnel listeners it carries none: the page takes it from its link's fragment. The
+ * extensions are module scripts after the page's own, so they run in that order, once `spinecord` exists.
  */
-function pageHtml(template: string, token: string | null, robots: string[]): string {
-  return template.replace(
+function pageHtml(template: string, token: string | null, robots: string[], ext: string[]): string {
+  if (!template.includes("</body>")) throw new Error("page.html has no </body>");
+  const scripts = ext.map((f) => `<script type="module" src="ext/${encodeURIComponent(f)}"></script>\n  `).join("");
+  return template.replace("</body>", `${scripts}</body>`).replace(
     META_PLACEHOLDER,
     `${
       token === null

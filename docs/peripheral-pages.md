@@ -86,13 +86,15 @@ Each one is declared only where it works:
 
 ## A locked phone
 
-A phone that locks its screen, or a browser that freezes a hidden tab, stops the page: it answers no ping, and after 3 s the page is `asleep` and every device of it answers `device_offline` until it answers again. The page keeps the screen on with a wake lock while it lends, and the list of what is lent says whether it holds one; a browser drops the lock whenever the page is hidden, and the page takes it again when it is visible. A camera or microphone track that the browser mutes is that device down (`device_offline` for it alone) until it is unmuted. A track the browser ended while the page was hidden (Safari on iOS does) is asked for again when the page is visible: the device is up again when the browser gives it back, and stays down with the reason when it does not.
+A phone that locks its screen, or a browser that freezes a hidden tab, stops the page: it answers no ping, and after 3 s the page is `asleep` and every device of it answers `device_offline` until it answers again. The page keeps the screen on with a wake lock while it lends, and the list of what is lent says whether it holds one; a browser drops the lock whenever the page is hidden, and the page takes it again when it is visible. A camera or microphone track that the browser mutes is that device down (`device_offline` for it alone) until it is unmuted. A track the browser ended while the page was hidden (Safari on iOS does) is asked for again when the page is visible, never with a prompt: the device is up again when the browser gives it back, and stays down with the reason when it does not. The page asks for a permission only in a tap. Where the browser took the permission back, the device leaves the manifest and `unavailable` says why; reload the page and tap **Lend this device** to lend it again. Where it would ask the person again (Safari on iOS after a lock), the device is down with "tap the page to resume" and the banner shows **Tap to resume camera and microphone**: that tap asks the browser again, and the device is up when it gives the track back.
+
+A phone also closes the page's connection when it locks or puts the browser in the background (iOS especially). The page then joins again by itself, under the same name and with the same token, after 0.5 s, 1 s, 2 s and then every 5 s, while its banner says "Reconnecting…". When it is visible again it tries at once, after taking back its camera, its microphone and the wake lock, so its hello lends what it has again. The process keeps the page's place for 30 s after the close (`asleep`, then `gone`): a page that joins within them takes its place, its devices keep their names, and a call that the close cut short (it answers `device_offline`, retryable) works when sent again. A phone often drops the socket without a close frame, so the process may still hold the old one: a hello under the same name with the token takes the place at once anyway, and the old socket is closed with 4008 (a hello with a wrong token displaces nothing). What is down and a pause are said again after the welcome. The page stops trying, and says why, when another page took its name (4008), when the process refuses its hello (a wrong token: the process started again, so open its new page or link), when the process ends, and 30 s after the close.
 
 `apps/local/bench/phone-page.ts` runs the phone kinds in Chrome with a phone's viewport and touch and its motion sensors overridden through the DevTools protocol (`Emulation.setSensorOverrideEnabled`), results in `apps/local/bench/results/phone-page.json`. Measured headless on macOS: the page lends the imu and the vibrator, the tilt of the override reads back (pitch 30, roll -15), `wait_until` on `pitch_deg` is met, `vibrate` completes, the imu is down while the tab is hidden and up when it is in front again, and the wake lock is asked for in the tap and again when the tab is visible (headless Chrome refuses it both times). Chrome's fake camera has no torch, so the torch is listed as unavailable. On a real phone none of this is verified yet: [`docs/hardware-log.md`](hardware-log.md).
 
 ## Add a device: the extension API
 
-The page exposes `window.spinecord`. The shipped kinds use the same `device()` call.
+The page exposes `window.spinecord`. The shipped kinds use the same `device()` call. A file of extensions is a script that calls it, loaded from a folder with `--page-ext` (below).
 
 ```js
 spinecord.device({
@@ -115,11 +117,22 @@ throw new spinecord.PageError("busy", "…");  // a command or read that fails w
 
 A device added after the page joined is announced at once. The process checks the manifest's shape and bounds (CONTRACT §2.4) and exposes it; nothing on the server changes.
 
+### Extensions from a folder (`--page-ext`)
+
+```sh
+bun apps/local/main.ts --twin --pages --page-ext deployments/example/page-ext
+```
+
+`--page-ext <folder>` (in a config file, `"pages": {"ext": "<folder>"}`) serves the `.js` files directly in that folder at `/ext/<file>` on every page listener, and the page loads each one as a module after its kit, in the order of their names, before the tap. They are served by the same listener as the page, so the page's Content Security Policy (`'self'` only) lets them run, and nothing is built: edit a file and reload the page. Nothing else of the folder is served, and nothing outside it. `deployments/example/page-ext` holds the two examples below.
+
 ### Example: a door sensor from a tap
 
-A phone taped beside a door, a strip of paper on the door that touches the screen while the door is shut:
+A phone taped beside a door, a strip of paper on the door that touches the pad on the screen while the door is shut. `deployments/example/page-ext/door.js`:
 
 ```js door.js
+// A door sensor from a tap (docs/peripheral-pages.md): a phone taped beside a door, a strip of paper on the door
+// that touches the pad on the screen while the door is shut. The page loads this file after its kit with
+// --page-ext deployments/example/page-ext; the model then has <page name>.door.
 const el = document.body.appendChild(Object.assign(document.createElement("div"), { className: "sc-pad" }));
 let opened = 0;
 spinecord.device({
@@ -128,12 +141,24 @@ spinecord.device({
   description: "A contact pad on this screen: closed is true while something touches it.",
   channels: [
     { name: "closed", type: "boolean", pushed: true, description: "true while the pad is touched." },
-    { name: "opened_count", type: "number", pushed: true, description: "Times the pad was released since the page joined." },
+    {
+      name: "opened_count",
+      type: "number",
+      pushed: true,
+      description: "Times the pad was released since the page joined.",
+    },
   ],
   commands: [],
 });
+spinecord.push("door", { closed: false, opened_count: 0 });
 el.addEventListener("pointerdown", () => spinecord.push("door", { closed: true }));
 el.addEventListener("pointerup", () => spinecord.push("door", { closed: false, opened_count: ++opened }));
 ```
 
-To try it, paste it into the browser's DevTools console on the page after lending (give the pad a size first, for example `el.style.cssText = "height:40vh;background:#334"`). The model then has `desk.door`: `wait_until {device: "desk.door", channel: "closed", op: "eq", value: false}`, or `drive … until` the same condition. Loading such files from a folder at start is a later step (`--page-ext`).
+The model then has `desk.door` (`phone.door` on a phone): `wait_until {device: "desk.door", channel: "closed", op: "eq", value: false}`, or `drive … until` the same condition.
+
+### Example: a QR reader from the camera
+
+`deployments/example/page-ext/qr.js` adds `qr`, of kind `code_reader`: `scan{max_ms 200..5000}` looks at frames of the lent camera (`spinecord.cameraFrame()`) until it finds a QR code, and answers `{found, text}`, or reason `timeout`; `last_text` and `read_count` are read. It decodes with the browser's `BarcodeDetector`, which Chrome on Android and on macOS have; where the browser has none (Safari on iOS, Firefox, Chrome on Windows and Linux) the device is not lent, and `unavailable` says so. The frame never leaves the page. On a real phone it is not verified yet: [`docs/hardware-log.md`](hardware-log.md).
+
+`apps/local/bench/ext-page.ts` serves the two examples to Chrome with its fake camera, taps **Lend this device** and asks through the tools (results in `apps/local/bench/results/ext-page.json`). Measured headless on macOS: the page loads both scripts after its own, lends `desk.door` and `desk.qr`, a `wait_until` on `closed` is met by a press on the pad and another by its release, and a `scan` of the fake camera's picture, which holds no code, ends with reason `timeout`. The bench then closes the page's socket from the page: the status and the banner say "Reconnecting…", the page joins again under its name on a second socket, the process lists one page, `active`, and a `wait_until` on `desk.door` is met again. A phone that closes the socket itself is not measured yet.

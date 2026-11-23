@@ -71,6 +71,20 @@ function rig(o: FakeBrowserOptions = {}) {
   return { browser, sock, page, views, labels: () => labels, join, req, setVisible };
 }
 const ids = (devices: PageDevice[]) => devices.map((d) => d.id);
+const REPO = joinPath(import.meta.dir, "..", "..", "..");
+/** A file of the example extensions (deployments/example/page-ext). */
+const extFile = (name: string) => readFileSync(joinPath(REPO, "deployments", "example", "page-ext", name), "utf8");
+/**
+ * Runs an extension file as the page runs it after its kit, with `spinecord` and a document whose body takes a pad
+ * element (the examples' only use of the DOM); `globals` stands for the browser's own (BarcodeDetector).
+ */
+function runExtension(spinecord: unknown, code: string, globals: Record<string, unknown> = {}) {
+  const listeners: Record<string, () => void> = {};
+  const pad = { className: "", addEventListener: (t: string, cb: () => void) => void (listeners[t] = cb) };
+  const document = { body: { appendChild: (el: unknown) => el }, createElement: () => pad };
+  new Function("spinecord", "document", "globalThis", code)(spinecord, document, globals);
+  return { listeners, pad };
+}
 /** The kinds a phone has and a computer lacks: a test of the computer's kinds leaves them out. */
 const PHONE_KINDS = ["imu", "vibrator", "torch"];
 const own = (u: { kind: string; why: string }[]) => u.filter((x) => !PHONE_KINDS.includes(x.kind));
@@ -345,10 +359,11 @@ describe("the wire protocol", () => {
   test("a close from the process ends the lending and says why", async () => {
     const { join, sock, page } = rig();
     await join();
-    sock.closeFromServer(4009, "the name is held by another page");
+    sock.closeFromServer(1001, "the process is ending");
     expect(page.kit.status()).toMatchObject({
       state: "closed",
-      closed: { code: 4009, reason: "the name is held by another page" },
+      closed: { code: 1001, reason: "the process is ending" },
+      rejoin: null,
     });
   });
 });
@@ -573,16 +588,13 @@ describe("screen and buttons", () => {
 });
 
 describe("the extension API", () => {
-  test("the door example of docs/peripheral-pages.md, verbatim, joins the manifest and pushes", async () => {
+  test("the door example, the file in deployments/example/page-ext and the docs' text alike, joins the manifest and pushes", async () => {
     const { join, page, sock } = rig();
     await join();
-    const doc = readFileSync(joinPath(import.meta.dir, "..", "..", "..", "docs", "peripheral-pages.md"), "utf8");
-    const code = doc.match(/```js door\.js\n([\s\S]*?)```/)![1]!;
-    // a body with a pad element: the example's only use of the DOM
-    const listeners: Record<string, () => void> = {};
-    const pad = { className: "", addEventListener: (t: string, cb: () => void) => void (listeners[t] = cb) };
-    const document = { body: { appendChild: (el: unknown) => el }, createElement: () => pad };
-    new Function("spinecord", "document", code)(page.spinecord, document);
+    const code = extFile("door.js");
+    const doc = readFileSync(joinPath(REPO, "docs", "peripheral-pages.md"), "utf8");
+    expect(doc.match(/```js door\.js\n([\s\S]*?)```/)![1]!).toBe(code);
+    const { listeners } = runExtension(page.spinecord, code);
     const devices = sock
       .json()
       .filter((m) => m.t === "devices")
@@ -592,7 +604,70 @@ describe("the extension API", () => {
     listeners.pointerdown!();
     listeners.pointerup!();
     const door = sock.json().filter((m) => m.t === "state" && m.device === "door");
-    expect(door.map((m) => m.values)).toEqual([{ closed: true }, { closed: false, opened_count: 1 }]);
+    expect(door.map((m) => m.values)).toEqual([
+      { closed: false, opened_count: 0 },
+      { closed: true },
+      { closed: false, opened_count: 1 },
+    ]);
+  });
+
+  test("the QR example: unavailable, with why, where the browser has no BarcodeDetector", async () => {
+    const { join, page } = rig();
+    runExtension(page.spinecord, extFile("qr.js"));
+    const hello = await join();
+    expect(ids(hello.devices)).not.toContain("qr");
+    expect(hello.unavailable).toContainEqual({
+      kind: "code_reader",
+      why: "code_reader: this browser has no barcode detector (BarcodeDetector)",
+    });
+  });
+
+  test("the QR example: scan reads a code from the lent camera's frames, closes each frame, and times out on none", async () => {
+    const { join, page, req } = rig();
+    const frames: { closed: boolean }[] = [];
+    const seen = { codes: [] as { rawValue: string }[][] };
+    const formats: string[][] = [];
+    class BarcodeDetector {
+      constructor(o: { formats: string[] }) {
+        formats.push(o.formats);
+      }
+      async detect() {
+        return seen.codes.shift() ?? [];
+      }
+    }
+    // each frame is closed once detect has looked at it: cameraFrame is wrapped to see each bitmap's close
+    const spinecord = {
+      ...page.spinecord,
+      cameraFrame: async () => {
+        const b = await page.spinecord.cameraFrame();
+        const f = { closed: false };
+        frames.push(f);
+        return { ...b, close: () => ((f.closed = true), b.close()) };
+      },
+    };
+    runExtension(spinecord, extFile("qr.js"), { BarcodeDetector });
+    const hello = await join();
+    expect(validatePageManifest(hello.devices)).toEqual([]);
+    expect(ids(hello.devices)).toContain("qr");
+    seen.codes = [[], [{ rawValue: "https://example.org/r1" }]];
+    const { res } = await req({
+      op: "command",
+      device: "qr",
+      command: "scan",
+      args: { max_ms: 2000 },
+      deadline_ms: 4000,
+    });
+    expect(res.result).toEqual({ reason: "completed", measured: { found: true, text: "https://example.org/r1" } });
+    expect(formats[0]).toEqual(["qr_code"]);
+    expect(frames.length).toBe(2);
+    expect(frames.every((f) => f.closed)).toBe(true);
+    const read = await req({ op: "read", device: "qr", channels: ["last_text", "read_count"] });
+    expect(read.res.readings).toEqual({ last_text: "https://example.org/r1", read_count: 1 });
+    const none = await req(
+      { op: "command", device: "qr", command: "scan", args: { max_ms: 300 }, deadline_ms: 2000 },
+      400,
+    );
+    expect(none.res.result).toEqual({ reason: "timeout", measured: { found: false, text: "" } });
   });
 
   test("a screen an extension adds is a value of face", async () => {
@@ -933,18 +1008,136 @@ describe("sleep and waking up", () => {
     expect(sock.json().at(-1)).not.toMatchObject({ t: "down", device: "camera" });
   });
 
-  test("a camera the browser refuses to give back stays down, with why", async () => {
+  test("a camera another program holds when the page is visible again stays down, with why", async () => {
     const { join, sock, browser, setVisible } = rig(PHONE);
     await join("phone");
     browser.video.end();
+    browser.refuseAgain("NotReadableError");
+    setVisible(true);
+    await tick(5);
+    expect(sock.json()).toContainEqual({
+      t: "down",
+      device: "camera",
+      why: "the page could not get the camera back: another program holds the camera",
+    });
+  });
+
+  test("a camera whose permission the browser took back leaves the manifest for unavailable, with why", async () => {
+    const { join, sock, browser, setVisible, page } = rig(PHONE);
+    await join("phone");
+    const track = browser.video;
+    track.end();
     browser.refuseAgain();
     setVisible(true);
     await tick(5);
-    expect(sock.json().at(-1)).toEqual({
+    const last = sock.json().at(-1)!;
+    expect(last.t).toBe("devices");
+    expect(ids(last.devices)).not.toContain("camera");
+    expect(last.unavailable).toContainEqual({
+      kind: "camera",
+      why: "camera: the page could not get the camera back: the person did not allow it; reload the page and tap Lend this device to lend it again",
+    });
+    expect(page.live().camera).toBeNull();
+    expect(track.stopped).toBe(true);
+  });
+
+  test("a permission the browser took back (denied) is never asked for: the device leaves for unavailable", async () => {
+    const { join, sock, browser, setVisible } = rig({ ...PHONE, permissions: true });
+    await join("phone");
+    browser.video.end();
+    browser.permission("camera", "denied");
+    const asked = browser.asked.length;
+    setVisible(true);
+    await tick(5);
+    expect(browser.asked.length).toBe(asked);
+    const last = sock
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!;
+    expect(ids(last.devices)).not.toContain("camera");
+    expect(last.unavailable).toContainEqual({
+      kind: "camera",
+      why: "camera: the page could not get the camera back: the browser took back the permission for the camera; reload the page and tap Lend this device to lend it again",
+    });
+    expect(browser.permissionAsks).toContain("query camera");
+  });
+
+  test("a permission the browser would prompt for again: down with tap the page to resume, then one tap asks and it is up", async () => {
+    const { join, sock, browser, setVisible, page } = rig({ ...PHONE, permissions: true });
+    await join("phone");
+    const camera = browser.video;
+    const microphone = browser.audioTrack;
+    setVisible(false);
+    camera.end();
+    microphone.end();
+    // Safari on iOS after a lock: asking would show the person a prompt
+    browser.permission("camera", "prompt");
+    browser.permission("microphone", "prompt");
+    const asked = browser.asked.length;
+    setVisible(true);
+    await tick(5);
+    // nothing asked outside a tap; both stay in the manifest, down, with what to do
+    expect(browser.asked.length).toBe(asked);
+    expect(sock.json()).toContainEqual({
       t: "down",
       device: "camera",
-      why: "the page could not get the camera back: the person did not allow it",
+      why: "the browser asks for the camera again: tap the page to resume",
     });
+    expect(sock.json()).toContainEqual({
+      t: "down",
+      device: "mic",
+      why: "the browser asks for the microphone again: tap the page to resume",
+    });
+    expect(page.kit.status().devices).toEqual(expect.arrayContaining(["camera", "mic"]));
+    expect(page.kit.status().down).toMatchObject({ camera: expect.stringContaining("tap the page to resume") });
+    expect(page.needsTap()).toEqual(["camera", "mic"]);
+    // the tap on the banner's button: getUserMedia for both, inside the gesture (called before any await)
+    const tapped = page.resumeMedia();
+    expect(browser.asked.slice(asked)).toEqual(["camera", "microphone"]);
+    await tapped;
+    await tick(5);
+    expect(browser.video).not.toBe(camera);
+    expect(browser.audioTrack).not.toBe(microphone);
+    expect(page.needsTap()).toEqual([]);
+    expect(
+      sock
+        .json()
+        .filter((m) => m.t === "up")
+        .map((m) => m.device),
+    ).toEqual(expect.arrayContaining(["camera", "mic"]));
+    expect(page.kit.status().down).toEqual({});
+  });
+
+  test("the person refuses in that tap: the device leaves for unavailable", async () => {
+    const { join, sock, browser, setVisible, page } = rig({ ...PHONE, permissions: true });
+    await join("phone");
+    browser.video.end();
+    browser.permission("camera", "prompt");
+    setVisible(true);
+    await tick(5);
+    browser.refuseAgain();
+    await page.resumeMedia();
+    const last = sock
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!;
+    expect(ids(last.devices)).not.toContain("camera");
+    expect(last.unavailable).toContainEqual({
+      kind: "camera",
+      why: "camera: the page could not get the camera back: the person did not allow it; reload the page and tap Lend this device to lend it again",
+    });
+    expect(page.needsTap()).toEqual([]);
+  });
+
+  test("a permission still granted is taken back without a prompt", async () => {
+    const { join, sock, browser, setVisible } = rig({ ...PHONE, permissions: true });
+    await join("phone");
+    const first = browser.video;
+    first.end();
+    setVisible(true);
+    await tick(5);
+    expect(browser.video).not.toBe(first);
+    expect(sock.json().filter((m) => m.t === "up" && m.device === "camera").length).toBe(1);
   });
 
   test("a muted microphone track is down, unmuted it is up; ended, it is asked for again", async () => {

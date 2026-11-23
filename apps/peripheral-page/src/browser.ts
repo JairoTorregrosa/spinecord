@@ -126,6 +126,8 @@ export interface Win {
       enumerateDevices?(): Promise<{ kind: string }[]>;
     };
     wakeLock?: { request(type: "screen"): Promise<WakeLockSentinelLike> };
+    /** What the browser grants, asked without a prompt. */
+    permissions?: { query(d: { name: string }): Promise<{ state: string }> };
     vibrate?(pattern: number | number[]): boolean;
   };
   matchMedia?(query: string): { matches: boolean };
@@ -164,6 +166,33 @@ export function refusal(e: unknown, what: "camera" | "microphone"): string {
   if (name === "NotReadableError" || name === "AbortError") return `another program holds the ${what}`;
   return `the browser refused it (${e instanceof Error ? e.message : String(e)})`.slice(0, 200);
 }
+
+/** A getUserMedia refusal that means the permission is gone, not that the device is busy or missing. */
+export function denied(e: unknown): boolean {
+  const name = e && typeof e === "object" && "name" in e ? String((e as { name: unknown }).name) : "";
+  return name === "NotAllowedError" || name === "SecurityError";
+}
+
+/**
+ * What the browser says of the camera's or the microphone's permission, without a prompt: "denied" (taken back),
+ * "prompt" (asking would show the person a prompt: Safari on iOS answers so after a lock), or null when it says
+ * granted or cannot say (no Permissions API, or one that does not know the name). The page asks outside a tap only on
+ * null, and a refusal then is said the same way as "denied".
+ */
+export async function permissionState(win: Win, what: "camera" | "microphone"): Promise<"denied" | "prompt" | null> {
+  let state: string | undefined;
+  try {
+    state = (await win.navigator.permissions?.query({ name: what }))?.state;
+  } catch {
+    return null;
+  }
+  return state === "denied" || state === "prompt" ? state : null;
+}
+/** Why a device whose permission the browser would ask for again is down: the banner's button is that tap. */
+export const tapToResume = (what: "camera" | "microphone") =>
+  `the browser asks for the ${what} again: tap the page to resume`;
+/** The end of the reason a device left the manifest for: what the person does to lend it again. */
+export const LEND_AGAIN = "reload the page and tap Lend this device to lend it again";
 
 /** The voices the browser lists; some browsers fill the list only after `voiceschanged`. */
 export function voices(synth: SynthLike, waitMs = 1500): Promise<VoiceLike[]> {

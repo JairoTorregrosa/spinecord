@@ -295,7 +295,8 @@ export const PAGE_CLOSE = {
   bad_message: 4000,
   bad_token: 4001,
   unknown_robot: 4004,
-  name_taken: 4009,
+  /** A hello under this page's name, with the token, took its place: the socket it closes does not join again. */
+  replaced: 4008,
   manifest_refused: 4010,
   too_many: 4029,
 } as const;

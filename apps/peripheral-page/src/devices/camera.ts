@@ -2,7 +2,17 @@
 // its size and quality. The frame comes from the track itself (ImageCapture.grabFrame), so its age is the time
 // since that grab and never the age of a picture a hidden tab stopped painting.
 import type { CommandSpec, Value } from "../../../../packages/protocol/types";
-import { refusal, type BitmapLike, type StreamLike, type TrackLike, type Win } from "../browser";
+import {
+  denied,
+  LEND_AGAIN,
+  permissionState,
+  tapToResume,
+  refusal,
+  type BitmapLike,
+  type StreamLike,
+  type TrackLike,
+  type Win,
+} from "../browser";
 import { PageError, type DeviceDef, type Frame, type Kit } from "../kit";
 
 export const CAMERA_DEFAULTS = { max_side_px: 640, quality: 0.7 };
@@ -31,8 +41,14 @@ export interface Camera {
   track(): TrackLike | null;
   /** Called after the track changes: a configure, a re-acquire, stop lending. */
   onTrack(cb: () => void): void;
-  /** The page is visible again: a track the browser ended while it was hidden is asked for again. */
-  reacquire(): Promise<void>;
+  /**
+   * The page is visible again: a track the browser ended while it was hidden is asked for again, never with a
+   * prompt. A permission the browser took back takes the camera out of the manifest, with why, into unavailable; one
+   * it would prompt for leaves the camera down until the person's tap (`{tap: true}`, from the banner's button).
+   */
+  reacquire(o?: { tap?: boolean }): Promise<void>;
+  /** The camera waits for the person's tap to be asked for again. */
+  needsTap(): boolean;
   /** Closes the stream: the browser's camera indicator goes off. */
   close(): void;
 }
@@ -48,6 +64,7 @@ export function camera(o: CameraOptions): Camera {
   const track = (): TrackLike | null => stream?.getVideoTracks()[0] ?? null;
 
   const changed: (() => void)[] = [];
+  let waitingTap = false;
   // an ended track may report no settings: the facing to ask for again is kept here
   let lastFacing = track()?.getSettings().facingMode;
   // events of a track other than the lent one say nothing about the camera
@@ -171,19 +188,39 @@ export function camera(o: CameraOptions): Camera {
     bitmap,
     track,
     onTrack: (cb) => void changed.push(cb),
-    async reacquire() {
+    needsTap: () => waitingTap,
+    async reacquire(how = {}) {
       const t = track();
       const md = win.navigator.mediaDevices;
       if (!t || t.readyState !== "ended" || !md?.getUserMedia) return;
       const want = lastFacing;
+      const revoke = (why: string) => {
+        waitingTap = false;
+        if (stream === null) return;
+        swap(null);
+        kit.withdraw("camera", `the page could not get the camera back: ${why}; ${LEND_AGAIN}`);
+      };
+      // in the person's tap getUserMedia is called before any await: the browser lets a prompt come from a tap only
+      if (!how.tap) {
+        const state = await permissionState(win, "camera");
+        if (state === "denied") return revoke("the browser took back the permission for the camera");
+        if (state === "prompt") {
+          waitingTap = true;
+          return kit.down("camera", tapToResume("camera"));
+        }
+      }
       try {
-        const next = await md.getUserMedia({
+        const asked = md.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...(want ? { facingMode: want } : {}) },
         });
+        const next = await asked;
+        waitingTap = false;
         if (stream === null) return void next.getTracks().forEach((x) => x.stop()); // the person stopped lending meanwhile
         swap(next);
         kit.up("camera");
       } catch (e) {
+        if (denied(e)) return revoke(refusal(e, "camera"));
+        waitingTap = false;
         kit.down("camera", `the page could not get the camera back: ${refusal(e, "camera")}`);
       }
     },

@@ -6,7 +6,17 @@ import { posix, win32 } from "node:path";
 import { pathFrom } from "./config";
 
 /** Flags whose value is a file. `--twin`, `--ev3` and `--ev3dev` may stand alone (the example robot). */
-const PATH_FLAGS = ["--twin", "--world", "--ev3", "--ev3dev", "--config", "--ssh-key", "--log-file", "--lan-key"];
+const PATH_FLAGS = [
+  "--twin",
+  "--world",
+  "--ev3",
+  "--ev3dev",
+  "--config",
+  "--ssh-key",
+  "--log-file",
+  "--lan-key",
+  "--page-ext",
+];
 /** `--lan-cert <cert.pem> <key.pem>`: a flag with two files. */
 const TWO_PATH_FLAGS = ["--lan-cert"];
 const PLAIN = /^[A-Za-z0-9_@+=:,./-]+$/;

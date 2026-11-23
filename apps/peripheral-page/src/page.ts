@@ -2,7 +2,9 @@
 // the tap unlocks (camera, microphone, speaker, imu, vibrator, torch), the wake lock, and `spinecord`, the
 // extension API (docs/peripheral-pages.md). main.ts draws it; a test drives it with a fake browser (test/fakes.ts).
 // Hidden and visible again: a hidden page's imu is down; a visible one takes the wake lock again and asks again
-// for a camera or microphone track the browser ended meanwhile.
+// for a camera or microphone track the browser ended meanwhile. A page whose socket closed (a phone locks it, or
+// puts the browser in the background) joins again by itself; each try waits for that taking back while the page is
+// visible, so the hello it sends lends what the page has again.
 import type { Scalar } from "../../../packages/protocol/types";
 import { unlock, type BitmapLike, type StreamLike, type Win } from "./browser";
 import { camera, type Camera } from "./devices/camera";
@@ -56,6 +58,10 @@ export interface Page {
   stopLending(): void;
   /** Call on every visibilitychange. */
   visibilityChanged(): void;
+  /** The kinds whose permission the browser would prompt for again: the banner offers the tap that asks. */
+  needsTap(): ("camera" | "mic")[];
+  /** The person's tap on "Tap to resume camera and microphone": asks the browser again, inside that gesture. */
+  resumeMedia(): Promise<void>;
   wake(): WakeState;
 }
 
@@ -65,6 +71,11 @@ export function createPage(o: PageOptions): Page {
   const kit = createKit({
     ...o,
     now,
+    beforeRejoin: async () => {
+      if (!o.visible()) return;
+      wake.acquire();
+      await Promise.all([cam?.reacquire(), mic?.reacquire()]);
+    },
     onStatus: (s) => {
       if (s.state === "closed") wake.release();
       o.onStatus?.(s);
@@ -129,14 +140,28 @@ export function createPage(o: PageOptions): Page {
     },
     visibilityChanged() {
       const state = kit.status().state;
-      if (state !== "lending" && state !== "paused") return;
+      const rejoining = state === "joining" && kit.status().rejoin !== null;
+      if (state !== "lending" && state !== "paused" && state !== "reconnecting" && !rejoining) return;
       const visible = o.visible();
       motion?.visible(visible);
       if (!visible) return;
+      // the try takes the wake lock and the media back before its hello
+      if (state === "reconnecting") return kit.reconnectNow();
       wake.acquire();
-      void cam?.reacquire();
-      void mic?.reacquire();
+      // a track taken back can bring a device of its own (the torch): the manifest follows once both settled
+      void Promise.all([cam?.reacquire(), mic?.reacquire()]).then(() => kit.reconcile());
     },
     wake: () => wake.state(),
+    needsTap: () => [...(cam?.needsTap() ? ["camera" as const] : []), ...(mic?.needsTap() ? ["mic" as const] : [])],
+    async resumeMedia() {
+      wake.acquire(); // in the tap, before any await
+      // each getUserMedia is called before the first await, so both are inside the gesture
+      await Promise.all([
+        cam?.needsTap() ? cam.reacquire({ tap: true }) : undefined,
+        mic?.needsTap() ? mic.reacquire({ tap: true }) : undefined,
+      ]);
+      kit.reconcile();
+      o.onStatus?.(kit.status());
+    },
   };
 }

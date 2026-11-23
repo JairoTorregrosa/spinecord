@@ -1,0 +1,76 @@
+{
+  "schema": "spinecord/ext-page@1",
+  "at": "2026-11-23T21:07:57.514Z",
+  "browser": "Google Chrome",
+  "headless": true,
+  "os": "darwin arm64",
+  "note": "Chrome with its fake camera and microphone; the page served with --page-ext deployments/example/page-ext; the fleet runs in this process",
+  "offered": {
+    "devices": ["desk.screen", "desk.touch", "desk.door", "desk.qr", "desk.camera", "desk.mic", "desk.speaker"],
+    "unavailable": [
+      {
+        "kind": "imu",
+        "why": "imu: this device sent no motion sample: it has no motion sensors, or the browser gives the page none"
+      },
+      {
+        "kind": "vibrator",
+        "why": "vibrator: this is not a phone or tablet: its browser can vibrate nothing"
+      },
+      {
+        "kind": "torch",
+        "why": "torch: the lent camera has no torch the browser can switch (on a phone the torch is usually next to the camera facing environment)"
+      }
+    ]
+  },
+  "steps": {
+    "scripts": ["page.js", "ext/door.js", "ext/qr.js"],
+    "barcode_detector": "function",
+    "wait_until_closed_true": {
+      "met": true,
+      "reason": "condition_met",
+      "ms": 310,
+      "readings": [
+        {
+          "device": "desk.door",
+          "channel": "closed",
+          "value": true,
+          "ts": 1795468073659
+        }
+      ]
+    },
+    "wait_until_closed_false": {
+      "met": true,
+      "reason": "condition_met",
+      "ms": 305,
+      "readings": [
+        {
+          "device": "desk.door",
+          "channel": "closed",
+          "value": false,
+          "ts": 1795468073969
+        }
+      ]
+    },
+    "opened_count": 1,
+    "qr_scan": {
+      "reason": "timeout",
+      "measured": {
+        "found": false,
+        "text": ""
+      }
+    },
+    "while_rejoining": [
+      "Reconnecting… | Reconnecting… the robot keeps this page's place for 30 s.",
+      "Lent to pages as desk | Camera and microphone lent to robot pages"
+    ],
+    "pages_after_rejoin": [
+      {
+        "name": "desk",
+        "state": "active"
+      }
+    ],
+    "sockets_opened": 2,
+    "wait_until_after_rejoin": "condition_met",
+    "console": ["error: Failed to load resource: the server responded with a status of 404 (Not Found) (/favicon.ico)"]
+  }
+}

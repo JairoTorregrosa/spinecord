@@ -4,7 +4,7 @@
 import type { Win } from "./browser";
 import type { View, ScreenDraw } from "./devices/display";
 import { drawFace } from "./faces";
-import type { KitActivity, KitStatus } from "./kit";
+import type { KitActivity, KitState, KitStatus } from "./kit";
 import { createPage } from "./page";
 
 const el = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -118,10 +118,12 @@ lendButton.addEventListener("click", () => {
 // ---------- banner and status ----------
 const pause = el<HTMLButtonElement>("pause");
 pause.addEventListener("click", () => {
-  if (page.kit.status().state === "paused") page.kit.resume();
+  if (page.kit.status().held) page.kit.resume();
   else page.kit.pause("the person pressed pause");
 });
 el("stop-lending").addEventListener("click", () => page.stopLending());
+// the browser asks again for the camera or the microphone only in a tap: this one
+el("resume-media").addEventListener("click", () => void page.resumeMedia().then(() => draw()));
 el("reload").addEventListener("click", () => location.reload());
 
 const KIND_NAMES: Record<string, string> = {
@@ -137,8 +139,19 @@ const KIND_NAMES: Record<string, string> = {
 let listening = false;
 let lastFrame: number | null = null;
 
+// every state has its words: a state added to the kit without them fails the type check
+const STATUS_TEXT: Record<KitState, (s: KitStatus) => string> = {
+  idle: () => "Not lent",
+  joining: (s) => (s.rejoin ? "Reconnecting…" : "Joining…"),
+  lending: (s) => `Lent to ${s.robot} as ${s.name}`,
+  paused: (s) => `Paused · ${s.name}`,
+  reconnecting: () => "Reconnecting…",
+  closed: () => "Closed",
+};
+
 function draw(s: KitStatus = page.kit.status()): void {
-  const lending = s.state === "lending" || s.state === "paused";
+  const away = s.rejoin !== null;
+  const lending = s.state === "lending" || s.state === "paused" || away;
   const sensitive = s.devices.filter((d) => d === "camera" || d === "mic" || d === "imu");
   el("setup").hidden = s.state !== "idle";
   el("lent").hidden = !lending && s.state !== "closed";
@@ -147,10 +160,12 @@ function draw(s: KitStatus = page.kit.status()): void {
     el("closed-why").textContent =
       `${s.closed.reason || "The connection closed"} (code ${s.closed.code}). Reload this page when the spinecord process runs again.`;
   const banner = el("banner");
-  banner.hidden = !lending || sensitive.length === 0;
+  banner.hidden = !lending || (sensitive.length === 0 && !away);
   banner.classList.toggle("paused", s.state === "paused");
-  el("banner-what").textContent =
-    s.state === "paused"
+  banner.classList.toggle("reconnecting", away);
+  el("banner-what").textContent = away
+    ? `Reconnecting… the robot keeps this page's place for 30 s${s.held ? "; lending stays paused" : ""}.`
+    : s.state === "paused"
       ? `Paused: the robot cannot use the ${sensitive.map((d) => KIND_NAMES[d]).join(" or ")}.`
       : `${sensitive.map((d) => KIND_NAMES[d]).join(" and ")} lent to robot ${s.robot}${listening ? " · listening…" : ""}`.replace(
           /^./,
@@ -160,17 +175,11 @@ function draw(s: KitStatus = page.kit.status()): void {
   el("banner-speech").hidden = !page.kit
     .manifest()
     .devices.some((d) => d.id === "mic" && d.commands.some((c) => c.name === "listen"));
-  pause.textContent = s.state === "paused" ? "Resume" : "Pause";
-  el("status").textContent =
-    s.state === "idle"
-      ? "Not lent"
-      : s.state === "joining"
-        ? "Joining…"
-        : s.state === "lending"
-          ? `Lent to ${s.robot} as ${s.name}`
-          : s.state === "paused"
-            ? `Paused · ${s.name}`
-            : "Closed";
+  pause.textContent = s.held ? "Resume" : "Pause";
+  const waiting = page.needsTap();
+  el("resume-media").hidden = waiting.length === 0;
+  if (waiting.length) banner.hidden = false;
+  el("status").textContent = STATUS_TEXT[s.state](s);
   el("status").dataset.state = s.state;
   const list = el("lent-list");
   list.replaceChildren(
@@ -183,7 +192,7 @@ function draw(s: KitStatus = page.kit.status()): void {
   if (preview.srcObject !== stream) preview.srcObject = stream as MediaStream | null;
   preview.hidden = !stream || !s.devices.includes("camera");
   document.title = lending
-    ? `${s.state === "paused" ? "Paused" : "Lent"} · ${s.name} · spinecord`
+    ? `${away ? "Reconnecting" : s.state === "paused" ? "Paused" : "Lent"} · ${s.name} · spinecord`
     : "Lend this device · spinecord";
 }
 function wakeItem(): HTMLLIElement {

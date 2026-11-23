@@ -4,6 +4,10 @@
 // an audio worklet; a microphone with neither is not lent.
 import type { CommandSpec, Value } from "../../../../packages/protocol/types";
 import {
+  denied,
+  LEND_AGAIN,
+  permissionState,
+  tapToResume,
   refusal,
   type AudioContextLike,
   type AudioNodeLike,
@@ -130,8 +134,14 @@ export interface Microphone {
   stream(): StreamLike | null;
   /** Starts the level meter; resolves false where the page has no audio worklet. */
   meter(): Promise<boolean>;
-  /** The page is visible again: a track the browser ended while it was hidden is asked for again. */
-  reacquire(): Promise<void>;
+  /**
+   * The page is visible again: a track the browser ended while it was hidden is asked for again, never with a
+   * prompt. A permission the browser took back takes the microphone out of the manifest, with why, into unavailable;
+   * one it would prompt for leaves it down until the person's tap (`{tap: true}`, from the banner's button).
+   */
+  reacquire(o?: { tap?: boolean }): Promise<void>;
+  /** The microphone waits for the person's tap to be asked for again. */
+  needsTap(): boolean;
   close(): void;
 }
 
@@ -140,6 +150,7 @@ export function microphone(o: MicrophoneOptions): Microphone {
   let stream = "stream" in o.got ? o.got.stream : null;
   const refused = "why" in o.got ? o.got.why : null;
   let node: WorkletNodeLike | null = null;
+  let waitingTap = false;
   let source: AudioNodeLike | null = null;
   const track = (): TrackLike | null => stream?.getAudioTracks()[0] ?? null;
   // events of a track other than the lent one say nothing about the microphone
@@ -252,7 +263,7 @@ export function microphone(o: MicrophoneOptions): Microphone {
   kit.device(def);
   kit.push("mic", { listening: false, last_transcript: "", last_match: "", heard_count: 0 });
 
-  return {
+  const mic: Microphone = {
     def,
     stream: () => stream,
     async meter() {
@@ -272,12 +283,30 @@ export function microphone(o: MicrophoneOptions): Microphone {
       kit.push("mic", { level_pct: 0 });
       return true;
     },
-    async reacquire() {
+    needsTap: () => waitingTap,
+    async reacquire(how = {}) {
       const t = track();
       const md = o.win.navigator.mediaDevices;
       if (!t || t.readyState !== "ended" || !md?.getUserMedia) return;
+      const revoke = (why: string) => {
+        waitingTap = false;
+        if (stream === null) return;
+        mic.close();
+        kit.withdraw("mic", `the page could not get the microphone back: ${why}; ${LEND_AGAIN}`);
+      };
+      // in the person's tap getUserMedia is called before any await: the browser lets a prompt come from a tap only
+      if (!how.tap) {
+        const state = await permissionState(o.win, "microphone");
+        if (state === "denied") return revoke("the browser took back the permission for the microphone");
+        if (state === "prompt") {
+          waitingTap = true;
+          return kit.down("mic", tapToResume("microphone"));
+        }
+      }
       try {
-        const next = await md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        const asked = md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        const next = await asked;
+        waitingTap = false;
         if (stream === null) return void next.getTracks().forEach((x) => x.stop()); // the person stopped lending meanwhile
         for (const old of stream.getTracks()) old.stop();
         stream = next;
@@ -285,6 +314,8 @@ export function microphone(o: MicrophoneOptions): Microphone {
         connect();
         kit.up("mic");
       } catch (e) {
+        if (denied(e)) return revoke(refusal(e, "microphone"));
+        waitingTap = false;
         kit.down("mic", `the page could not get the microphone back: ${refusal(e, "microphone")}`);
       }
     },
@@ -297,4 +328,5 @@ export function microphone(o: MicrophoneOptions): Microphone {
       stream = null;
     },
   };
+  return mic;
 }
