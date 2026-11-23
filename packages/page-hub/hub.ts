@@ -204,9 +204,15 @@ export class PageLink {
       if (!ids.has(p.device)) {
         this.pending.delete(id);
         clearTimeout(p.timer);
-        p.reject(offline(`The page named ${this.name} no longer lends ${this.name}.${p.device}.`));
+        p.reject(offline(`The page named ${this.name} stopped lending ${this.name}.${p.device}.`));
       }
-    for (const key of [...this.values.keys()]) if (!ids.has(key.split(".")[0]!)) this.values.delete(key);
+    // a cached value is kept only for a channel the new manifest still pushes, with the same type
+    for (const key of [...this.values.keys()]) {
+      const [device, channel] = key.split(".") as [string, string];
+      const was = this.devices.find((d) => d.id === device)?.channels.find((c) => c.name === channel);
+      const is = devices.find((d) => d.id === device)?.channels.find((c) => c.name === channel);
+      if (!is || is.pushed !== true || is.type !== was?.type) this.values.delete(key);
+    }
     for (const id of [...this.down.keys()]) if (!ids.has(id)) this.down.delete(id);
     this.devices = devices;
     this.unavailable = unavailable;

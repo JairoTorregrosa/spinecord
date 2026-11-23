@@ -278,6 +278,22 @@ describe("PageHub", () => {
     expect(r.reqs().length).toBe(before);
   });
 
+  test("a new manifest drops the cached value of a channel it removes or retypes, and keeps the others", async () => {
+    const r = rig();
+    r.link.receive({ t: "state", device: "touch", values: { b1: true, b1_presses: 3 } });
+    const retyped: PageDevice = {
+      ...touch,
+      channels: [{ ...touch.channels[0]!, type: "number" }, touch.channels[1]!],
+    };
+    r.link.setDevices([retyped], []);
+    const [b1, presses] = await r.hub.read("desk.touch", ["b1", "b1_presses"]);
+    expect(b1).toMatchObject({ value: null, error: "the page has not reported this channel yet" });
+    expect(presses).toMatchObject({ value: 3 });
+    r.link.setDevices([{ ...touch, channels: [touch.channels[0]!] }], []);
+    r.link.setDevices([touch], []);
+    expect((await r.hub.read("desk.touch", ["b1_presses"]))[0]).toMatchObject({ value: null });
+  });
+
   test("a closed page ends its requests; a page that joins under its name takes its place", async () => {
     const r = rig();
     const read = r.hub.read("desk.camera", ["width_px"]);
