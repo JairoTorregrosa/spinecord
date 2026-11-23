@@ -16,13 +16,14 @@ import {
   tickMessage,
 } from "../agent.ts";
 import {
+  activeProfile,
   antConfigDir,
+  checkEnv,
   costLine,
   localTime,
   paidBy,
   parseArgs,
   parseMission,
-  payerFromEnv,
   readChatLine,
   readMission,
   SECTIONS,
@@ -157,6 +158,10 @@ describe("what the SDK is given", () => {
       expect(BUILT_IN_TOOLS).toContain(tool);
       expect(options.disallowedTools).toContain(tool);
     }
+  });
+
+  test("a message goes to Claude as written: no @file mention is replaced by the file", () => {
+    expect(options.verbatimPrompts).toBe(true);
   });
 
   test("nothing of this computer's Claude Code leaks in", () => {
@@ -347,98 +352,106 @@ describe("files of this computer", () => {
 });
 
 describe("who pays", () => {
-  const dir = join("ant-config");
-  /** An ant folder with these files in it, without touching the disk. */
-  const antFolder =
-    (...files: string[]) =>
-    (path: string) =>
-      files.map((file) => join(dir, file)).includes(path);
-  const loggedIn = antFolder(join("configs", "work.json"), join("credentials", "work.json"));
+  // the accountInfo() answers below are the shapes Claude Code 2.1.319 gave on 2026-11-22, one for each login
+  const LOGIN = { subscriptionType: "Claude Max", apiProvider: "firstParty" };
+  const TOKEN = { tokenSource: "CLAUDE_CODE_OAUTH_TOKEN", apiProvider: "firstParty" };
+  const KEY = { apiKeySource: "ANTHROPIC_API_KEY", apiProvider: "firstParty" };
+  const BEARER = { tokenSource: "ANTHROPIC_AUTH_TOKEN", apiProvider: "firstParty" };
+  const CONSOLE = { apiProvider: "firstParty" }; // an ant profile, named or active
+  const NOTHING = { tokenSource: "none", apiProvider: "firstParty" };
 
-  test("the ant folder: ANTHROPIC_CONFIG_DIR, else APPDATA on Windows, else ~/.config", () => {
-    expect(antConfigDir({ ANTHROPIC_CONFIG_DIR: join("x", "ant") }, "darwin", "home")).toBe(join("x", "ant"));
-    expect(antConfigDir({ APPDATA: join("C", "AppData") }, "win32", "home")).toBe(join("C", "AppData", "Anthropic"));
-    expect(antConfigDir({}, "linux", "home")).toBe(join("home", ".config", "anthropic"));
-    expect(antConfigDir({ ANTHROPIC_CONFIG_DIR: "" }, "darwin", "home")).toBe(join("home", ".config", "anthropic"));
+  test("the ant folder: ANTHROPIC_CONFIG_DIR, else $XDG_CONFIG_HOME/anthropic, else ~/.config/anthropic", () => {
+    expect(antConfigDir({ ANTHROPIC_CONFIG_DIR: join("x", "ant") }, "home")).toBe(join("x", "ant"));
+    expect(antConfigDir({ XDG_CONFIG_HOME: join("x", "cfg") }, "home")).toBe(join("x", "cfg", "anthropic"));
+    expect(antConfigDir({ ANTHROPIC_CONFIG_DIR: "" }, "home")).toBe(join("home", ".config", "anthropic"));
   });
 
-  test("the environment picks the payer in Claude Code's order", () => {
-    const none = antFolder();
-    expect(payerFromEnv({}, dir, none)).toEqual({ kind: "computer-login" });
-    expect(payerFromEnv({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, dir, none)).toEqual({ kind: "subscription-token" });
-    expect(payerFromEnv({ ANTHROPIC_API_KEY: "k", CLAUDE_CODE_OAUTH_TOKEN: "t" }, dir, none)).toEqual({
-      kind: "api-key",
-    });
-    expect(payerFromEnv({ ANTHROPIC_AUTH_TOKEN: "b", ANTHROPIC_API_KEY: "k" }, dir, none)).toEqual({
-      kind: "bearer-token",
-    });
-    expect(payerFromEnv({ CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_API_KEY: "k" }, dir, none)).toEqual({
-      kind: "cloud",
-      provider: "Amazon Bedrock",
-    });
-    expect(payerFromEnv({ ANTHROPIC_API_KEY: "" }, dir, none)).toEqual({ kind: "computer-login" });
-    // a cloud switch set to 0, false, no or off is off, as Claude Code reads it
-    for (const off of ["0", "false", "No", "off"])
-      expect(payerFromEnv({ CLAUDE_CODE_USE_BEDROCK: off, ANTHROPIC_API_KEY: "k" }, dir, none)).toEqual({
-        kind: "api-key",
-      });
-    expect(payerFromEnv({ ANTHROPIC_PROFILE: "work" }, dir, loggedIn)).toEqual({
-      kind: "ant-profile",
-      profile: "work",
-    });
+  test("the active profile is the first line of active_config, or none", () => {
+    expect(activeProfile("dir", () => "work\n")).toBe("work");
+    expect(activeProfile("dir", () => "  ")).toBeNull();
+    expect(
+      activeProfile("dir", () => {
+        throw new Error("ENOENT");
+      }),
+    ).toBeNull();
   });
 
-  test("a profile that is not in the ant folder stops the start, with its name and the folder", () => {
-    expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "nonexistent" }, dir, loggedIn)).toThrow(
-      `ANTHROPIC_PROFILE=nonexistent: there is no ant profile "nonexistent" in ${dir}`,
-    );
-  });
-
-  test("a profile that is not logged in stops the start: Claude Code would skip it too", () => {
-    expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "work" }, dir, antFolder(join("configs", "work.json")))).toThrow(
-      `the ant profile "work" in ${dir} is not logged in`,
-    );
-  });
-
-  test("a profile under a key or a token stops the start: the key or the token would pay", () => {
-    expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "work", ANTHROPIC_API_KEY: "k" }, dir, loggedIn)).toThrow(
+  test("a profile under a cloud switch, a key or a token stops the start before Claude Code runs", () => {
+    expect(() => checkEnv({ ANTHROPIC_PROFILE: "work", ANTHROPIC_API_KEY: "k" })).toThrow(
       "ANTHROPIC_PROFILE=work is set, but ANTHROPIC_API_KEY is set too and would pay first",
     );
-    expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "work", CLAUDE_CODE_OAUTH_TOKEN: "t" }, dir, loggedIn)).toThrow(
-      "CLAUDE_CODE_OAUTH_TOKEN is set too",
+    expect(() => checkEnv({ ANTHROPIC_PROFILE: " work ", CLAUDE_CODE_OAUTH_TOKEN: "t" })).toThrow(
+      "ANTHROPIC_PROFILE=work is set, but CLAUDE_CODE_OAUTH_TOKEN",
     );
+    expect(() => checkEnv({ ANTHROPIC_PROFILE: "work", CLAUDE_CODE_USE_MANTLE: "1" })).toThrow(
+      "CLAUDE_CODE_USE_MANTLE",
+    );
+    expect(() => checkEnv({ ANTHROPIC_PROFILE: "work", CLAUDE_CODE_USE_BEDROCK: "off" })).not.toThrow();
+    expect(() => checkEnv({ ANTHROPIC_PROFILE: "work" })).not.toThrow();
+    expect(() => checkEnv({ ANTHROPIC_API_KEY: "k", CLAUDE_CODE_OAUTH_TOKEN: "t" })).not.toThrow();
   });
 
-  test("the line names the payer that Claude Code confirms, and no secret", () => {
-    const line = (env: Record<string, string>, account: object) => paidBy(payerFromEnv(env, dir, loggedIn), account);
-    // the accountInfo() answers below are the shapes Claude Code gave for each login on 2026-11-22
-    expect(
-      line({ ANTHROPIC_API_KEY: "sk-ant-secret" }, { apiKeySource: "ANTHROPIC_API_KEY", tokenSource: "claude.ai" }),
-    ).toBe("paid by: API key");
-    expect(line({ CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-secret" }, { tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" })).toBe(
+  test("a cloud provider is named from apiProvider, and an Anthropic credential next to it stops the start", () => {
+    expect(paidBy({ apiProvider: "bedrock" }, {}, null)).toBe("paid by: Amazon Bedrock, through your cloud account");
+    expect(paidBy({ apiProvider: "anthropicGoogleCloud" }, {}, null)).toBe(
+      "paid by: Claude Platform on Google Cloud, through your cloud account",
+    );
+    expect(paidBy({ apiProvider: "newCloud" }, {}, null)).toBe("paid by: newCloud, through your cloud account");
+    expect(() => paidBy({ apiProvider: "vertex" }, { ANTHROPIC_PROFILE: "work" }, null)).toThrow(
+      "ANTHROPIC_PROFILE would not pay",
+    );
+    expect(() => paidBy({ apiProvider: "vertex" }, { ANTHROPIC_API_KEY: "k" }, null)).toThrow(
+      "ANTHROPIC_API_KEY would not pay",
+    );
+    // a cloud switch that Claude Code did not follow
+    expect(() => paidBy(KEY, { CLAUDE_CODE_USE_GATEWAY: "1", ANTHROPIC_API_KEY: "k" }, null)).toThrow(
+      "CLAUDE_CODE_USE_GATEWAY is on, but Claude Code uses Anthropic's API",
+    );
+    for (const off of ["0", "false", "No", "off"])
+      expect(paidBy(KEY, { CLAUDE_CODE_USE_BEDROCK: off, ANTHROPIC_API_KEY: "k" }, null)).toBe("paid by: API key");
+  });
+
+  test("a Claude plan: the subscription token, or this computer's login", () => {
+    expect(paidBy(TOKEN, { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-secret" }, "work")).toBe(
       "paid by: Claude subscription token",
     );
-    expect(line({ ANTHROPIC_PROFILE: "work" }, { apiProvider: "firstParty" })).toBe(
-      "paid by: Console login, ant profile work",
-    );
-    expect(line({}, { subscriptionType: "Claude Max", apiProvider: "firstParty" })).toBe(
-      "paid by: this computer's Claude Code login (Claude Max plan)",
-    );
-    expect(line({}, { apiKeySource: "/login managed key" })).toBe(
-      "paid by: a Console API key saved by this computer's Claude Code (/login)",
+    expect(paidBy(LOGIN, {}, "work")).toBe("paid by: this computer's Claude Code login (Claude Max plan)");
+    expect(() => paidBy(LOGIN, { CLAUDE_CODE_OAUTH_TOKEN: "t" }, null)).toThrow(
+      "CLAUDE_CODE_OAUTH_TOKEN is set, but Claude Code does not use it",
     );
   });
 
-  test("when Claude Code uses another payer than the environment chose, the start stops", () => {
-    const payer = payerFromEnv({ ANTHROPIC_PROFILE: "work" }, dir, loggedIn);
-    expect(() => paidBy(payer, { subscriptionType: "Claude Max" })).toThrow(
-      "uses this computer's Claude Code login (Claude Max plan)",
+  test("a named profile that Claude Code skipped stops the start: missing, logged out or misnamed", () => {
+    expect(() => paidBy(LOGIN, { ANTHROPIC_PROFILE: "nonexistent" }, "work")).toThrow(
+      "ANTHROPIC_PROFILE=nonexistent is set, but Claude Code skipped that profile and uses this computer's Claude Code login (Claude Max plan)",
     );
-    expect(() => paidBy({ kind: "api-key" }, { tokenSource: "claude.ai" })).toThrow("Nothing was sent");
-    expect(() => paidBy({ kind: "subscription-token" }, { subscriptionType: "Claude Max" })).toThrow(
-      "another credential than CLAUDE_CODE_OAUTH_TOKEN",
+    expect(() => paidBy(NOTHING, { ANTHROPIC_PROFILE: "nonexistent" }, null)).toThrow(
+      "ANTHROPIC_PROFILE=nonexistent: Claude Code found no login in that profile",
     );
-    expect(() => paidBy({ kind: "api-key" }, { apiKeySource: "/login managed key" })).toThrow("/login");
+    expect(() => paidBy(NOTHING, {}, null)).toThrow("Claude Code has no login on this computer");
+  });
+
+  test("Console billing is named from the environment, and a credential Claude Code did not use stops the start", () => {
+    expect(paidBy(KEY, { ANTHROPIC_API_KEY: "sk-ant-secret" }, "work")).toBe("paid by: API key");
+    expect(() => paidBy(CONSOLE, { ANTHROPIC_API_KEY: "k" }, null)).toThrow("ANTHROPIC_API_KEY is set, but");
+    expect(paidBy(BEARER, { ANTHROPIC_AUTH_TOKEN: "b" }, null)).toBe(
+      "paid by: the bearer token in ANTHROPIC_AUTH_TOKEN",
+    );
+    expect(() => paidBy(CONSOLE, { ANTHROPIC_AUTH_TOKEN: "b" }, null)).toThrow("ANTHROPIC_AUTH_TOKEN is set, but");
+    expect(paidBy({ apiKeySource: "/login managed key" }, {}, null)).toBe(
+      "paid by: a Console API key saved by this computer's Claude Code (/login)",
+    );
+    expect(() => paidBy({ apiKeySource: "/login managed key" }, { ANTHROPIC_PROFILE: "work" }, null)).toThrow(
+      "skipped that profile",
+    );
+    expect(paidBy(CONSOLE, { ANTHROPIC_PROFILE: " work " }, "other")).toBe("paid by: Console login, ant profile work");
+    expect(paidBy(CONSOLE, {}, "work")).toBe("paid by: Console login, ant profile work (active profile)");
+    expect(paidBy(CONSOLE, {}, null)).toBe("paid by: a Console credential this program cannot name");
+  });
+
+  test("no line carries a secret", () => {
+    const env = { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-secret" };
+    expect(paidBy(TOKEN, env, null)).not.toContain("secret");
   });
 });
 

@@ -17,13 +17,14 @@ import { type Options, query, type SDKUserMessage } from "@anthropic-ai/claude-a
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
+  activeProfile,
   antConfigDir,
+  checkEnv,
   costLine,
   localTime,
   type Mission,
   paidBy,
   parseArgs,
-  payerFromEnv,
   readChatLine,
   readMission,
   type Settings,
@@ -113,6 +114,7 @@ export function buildOptions(mission: Mission, settings: Settings): Options {
 
     settingSources: [], // ignore the Claude Code settings, memory and skills of this computer
     persistSession: false, // the conversation lives in memory while the program runs, not on disk
+    verbatimPrompts: true, // every message goes to Claude as written: an @file mention is not replaced by the file
 
     maxTurns: MAX_STEPS_PER_TURN, // bound of one turn
     maxBudgetUsd: settings.maxUsd, // the SDK's bound, counted since its last reset; the loop's own sum below holds for the whole session
@@ -211,8 +213,8 @@ async function main(): Promise<number> {
   }
   const mission = readMission(settings.missionFile ?? DEFAULT_MISSION_FILE);
   checkRobotFlags(settings.robotFlags);
-  // who pays, from the environment: a profile that Claude Code would skip stops the start here
-  const payer = payerFromEnv(process.env, antConfigDir(process.env));
+  // a profile under a key or a token would not pay: that stops the start before Claude Code runs
+  checkEnv(process.env);
   console.log(
     `${mission.name} is waking up (model ${MODEL}, budget $${settings.maxUsd.toFixed(2)}). Ctrl+C stops the robot and ends.`,
   );
@@ -299,17 +301,22 @@ async function main(): Promise<number> {
   })();
   // ---- who pays, from Claude Code itself, before anything is sent. The init message only says "none" for every
   // login and token; accountInfo() names the token or the claude.ai plan in use.
-  try {
-    const account = await Promise.race([
-      session.accountInfo(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`no answer in ${ACCOUNT_WAIT_MS / 1000} s`)), ACCOUNT_WAIT_MS),
-      ),
-    ]);
-    startSource = account.apiKeySource;
-    console.log(paidBy(payer, account));
-  } catch (error) {
+  const account = await Promise.race([
+    session.accountInfo(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`no answer in ${ACCOUNT_WAIT_MS / 1000} s`)), ACCOUNT_WAIT_MS),
+    ),
+  ]).catch((error) => {
     stop(`Claude Code did not say who pays: ${error instanceof Error ? error.message : String(error)}`, true);
+    return null;
+  });
+  if (account) {
+    startSource = account.apiKeySource;
+    try {
+      console.log(paidBy(account, process.env, activeProfile(antConfigDir(process.env))));
+    } catch (error) {
+      stop(error instanceof Error ? error.message : String(error), true);
+    }
   }
 
   // the SDK throws when Claude Code cannot start or dies; the session ending by itself is also a way out

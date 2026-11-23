@@ -53,7 +53,9 @@ Windows PowerShell:
 $env:ANTHROPIC_PROFILE = "work"
 ```
 
-The profiles live in `~/.config/anthropic/` (Windows: `%APPDATA%\Anthropic`), or in the folder `ANTHROPIC_CONFIG_DIR` names. Claude Code skips a profile it cannot use without a word, and this computer's Claude Code login pays in its place. So the program does not start when the profile in `ANTHROPIC_PROFILE` is not in that folder or is not logged in; it names the profile and the folder.
+The profiles live in `~/.config/anthropic/`, or in the folder `ANTHROPIC_CONFIG_DIR` names. Option A was not run on native Windows: the Claude Code that the SDK brings looks for the profiles in `$HOME/.config/anthropic` and has no `%APPDATA%` branch, so in PowerShell you may need to set `ANTHROPIC_CONFIG_DIR` to the folder that `ant auth status` shows as `Config dir`.
+
+Claude Code skips a profile it cannot use (a wrong name, or not logged in) without a word, and this computer's Claude Code login pays in its place. The program asks Claude Code which login it uses and does not start when the profile in `ANTHROPIC_PROFILE` is not the one that would pay.
 
 **B. A Console API key.** Make a key in the [Claude Console](https://platform.claude.com/) (API keys → Create key). macOS:
 
@@ -76,7 +78,7 @@ Each variable lasts until you close that terminal. When none is set, a computer 
 <details>
 <summary>Which one wins, and the cloud providers</summary>
 
-Claude Code takes the first of these that is set ([authentication](https://code.claude.com/docs/en/authentication)): a cloud provider, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, the profile in `ANTHROPIC_PROFILE`, this computer's Claude Code login. The program does not start when `ANTHROPIC_PROFILE` is set together with one that comes before it, because the profile would not pay. After the start it asks Claude Code which login it uses and stops when that is not the one the environment chose.
+Claude Code takes the first of these that is set ([authentication](https://code.claude.com/docs/en/authentication)): a cloud provider, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, the profile in `ANTHROPIC_PROFILE`, this computer's Claude Code login, the ant CLI's active profile. The program does not start when `ANTHROPIC_PROFILE` is set together with one that comes before it, because the profile would not pay. After the start it asks Claude Code which login it uses (`accountInfo()`), prints that one, and stops when a variable you set is not the one that pays.
 
 The cloud providers, from the same environment ([quickstart](https://code.claude.com/docs/en/agent-sdk/quickstart)):
 
@@ -117,7 +119,7 @@ Pilar> I ran a practice reminder: Rosa's chair was 52 cm ahead, I drove 37 cm sl
 - A line that starts with `->` is the assistant using the robot: the tool and the robot.
 - A line in `[ ]` is what the turn cost, and the total of the session against its budget.
 - A line that starts with `/` is not passed on: Claude Code's commands (`/clear`, `/model`, ...) are not for this assistant.
-- A line with a word that starts with `@` is not passed on: Claude Code would read that file of your computer into the message (`@notes.txt`). An `@` inside a word, as in `a@b.com`, passes.
+- A line with a word that starts with `@` is not passed on, and says so: for Claude Code it is a file of your computer (`@notes.txt`). An `@` inside a word, as in `a@b.com`, passes.
 
 ## 4. Let it act on its own
 
@@ -211,10 +213,10 @@ Measured on 2026-11-22 with `claude-opus-5-5`, the pill assistant and the twin. 
 | A wake-up that does the mission from the start (8 tool calls) | login | $0.11 | 105,384 (98,265) |
 | A wake-up that answers `nothing to do` | login | $0.004 to $0.005 | about 15,700 (15,493) |
 
-Claude keeps what it has already read in a cache at a lower price. With a Console login or an API key the cache lasts 5 minutes: at `--every 330` the later wake-ups read nothing from the cache, and a `nothing to do` costs $0.076, about 19 times the $0.004 of `--every 60`. So keep `--every` at 300 or less. From the wake-ups above, `--every 60` with nothing to do is about $0.24 an hour (60 at $0.004), and `--every 330` about $0.83 an hour (11 at $0.076); both are sums, not hours that were run. A Claude Code login keeps its cache for an hour.
+Claude keeps what it has already read in a cache at a lower price. Each row above is one run, and the three runs paid with A went at the same time on one Console organization. With A the cache lasts 5 minutes: at `--every 330` the third wake-up read 0 tokens from the cache, and its `nothing to do` cost $0.076, about 19 times the $0.004 of `--every 60`. So keep `--every` at 300 or less. From the wake-ups above, `--every 60` with nothing to do is about $0.24 an hour (60 at $0.004), and `--every 330` about $0.83 an hour (11 at $0.076); both are sums, not hours that were run. An API key was not measured. A Claude Code login is said to keep its cache for an hour; that was not measured here.
 
 The program ends at the first turn that reaches `--max-usd`, and that turn can pass it by about one step.
 
 ## What the agent may do
 
-`agent.ts` gives Claude one MCP server, spinecord, and nothing else: none of Claude Code's tools for files, the shell or the web exist for this agent, no chat line with a word that starts with `@` reaches Claude (Claude Code reads an `@file` mention into the message without any tool, so the chat refuses it), the settings and memory of your computer are not loaded, and a tool call that would need a question to a person is denied. Each turn is bounded to 15 steps. The tests in [`test/`](test) check that options object and never call Claude: `bun test`.
+`agent.ts` gives Claude one MCP server, spinecord, and nothing else: none of Claude Code's tools for files, the shell or the web exist for this agent, every message reaches Claude as written (`verbatimPrompts`), so an `@file` mention does not bring a file of your computer in, the settings and memory of your computer are not loaded, and a tool call that would need a question to a person is denied. Each turn is bounded to 15 steps. The tests in [`test/`](test) check that options object and never call Claude: `bun test`.
