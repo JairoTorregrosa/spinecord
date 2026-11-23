@@ -347,7 +347,7 @@ export class PageLink {
         this.held.delete(id);
         reject(late());
       }, deadlineMs);
-      (timer as { unref?: () => void }).unref?.();
+      // not unref'd: a request is awaited, and its deadline is what answers it when the page is silent
       this.pending.set(id, { device, resolve: (res, image) => resolve({ res, image }), reject, timer });
     });
     this.socket!.send(msg(id));
