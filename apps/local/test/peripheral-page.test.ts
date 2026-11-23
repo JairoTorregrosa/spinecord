@@ -244,9 +244,13 @@ describe("the peripheral page against the listener and the hub", () => {
     const { page, vanish, sockets } = await r.lend();
     const t0 = Date.now();
     vanish();
+    // lending on the page, and active on the process once it answered the first ping of the new socket
     await until(
-      "the page to be lending again",
-      async () => page.kit.status().state === "lending" && sockets.length >= 2,
+      "the page to be active again",
+      async () =>
+        page.kit.status().state === "lending" &&
+        sockets.length >= 2 &&
+        (await r.call("describe_robot")).data.pages[0]?.state === "active",
     );
     expect(Date.now() - t0).toBeLessThan(1000);
     const d = await r.call("describe_robot");
