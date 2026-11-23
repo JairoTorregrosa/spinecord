@@ -4,13 +4,16 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,6 +133,8 @@ export class FakeBrick {
         speed_sp: "0",
         position_sp: "0",
         time_sp: "0",
+        duty_cycle_sp: "0",
+        duty_cycle: "0",
         stop_action: "coast",
         command: "",
         state: "",
@@ -190,6 +195,35 @@ export class FakeBrick {
         Bun.sleepSync(1);
       }
     }
+  }
+
+  /**
+   * Rewrites an attribute in place, as the kernel does for a file a loop holds open: one write of a fixed-width
+   * line at offset 0 of the same file, so a reader through a held descriptor sees the old value or the new one.
+   * (put() replaces the file, which a held descriptor never sees.)
+   */
+  setInPlace(file: string, value: string | number): void {
+    const fd = openSync(file, "r+");
+    try {
+      writeSync(fd, `${String(value).padStart(15)}\n`, 0);
+    } finally {
+      closeSync(fd);
+    }
+  }
+  setMotorInPlace(i: number, attr: string, value: string | number): void {
+    this.setInPlace(join(this.motorDir(i), attr), value);
+  }
+  setSensorInPlace(i: number, attr: string, value: string | number): void {
+    this.setInPlace(join(this.root, "sys", "class", "lego-sensor", `sensor${i}`, attr), value);
+  }
+  /**
+   * The first line of a motor attribute: what a driver reads of a value written through a held descriptor, which
+   * writes its line at offset 0 and leaves any longer old text behind it in a plain file.
+   */
+  motorLine(i: number, attr: string): string {
+    return readFileSync(join(this.motorDir(i), attr), "utf8")
+      .split("\n")[0]!
+      .trim();
   }
 
   motorDir(i: number): string {

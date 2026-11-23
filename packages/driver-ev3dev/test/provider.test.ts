@@ -9,6 +9,7 @@ import {
   Ev3devProvider,
   EXAMPLE_EV3DEV_HARDWARE,
   MIN_BRIDGE_VERSION,
+  MIN_LOOP_BRIDGE_VERSION,
   MIN_PAIRLESS_BRIDGE_VERSION,
   MIN_SENSORS_BRIDGE_VERSION,
   readOnlyTransport,
@@ -184,6 +185,25 @@ describe("fake brick", () => {
     expect(out.ahead.reply.result).toMatchObject({ reason: "completed", measured: { degrees: -27 } });
   });
 
+  brickTest(
+    "a bridge held off the processor between the two command writes of run_pair gives the second motor its whole time",
+    () => {
+      // Seen on CI (issue #25): the bridge lost 300 ms between writing B's command and C's; B arrived meanwhile, and
+      // a time bound counted from before the writes judged C at its first look: right_deg 0, reason stalled.
+      const brick = new FakeBrick({ motors: [{ port: "B" }, { port: "C" }], sensors: [] });
+      open.push({ brick });
+      const r = spawnSync(python!, [join(import.meta.dir, "stall_check.py"), BRIDGE_FILE, brick.root, "300"], {
+        encoding: "utf8",
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+      });
+      expect(r.stderr).toBe("");
+      expect(JSON.parse(r.stdout)).toMatchObject({
+        ok: true,
+        result: { reason: "completed", measured: { left_deg: 100, right_deg: -50 } },
+      });
+    },
+  );
+
   brickTest("a robot that declares no pair: the hello carries none, and motors on B and C are two motors", async () => {
     const { provider, brick, play } = setup({ pair: undefined, maxOpMs: PATIENT_OP_MS });
     const specs = await provider.devices();
@@ -219,10 +239,16 @@ describe("fake brick", () => {
       "ev3.battery:battery",
     ]);
     expect(byId(specs, "ev3.B").roles).toEqual(["left_wheel"]);
-    expect(byId(specs, "ev3.B").channels.map((c) => c.name)).toEqual(["position_deg", "speed_deg_s", "stalled"]);
+    expect(byId(specs, "ev3.B").channels.map((c) => c.name)).toEqual([
+      "position_deg",
+      "speed_deg_s",
+      "stalled",
+      "power_pct",
+    ]);
     expect(byId(specs, "ev3.B").commands.map((c) => c.name)).toEqual([
       "run_degrees",
       "run_time",
+      "power",
       "run_to_position",
       "brake",
       "reset_position",
@@ -250,7 +276,8 @@ describe("fake brick", () => {
         expect(c.bound.max).toBeGreaterThanOrEqual(0);
         if (c.moves && c.name !== "brake") {
           expect(c.bound).toMatchObject({ kind: "ms", max: OP_MS });
-          expect("brake" in c.params.properties).toBe(true);
+          // power always brakes at its end (CONTRACT §2.3): the others choose
+          expect("brake" in c.params.properties).toBe(c.name !== "power");
         }
       }
     expect(provider.inventory()!.sensors.map((s) => s.driver_name)).toEqual([
@@ -272,7 +299,7 @@ describe("fake brick", () => {
     expect((await provider.read("ev3.buttons"))[0]!.value).toEqual(["enter", "left"]);
     brick.setMotor(1, "position", 123);
     brick.setMotor(0, "speed", -525);
-    expect((await provider.read("ev3.B")).map((r) => r.value)).toEqual([0, -525, false]);
+    expect((await provider.read("ev3.B")).map((r) => r.value)).toEqual([0, -525, false, 0]);
     expect((await provider.read("ev3.pair")).map((r) => r.value)).toEqual([0, 123]);
   });
 
@@ -428,16 +455,18 @@ describe("fake brick", () => {
   });
 
   brickTest("run_time is cut to the time bound; run_pair starts both motors with proportional speeds", async () => {
-    const { provider, brick, play } = setup();
+    // The fake's motors turn on this process's timers, which a loaded machine can hold back for a while: the bound
+    // is the patient one, so it never judges a motor the fake has not played yet. run_pair ends when both arrive.
+    const { provider, brick, play } = setup({ maxOpMs: PATIENT_OP_MS });
     play(0);
     play(1);
     const timed = await provider.command("ev3.B", "run_time", { ms: 5000, speed_pct: -20 }, never);
     expect(timed).toMatchObject({
       reason: "clamped",
       clamped: true,
-      measured: { applied_ms: OP_MS, degrees: -50 },
+      measured: { applied_ms: PATIENT_OP_MS, degrees: -50 },
     });
-    expect(brick.motor(0, "time_sp")).toBe(String(OP_MS));
+    expect(brick.motor(0, "time_sp")).toBe(String(PATIENT_OP_MS));
     expect(brick.motor(0, "speed_sp")).toBe("-210");
     const pair = await provider.command(
       "ev3.pair",
@@ -1015,7 +1044,7 @@ describe("fake brick", () => {
       });
     expect(await ask({ op: "hello", id: 4, config: { bounds } })).toMatchObject({
       ok: true,
-      bridge: String(MIN_SENSORS_BRIDGE_VERSION),
+      bridge: String(MIN_LOOP_BRIDGE_VERSION),
     });
     expect(await ask({ op: "read", id: 5, device: "pair" })).toMatchObject({
       ok: false,

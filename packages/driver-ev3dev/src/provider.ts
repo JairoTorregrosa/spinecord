@@ -9,6 +9,7 @@
 // robot_offline. The next call opens again, until close(): a closed provider opens nothing.
 //
 // The provider never chunks and never retries a motion: the runtime does the first, nobody the second.
+import { planLoop, type LoopContext } from "../../protocol/loop";
 import { RETRYABLE, RuntimeError } from "../../protocol/types";
 import type {
   ChannelSpec,
@@ -17,7 +18,13 @@ import type {
   DeviceSpec,
   ErrorCode,
   Limits,
+  LoopEnd,
+  LoopEvent,
+  LoopPlan,
+  LoopSpec,
+  LoopTelemetry,
   Provider,
+  ProviderLoop,
   Reading,
   StopReason,
   Value,
@@ -36,6 +43,20 @@ export const MIN_PAIRLESS_BRIDGE_VERSION = 5;
  * this one. It is also the first that serves NXT sensors and generic sensors; an older bridge lists those as unknown.
  */
 export const MIN_SENSORS_BRIDGE_VERSION = 6;
+/**
+ * Oldest bridge that runs a loop on the brick (loop_start, loop_set, loop_probe), serves motor.power and the
+ * power_pct channel, and arms the guard's deadman. Only a loop and power ask for it: every other use keeps working
+ * on an older bridge.
+ */
+export const MIN_LOOP_BRIDGE_VERSION = 7;
+/**
+ * The fastest loop rate declared for a brick on ev3dev until loop_probe measures the brick at hand: the brick's own
+ * sysfs I/O for a tick of 5 reads and 2 writes measured 3.2 ms mean and 8 ms p99, without the law and the scheduler
+ * (docs/hardware-log.md).
+ */
+export const EV3DEV_LOOP_RATE_HZ = 50;
+/** While run-direct is live, the guard brakes every motor after this long without a byte from the bridge. */
+export const GUARD_DEADMAN_MS = 250;
 /** How long the bridge waits for every motor to read speed 0 after a stop. */
 export const BRIDGE_STOP_VERIFY_MS = 800;
 export const MODE_SWITCH_REQUIRED = "mode_switch_required";
@@ -115,6 +136,21 @@ export interface Ev3devProviderOptions {
   linkSilenceMs?: number;
   /** Round-trip allowance added to the bridge's stop verification to get stop_worst_ms, ms. Default 700. */
   stopLinkMs?: number;
+  /** The fastest loop rate declared until probeLoop() measures this brick, Hz. Default EV3DEV_LOOP_RATE_HZ. */
+  loopRateHz?: number;
+}
+/** What loop_probe measured on the brick: what one tick of the probed plan costs, and the rate that allows. */
+export interface LoopProbe {
+  ticks: number;
+  signals: number;
+  outputs: number;
+  mean_ms: number;
+  p50_ms: number;
+  p99_ms: number;
+  max_ms: number;
+  /** The fastest of 10, 20, 25, 50, 100 and 200 Hz whose p99 tick takes at most half a period. */
+  max_rate_hz: number;
+  python: string;
 }
 
 /** What the bridge reports in `hello`. Raw sysfs names are kept so a mismatch is visible. */
@@ -556,6 +592,14 @@ export class Ev3devProvider implements Provider {
   private lastRx = 0;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private wired = false;
+  private readonly defaultLoopRate: number;
+  /** The loop running on the brick: the id of its loop_start, where its events go, and how its end is told. */
+  private looping: { id: number; on: (ev: LoopEvent) => void; ended: (e: LoopEnd) => void } | null = null;
+  /**
+   * CONTRACT §4, §5a: a loop runs on the brick, as a task of the bridge. max_rate_hz is EV3DEV_LOOP_RATE_HZ (or
+   * loopRateHz) until probeLoop() measures this brick; a new link starts from it again.
+   */
+  readonly loop: Extract<ProviderLoop, { runs_on: "device" }>;
 
   constructor(
     private readonly transport: LineTransport,
@@ -618,6 +662,14 @@ export class Ev3devProvider implements Provider {
     const stopLinkMs = opts.stopLinkMs ?? 700;
     if (!positive(stopLinkMs)) fail("stopLinkMs must be > 0");
     this.stop_worst_ms = BRIDGE_STOP_VERIFY_MS + Math.ceil(stopLinkMs);
+    this.defaultLoopRate = opts.loopRateHz ?? EV3DEV_LOOP_RATE_HZ;
+    if (!positive(this.defaultLoopRate)) fail(`loopRateHz must be > 0, got ${JSON.stringify(opts.loopRateHz)}`);
+    this.loop = {
+      runs_on: "device",
+      max_rate_hz: this.defaultLoopRate,
+      check: (plan) => this.checkLoop(plan),
+      start: (plan, on) => this.startLoop(plan, on),
+    };
   }
 
   // ------------------------------------------------------------- link
@@ -637,6 +689,8 @@ export class Ev3devProvider implements Provider {
     } catch {
       return;
     } // not ours (a login banner on stdout)
+    if (msg !== null && typeof msg === "object" && (msg.ev === "loop" || msg.ev === "loop_end"))
+      return this.loopEvent(msg);
     if (msg === null || typeof msg !== "object" || typeof msg.id !== "number") return; // events: hb, watchdog
     const p = this.pending.get(msg.id);
     if (!p) return;
@@ -656,6 +710,14 @@ export class Ev3devProvider implements Provider {
     this.heartbeat = null;
     this.state = "closed";
     this.opening = null;
+    // a loop on the brick: its bridge brakes on its own when the link drops (the watchdog), and nothing more of
+    // it reaches this side
+    const loop = this.looping;
+    this.looping = null;
+    if (loop) {
+      loop.on({ t: "end", end: { reason: "input_lost" }, failure: `the link to the brick closed: ${reason}` });
+      loop.ended({ reason: "input_lost" });
+    }
     const failed = [...this.pending.values()];
     this.pending.clear();
     for (const p of failed) {
@@ -839,6 +901,7 @@ export class Ev3devProvider implements Provider {
         this.lastRx = Date.now();
         this.heartbeat = setInterval(() => this.beat(), this.o.heartbeatMs);
         await this.hello(Math.max(1000, this.o.helloTimeoutMs - (Date.now() - t0)));
+        this.loop.max_rate_hz = this.defaultLoopRate; // what probeLoop measured holds for the link it measured
         this.fresh = true;
         this.state = "ready";
         this.closedWhy = null;
@@ -944,6 +1007,10 @@ export class Ev3devProvider implements Provider {
       "Positive = the direction a positive speed turns the shaft (the driver's forward). This is shaft rotation, not a heading: whether it moves the robot forward or turns it depends on how the motor is mounted.";
     const out: DeviceSpec[] = [];
     const motors = new Map(inv.motors.map((m) => [m.port, m]));
+    // a bridge older than MIN_LOOP_BRIDGE_VERSION serves neither power nor a loop: its manifests say neither
+    const loops = Number(inv.bridge) >= MIN_LOOP_BRIDGE_VERSION;
+    const loopRefresh = (what: string) =>
+      ` A loop (run_loop) refreshes ${what} every tick, each refresh for the loop's hold time.`;
 
     for (const p of ["A", "B", "C", "D"] as OutputPort[]) {
       const m = motors.get(p);
@@ -976,6 +1043,20 @@ export class Ev3devProvider implements Provider {
               max_rate_hz: 50,
               description: "true if the last operation on this motor ended because the motor could not turn.",
             },
+            ...(loops
+              ? [
+                  {
+                    name: "power_pct",
+                    type: "number" as const,
+                    unit: "pct",
+                    range: [-o.maxSpeedPct, o.maxSpeedPct] as [number, number],
+                    max_rate_hz: 50,
+                    approx:
+                      "The duty cycle the bridge's latest power command or loop refresh applies (run-direct), while it lasts; 0 otherwise.",
+                    description: "The unregulated power being applied, percent; negative = backwards.",
+                  },
+                ]
+              : []),
           ],
           [
             {
@@ -1009,8 +1090,32 @@ export class Ev3devProvider implements Provider {
                 },
                 ["ms", "speed_pct"],
               ),
-              description: `Runs for a time at a regulated speed. ${oneOp} measured.degrees is the encoder change.`,
+              ...(loops ? { drives: { arg: "speed_pct", max_hold_ms: o.boundMs } } : {}),
+              description: `Runs for a time at a regulated speed. ${oneOp} measured.degrees is the encoder change.${loops ? `${loopRefresh("speed_pct")} The kernel ends each refresh by itself (run-timed for the hold time); a value that rounds to 0 brakes.` : ""}`,
             },
+            ...(loops
+              ? [
+                  {
+                    name: "power",
+                    moves: true,
+                    bound: { ...motion, params: ["ms"] },
+                    params: obj(
+                      {
+                        power_pct: {
+                          type: "number",
+                          minimum: -o.maxSpeedPct,
+                          maximum: o.maxSpeedPct,
+                          description: "Signed unregulated power (duty cycle), percent; negative = backwards. Not 0.",
+                        },
+                        ms: { type: "number", minimum: 1, maximum: o.boundMs },
+                      },
+                      ["power_pct", "ms"],
+                    ),
+                    drives: { arg: "power_pct", max_hold_ms: Math.min(o.boundMs, GUARD_DEADMAN_MS) },
+                    description: `Applies unregulated power (run-direct) for a time, then brakes: the speed follows the load. ${oneOp} measured.degrees is the encoder change.${loopRefresh("power_pct")} run-direct has no time limit in the kernel: the bridge ends it, and the brick's guard process brakes every motor ${GUARD_DEADMAN_MS} ms after the bridge falls silent while it is live.`,
+                  },
+                ]
+              : []),
             {
               name: "run_to_position",
               moves: true,
@@ -1490,6 +1595,228 @@ export class Ev3devProvider implements Provider {
     } finally {
       signal.removeEventListener("abort", abort);
     }
+  }
+
+  // ------------------------------------------------------------- loops
+
+  /** The channels the bridge reads in a loop, by device kind. A sensor with an entry: every channel of its entry. */
+  private static readonly LOOP_CHANNELS: Record<string, string[]> = {
+    motor: ["position_deg", "speed_deg_s", "stalled", "power_pct"],
+    motor_pair: ["left_deg", "right_deg"],
+    battery: ["voltage_v", "low"],
+    sensor: ["values"],
+  };
+
+  private reinstallForLoops(what: string): RuntimeError {
+    return err(
+      "misconfigured",
+      `ev3dev: ${what} needs bridge version ${MIN_LOOP_BRIDGE_VERSION} or newer, and the installed bridge is version ${JSON.stringify(this.inv?.bridge)}. Nothing was sent. Reinstall it: start the server with --install-bridge (in a config file: "install_bridge": true), or call installBridge() from code.`,
+    );
+  }
+
+  /** The typed refusal of a plan the bridge cannot run (CONTRACT §5a, Planning); sends nothing. */
+  private checkLoop(plan: LoopPlan): void {
+    if (!this.inv || !this.specs) throw err("robot_offline", "ev3dev: the link to the brick is not open");
+    if (!(Number(this.inv.bridge) >= MIN_LOOP_BRIDGE_VERSION)) throw this.reinstallForLoops("a loop on the brick");
+    for (const s of plan.signals) {
+      const spec = this.specs.get(s.device);
+      if (!spec) throw err("unknown_device", `loop.signals.${s.name}: ${s.device} is not a device of ${this.id}`);
+      const known =
+        Ev3devProvider.LOOP_CHANNELS[spec.kind] ??
+        (/^S[1-4]$/.test(spec.id.slice(this.id.length + 1)) && spec.kind !== "unknown"
+          ? spec.channels.filter((c) => c.type !== "string").map((c) => c.name)
+          : []);
+      if (!known.includes(s.channel))
+        throw err(
+          "unsupported",
+          `loop.signals.${s.name}: the bridge reads no channel ${s.channel} of ${s.device} in a loop. Channels it reads there: ${known.join(", ") || "none"}. Nothing was sent.`,
+        );
+    }
+    plan.outputs.forEach((o, i) => {
+      const spec = this.specs!.get(o.device);
+      if (spec?.kind !== "motor" || (o.command !== "power" && o.command !== "run_time"))
+        throw err(
+          "unsupported",
+          `loop.outputs[${i}]: a loop on the brick drives power and run_time of a motor, not ${o.command} of ${o.device}. Nothing was sent.`,
+        );
+    });
+  }
+
+  /** The plan as the bridge names devices: by their local name. */
+  private localPlan(plan: LoopPlan): LoopPlan {
+    const local = (d: string) => d.slice(this.id.length + 1);
+    return {
+      ...plan,
+      signals: plan.signals.map((s) => ({ ...s, device: local(s.device) })),
+      outputs: plan.outputs.map((o) => ({ ...o, device: local(o.device) })),
+    };
+  }
+
+  /** CONTRACT §4: hands the planned loop to the bridge, which runs it as a task and pushes telemetry and its end. */
+  private async startLoop(
+    plan: LoopPlan,
+    on: (ev: LoopEvent) => void,
+  ): Promise<{
+    set(params: Record<string, number>, ramp_ms: number): Promise<void>;
+    end(): Promise<void>;
+    ended: Promise<LoopEnd>;
+  }> {
+    await this.ensure();
+    if (this.looping) throw err("busy", "ev3dev: a loop already runs on this brick: one loop at a time");
+    this.checkLoop(plan);
+    let ended!: (e: LoopEnd) => void;
+    const end = new Promise<LoopEnd>((resolve) => (ended = resolve));
+    this.flushReads();
+    const { id, reply } = this.request({ op: "loop_start", plan: this.localPlan(plan) }, this.o.requestTimeoutMs);
+    const run = { id, on, ended };
+    this.looping = run; // before the reply: the first events may come right behind it
+    try {
+      await reply;
+    } catch (e) {
+      if (this.looping === run) this.looping = null;
+      throw e;
+    }
+    return {
+      set: async (params, ramp_ms) => {
+        await this.request({ op: "loop_set", loop: id, params, ramp_ms }, this.o.requestTimeoutMs).reply;
+      },
+      end: async () => {
+        if (this.looping !== run) return;
+        try {
+          this.transport.send(JSON.stringify({ op: "abort", target: id }));
+        } catch {
+          /* the close callback ends the loop */
+        }
+      },
+      ended: end,
+    };
+  }
+
+  /** A `loop` or `loop_end` line of the bridge, for the loop running here. */
+  private loopEvent(msg: Record<string, unknown>): void {
+    const run = this.looping;
+    if (!run || msg.loop !== run.id) return;
+    const telemetry: LoopTelemetry = {
+      ticks: Number(msg.ticks) || 0,
+      overruns: Number(msg.overruns) || 0,
+      age_ms: Number(msg.age_ms) || 0,
+      periods: Array.isArray(msg.periods) ? (msg.periods as number[]) : [],
+      signals: Array.isArray(msg.signals) ? (msg.signals as LoopTelemetry["signals"]) : [],
+      outputs: Array.isArray(msg.outputs) ? (msg.outputs as LoopTelemetry["outputs"]) : [],
+      trace: (msg.trace && typeof msg.trace === "object" ? msg.trace : { t_ms: [] }) as LoopTelemetry["trace"],
+      params: (msg.params && typeof msg.params === "object" ? msg.params : {}) as Record<string, number>,
+    };
+    if (msg.ev === "loop") return run.on({ t: "telemetry", telemetry });
+    this.looping = null;
+    const reasons: LoopEnd["reason"][] = [
+      "completed",
+      "guard",
+      "preempted",
+      "unattended",
+      "overrun",
+      "input_lost",
+      "not_still",
+      "timeout",
+    ];
+    const known = reasons.includes(msg.reason as LoopEnd["reason"]);
+    const end: LoopEnd = {
+      reason: known ? (msg.reason as LoopEnd["reason"]) : "input_lost",
+      ...(typeof msg.guard === "string" ? { guard: msg.guard } : {}),
+    };
+    const failure =
+      typeof msg.failure === "string"
+        ? msg.failure
+        : known
+          ? undefined
+          : `the bridge ended the loop with a reason this driver does not know: ${JSON.stringify(msg.reason)}`;
+    run.on({
+      t: "end",
+      end,
+      telemetry,
+      ...(typeof msg.brake_error === "string" ? { brake_error: msg.brake_error } : {}),
+      ...(failure ? { failure } : {}),
+    });
+    run.ended(end);
+  }
+
+  /**
+   * Measures what one tick of a loop costs on this brick: the bridge runs `ticks` ticks of the plan back to back
+   * (its real reads, law and refreshes, every output written as 0 with no run command, so nothing moves), and
+   * answers with the tick's cost and the fastest rate it allows. That rate becomes this link's loop.max_rate_hz.
+   * Without `spec`, the plan reads every motor's position and speed and one channel of each sensor, and drives
+   * every motor's power with a value term on each signal. Not run at connection: it takes the brick seconds.
+   */
+  async probeLoop(opts: { spec?: LoopSpec; ticks?: number } = {}): Promise<LoopProbe> {
+    await this.ensure();
+    if (!(Number(this.inv!.bridge) >= MIN_LOOP_BRIDGE_VERSION)) throw this.reinstallForLoops("loop_probe");
+    const specs = [...this.specs!.values()];
+    const spec = opts.spec ?? this.probeSpec(specs);
+    const ctx: LoopContext = { signals: {}, outputs: [], max_rate_hz: 1000, max_loop_ms: 3_600_000 };
+    const find = (name: string) => {
+      const id = this.specs!.has(name) ? name : (this.roles[name] ?? name);
+      const d = this.specs!.get(id);
+      if (!d) throw err("unknown_device", `unknown device "${name}"; devices: ${[...this.specs!.keys()].join(", ")}`);
+      return d;
+    };
+    for (const [name, s] of Object.entries(spec.signals ?? {})) {
+      const d = find(s.device);
+      const ch = d.channels.find((c) => c.name === s.channel);
+      if (!ch) throw err("unknown_channel", `loop.signals.${name}: ${d.id} has no channel ${s.channel}`);
+      ctx.signals[name] = { device: d.id, ...ch };
+    }
+    for (const o of spec.outputs ?? []) {
+      const d = find(o.device);
+      const cmd = d.commands.find((c) => c.name === o.command);
+      const arg = cmd?.drives ? (cmd.params.properties[cmd.drives.arg] as { minimum?: number; maximum?: number }) : {};
+      ctx.outputs.push({
+        device: d.id,
+        ...(cmd?.drives ? { drives: cmd.drives } : {}),
+        ...(typeof arg?.minimum === "number" && typeof arg?.maximum === "number"
+          ? { range: [arg.minimum, arg.maximum] as [number, number] }
+          : {}),
+      });
+    }
+    const plan = planLoop(spec, ctx);
+    this.checkLoop(plan);
+    const ticks = opts.ticks ?? 1000;
+    this.flushReads();
+    const res = await this.request(
+      { op: "loop_probe", plan: this.localPlan(plan), ticks },
+      this.o.requestTimeoutMs + ticks * 30,
+    ).reply;
+    const probe = res.probe as LoopProbe;
+    if (!probe || !positive(probe.max_rate_hz))
+      throw err("internal", `ev3dev: loop_probe answered ${JSON.stringify(res.probe)}`);
+    this.loop.max_rate_hz = probe.max_rate_hz;
+    return probe;
+  }
+
+  /** The plan probeLoop measures without one given: the brick's motors and sensors as they are plugged. */
+  private probeSpec(specs: DeviceSpec[]): LoopSpec {
+    const signals: LoopSpec["signals"] = {};
+    const motors = specs.filter((d) => d.kind === "motor" && d.commands.some((c) => c.name === "power"));
+    for (const m of motors) {
+      const port = m.id.slice(this.id.length + 1);
+      signals[`position_${port}`] = { device: m.id, channel: "position_deg" };
+      signals[`speed_${port}`] = { device: m.id, channel: "speed_deg_s" };
+    }
+    for (const d of specs.filter((x) => /^S[1-4]$/.test(x.id.slice(this.id.length + 1)))) {
+      const ch = d.channels.find((c) => c.type === "number" && c.active !== false);
+      if (ch) signals[`sensor_${d.id.slice(this.id.length + 1)}`] = { device: d.id, channel: ch.name };
+    }
+    if (!motors.length)
+      throw err("unsupported", "ev3dev: loop_probe drives a motor's power, and this brick has no motor on A-D");
+    const names = Object.keys(signals);
+    return {
+      rate_hz: 100,
+      duration_ms: 60_000,
+      signals,
+      outputs: motors.map((m) => ({
+        device: m.id,
+        command: "power",
+        terms: names.map((signal) => ({ signal, gain: 0 })),
+      })),
+    };
   }
 
   // ------------------------------------------------------------- stop

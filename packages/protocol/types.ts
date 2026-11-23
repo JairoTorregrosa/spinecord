@@ -134,8 +134,52 @@ export interface LoopRead {
   channel: string;
   index?: number;
 }
-/** What the device-side executor of a loop pushes while it runs. */
-export type LoopEvent = { t: "report"; report: Partial<LoopReport> } | { t: "end"; end: LoopEnd };
+/** A window of one signal's values over the ticks of a telemetry line: counts and sums, so windows add up. */
+export interface LoopSignalWindow {
+  n: number;
+  min: number;
+  max: number;
+  sum: number;
+  last: number;
+  integral: number;
+  derivative: number;
+}
+/** A window of one output's values: `sum` is of their magnitudes, `cut` the ticks on which it was cut. */
+export interface LoopOutputWindow {
+  n: number;
+  min: number;
+  max: number;
+  sum: number;
+  last: number;
+  cut: number;
+}
+/**
+ * What a device that runs a loop pushes about the ticks since its previous push: the totals so far, the measured
+ * time between two ticks, a window per signal and per output (loop.ts recordTick's, as counts and sums), the trace
+ * points and the params as they stand. The runtime builds the loop's report from these.
+ */
+export interface LoopTelemetry {
+  ticks: number;
+  overruns: number;
+  age_ms: number;
+  periods: number[];
+  signals: LoopSignalWindow[];
+  outputs: LoopOutputWindow[];
+  trace: LoopTrace;
+  params: Record<string, number>;
+}
+/** What the device-side executor of a loop pushes while it runs, and at its end. */
+export type LoopEvent =
+  | { t: "telemetry"; telemetry: LoopTelemetry }
+  | {
+      t: "end";
+      end: LoopEnd;
+      telemetry?: LoopTelemetry;
+      /** The end brake failed on the device: why. */
+      brake_error?: string;
+      /** The executor failed (a fault on the device, a link that closed): why. */
+      failure?: string;
+    };
 /**
  * How a provider runs a loop. `host`: the runtime's executor ticks it, one exchange per tick. `device`: the device
  * runs the planned loop by itself and pushes telemetry and its end.
@@ -163,7 +207,19 @@ export type ProviderLoop =
     }
   | {
       runs_on: "device";
+      /** The fastest rate the device holds a tick at. */
       max_rate_hz: number;
+      /**
+       * Throws the typed refusal of a plan this device cannot run (an executor too old, a channel or a command it
+       * does not serve in a loop). Called when the loop is planned; sends nothing.
+       */
+      check?(plan: LoopPlan): void;
+      /**
+       * Hands the planned loop to the device, which runs it by itself, pushes telemetry and its end through `on`.
+       * Resolves once the device has taken it; rejects with the device's typed refusal, nothing having moved.
+       * `end` asks the device to end the loop (it brakes, then `ended` resolves with reason preempted); `ended`
+       * resolves with the device's reason, also when the link closes.
+       */
       start(
         plan: LoopPlan,
         on: (ev: LoopEvent) => void,
