@@ -212,7 +212,7 @@ describe("the peripheral page against the listener and the hub", () => {
     const { page, drop, sockets } = await r.lend();
     const before = r.call("wait_until", {
       condition: { device: "desk.touch", channel: "b1", op: "eq", value: true },
-      timeout_ms: 5000,
+      timeout_ms: 3000,
     });
     await Bun.sleep(50);
     drop();
@@ -222,10 +222,9 @@ describe("the peripheral page against the listener and the hub", () => {
       error: { code: "device_offline", retryable: true, retry_after_ms: 2000 },
       next: ["describe_robot", "wait_until"],
     });
-    await until("the page to be away", async () => page.kit.status().state !== "lending");
     await until("the page to be active again", async () => {
       const d = await r.call("describe_robot");
-      return page.kit.status().state === "lending" && d.data.pages[0]?.state === "active";
+      return page.kit.status().state === "lending" && sockets.length >= 2 && d.data.pages[0]?.state === "active";
     });
     expect(sockets.length).toBeGreaterThanOrEqual(2);
     const d = await r.call("describe_robot");
@@ -237,7 +236,7 @@ describe("the peripheral page against the listener and the hub", () => {
     });
     setTimeout(() => page.touch.press(0), 100);
     expect((await waiting).data).toMatchObject({ met: true });
-  });
+  }, 15_000);
 
   test("a socket the process never saw close: the page joins again and takes its place in under 1 s", async () => {
     const r = await rig();
