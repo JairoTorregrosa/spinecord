@@ -148,8 +148,8 @@ async function full() {
 describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
   const TABLE: Record<string, { channels: string[]; commands: string[] }> = {
     motor: {
-      channels: ["position_deg", "speed_deg_s", "stalled"],
-      commands: ["run_degrees", "run_time", "run_to_position", "brake", "reset_position"],
+      channels: ["position_deg", "speed_deg_s", "stalled", "power_pct"],
+      commands: ["run_degrees", "run_time", "power", "run_to_position", "brake", "reset_position"],
     },
     motor_pair: { channels: ["left_deg", "right_deg"], commands: ["run_pair", "brake"] },
     touch: { channels: ["pressed", "presses"], commands: [] },
@@ -166,6 +166,7 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
   const PARAMS: Record<string, string[]> = {
     run_degrees: ["degrees", "speed_pct", "brake"],
     run_time: ["ms", "speed_pct", "brake"],
+    power: ["power_pct", "ms"],
     run_to_position: ["position_deg", "speed_pct", "brake"],
     brake: [],
     reset_position: [],
@@ -177,7 +178,7 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
     clear: [],
     set: ["pattern"],
   };
-  const MOVES = ["run_degrees", "run_time", "run_to_position", "run_pair"];
+  const MOVES = ["run_degrees", "run_time", "power", "run_to_position", "run_pair"];
 
   test("ids, kinds and roles; detection changes nothing on the brick", async () => {
     const { ev3, specs, fake } = await full();
@@ -243,9 +244,21 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
         else if (c.moves) {
           expect(c.bound.kind).toBe("ms"); // motion is bounded by time, never by degrees
           expect(c.bound.max).toBe(MAX_MOTION_MS);
-          expect(c.params.properties.brake).toMatchObject({ type: "boolean", default: true });
-          expect(c.params.required).toContain("speed_pct");
+          // unregulated power brakes at its end; every regulated motion chooses
+          if (c.name === "power") expect(c.params.required).toEqual(["power_pct", "ms"]);
+          else {
+            expect(c.params.properties.brake).toMatchObject({ type: "boolean", default: true });
+            expect(c.params.required).toContain("speed_pct");
+          }
         }
+        // a loop refreshes the timed commands, each refresh bounded on the brick (CONTRACT §2, Loop outputs)
+        expect(c.drives).toEqual(
+          c.name === "run_time"
+            ? { arg: "speed_pct", max_hold_ms: MAX_MOTION_MS }
+            : c.name === "power"
+              ? { arg: "power_pct", max_hold_ms: MAX_MOTION_MS }
+              : undefined,
+        );
         expect(c.description.length).toBeGreaterThan(10);
       }
     }
@@ -381,6 +394,7 @@ describe("read(): no side effects", () => {
       ["ev3.B", "position_deg", 123, "deg"],
       ["ev3.B", "speed_deg_s", 0, "deg_s"],
       ["ev3.B", "stalled", false, undefined],
+      ["ev3.B", "power_pct", 0, "pct"],
     ]);
     expect(m[0].ts).toBeGreaterThanOrEqual(ts0);
     expect(m[0]).not.toHaveProperty("error");
@@ -562,7 +576,7 @@ describe("read(): no side effects", () => {
     expect(notified).toBe(1);
     fake.dropNext(1); // lost reply
     r = await ev3.read("ev3.B");
-    expect(r.map((x) => x.value)).toEqual([null, null, null]);
+    expect(r.map((x) => x.value)).toEqual([null, null, null, null]);
     for (const x of r) expect(x.error).toContain("timeout");
     expect((await ev3.read("ev3.B"))[0].value).toBe(0);
   });

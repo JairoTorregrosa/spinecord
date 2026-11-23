@@ -26,6 +26,8 @@ export const TYPE_MEDIUM_MOTOR = 8;
 export const LARGE_DEG_S = 1020;
 /** Medium motor at 100 % speed, deg/s (about 260 rpm). */
 export const MEDIUM_DEG_S = 1560;
+/** The fastest loop rate the twin declares: a tick is an exchange with this emulator in the same process. */
+export const SIM_BRICK_LOOP_RATE_HZ = 100;
 /**
  * A motor released without brake keeps turning while it slows down. Here: a linear run-down that lasts this long
  * from 100 % speed (proportionally shorter from less). An approximation, to be calibrated on a real robot.
@@ -260,6 +262,11 @@ export class SimBrick implements Transport, WorldHost {
   busy(mask = 0x0f): boolean {
     this.tick();
     return this.motors.some((m, i) => (mask & (1 << i)) !== 0 && m.speedPct !== 0);
+  }
+  /** A hand turns a motor's shaft by `degrees` (a disturbance in a test, a person moving an arm): the encoder follows. */
+  turnShaft(port: MotorPort, degrees: number): void {
+    this.tick();
+    this.motors["ABCD".indexOf(port)]!.pos += degrees;
   }
   pressButton(button: number, down = true): void {
     if (down) this.buttons.add(button);

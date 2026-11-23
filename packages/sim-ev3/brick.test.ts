@@ -413,7 +413,7 @@ const profile = (drivetrain?: { wheel_diameter_cm: number; axle_track_cm: number
   id: "t",
   roles: {},
   notes: [],
-  limits: { max_speed_pct: 60, max_command_ms: 15000, max_program_ms: 60000 },
+  limits: { max_speed_pct: 60, max_command_ms: 15000, max_program_ms: 60000, max_loop_ms: 60000 },
   ...(drivetrain
     ? {
         drivetrain: {

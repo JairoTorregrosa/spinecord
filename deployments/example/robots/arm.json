@@ -16,7 +16,8 @@
     "limits": {
       "max_speed_pct": 40,
       "max_command_ms": 10000,
-      "max_program_ms": 120000
+      "max_program_ms": 120000,
+      "max_loop_ms": 60000
     },
     "notes": [
       "The gripper motor on A opens with positive degrees.",

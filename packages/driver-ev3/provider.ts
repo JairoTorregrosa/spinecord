@@ -20,7 +20,10 @@ import type {
   DeviceSpec,
   ErrorCode,
   Limits,
+  LoopRead,
+  LoopWrite,
   Provider,
+  ProviderLoop,
   Reading,
   StopReason,
   Value,
@@ -42,6 +45,7 @@ import {
   outputRead,
   outputStop,
   outputTest,
+  outputTimePower,
   outputTimeSpeed,
   outputTimeSync,
   readF32,
@@ -58,6 +62,11 @@ import type { Transport } from "./transport";
 
 /** No motion operation lasts longer than this on the brick (CONTRACT.md 0.8). */
 export const MAX_MOTION_MS = 250;
+/**
+ * The fastest loop rate declared for a brick over USB (the bridge page and WebHID): one tick is one packet there and
+ * back. A conservative figure, not a measurement: no loop has run on a real brick (docs/hardware-log.md).
+ */
+export const EV3_USB_LOOP_RATE_HZ = 50;
 /** An operation shorter than this is never reported as stalled: a motor may not have left rest yet. */
 export const MIN_STALL_WINDOW_MS = 100;
 export const LED_PATTERNS = [
@@ -115,6 +124,8 @@ export interface Ev3ProviderOptions {
   now?: () => number;
   /** Waits `ms` of the same clock as `now`. Default: a real timer. */
   sleep?: (ms: number) => Promise<void>;
+  /** The fastest loop rate this provider's transport carries, Hz. Default EV3_USB_LOOP_RATE_HZ. */
+  loopRateHz?: number;
 }
 
 // ---------------------------------------------------------------- device catalogue
@@ -445,6 +456,19 @@ export class Ev3Provider implements Provider {
   private modes: number[] = [0, 0, 0, 0]; // current mode of sensor ports 1-4
   private readonly running = new Map<number, { abort: (byStop?: boolean) => void }>(); // output index -> running operation
   private readonly stalled = [false, false, false, false];
+  /** The power the latest power operation or loop refresh applies on each output, and until when (clock ms). */
+  private readonly powered: { pct: number; until: number }[] = [0, 1, 2, 3].map(() => ({ pct: 0, until: 0 }));
+  /** Output indexes a loop drives: claimed from its first tick to its end. */
+  private readonly looped = new Set<number>();
+  /** stop() or a brake preempted the loop: its ticks are refused until the runtime ends it. */
+  private loopHalted = false;
+  private readonly loopClaim = {
+    abort: () => {
+      this.loopHalted = true;
+    },
+  };
+  /** CONTRACT §4: a loop on a stock brick runs on the host, one packet per tick. */
+  readonly loop: ProviderLoop;
   private readonly listeners = new Set<() => void>();
 
   constructor(transport: Transport, opts: Ev3ProviderOptions) {
@@ -502,6 +526,14 @@ export class Ev3Provider implements Provider {
         this.o.timeoutMs,
     );
     this.link = new Ev3Link(transport, { timeoutMs: this.o.timeoutMs, now: this.o.now });
+    const rate = opts.loopRateHz ?? EV3_USB_LOOP_RATE_HZ;
+    if (!positive(rate)) fail(`loopRateHz must be > 0, got ${JSON.stringify(rate)}`);
+    this.loop = {
+      runs_on: "host",
+      max_rate_hz: rate,
+      tick: (writes, reads, hold_ms) => this.tick(writes, reads, hold_ms),
+      end: (devices) => this.endLoop(devices),
+    };
   }
 
   /** Called when the device list or a channel's `active` flag changed (a sensor mode switch, a swapped sensor). */
@@ -645,6 +677,16 @@ export class Ev3Provider implements Provider {
               max_rate_hz: 50,
               description: "true if the last operation on this motor ended because the motor could not turn.",
             },
+            {
+              name: "power_pct",
+              type: "number",
+              unit: "pct",
+              range: [-o.maxSpeedPct, o.maxSpeedPct],
+              max_rate_hz: 50,
+              approx:
+                "The duty cycle this provider's latest power command or loop refresh applies, while it lasts; 0 otherwise. The firmware does not report it.",
+              description: "The unregulated power being applied, percent; negative = backwards.",
+            },
           ],
           [
             {
@@ -678,7 +720,27 @@ export class Ev3Provider implements Provider {
                 },
                 ["ms", "speed_pct"],
               ),
-              description: `Runs for a time at a regulated speed. ${oneOp} measured.degrees is the encoder change.`,
+              drives: { arg: "speed_pct", max_hold_ms: o.boundMs },
+              description: `Runs for a time at a regulated speed. ${oneOp} measured.degrees is the encoder change. A loop refreshes speed_pct every tick, each refresh for the loop's hold time.`,
+            },
+            {
+              name: "power",
+              moves: true,
+              bound: { ...motion, params: ["ms"] },
+              params: obj(
+                {
+                  power_pct: {
+                    type: "number",
+                    minimum: -o.maxSpeedPct,
+                    maximum: o.maxSpeedPct,
+                    description: "Signed unregulated power (duty cycle), percent; negative = backwards. Not 0.",
+                  },
+                  ms: { type: "number", minimum: 1, maximum: o.boundMs },
+                },
+                ["power_pct", "ms"],
+              ),
+              drives: { arg: "power_pct", max_hold_ms: o.boundMs },
+              description: `Applies unregulated power for a time, then brakes: the speed follows the load. ${oneOp} measured.degrees is the encoder change. A loop refreshes power_pct every tick, each refresh for the loop's hold time.`,
             },
             {
               name: "run_to_position",
@@ -982,6 +1044,7 @@ export class Ev3Provider implements Provider {
             position_deg: { value: readI32(g, 0) },
             speed_deg_s: { value: Math.round((readI8(g, 4) / 100) * this.o.degPerSecAt100) },
             stalled: { value: this.stalled[i] },
+            power_pct: { value: this.powerNow(i) },
           };
         });
       }
@@ -1208,6 +1271,44 @@ export class Ev3Provider implements Provider {
             },
             signal,
           );
+        }
+        case "motor.power": {
+          const port = local as OutputPort,
+            i = outputIndex(port),
+            mask = OUTPUT_MASK[port];
+          const ms = this.number(args, "ms", where);
+          if (ms < 1) throw new RuntimeError("invalid_argument", `${where}: ms must be >= 1, got ${ms}`);
+          const opMs = Math.min(Math.round(ms), o.boundMs);
+          const raw = this.number(args, "power_pct", where);
+          if (raw === 0) throw new RuntimeError("invalid_argument", `${where}: power_pct must not be 0`);
+          const v = Math.sign(raw) * Math.max(1, Math.min(o.maxSpeedPct, Math.round(Math.abs(raw))));
+          const timeCut = Math.round(ms) > opMs,
+            powerCut = Math.abs(raw) > o.maxSpeedPct;
+          this.claim([i]);
+          this.powered[i] = { pct: v, until: o.now() + opMs };
+          try {
+            return await this.operate(
+              {
+                requested: args,
+                clamped: timeCut || powerCut,
+                applied: { ...(timeCut ? { applied_ms: opMs } : {}), ...(powerCut ? { applied_power_pct: v } : {}) },
+                mask,
+                ports: [i],
+                lead: 0,
+                leadDir: v < 0 ? -1 : 1,
+                targetDeg: null,
+                opMs,
+                expectDeg: ((Math.abs(v) / 100) * o.degPerSecAt100 * opMs) / 1000,
+                rate: (Math.abs(v) / 100) * o.degPerSecAt100,
+                brake: true,
+                start: outputTimePower(mask, v, 0, opMs, 0, true),
+                measure: (d) => ({ degrees: d[0] }),
+              },
+              signal,
+            );
+          } finally {
+            this.powered[i] = { pct: 0, until: 0 };
+          }
         }
         case "motor.brake": {
           const i = outputIndex(local as OutputPort);
@@ -1538,6 +1639,171 @@ export class Ev3Provider implements Provider {
     };
   }
 
+  // ------------------------------------------------------------- loop
+
+  /** The power applied on an output right now: what the latest power operation or loop refresh set, while it lasts. */
+  private powerNow(i: number): number {
+    const p = this.powered[i]!;
+    return this.o.now() < p.until ? p.pct : 0;
+  }
+
+  /**
+   * One tick of a host loop as ONE direct command: every output refresh (a timed operation of `hold_ms`, so the
+   * brick ends it by itself when no refresh follows), then every input read. A refresh replaces the operation in
+   * flight on its port. A value that rounds to 0 brakes the port. The packet waits in the queue like a start does:
+   * what it carries is decided when it is built, so a tick that a stop overtook carries no refresh.
+   */
+  private tick(writes: LoopWrite[], reads: LoopRead[], hold_ms: number): Promise<(number | null)[]> {
+    return this.guard(async () => {
+      if (this.loopHalted)
+        throw new RuntimeError("busy", "the loop was preempted by a stop or a brake; it takes no more ticks");
+      if (!this.specs) await this.devices();
+      const o = this.o;
+      const hold = Math.max(1, Math.min(Math.round(hold_ms), o.boundMs));
+      const refresh: { i: number; bc: number[]; power: number }[] = [];
+      for (const w of writes) {
+        const { spec, local } = await this.lookup(w.device);
+        const cmd = spec.commands.find((c) => c.name === w.command);
+        const where = `${spec.id}.${w.command}`;
+        if (spec.kind !== "motor" || !cmd?.drives)
+          throw new RuntimeError("unsupported", `${where}: a loop refreshes only commands that declare drives`);
+        const port = local as OutputPort;
+        const i = outputIndex(port),
+          mask = OUTPUT_MASK[port];
+        const raw = this.number(w.args, cmd.drives.arg, where);
+        const v = Math.sign(raw) * Math.min(o.maxSpeedPct, Math.round(Math.abs(raw)));
+        const claim = this.running.get(i);
+        if (claim && claim !== this.loopClaim)
+          throw new RuntimeError("busy", `an operation is already running on output port ${port}`, true);
+        const brake = w.args.brake === undefined ? true : this.brakeArg(w.args, where);
+        refresh.push({
+          i,
+          power: w.command === "power" ? v : 0,
+          bc:
+            v === 0
+              ? outputStop(mask, true)
+              : w.command === "power"
+                ? outputTimePower(mask, v, 0, hold, 0, true)
+                : outputTimeSpeed(mask, v, 0, hold, 0, brake),
+        });
+      }
+      for (const r of refresh) {
+        this.running.set(r.i, this.loopClaim);
+        this.looped.add(r.i);
+      }
+      // each read: its bytecodes at a global offset, and how its bytes become a number (null = no value)
+      const parts: { size: number; bc: (base: number) => number[]; value: (g: Uint8Array) => number | null }[] = [];
+      for (const r of reads) parts.push(await this.loopRead(r));
+      let globals = 0;
+      const bases = parts.map((p) => {
+        const at = globals;
+        globals += p.size;
+        return at;
+      });
+      const readBc = parts.flatMap((p, k) => p.bc(bases[k]!));
+      const g = await this.link.command(
+        () => (this.loopHalted ? readBc : [...refresh.flatMap((r) => r.bc), ...readBc]),
+        globals,
+        { droppable: true },
+      );
+      const until = o.now() + hold;
+      for (const r of refresh) this.powered[r.i] = { pct: r.power, until: r.power === 0 ? 0 : until };
+      return parts.map((p, k) => p.value(g.subarray(bases[k]!, bases[k]! + p.size)));
+    });
+  }
+
+  /** How one loop input is read inside a tick packet, with the decoders read() uses. */
+  private async loopRead(r: LoopRead): Promise<{
+    size: number;
+    bc: (base: number) => number[];
+    value: (g: Uint8Array) => number | null;
+  }> {
+    const { spec, local } = await this.lookup(r.device);
+    const none = { size: 0, bc: () => [], value: () => null };
+    const pick = (v: Value | null): number | null => {
+      const x = Array.isArray(v) ? (r.index === undefined ? undefined : v[r.index]) : v;
+      return typeof x === "boolean" ? (x ? 1 : 0) : typeof x === "number" && Number.isFinite(x) ? x : null;
+    };
+    if (spec.kind === "motor") {
+      const i = outputIndex(local as OutputPort);
+      if (r.channel === "position_deg")
+        return { size: 4, bc: (b) => outputGetCount(i, b), value: (g) => readI32(g, 0) };
+      if (r.channel === "speed_deg_s")
+        return {
+          size: 5,
+          bc: (b) => outputRead(i, b + 4, b),
+          value: (g) => Math.round((readI8(g, 4) / 100) * this.o.degPerSecAt100),
+        };
+      if (r.channel === "stalled") return { ...none, value: () => (this.stalled[i] ? 1 : 0) };
+      if (r.channel === "power_pct") return { ...none, value: () => this.powerNow(i) };
+      return none;
+    }
+    if (spec.kind === "motor_pair" && (r.channel === "left_deg" || r.channel === "right_deg")) {
+      const pair = this.pairPorts();
+      const i = outputIndex(r.channel === "left_deg" ? pair.left : pair.right);
+      return { size: 4, bc: (b) => outputGetCount(i, b), value: (g) => readI32(g, 0) };
+    }
+    if (spec.kind === "battery" && r.channel === "voltage_v") {
+      return {
+        size: 4,
+        bc: uiBatteryVolts,
+        value: (g) => {
+          const v = readF32(g, 0);
+          return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
+        },
+      };
+    }
+    const port = /^S[1-4]$/.test(local) ? Number(local.slice(1)) - 1 : -1;
+    const kind = port < 0 ? undefined : SENSOR_KINDS[this.types[port]!];
+    const chan = kind?.channels.find((c) => c.spec.name === r.channel);
+    // a loop never switches a mode: a channel of another mode has no value
+    if (!chan || chan.mode !== this.modes[port]) return none;
+    const type = this.types[port]!,
+      mode = chan.mode,
+      count = chan.count;
+    return {
+      size: count * 4 + 2,
+      // the values of the current mode, and the type and mode they were read in (READY_SI keeps both)
+      bc: (b) => [...inputReadySi(port, 0, -1, count, b), ...inputGetTypeMode(port, b + count * 4, b + count * 4 + 1)],
+      value: (g) => {
+        if (g[count * 4] !== type || g[count * 4 + 1] !== mode) {
+          // another sensor, or another mode: the scan learns of it, the loop gets no value
+          this.types[port] = g[count * 4]!;
+          this.modes[port] = g[count * 4 + 1]!;
+          this.changed();
+          return null;
+        }
+        const values = floats(g, 0, count);
+        return values.every(Number.isFinite) ? pick(chan.decode(values).value) : null;
+      },
+    };
+  }
+
+  /** The end of a loop: brakes every port it drove (and `devices`), ahead of the queue, and releases them. */
+  private endLoop(devices: string[]): Promise<void> {
+    return this.guard(async () => {
+      const ports = new Set(this.looped);
+      for (const d of devices) {
+        const { spec, local } = await this.lookup(d);
+        if (spec.kind === "motor") ports.add(outputIndex(local as OutputPort));
+      }
+      try {
+        const mask = [...ports].reduce((m, i) => m | (1 << i), 0);
+        if (mask) await this.link.command(outputStop(mask, true), 0, { urgent: true });
+      } catch (e) {
+        // dropped by a stop() that brakes every port itself: the brake is done all the same
+        if (!(e instanceof Ev3Error && e.code === "stopped")) throw e;
+      } finally {
+        for (const i of ports) {
+          this.powered[i] = { pct: 0, until: 0 };
+          if (this.running.get(i) === this.loopClaim) this.running.delete(i);
+        }
+        this.looped.clear();
+        this.loopHalted = false;
+      }
+    });
+  }
+
   // ------------------------------------------------------------- stop
 
   /** A3 brake on the given outputs ahead of the queue, then A8/A9 until every one reads speed 0 and not busy, or the settle window ends. */
@@ -1577,6 +1843,7 @@ export class Ev3Provider implements Provider {
   stop(): Promise<{ motors_stopped: boolean }> {
     return this.guard(async () => {
       for (const r of new Set(this.running.values())) r.abort(true);
+      for (const p of this.powered) p.until = 0;
       // Everything queued goes, urgent commands of running operations included: stop brakes all ports itself.
       this.link.dropQueued(true);
       return { motors_stopped: await this.brakeVerified([0, 1, 2, 3]) };
