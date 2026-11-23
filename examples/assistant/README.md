@@ -5,7 +5,7 @@ A robot that helps one person with one thing: it reminds your grandmother of her
 | File | What it is |
 |---|---|
 | [`assistant.md`](assistant.md) | **The only file you edit.** Who the assistant is, who it helps, its mission, its rules |
-| [`missions/`](missions) | Three more assistants to copy from: a waiter, a plant alert, a guard |
+| [`missions/`](missions) | Six more assistants to copy from: a waiter, a plant alert, a guard, and three that use a page as eyes, ears and voice: a pill reminder that speaks and listens, a door watcher, a robot you move with your voice |
 | [`agent.ts`](agent.ts) | The program: it gives Claude your file and the robot's tools, and passes messages in and out. Read it top to bottom to see how an agent is made |
 | [`setup.ts`](setup.ts) | The plumbing: the command line, reading `assistant.md`, the cost line |
 
@@ -175,7 +175,60 @@ Save the file and start the program again. A title that is missing or empty stop
 
 The model is the line `export const MODEL = "claude-opus-5-5";` at the top of `agent.ts`.
 
-## 6. Stop the robot
+## 6. Eyes, ears and voice
+
+A browser page can lend the robot the camera, the microphone, the speaker and the screen of this computer: the robot sees, listens, speaks and shows a face. The page is spinecord's [peripheral page](../../docs/peripheral-pages.md). The three missions in Spanish use it:
+
+| File | What it does |
+|---|---|
+| [`missions/pill-voice.md`](missions/pill-voice.md) | Luz drives to the chair, says the pill out loud and listens for "ya me la tomé", "ya" or "después". No answer: it asks once more, then says it will come back |
+| [`missions/door.md`](missions/door.md) | Portero watches the door with its distance sensor and the page's button 1. When someone comes, it looks once through the camera, greets them and shows a happy face |
+| [`missions/voice-commands.md`](missions/voice-commands.md) | Eco listens for one order ("adelante", "atrás", "izquierda", "derecha", "para") and makes one small move: 10 cm or 45 degrees, and `stop` on "para". One order per chat message (`escucha`): a run of three orders in one turn passed the turn's 15 steps |
+
+**Start it.** A mission says it needs a page with one line under `## My robot`, the language the page listens and speaks in:
+
+```text
+## My robot
+
+Page: es-ES
+```
+
+Then start the program as always:
+
+```sh
+bun agent.ts --mission missions/pill-voice.md
+```
+
+The program starts the page listener of the spinecord server (`--pages`) and prints the link to open:
+
+```text
+Luz uses a page as its eyes, ears and voice. On this computer open this link in Chrome or Edge:
+  http://127.0.0.1:8768/#robot=r1-sim&lang=es-ES
+and tap "Lend this device". Waiting for the page (press Enter to go on without it)...
+The page desk joined r1-sim: camera, microphone, speaker, touch_panel, display.
+```
+
+1. Open the link in Chrome or Edge on this computer.
+2. Tap **Lend this device**. The browser asks for the camera and the microphone; allow them. A device you refuse is left out, and the assistant is told so.
+3. The program says the page joined. Talk to the assistant in the chat (step 3), for example `haz tu misión ahora`; it answers through the page's speaker and listens through its microphone.
+
+With robot flags after `--`, the page joins that robot: `bun agent.ts --mission missions/door.md -- --ev3`. A phone joins through the server's `--lan`: see [Pairing a phone](../../docs/peripheral-pages.md#pairing-a-phone---lan).
+
+**The language.** The page listens and speaks in the language of the link (`#lang=`), which comes from the `Page:` line; a `listen` or `speak` that names its own `lang` uses that one. Spanish is `es-ES`; for the Spanish of another country write its tag, for example `Page: es-MX` or `Page: es-AR`. For English: `Page: en-US`. The voices the browser has for that language are what the assistant sees in `describe_device`.
+
+**The privacy banner.** While the page lends the camera or the microphone, a red banner on the page says so. It flashes on each photo and says "listening…" for the whole of a `listen`. **Pause** makes the page stop answering until **Resume**; **Stop lending** closes the camera and the microphone. Nothing is stored: a photo or a phrase goes only to the assistant, in the answer of the call that asked for it. The assistant's instructions tell it to read a photo only when it must look and to listen only when it waits for an answer.
+
+**What was checked.** `listen` uses the browser's speech service, which works in Chrome and Edge; on desktop it may send the audio to the browser maker's service, and the banner says so. In this repository `listen` has not yet been checked against real speech: the tests and the runs below use a fake page with scripted phrases (`bun test`, and `bun test/real-run.ts`, which runs one mission with Claude against the twin and that fake page).
+
+Three runs of 2026-11-23 against the twin and the fake page, paid with A (the tool lines, then what the page was told):
+
+| Mission | Tools | What the page said and showed | Cost |
+|---|---|---|---|
+| `pill-voice.md`, the fake hears "ya me la tomé" | 14 calls: discovery, one `drive`, `speak`, `listen`, `speak`, `face` | "Carmen, esto es una práctica." "Carmen, es hora de tu pastilla azul, con el desayuno." "Muy bien, Carmen." and a happy face | $0.18 |
+| `door.md`, button 1 pressed | 11 calls: discovery, `wait_until` met by the button, one frame, `speak`, `face` | "Hola, ya te atienden." and a happy face | $0.09 |
+| `voice-commands.md`, the fake hears "adelante" | 9 calls: discovery, `listen`, `drive` 10 cm at speed 20, `speak` | "Listo" | $0.09 |
+
+## 7. Stop the robot
 
 | What you do | What happens |
 |---|---|
@@ -186,7 +239,7 @@ The model is the line `export const MODEL = "claude-opus-5-5";` at the top of `a
 
 `Ctrl+C` is the way to stop when you are in a hurry: the program waits for Claude about 10 s at most, and the robot stops at once, because the spinecord server stops every motor on `SIGINT` and when its input closes. On a real robot keep a hand near it on a first run; what spinecord does when the cable or the network goes away is in [Stopping the robot](../../README.md#stopping-the-robot).
 
-## 7. A real robot
+## 8. A real robot
 
 Everything after a lone `--` goes to the spinecord server and chooses the robot:
 
@@ -219,4 +272,4 @@ The program ends at the first turn that reaches `--max-usd`, and that turn can p
 
 ## What the agent may do
 
-`agent.ts` gives Claude one MCP server, spinecord, and nothing else: none of Claude Code's tools for files, the shell or the web exist for this agent, every message reaches Claude as written (`verbatimPrompts`), so an `@file` mention does not bring a file of your computer in, the settings and memory of your computer are not loaded, and a tool call that would need a question to a person is denied. Each turn is bounded to 15 steps. The tests in [`test/`](test) check that options object and never call Claude: `bun test`.
+`agent.ts` gives Claude one MCP server, spinecord, and nothing else: none of Claude Code's tools for files, the shell or the web exist for this agent, every message reaches Claude as written (`verbatimPrompts`), so an `@file` mention does not bring a file of your computer in, the settings and memory of your computer are not loaded, and a tool call that would need a question to a person is denied. Each turn is bounded to 15 steps. The tests in [`test/`](test) check that options object, the page listener and the page missions step by step against the twin and a fake page, and never call Claude: `bun test`.
