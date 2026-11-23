@@ -220,6 +220,8 @@ export function createKit(o: KitOptions): Kit {
   let retry: ReturnType<typeof setTimeout> | null = null;
   let trying = false;
   let closing = false;
+  /** A beforeRejoin that outlasted prepare_ms settled after the hello: the manifest is sent again once welcomed. */
+  let lateManifest = false;
 
   const status = (): KitStatus => ({
     state,
@@ -370,6 +372,10 @@ export function createKit(o: KitOptions): Kit {
       if (retry) clearTimeout(retry);
       retry = null;
       to("lending");
+      if (lateManifest) {
+        lateManifest = false;
+        kit.announce();
+      }
       // every pushed channel has a value from the start: a read before the first push is an error otherwise
       for (const [device, values] of latest) if (announced.has(device)) sendState(device, values);
       // a page that joined again starts afresh on the process: what is down and the person's pause are said again
@@ -477,10 +483,15 @@ export function createKit(o: KitOptions): Kit {
     let cap: ReturnType<typeof setTimeout> | undefined;
     try {
       const left = away.since + windowMs - now();
-      await Promise.race([
-        o.beforeRejoin?.().catch(() => {}),
-        new Promise((r) => (cap = setTimeout(r, Math.max(0, Math.min(prepareMs, left))))),
-      ]);
+      let settled = false;
+      const prepared = (o.beforeRejoin?.() ?? Promise.resolve()).catch(() => {}).then(() => void (settled = true));
+      await Promise.race([prepared, new Promise((r) => (cap = setTimeout(r, Math.max(0, Math.min(prepareMs, left)))))]);
+      // what it took back after the hello went out is announced then, or after the welcome
+      if (!settled)
+        void prepared.then(() => {
+          if (joined()) kit.announce();
+          else lateManifest = true;
+        });
     } finally {
       clearTimeout(cap);
       trying = false;

@@ -293,6 +293,28 @@ describe("joining again after the socket closed", () => {
     expect(after.some((m) => m.t === "down" && m.device === "camera")).toBe(false);
   });
 
+  test("a camera that comes back after the hello is announced after the welcome, with its torch", async () => {
+    const r = rig(PHONE, { delays_ms: [10_000], window_ms: 30_000, prepare_ms: 30 });
+    await r.join("phone");
+    r.setVisible(false);
+    r.browser.video.end();
+    r.sock().closeFromServer(1006, "");
+    r.browser.holdMedia();
+    r.setVisible(true);
+    await r.opened(2, 500);
+    r.sock().open();
+    expect(r.hello().devices.map((d) => d.id)).not.toContain("torch");
+    r.welcome("phone");
+    r.browser.releaseMedia();
+    await tick(10);
+    const last = r
+      .sock()
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!;
+    expect(last.devices.map((d: PageDevice) => d.id)).toEqual(expect.arrayContaining(["camera", "torch"]));
+  });
+
   test("the wake lock is kept while the page waits to join again", async () => {
     const r = rig();
     await r.join();

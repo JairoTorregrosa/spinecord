@@ -143,6 +143,7 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
   let audioCalls = 0;
   let refuseAgain: string | null = null;
   let holdMedia = false;
+  const heldMedia: (() => void)[] = [];
   const permissionStates: Record<string, string> = {};
   const winListeners: Partial<Record<MotionEventType, ((ev: any) => void)[]>> = {};
   const vibrations: (number | number[])[] = [];
@@ -287,7 +288,8 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
         : {
             mediaDevices: {
               async getUserMedia(c) {
-                if (holdMedia) return new Promise(() => {}); // a prompt nobody answers
+                // a prompt nobody answers yet: the call goes on at releaseMedia()
+                if (holdMedia) await new Promise<void>((r) => heldMedia.push(r));
                 if (c.video) {
                   asked.push("camera");
                   const how = refuseAgain && videoCalls > 0 ? refuseAgain : (o.camera ?? "allow");
@@ -411,9 +413,14 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
     refuseAgain(name = "NotAllowedError") {
       refuseAgain = name;
     },
-    /** Further getUserMedia calls never settle (a prompt nobody answers). */
+    /** Further getUserMedia calls wait, unsettled, until releaseMedia() (a prompt nobody answers yet). */
     holdMedia() {
       holdMedia = true;
+    },
+    /** The held getUserMedia calls go on. */
+    releaseMedia() {
+      holdMedia = false;
+      heldMedia.splice(0).forEach((r) => r());
     },
     /** What navigator.permissions.query answers for a name from then on. */
     permission(name: "camera" | "microphone", state: "granted" | "denied" | "prompt") {
