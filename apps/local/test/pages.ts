@@ -104,6 +104,43 @@ export const FAKE_DEVICES: PageDevice[] = [
   },
 ];
 
+/** A screen for a fake that shows faces and text: add it to `devices`. Its commands are recorded in `shown`. */
+export const FAKE_SCREEN: PageDevice = {
+  id: "screen",
+  kind: "display",
+  roles: ["face"],
+  description: "The screen of this test page; it records what it is told to show.",
+  channels: [{ name: "showing", type: "string", pushed: true, description: "What the screen shows." }],
+  commands: [
+    {
+      name: "face",
+      description: "Shows a face.",
+      params: closedObject(
+        { expression: { type: "string", enum: ["neutral", "happy", "sad", "thinking", "listening", "speaking"] } },
+        ["expression"],
+      ),
+      bound: { kind: "instant", max: 0 },
+      moves: false,
+    },
+    {
+      name: "text",
+      description: "Shows lines of text.",
+      params: closedObject({ lines: { type: "array", items: { type: "string", maxLength: 40 }, maxItems: 4 } }, [
+        "lines",
+      ]),
+      bound: { kind: "instant", max: 0 },
+      moves: false,
+    },
+    {
+      name: "clear",
+      description: "Clears the screen.",
+      params: closedObject({}),
+      bound: { kind: "instant", max: 0 },
+      moves: false,
+    },
+  ],
+};
+
 export interface FakePageOptions {
   /** The page's address, as list_robots' join names it: http://127.0.0.1:<port>/, or a join link with the token in
    * its fragment (#t=<token>), as the network listener's QR code carries it. */
@@ -131,6 +168,8 @@ export interface FakePage {
   /** Resolves when the socket closed: the code and the reason the server gave. */
   closed: Promise<{ code: number; reason: string }>;
   spoken: string[];
+  /** What the screen of FAKE_SCREEN was told to show: "face happy", "text Hola", "clear". */
+  shown: string[];
   received: ServerToPage[];
   press(): void;
   release(): void;
@@ -166,6 +205,7 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
   const devices = o.devices ?? FAKE_DEVICES;
   const received: ServerToPage[] = [];
   const spoken: string[] = [];
+  const shown: string[] = [];
   let silent = false;
   let presses = 0;
   const send = (m: PageToServer) => ws.send(JSON.stringify(m));
@@ -240,6 +280,17 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
         result: { measured: { heard: transcript !== "", transcript, confidence: 0.9, match }, reason: "completed" },
       });
     }
+    if (m.device === "screen" && ["face", "text", "clear"].includes(m.command)) {
+      const what =
+        m.command === "face"
+          ? `face ${m.args.expression}`
+          : m.command === "text"
+            ? `text ${(m.args.lines as string[]).join(" / ")}`
+            : "clear";
+      shown.push(what);
+      send({ t: "state", device: "screen", values: { showing: what } });
+      return send({ t: "res", id: m.id, ok: true, result: { measured: {}, reason: "completed" } });
+    }
     if (m.command === "configure")
       return send({ t: "res", id: m.id, ok: true, result: { measured: {}, reason: "completed" } });
     send({ t: "res", id: m.id, ok: false, error: { code: "unknown_command", message: `no ${m.command}` } });
@@ -248,6 +299,7 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
     joined,
     closed,
     spoken,
+    shown,
     received,
     press() {
       send({ t: "state", device: "touch", values: { b1: true, b1_presses: ++presses } });

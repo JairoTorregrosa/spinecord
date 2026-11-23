@@ -7,6 +7,10 @@
 //   4. THE LOOP             send a message, print what Claude says and does, print what it cost.
 //   5. THE END              every way out stops the robot first.
 //
+// A mission with a "Page:" line under "## My robot" also gets eyes, ears and a voice: a browser page that lends
+// the robot its camera, microphone, speaker, screen and buttons. The program starts the page listener, prints
+// the link to open, and waits until the page has joined (lendPage below).
+//
 // Run it:  bun agent.ts            chat
 //          bun agent.ts --every 60 autonomous, one wake-up a minute
 //          bun agent.ts --help     every option
@@ -14,23 +18,31 @@
 // The agent loop itself (Claude thinks, calls a tool, reads the result, thinks again) lives in the Claude
 // Agent SDK. This file only configures it and passes messages in and out.
 import { type Options, query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { resolve } from "node:path";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
   activeProfile,
   antConfigDir,
   checkEnv,
   costLine,
+  joinedPage,
   localTime,
   type Mission,
+  pageLink,
+  pageListener,
   paidBy,
   parseArgs,
   readChatLine,
   readMission,
+  ServerLog,
   type Settings,
   Spend,
   UsageError,
   USAGE,
+  watchLog,
+  withPages,
 } from "./setup.ts";
 
 /** The Claude model that thinks for the robot. Change it here, for example to "claude-haiku-5-5" (cheaper). */
@@ -41,6 +53,9 @@ export const MAX_STEPS_PER_TURN = 15;
 
 /** How long the start may wait for Claude Code to say which login it uses, in ms. */
 const ACCOUNT_WAIT_MS = 30_000;
+
+/** How long the start may wait for the spinecord server to say where the page is served, in ms. */
+export const LISTENER_WAIT_MS = 30_000;
 
 /** How long the end may wait for Claude to let go of a turn, in ms. */
 const PATIENCE_MS = 5000;
@@ -74,6 +89,12 @@ Two kinds of message reach you:
 You remember this whole conversation. Before you act on a tick, check what you already did, so that you never do the same thing twice.
 
 Write plain text for a terminal, without markdown. Be brief: three sentences at most, unless the person asks for more.
+
+Your robot may have devices that a browser page lends it: a camera (eyes), a microphone (ears), a speaker (voice), a screen (face) and buttons (touch). describe_robot lists the pages and their devices. Three habits with them:
+- Read what a page lends before you use it: describe_robot for its devices, describe_device for a command's arguments, languages and voices. Use only what is there, and say so when something your notes need is missing.
+- Speak short: one sentence per speak, in the language of your notes.
+- Never keep the camera or the microphone on without need: read a frame only when you must look, listen only when you wait for an answer, and never more than the time your notes give.
+If a page device answers device_offline, tell the person in the chat what its message says, then try once more.
 
 ----- the owner's notes -----
 ${mission.text}`;
@@ -176,6 +197,63 @@ export async function autonomous(clock: Clock): Promise<void> {
   }
 }
 
+/** What lendPage needs: the server's log, the page's language, and the ways the wait ends besides the join. */
+export type Lend = {
+  log: ServerLog;
+  lang: string;
+  name: string;
+  print: (line: string) => void;
+  /** Resolves when the person types a line: the assistant goes on without waiting for the page. */
+  typed: Promise<unknown>;
+  /** Resolves when the program is stopping. */
+  stopped: Promise<unknown>;
+  listenerWaitMs?: number;
+};
+
+/**
+ * Eyes, ears and voice: reads on the server's log where the page is served, prints the link to open, and waits
+ * until a page has joined the robot, the person types a line, or the program stops. Throws when the server does
+ * not say where the page is served in time, or when its robots take no pages.
+ */
+export async function lendPage(lend: Lend): Promise<"joined" | "typed" | "stopped"> {
+  const { log, print } = lend;
+  const waitMs = lend.listenerWaitMs ?? LISTENER_WAIT_MS;
+  let stopping = false;
+  void lend.stopped.then(() => (stopping = true));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise((resolve) => (timer = setTimeout(resolve, waitMs)));
+  // the server writes one "robot" line per robot, then "ready"
+  const ready = await watchLog(
+    log,
+    (events) => (events.some((e) => e.ev === "ready") ? events : null),
+    Promise.race([late, lend.stopped]),
+  );
+  clearTimeout(timer);
+  if (ready === null) {
+    if (stopping) return "stopped";
+    throw new Error(
+      `The spinecord server did not say where the page is served within ${waitMs / 1000} s (its log: ${log.path}).`,
+    );
+  }
+  const listener = pageListener(ready);
+  if (listener === null)
+    throw new Error(
+      `${lend.name} needs a page, but no robot of the spinecord server takes pages: with --config, add "pages": {} to that file.`,
+    );
+  print(`${lend.name} uses a page as its eyes, ears and voice. On this computer open this link in Chrome or Edge:`);
+  print(`  ${pageLink(listener, lend.lang)}`);
+  print(`and tap "Lend this device". Waiting for the page (press Enter to go on without it)...`);
+  const ended = Promise.race([lend.typed.then(() => "typed" as const), lend.stopped.then(() => "stopped" as const)]);
+  const page = await watchLog(log, (events) => joinedPage(events, listener.robot), ended);
+  if (page !== null) {
+    print(`The page ${page.name} joined ${listener.robot}: ${page.kinds.join(", ")}.`);
+    return "joined";
+  }
+  const why = await ended;
+  if (why === "typed") print(`Going on without a page: ${lend.name} can get one later through the same link.`);
+  return why;
+}
+
 /** The parts of an SDK session the end uses. */
 export type Session = { interrupt: () => Promise<unknown>; close: () => void };
 
@@ -207,12 +285,17 @@ export async function endSession(end: {
 // ---------------------------------------------------------------- 3, 4, 5: the program
 
 async function main(): Promise<number> {
-  const settings = parseArgs(process.argv.slice(2));
-  if (settings.help) {
+  const asked = parseArgs(process.argv.slice(2));
+  if (asked.help) {
     console.log(USAGE);
     return 0;
   }
-  const mission = readMission(settings.missionFile ?? DEFAULT_MISSION_FILE);
+  const mission = readMission(asked.missionFile ?? DEFAULT_MISSION_FILE);
+  // a mission with a page: the server also listens for the page, and writes a log this program reads
+  const ownLog = join(tmpdir(), `spinecord-assistant-${process.pid}-${Date.now()}.jsonl`);
+  const paged = mission.page ? withPages(asked.robotFlags, ownLog) : null;
+  const settings: Settings = paged ? { ...asked, robotFlags: paged.robotFlags } : asked;
+  const serverLog = paged ? new ServerLog(paged.logFile) : null;
   checkRobotFlags(settings.robotFlags);
   // a profile under a key or a token would not pay: that stops the start before Claude Code runs
   checkEnv(process.env);
@@ -360,21 +443,42 @@ async function main(): Promise<number> {
     stop("the chat is closed");
   };
 
-  void (
-    stopped
-      ? Promise.resolve()
-      : settings.mode.kind === "chat"
-        ? chat()
-        : autonomous({
-            name: mission.name,
-            everySeconds: settings.mode.everySeconds,
-            forMinutes: settings.mode.forMinutes,
-            takeTurn,
-            stop,
-            untilStopped,
-            isStopped: () => stopped !== null,
-          })
-  ).catch((error) => stop(`the program failed: ${error instanceof Error ? error.message : String(error)}`, true));
+  /** The page, when the mission has one: the link is printed and the start waits for the join or a typed line. */
+  const page = async (): Promise<void> => {
+    if (!mission.page || !serverLog) return;
+    const reader = keyboard ?? createInterface({ input: process.stdin });
+    try {
+      await lendPage({
+        log: serverLog,
+        lang: mission.page.lang,
+        name: mission.name,
+        print: (line) => console.log(line),
+        typed: new Promise((resolve) => reader.once("line", resolve)),
+        stopped: untilStopped,
+      });
+    } finally {
+      if (reader !== keyboard) reader.close();
+    }
+  };
+
+  const start = async (): Promise<void> => {
+    await page();
+    if (stopped) return;
+    if (settings.mode.kind === "chat") return chat();
+    return autonomous({
+      name: mission.name,
+      everySeconds: settings.mode.everySeconds,
+      forMinutes: settings.mode.forMinutes,
+      takeTurn,
+      stop,
+      untilStopped,
+      isStopped: () => stopped !== null,
+    });
+  };
+
+  void (stopped ? Promise.resolve() : start()).catch((error) =>
+    stop(`the program failed: ${error instanceof Error ? error.message : String(error)}`, true),
+  );
 
   // ---- 5. THE END. One path for Ctrl+C, the budget, --for, "bye" and every error.
   const { why, failed } = await untilStopped;
@@ -390,6 +494,12 @@ async function main(): Promise<number> {
     reading,
     patienceMs: PATIENCE_MS,
   });
+  if (paged?.logFile === ownLog)
+    try {
+      rmSync(ownLog, { force: true, maxRetries: 3, retryDelay: 200 });
+    } catch (error) {
+      console.log(`The server log ${ownLog} stays: ${error instanceof Error ? error.message : String(error)}`);
+    }
   console.log(
     `${mission.name} is off. ${turn} turn(s), $${spend.total.toFixed(4)} in total (an estimate of the SDK, not a bill).`,
   );

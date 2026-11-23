@@ -1,8 +1,8 @@
 // The plumbing around the agent: the command line, assistant.md, and the numbers printed after each turn.
 // Nothing here talks to Claude or to the robot; agent.ts does that.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 // ---------------------------------------------------------------- the command line
 
@@ -102,7 +102,12 @@ export type Mission = {
   name: string;
   /** the whole file, as the person wrote it: this is what Claude reads */
   text: string;
+  /** the line "Page: <language>" under "## My robot": the robot's eyes, ears and voice are a browser page. null: no page */
+  page: { lang: string } | null;
 };
+
+/** A language tag as browsers take it: es-ES, es-MX, en-US, pt-BR, fr. */
+const LANGUAGE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 
 export function parseMission(text: string, file: string): Mission {
   const bodies = new Map<string, string[]>();
@@ -119,7 +124,17 @@ export function parseMission(text: string, file: string): Mission {
       `${file}: ${missing.map((title) => `"## ${title}"`).join(", ")} ${missing.length === 1 ? "is" : "are"} missing or empty. ` +
         `An assistant file has these titles, each with some words under it: ${SECTIONS.map((t) => `"## ${t}"`).join(", ")}.`,
     );
-  return { name: bodies.get("Name")![0]!, text: text.trim() };
+  const pageLine = bodies.get("My robot")!.find((line) => /^page\s*:/i.test(line));
+  let page: Mission["page"] = null;
+  if (pageLine !== undefined) {
+    const lang = pageLine.replace(/^page\s*:/i, "").trim();
+    if (!LANGUAGE.test(lang))
+      throw new Error(
+        `${file}: the line "${pageLine}" under "## My robot" needs the language the page listens and speaks in, for example "Page: es-ES".`,
+      );
+    page = { lang };
+  }
+  return { name: bodies.get("Name")![0]!, text: text.trim(), page };
 }
 
 export function readMission(file: string): Mission {
@@ -369,4 +384,117 @@ const two = (n: number) => String(n).padStart(2, "0");
 /** The computer's local date and time, the same on every system: "Sunday 2026-11-22 18:05". */
 export function localTime(now: Date): string {
   return `${DAYS[now.getDay()]} ${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())} ${two(now.getHours())}:${two(now.getMinutes())}`;
+}
+
+// ---------------------------------------------------------------- the page: eyes, ears and voice
+//
+// A mission with a "Page:" line gets a page listener: the spinecord server's --pages. The server says on its log
+// (--log-file) where the page is served and when a page has joined; the program reads that file, because the
+// server itself is started by Claude Code and its stderr does not reach this program.
+
+/** The repository root: the spinecord server takes a relative path on its command line from there. */
+const REPO = resolve(import.meta.dir, "..", "..");
+
+const flagValue = (flags: string[], name: string): string | undefined => {
+  const i = flags.findIndex((f) => f === name || f.startsWith(`${name}=`));
+  if (i < 0) return undefined;
+  return flags[i] === name ? flags[i + 1] : flags[i]!.slice(name.length + 1);
+};
+const hasFlag = (flags: string[], name: string) => flags.some((f) => f === name || f.startsWith(`${name}=`));
+
+/** A path of the server's command line as the server reads it: as it is, from the home folder (~), or from the repository. */
+export function serverPath(path: string, home: string = homedir()): string {
+  if (path.startsWith("~/") || path.startsWith("~\\")) return join(home, path.slice(2));
+  return isAbsolute(path) ? path : resolve(REPO, path);
+}
+
+/**
+ * The robot flags with the page listener on, and the server log the program reads. No flags: the twin and a page
+ * (--pages alone would start only the robot without a body). A --log-file the person gave is kept and read.
+ */
+export function withPages(robotFlags: string[], ownLogFile: string): { robotFlags: string[]; logFile: string } {
+  const flags = robotFlags.length === 0 ? ["--twin"] : [...robotFlags];
+  // a --config file says itself whether its robots take pages; the start checks it on the server's log
+  if (!hasFlag(flags, "--pages") && !hasFlag(flags, "--config")) flags.push("--pages");
+  const given = flagValue(flags, "--log-file");
+  if (given !== undefined) return { robotFlags: flags, logFile: serverPath(given) };
+  return { robotFlags: [...flags, "--log-file", ownLogFile], logFile: ownLogFile };
+}
+
+/** One JSON line of the server's log: {"ev": ..., ...fields}. */
+export type LogEvent = { ev: string } & Record<string, unknown>;
+
+/** The lines the server appends to its log file once this reader exists. Lines already in it (an earlier run) are skipped. */
+export class ServerLog {
+  private offset: number;
+  private rest = "";
+  readonly events: LogEvent[] = [];
+  constructor(readonly path: string) {
+    this.offset = existsSync(path) ? statSync(path).size : 0;
+  }
+  /** Reads what was appended since the last call and returns every event so far. */
+  read(): LogEvent[] {
+    if (!existsSync(this.path)) return this.events;
+    const all = readFileSync(this.path);
+    if (all.length < this.offset) this.offset = 0; // the file was emptied: read it from the start
+    const parts = (this.rest + all.subarray(this.offset).toString("utf8")).split(/\r?\n/);
+    this.offset = all.length;
+    this.rest = parts.pop() ?? "";
+    for (const line of parts) {
+      if (!line.startsWith("{")) continue;
+      try {
+        const event = JSON.parse(line) as LogEvent;
+        if (typeof event.ev === "string") this.events.push(event);
+      } catch {
+        // not a log line
+      }
+    }
+    return this.events;
+  }
+}
+
+/** Where a page joins: the address the server serves it on, and the robot it should join. */
+export type PageListener = { url: string; robot: string };
+
+/**
+ * From the server's "robot" lines: the address of the page and the robot it joins. A robot with a body comes
+ * first, because the page lends its eyes, ears and voice to the robot that drives; else the robot without a body.
+ */
+export function pageListener(events: LogEvent[]): PageListener | null {
+  const robots = events.filter((e) => e.ev === "robot" && typeof e.join === "string");
+  const robot = robots.find((e) => e.backend !== "page") ?? robots[0];
+  const url = typeof robot?.join === "string" ? robot.join.match(/https?:\/\/\S+?\//)?.[0] : undefined;
+  return robot && url ? { url, robot: String(robot.id) } : null;
+}
+
+/** The link the person opens: the page's address with the robot and the language in its fragment. */
+export function pageLink(listener: PageListener, lang: string): string {
+  return `${listener.url}#robot=${encodeURIComponent(listener.robot)}&lang=${encodeURIComponent(lang)}`;
+}
+
+/** A page joined the robot and answered: the server's "page" line that says so, or null. */
+export function joinedPage(events: LogEvent[], robot: string): { name: string; kinds: string[] } | null {
+  const joined = events.find((e) => e.ev === "page" && e.robot_id === robot && e.to === "active");
+  if (!joined) return null;
+  return { name: String(joined.name), kinds: Array.isArray(joined.kinds) ? joined.kinds.map(String) : [] };
+}
+
+/** Reads the log every pollMs until `found` returns a value, or `ended` settles first (the program is stopping). */
+export async function watchLog<T>(
+  log: ServerLog,
+  found: (events: LogEvent[]) => T | null,
+  ended: Promise<unknown>,
+  pollMs = 200,
+): Promise<T | null> {
+  let over = false;
+  void ended.then(
+    () => (over = true),
+    () => (over = true),
+  );
+  while (!over) {
+    const value = found(log.read());
+    if (value !== null) return value;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return null;
 }
