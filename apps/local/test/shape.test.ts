@@ -36,6 +36,15 @@ describe("the arm example: no pair, no drivetrain", () => {
     expect(heading("ev3 S2")).toThrow("profile.drivetrain.heading.device must be a role");
     expect(heading("gyro")().profile.drivetrain!.heading!.device).toBe("gyro");
     expect(heading("ev3.S2")().profile.drivetrain!.heading!.device).toBe("ev3.S2");
+    // hardware.ir_channel: the infrared remote's channel, 1-4, absent = 1
+    const ir = (v: unknown) => {
+      const f = structuredClone(base);
+      f.hardware.ir_channel = v;
+      return () => parseRobotFile(f, "x.json");
+    };
+    expect(ir(3)().hardware.ir_channel).toBe(3);
+    expect(parseRobotFile(base, "x.json").hardware.ir_channel).toBeUndefined();
+    for (const bad of [0, 5, 2.5, "2"]) expect(ir(bad)).toThrow("x.json: hardware.ir_channel must be 1, 2, 3 or 4");
   });
 
   test("as a twin (--twin arm.json): drivetrain null, no pair device, drive unsupported, each motor moves", async () => {
