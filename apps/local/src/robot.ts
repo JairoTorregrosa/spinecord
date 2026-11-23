@@ -2,6 +2,7 @@
 // and an activity. Both follow the transition tables of protocol/types.ts, asserted on every transition.
 //   link      offline → handshaking → online → offline
 //   activity  idle → acting | running_program → idle        one moving call at a time; a second one gets `busy`
+//             idle → looping → stopping → idle | fault       run_loop; every end of the loop takes the path of stop
 //             any → stopping → idle | fault                  stop preempts everything and is verified
 //             fault → idle                                   reset_fault, after a verified stop
 // Every check-and-claim happens before the first await, so calls sent in parallel cannot both win.
@@ -16,6 +17,10 @@ import {
   type RobotTool,
   type RuntimeResult,
 } from "../../../packages/protocol/types";
+import type { LoopEnd, LoopReport } from "../../../packages/protocol/types";
+import { type Clock, realClock } from "../../../packages/runtime/clock";
+import type { HostLoop } from "../../../packages/runtime/host-loop";
+import { LOOP_START_TICKS } from "../../../packages/runtime/host-loop";
 import type { LocalRuntime } from "../../../packages/runtime/runtime";
 
 /** A typed failure with what the envelope's error needs beyond the code. */
@@ -47,6 +52,35 @@ export interface RobotOptions {
   deadlineMarginMs?: number;
   /** The client cancelled a call in flight. */
   onCancel?: (tool: string, moving: boolean) => void;
+  /** A loop ended, whoever ended it (CONTRACT §6: the `loop_end` line). */
+  onLoopEnd?: (line: LoopEndLine) => void;
+  /** The clock of the attention window and of the backstop behind a loop. Default: real time. */
+  clock?: Clock;
+}
+/** What the log keeps of a loop that ended: no signal value and no trace. */
+export interface LoopEndLine {
+  ts: string;
+  robot_id: string;
+  reason: LoopEnd["reason"];
+  guard: string | null;
+  runs_on: LoopReport["runs_on"];
+  ticks: number;
+  overruns: number;
+  ms: number;
+}
+/**
+ * The robot's loop on this link. Its states are the executor's (running → ended); around it, this process keeps the
+ * attention window (a timer armed while no supervise_loop is pending) and the backstop (one timer from the start).
+ */
+interface LoopRecord {
+  loop: HostLoop;
+  /** supervise_loop calls in flight: while one is, the attention window is not counting. */
+  pending: number;
+  attention: AbortController | null;
+  backstop: AbortController;
+  /** Resolves once the loop has ended and the robot has taken the path of stop after it. */
+  settled: Promise<void>;
+  settle: () => void;
 }
 
 /** The life of a robot in its process. In `closing` and `closed` every call is refused; only the shutdown's own stop runs. */
@@ -88,10 +122,14 @@ export class LocalRobot {
   private resetRun: Promise<RuntimeResult> | null = null;
   /** The verified stop a reset_fault is running in the runtime; a stop waits for it, so the two never run side by side. */
   private resetVerify: Promise<unknown> | null = null;
+  /** The latest loop of this link: running while the robot is looping, its final report after. */
+  private loop: LoopRecord | null = null;
+  private readonly clock: Clock;
 
   constructor(private readonly o: RobotOptions) {
     this.id = o.id;
     this.connectBase = o.connect ?? null;
+    this.clock = o.clock ?? realClock;
   }
 
   // ---------- state ----------
@@ -184,6 +222,12 @@ export class LocalRobot {
     const rt = this.rt;
     this.rt = null;
     this.toLink("offline", why);
+    // the report is gone with the link; the brick ends the motion at hold_ms, and the next link's verified stop
+    // clears the fault
+    const loop = this.loop;
+    this.dropLoop();
+    if (this.activity === "looping") this.fault(`the link closed while a loop ran: ${why}`);
+    if (loop?.loop.running) void loop.loop.stop({ reason: "preempted" }).catch(() => {});
     if (rt) {
       // aborts every call in flight; the stop itself cannot reach the hardware any more
       void rt.stop().catch(() => {});
@@ -237,6 +281,8 @@ export class LocalRobot {
     const rt = this.online();
     if (tool === "stop") return { data: await this.stop() };
     if (tool === "reset_fault") return this.resetFault(rt);
+    if (tool === "run_loop") return this.runLoop(rt, args, cancel);
+    if (tool === "supervise_loop") return this.superviseLoop(args, cancel);
     const moving = this.moves(rt, tool, args);
     const reads = !moving && tool !== "command_device";
     if (!reads && this.activity === "fault")
@@ -244,14 +290,12 @@ export class LocalRobot {
         "fault",
         `Robot ${this.id} is in fault (${this.faultReason ?? "unknown reason"}). Read it (read_all), then call reset_fault.`,
       );
-    if (!moving) return this.bounded(rt, tool, args, null, cancel);
-    if (this.activity !== "idle")
-      throw new LocalError(
-        "busy",
-        `Robot ${this.id} is ${this.activity}: one moving call at a time. Wait for it to end, or call stop.`,
-        true,
-        BUSY_RETRY_MS,
-      );
+    if (!moving) {
+      if (this.activity === "looping" && tool === "command_device" && this.loopDrives(rt, args.device))
+        throw this.busy(`${String(args.device)} is driven by the loop`);
+      return this.bounded(rt, tool, args, null, cancel);
+    }
+    if (this.activity !== "idle") throw this.busy();
     // claimed synchronously: a call sent in parallel sees acting and gets busy
     let end!: () => void;
     const ended = new Promise<void>((resolve) => {
@@ -354,6 +398,186 @@ export class LocalRobot {
     }
   }
 
+  // ---------- loops ----------
+  /** `busy` for a call that cannot run in this activity; while looping it names the way to the loop. */
+  private busy(what?: string): LocalError {
+    const e =
+      this.activity === "looping"
+        ? new LocalError(
+            "busy",
+            `Robot ${this.id} is looping${what ? ` (${what})` : ""}: one loop or one moving call at a time. Read or steer the loop with supervise_loop, or end it with stop.`,
+            true,
+            BUSY_RETRY_MS,
+          )
+        : new LocalError(
+            "busy",
+            `Robot ${this.id} is ${this.activity}: one moving call at a time. Wait for it to end, or call stop.`,
+            true,
+            BUSY_RETRY_MS,
+          );
+    if (this.activity === "looping") e.next = ["supervise_loop", "stop"];
+    return e;
+  }
+  /** Is `name` (a device id or a role) a device the running loop drives? */
+  private loopDrives(rt: LocalRuntime, name: unknown): boolean {
+    const loop = this.loop?.loop;
+    if (!loop?.running || typeof name !== "string") return false;
+    const id = rt.profile().roles[name] ?? name;
+    const device = rt.devices().find((d) => d.id === id || d.roles.includes(name));
+    return loop.driven.includes(device?.id ?? id);
+  }
+  private disarm(): void {
+    const l = this.loop;
+    if (!l) return;
+    l.attention?.abort();
+    l.attention = null;
+    l.backstop.abort();
+  }
+  private dropLoop(): void {
+    this.disarm();
+    this.loop = null;
+  }
+  /** Restarts the attention window of a running loop that no supervise_loop is waiting on. */
+  private attend(l: LoopRecord): void {
+    l.attention?.abort();
+    l.attention = null;
+    if (!l.loop.running || l.pending > 0) return;
+    const window = new AbortController();
+    l.attention = window;
+    void this.clock.sleep(l.loop.plan.attention_ms, window.signal).then(() => {
+      if (window.signal.aborted || l.attention !== window || !l.loop.running) return;
+      void l.loop.stop({ reason: "unattended" });
+    });
+  }
+
+  /**
+   * run_loop: planned against the devices as they stand (a refusal sends nothing and leaves the robot idle), then
+   * idle → looping, then started, all before the first await. Answers after the loop's first ticks.
+   */
+  private async runLoop(rt: LocalRuntime, args: Record<string, unknown>, cancel?: AbortSignal): Promise<RuntimeResult> {
+    if (this.activity === "fault")
+      throw new LocalError(
+        "fault",
+        `Robot ${this.id} is in fault (${this.faultReason ?? "unknown reason"}). Read it (read_all), then call reset_fault.`,
+      );
+    if (this.activity !== "idle") throw this.busy();
+    const planned = rt.planLoop(args);
+    this.toActivity("looping", "run_loop");
+    let loop: HostLoop;
+    try {
+      loop = rt.startLoop(planned);
+    } catch (e) {
+      void this.stop().catch(() => {});
+      throw e;
+    }
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => (settle = resolve));
+    const l: LoopRecord = { loop, pending: 1, attention: null, backstop: new AbortController(), settled, settle };
+    this.loop = l;
+    // behind the loop: duration + 2 s + the stop's worst case, from its start
+    const margin = this.o.deadlineMarginMs ?? DEADLINE_MARGIN_MS;
+    void this.clock.sleep(loop.plan.duration_ms + margin + rt.stop_worst_ms, l.backstop.signal).then(() => {
+      if (!l.backstop.signal.aborted && loop.running) void loop.stop({ reason: "timeout" });
+    });
+    void loop.ended.then((end) => this.loopEnded(l, rt, end));
+    try {
+      // the start window: the first ticks, or the loop's end; behind it the backstop of every call
+      const window = LOOP_START_TICKS * loop.plan.period_ms + margin + rt.stop_worst_ms;
+      const late = new AbortController();
+      const first = await Promise.race([
+        loop.started.then(() => "started" as const),
+        this.clock.sleep(window, late.signal).then(() => "late" as const),
+        this.cancelled(cancel),
+      ]);
+      late.abort();
+      if (first === "cancelled") {
+        this.o.onCancel?.("run_loop", true);
+        if (this.loop === l && (this.activity as RobotActivity) === "looping") await this.stop().catch(() => {});
+      } else if (first === "late" && loop.running) {
+        await loop.stop({ reason: "timeout" });
+        await this.stop().catch(() => {});
+      }
+      // a loop that ended this early is reported with the robot in the state its stop left it in
+      if (!loop.running) await l.settled;
+      return { data: loop.report(), moved: true };
+    } finally {
+      l.pending--;
+      this.attend(l);
+    }
+  }
+
+  /** Resolves "cancelled" when the client cancels the call; never resolves without a signal. */
+  private cancelled(cancel?: AbortSignal): Promise<"cancelled"> {
+    return new Promise((resolve) => {
+      if (cancel?.aborted) resolve("cancelled");
+      else cancel?.addEventListener("abort", () => resolve("cancelled"), { once: true });
+    });
+  }
+
+  /** The loop ended by itself or was ended: the robot takes the path of stop, and the log has one line. */
+  private loopEnded(l: LoopRecord, rt: LocalRuntime, end: LoopEnd): void {
+    l.attention?.abort();
+    l.attention = null;
+    l.backstop.abort();
+    this.o.onLoopEnd?.({
+      ts: new Date().toISOString(),
+      robot_id: this.id,
+      reason: end.reason,
+      guard: end.guard ?? null,
+      runs_on: "host",
+      ...l.loop.counts(),
+    });
+    if (this.loop === l && this.activity === "looping" && this.rt === rt)
+      void this.stop()
+        .catch(() => {})
+        .then(l.settle);
+    else void (this.stopRun ?? Promise.resolve()).catch(() => {}).then(l.settle);
+  }
+
+  /** supervise_loop: the report, after the params are set and the wait has passed; it renews the attention window. */
+  private async superviseLoop(args: Record<string, unknown>, cancel?: AbortSignal): Promise<RuntimeResult> {
+    const l = this.loop;
+    if (!l)
+      throw Object.assign(
+        new LocalError(
+          "illegal_state",
+          `Robot ${this.id} has run no loop on this link (it is ${this.activity}). Start one with run_loop.`,
+        ),
+        { next: ["run_loop"] },
+      );
+    const params = (args.params ?? {}) as Record<string, number>;
+    const ramp = typeof args.ramp_ms === "number" ? args.ramp_ms : 0;
+    const wait = typeof args.wait_ms === "number" ? args.wait_ms : 0;
+    if (Object.keys(params).length && l.loop.running) l.loop.set(params, ramp);
+    l.pending++;
+    l.attention?.abort();
+    l.attention = null;
+    try {
+      if (wait > 0 && l.loop.running) {
+        const done = new AbortController();
+        const first = await Promise.race([
+          l.loop.ended.then(() => "ended" as const),
+          this.clock.sleep(wait, done.signal).then(() => "waited" as const),
+          this.cancelled(cancel),
+        ]);
+        done.abort();
+        if (first === "cancelled") {
+          this.o.onCancel?.("supervise_loop", true);
+          if (this.loop === l && this.activity === "looping") await this.stop().catch(() => {});
+        }
+      } else if (cancel?.aborted && this.loop === l && this.activity === "looping") {
+        this.o.onCancel?.("supervise_loop", true);
+        await this.stop().catch(() => {});
+      }
+      // an ended loop is reported with the robot in the state its stop left it in
+      if (!l.loop.running) await l.settled;
+      return { data: l.loop.report() };
+    } finally {
+      l.pending--;
+      this.attend(l);
+    }
+  }
+
   /** Brakes everything and aborts every call in flight. Never waits behind another call; a second stop joins the first. */
   stop(): Promise<{ motors_stopped: boolean; activity: RobotActivity }> {
     if (this.stopRun) return this.stopRun;
@@ -393,6 +617,7 @@ export class LocalRobot {
           why = "the motors read stopped, but the preempted call did not end";
         }
       }
+      this.disarm();
       // a verified stop does not clear a fault: reset_fault does
       if (!stopped) this.fault(why);
       else if (cameFromFault) this.fault(this.faultReason ?? "fault before the stop");

@@ -36,6 +36,8 @@ export const NEXT_OK: Record<string, string[]> = {
   stop: ["read_all", "describe_robot"],
   reset_fault: ["read_all", "drive"],
   run_program: ["read_all", "stop"],
+  run_loop: ["supervise_loop", "stop"],
+  supervise_loop: ["supervise_loop", "stop", "read_all"],
 };
 export const NEXT_ERR: Partial<Record<ErrorCode, string[]>> = {
   unknown_robot: ["list_robots"],
@@ -172,7 +174,7 @@ export async function callTool(
   }
 }
 
-const FACTS = ["reason", "outcome", "met", "motors_stopped", "activity"];
+const FACTS = ["state", "reason", "guard", "outcome", "met", "motors_stopped", "activity"];
 const LISTS = ["robots", "readings", "samples", "steps"];
 const MAX_MESSAGE = 200;
 /** Line 1 of the text block: what happened, for a reader that does not parse the JSON below it. Never a newline. */

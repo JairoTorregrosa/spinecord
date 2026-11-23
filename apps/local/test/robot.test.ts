@@ -18,7 +18,7 @@ const PROFILE: RobotProfile = {
   id: "m1",
   roles: {},
   notes: [],
-  limits: { max_speed_pct: 80, max_command_ms: 10000, max_program_ms: 20000 },
+  limits: { max_speed_pct: 80, max_command_ms: 10000, max_program_ms: 20000, max_loop_ms: 30000 },
   drivetrain: {
     type: "differential",
     pair_device: "mock.pair",

@@ -104,6 +104,42 @@ describe("a stock EV3 lent by the page", () => {
     expect(r.entry.page.status().socket).not.toBe("open");
   });
 
+  test("a loop over the page: one packet per tick; the socket closes mid-loop and the page brakes every motor", async () => {
+    const r = await rig();
+    r.entry.page = r.openPage();
+    await r.online();
+    const d = await r.tool("describe_robot");
+    expect(d).toMatchObject({ ok: true, data: { loop: { runs_on: "host", max_rate_hz: 50 } } });
+    const started = await r.tool("run_loop", {
+      rate_hz: 20,
+      duration_ms: 30000,
+      attention_ms: 120000,
+      signals: { left: { device: "left_wheel", channel: "position_deg" } },
+      params: { speed: 20 },
+      outputs: [{ device: "left_wheel", command: "run_time", terms: [{ feed: "speed" }] }],
+    });
+    expect(started).toMatchObject({ ok: true, robot: { activity: "looping" }, data: { state: "running", ticks: 20 } });
+    expect(r.usb.brick.motors[1]!.speedPct).toBe(20);
+    expect(r.usb.brick.overlaps).toBe(0);
+    // each tick: the refresh and the read in one direct command
+    const ticks = r.usb.brick.sent.filter((p) => p.opcodes.includes(OP.OUTPUT_TIME_SPEED));
+    expect(ticks.length).toBeGreaterThanOrEqual(19);
+    for (const p of ticks) expect(p.opcodes).toEqual([OP.OUTPUT_TIME_SPEED, OP.OUTPUT_GET_COUNT]);
+    const before = r.usb.brick.sent.length;
+    r.bridge.stop(); // the socket closes, as when the process is killed or the cable goes
+    await until("the page's brake to reach the brick", () =>
+      r.usb.brick.sent.slice(before).some((s) => s.type === 0x80 && s.packet[7] === OP.OUTPUT_STOP),
+    );
+    // and without it the brick ends the motion by itself hold_ms (3 periods) after the latest refresh
+    await until("the motor to stop", () => !r.usb.brick.busy());
+    await until("the robot to be offline", () => r.fleet.robots[0]!.view().link === "offline");
+    // the report is gone with the link, and the robot is in fault until a new link's verified stop
+    expect(r.fleet.robots[0]!.listing()).toMatchObject({ activity: "fault" });
+    expect(r.fleet.robots[0]!.listing().fault_reason).toContain("the link closed while a loop ran");
+    expect(await r.tool("supervise_loop")).toMatchObject({ ok: false, error: { code: "robot_offline" } });
+    await until("the loop's end to be logged", () => r.events.includes("loop_end"));
+  });
+
   test("the automatic open and the button together open the EV3 once", async () => {
     const r = await rig();
     const { hid } = fakeHid({ granted: [r.usb.device], chooser: [r.usb.device] });

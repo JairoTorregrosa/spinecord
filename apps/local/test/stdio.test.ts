@@ -28,7 +28,7 @@ describe("a twin behind stdio", () => {
 
   test("initialize names the server and carries its instructions", () => {
     expect(s.init.serverInfo.name).toBe("spinecord");
-    expect(s.init.instructions).toContain("One moving call at a time");
+    expect(s.init.instructions).toContain("One moving call or one loop at a time");
   });
 
   test("tools/list is the catalog, each tool with its outputSchema", () => {

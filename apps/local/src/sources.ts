@@ -3,20 +3,20 @@
 //   ev3dev   Ev3devProvider over the system ssh client; the robot starts offline and is connected in the
 //            background, at start and each time the link closes, until a link holds
 //   ev3      the real Ev3Provider over the bridge page's socket, built each time the page opens an EV3
-import { Ev3Provider } from "../../../packages/driver-ev3/provider";
+import { EV3_USB_LOOP_RATE_HZ, Ev3Provider } from "../../../packages/driver-ev3/provider";
 import type { Transport } from "../../../packages/driver-ev3/transport";
 import { RuntimeError } from "../../../packages/protocol/types";
 import { Ev3devProvider } from "../../../packages/driver-ev3dev/src/provider";
 import { SshLineTransport, installBridge } from "../../../packages/driver-ev3dev/src/ssh";
 import type { Clock } from "../../../packages/runtime/clock";
 import { createRuntime, type LocalRuntime } from "../../../packages/runtime/runtime";
-import { LARGE_DEG_S, SimBrick, drivetrainFromProfile } from "../../../packages/sim-ev3/brick";
+import { LARGE_DEG_S, SIM_BRICK_LOOP_RATE_HZ, SimBrick, drivetrainFromProfile } from "../../../packages/sim-ev3/brick";
 import { World, parseWorld } from "../../../packages/sim-world/world";
 import { SimWorldProvider } from "../../../packages/sim-world/world-provider";
 import { buildBridgePage } from "../../robot-page/bridge-build";
 import type { LocalConfig, RobotSource } from "./config";
 import { serveBridge, type BridgePageFiles, type BridgeServer } from "./hid-bridge";
-import { LocalRobot } from "./robot";
+import { LocalRobot, type LoopEndLine } from "./robot";
 
 export type Log = (ev: string, fields?: Record<string, unknown>) => void;
 export interface Fleet {
@@ -52,7 +52,15 @@ export function twinRuntime(s: Source<"twin">, clock?: Clock): { runtime: LocalR
         ...(time && { now: time.now }),
       }),
       (limits) =>
-        new Ev3Provider(brick, { limits, hardware, pair, roles: profile.roles, degPerSecAt100: LARGE_DEG_S, ...time }),
+        new Ev3Provider(brick, {
+          limits,
+          hardware,
+          pair,
+          roles: profile.roles,
+          degPerSecAt100: LARGE_DEG_S,
+          loopRateHz: SIM_BRICK_LOOP_RATE_HZ,
+          ...time,
+        }),
     ],
     ...(clock && { clock }),
   });
@@ -65,7 +73,10 @@ export function ev3Runtime(s: Source<"ev3">, transport: Transport): LocalRuntime
   const profile = { ...s.robot.profile, id: s.id };
   return createRuntime({
     profile,
-    providers: [(limits) => new Ev3Provider(transport, { limits, hardware, pair, roles: profile.roles })],
+    providers: [
+      (limits) =>
+        new Ev3Provider(transport, { limits, hardware, pair, roles: profile.roles, loopRateHz: EV3_USB_LOOP_RATE_HZ }),
+    ],
   });
 }
 
@@ -181,10 +192,17 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     o.log(fsm, { robot_id: id, from, to, why });
   const cancels = (id: string) => (tool: string, moving: boolean) =>
     o.log("cancelled", { robot_id: id, tool, action: moving ? "stop" : "abort" });
+  const loopEnds = (line: LoopEndLine) => o.log("loop_end", { ...line });
 
   for (const s of config.robots) {
     if (s.source === "twin") {
-      const robot = new LocalRobot({ id: s.id, onTransition: transitions(s.id), onCancel: cancels(s.id) });
+      const robot = new LocalRobot({
+        id: s.id,
+        onTransition: transitions(s.id),
+        onCancel: cancels(s.id),
+        onLoopEnd: loopEnds,
+        ...(o.clock && { clock: o.clock }),
+      });
       const { runtime, brick } = twinRuntime(s, o.clock);
       await robot.attach(runtime);
       bricks.set(s.id, brick);
@@ -195,6 +213,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         connect: `Check that the brick is on and that "ssh ${s.ssh.user}@${s.ssh.host}" connects from this computer without asking for a password or about the host key; this server keeps trying by itself.`,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
+        onLoopEnd: loopEnds,
       });
       // --install-bridge: part of every attempt until one copy has succeeded, so a brick that is off at start
       // gets its bridge when it answers
@@ -258,6 +277,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         connect: `Ask the person at this computer to open ${b.url} in Chrome or Edge, plug the EV3 in over USB, turn it on and press "Connect EV3".`,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
+        onLoopEnd: loopEnds,
       });
       closers.push(() => b.stop());
       robots.push(robot);
