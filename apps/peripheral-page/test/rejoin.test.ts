@@ -263,6 +263,36 @@ describe("joining again after the socket closed", () => {
     });
   });
 
+  test("a try that hangs before its welcome still ends with the window, and says why", async () => {
+    const r = rig({}, { delays_ms: [20], window_ms: 300 });
+    await r.join();
+    r.sock().closeFromServer(1006, "");
+    await r.opened(2);
+    // the new socket never opens: no close, no welcome
+    for (let i = 0; i < 100 && r.page.kit.status().state !== "closed"; i++) await tick(10);
+    expect(r.page.kit.status().state).toBe("closed");
+    expect(r.page.kit.status().closed!.reason).toContain("could not join again");
+    await tick(60);
+    expect(r.sockets.length).toBe(2);
+  });
+
+  test("visible again while a try waits for its welcome: the imu is up and the camera taken back", async () => {
+    const r = rig(PHONE, { delays_ms: [20], window_ms: 30_000 });
+    await r.join("phone");
+    r.setVisible(false);
+    const ended = r.browser.video;
+    ended.end();
+    r.sock().closeFromServer(1006, "");
+    await r.opened(2); // the timer's try, while hidden
+    r.setVisible(true);
+    await tick(5);
+    expect(r.browser.video).not.toBe(ended);
+    r.welcome("phone");
+    const after = r.sock().json();
+    expect(after.some((m) => m.t === "down" && m.device === "imu")).toBe(false);
+    expect(after.some((m) => m.t === "down" && m.device === "camera")).toBe(false);
+  });
+
   test("the wake lock is kept while the page waits to join again", async () => {
     const r = rig();
     await r.join();

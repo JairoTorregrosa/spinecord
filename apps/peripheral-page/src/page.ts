@@ -136,7 +136,8 @@ export function createPage(o: PageOptions): Page {
     },
     visibilityChanged() {
       const state = kit.status().state;
-      if (state !== "lending" && state !== "paused" && state !== "reconnecting") return;
+      const rejoining = state === "joining" && kit.status().rejoin !== null;
+      if (state !== "lending" && state !== "paused" && state !== "reconnecting" && !rejoining) return;
       const visible = o.visible();
       motion?.visible(visible);
       if (!visible) return;

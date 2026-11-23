@@ -367,6 +367,8 @@ export function createKit(o: KitOptions): Kit {
     if (m.t === "welcome") {
       robot = m.robot;
       away = null;
+      if (retry) clearTimeout(retry);
+      retry = null;
       to("lending");
       // every pushed channel has a value from the start: a read before the first push is an error otherwise
       for (const [device, values] of latest) if (announced.has(device)) sendState(device, values);
@@ -408,6 +410,21 @@ export function createKit(o: KitOptions): Kit {
     });
     sock.addEventListener("message", (ev) => sock === ws && onMessage(ev.data));
     sock.addEventListener("close", (ev) => sock === ws && onClose(ev.code ?? 1006, ev.reason ?? ""));
+    // a try that hangs in its handshake or before its welcome still ends with the window
+    if (away) {
+      const left = away.since + windowMs - now();
+      retry = setTimeout(
+        () => {
+          retry = null;
+          if (state !== "joining" || ws !== sock) return;
+          ws = null;
+          sock.close(1000, "the page gave up joining again");
+          stopAll();
+          giveUp();
+        },
+        Math.max(0, left),
+      );
+    }
   }
 
   function end(code: number, reason: string): void {
@@ -420,6 +437,8 @@ export function createKit(o: KitOptions): Kit {
 
   function onClose(code: number, reason: string): void {
     ws = null;
+    if (retry) clearTimeout(retry);
+    retry = null;
     stopAll();
     // a page that was never welcomed has no place to take back
     const welcomed = away !== null || state === "lending" || state === "paused";
