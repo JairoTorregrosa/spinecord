@@ -60,7 +60,7 @@ describe("a stock EV3 lent by the page", () => {
     await r.online();
     expect(await r.tool("describe_robot")).toMatchObject({
       ok: true,
-      data: { backend: "ev3" },
+      data: { backend: "ev3-stock" },
       robot: { link: "online" },
     });
     const before = r.usb.brick.motors[1]!.pos;

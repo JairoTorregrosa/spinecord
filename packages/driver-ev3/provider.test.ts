@@ -188,7 +188,7 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
   test("ids, kinds and roles; detection changes nothing on the brick", async () => {
     const { ev3, specs, fake } = await full();
     expect(ev3.id).toBe("ev3");
-    expect(ev3.backend).toBe("ev3");
+    expect(ev3.backend).toBe("ev3-stock");
     expect(specs.map((d) => [d.id, d.kind])).toEqual([
       ["ev3.A", "motor"],
       ["ev3.B", "motor"],

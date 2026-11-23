@@ -84,7 +84,7 @@ describe("an ev3dev brick over ssh", () => {
       expect(events).toContain("bridge_installed");
       expect(await tool("describe_robot")).toMatchObject({
         ok: true,
-        data: { backend: "ev3" },
+        data: { backend: "ev3dev" },
         robot: { link: "online" },
       });
       const read = await tool("read_device", { device: "distance" });

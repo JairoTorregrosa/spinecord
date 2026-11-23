@@ -18,6 +18,7 @@ export interface MockOptions {
   // long one). Absent: run_pair is bounded in degrees and every operation is cut at 250 ms.
   op_ms?: number;
   backend?: BackendKind; // default "sim"
+  max_speed_pct?: number; // the maximum of every speed argument, as a driver writes the profile's limit; default 100
   pair_brake?: boolean; // false = the pair has no brake{} command (a manifest the runtime must refuse)
   extra?: DeviceSpec[]; // more manifests; their channels read from `values`
 }
@@ -72,7 +73,8 @@ export class MockProvider implements Provider {
     this.stop_worst_ms = o.stop_worst_ms ?? 100;
     this.frameTs = o.clock.now();
     const id = (local: string) => `${this.id}.${local}`;
-    const speed = { type: "number", minimum: 1, maximum: 100 };
+    const maxSpeed = o.max_speed_pct ?? 100;
+    const speed = { type: "number", minimum: 1, maximum: maxSpeed };
     const brake = {
       type: "boolean",
       description: "false = coast at the end so the next chunk chains smoothly. Default true.",
@@ -157,7 +159,7 @@ export class MockProvider implements Provider {
               type: "object",
               properties: {
                 ms: { type: "integer", minimum: 1, maximum: 250 },
-                speed_pct: { type: "number", minimum: -100, maximum: 100 },
+                speed_pct: { type: "number", minimum: -maxSpeed, maximum: maxSpeed },
                 brake,
               },
               required: ["ms", "speed_pct"],
