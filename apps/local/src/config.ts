@@ -159,8 +159,6 @@ export function parsePagesRobot(json: unknown, where: string): RobotProfile {
     id: p.id as string,
     roles: roles as Record<string, string>,
     limits: {
-      // every limit the file gives is a number > 0 and reaches the runtime, which says which it needs
-      ...Object.fromEntries(Object.keys(lim).map((k) => [k, positive(k)])),
       max_speed_pct: positive("max_speed_pct"),
       max_command_ms: positive("max_command_ms"),
       max_program_ms: positive("max_program_ms"),

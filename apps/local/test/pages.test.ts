@@ -240,6 +240,20 @@ describe("peripheral pages", () => {
     expect((await r.twin("read_device", { device: "desk.touch" })).ok).toBe(true);
   });
 
+  test("a loop that names a page device is refused: the hub runs no loops", async () => {
+    const r = await rig();
+    await r.joined();
+    const run = await r.twin("run_loop", {
+      rate_hz: 20,
+      duration_ms: 1000,
+      signals: { pressed: { device: "desk.touch", channel: "b1" } },
+      outputs: [{ device: "left_wheel", command: "run_time", terms: [{ signal: "pressed", gain: 10 }] }],
+    });
+    expect(run).toMatchObject({ ok: false, error: { code: "unsupported" } });
+    expect(run.error.message).toContain("provider pages runs no loops");
+    expect((await r.twin("read_all")).robot.activity).toBe("idle");
+  });
+
   test("a device reported down answers device_offline for it alone", async () => {
     const r = await rig();
     const p = await r.joined();
