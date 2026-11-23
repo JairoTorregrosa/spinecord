@@ -107,6 +107,7 @@ Without arguments the server runs a simulated twin of the example robot (`r1-sim
 | an EV3 and its twin | `--ev3 --twin` |
 | the twin of the example arm: two free motors and a touch sensor, no wheels | `--twin deployments/example/robots/arm.json` |
 | a robot file of your own | `--ev3 <robot.json>`, `--twin <robot.json>`, `--ev3dev <robot.json>` |
+| devices lent by browser pages, beside the twin | `--twin --pages` ([Peripheral pages](#peripheral-pages-devices-lent-by-a-browser)) |
 | several robots of a kind | `--config <file.json>` |
 
 The registration holds the arguments. To switch robots, remove it and add it again, then start Claude Code again:
@@ -119,6 +120,18 @@ bun apps/local/main.ts --print-add --ev3 --twin
 and run the line it prints.
 
 `--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C driven as one pair, heading from its gyro. The other example, [`deployments/example/robots/arm.json`](deployments/example/robots/arm.json), declares no `pair` and no `drivetrain`: its motors are devices for `command_device`, and `drive`, `turn` and `arc` answer `unsupported`. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](CONTRACT.md). The server logs on stderr (`claude --debug` shows it); `--log-file <path>` keeps the log in a file ([Troubleshooting](#troubleshooting)).
+
+### Peripheral pages: devices lent by a browser
+
+A *peripheral page* is a browser page that joins a robot of the server and lends it devices of the computer or the phone it runs on: a camera, a microphone, a speaker, a screen, touch buttons. The page declares each device as a manifest, and the model reads and commands it with the same tools as a motor or a sensor: `describe_robot` lists the page under `pages`, `read_device` returns a camera frame as an image, `command_device` runs a speaker's `speak` or a microphone's `listen`, and a pushed touch button can end a `drive … until` or a `wait_until`. No tool is added. A page never moves the robot, and the person at the page can pause it at any moment: its devices then answer `device_offline`, and a move guarded by one of its channels is braked.
+
+`--pages` turns pages on for every robot of the server and adds the robot `pages`, which has no body: it is online from the start, with no device until a page joins ([`deployments/example/robots/pages.json`](deployments/example/robots/pages.json)).
+
+```sh
+bun apps/local/main.ts --print-add --twin --pages
+```
+
+The server then listens for pages on `http://127.0.0.1:8768/` (`--page-port <n>` for another port), on this computer only, and `list_robots` gives each robot a `join` sentence to tell the person. A page joins with the pairing token the server writes into the page it serves at that address; the token changes at every start. The page itself, which lends the camera, the microphone and the voice of the browser, comes next. Until then a page is any client that speaks the protocol of [`CONTRACT.md`](CONTRACT.md) §2.4, as the test client [`apps/local/test/pages.ts`](apps/local/test/pages.ts) does.
 
 ### An EV3 on ev3dev: the ssh key first
 

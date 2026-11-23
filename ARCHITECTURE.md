@@ -10,7 +10,8 @@
 protocol ← driver-ev3 ← sim-ev3 → sim-world → protocol
 protocol ← driver-ev3dev
 protocol ← runtime        (talks to drivers only through the Provider interface)
-protocol, runtime, driver-ev3, driver-ev3dev, sim-ev3, sim-world ← apps/local   (it also builds and serves apps/robot-page's bridge page)
+protocol ← page-hub
+protocol, runtime, driver-ev3, driver-ev3dev, sim-ev3, sim-world, page-hub ← apps/local   (it also builds and serves apps/robot-page's bridge page)
 driver-ev3 ← apps/robot-page
 ```
 
@@ -26,7 +27,8 @@ driver-ev3 ← apps/robot-page
 | `sim-world` | World model loaded from JSON, physics, sensor models, `SimWorldProvider` (`sim.world`, `sim.camera`, `sim.speaker`), declarative training, viewer pieces. | Hardware protocols; hardcoded worlds or tasks. |
 | `sim-ev3` | `SimBrick`: byte-level EV3 firmware emulator implementing the `driver-ev3` Transport on top of `sim-world`; demo page. | Tool semantics: the twin runs the real `Ev3Provider`. |
 | `runtime` | Executes the tools that address one robot, next to the hardware: device registry, role resolution, reads, sampling, conditions, kinematics for any `motor_pair` drivetrain the profile declares (heading from the channel the profile names, else from the wheel encoders), arg validation and clamping, chunking, program interpreter, the host executor of a loop (its ticks, duration, overrun rule and report). | MCP, link and activity state, anything EV3-specific. |
-| `apps/local` | The server (CONTRACT §6): MCP over stdio with the runtime and the robots (twin, ev3dev over SSH, stock EV3 behind the bridge page) in one bun process. Serves the catalog verbatim, validates inputs and results, owns the link and activity state of its robots (the `looping` activity included), the backstop behind every call and behind a loop, a loop's attention window, and the stop at exit. | Device semantics, kinematics, condition evaluation, robot-specific limits (they come from the profile). |
+| `page-hub` | `PageHub`, a `Provider`: the peripheral pages of one robot (CONTRACT §2.4), their manifests, the pushed-value cache, requests with deadlines, frames and their limits, `stop`. It talks to a page through a `PageSocket`, so a test hands it a fake. | Listening on a port, tokens, the page state machine and its ping timers (they are `apps/local`'s). |
+| `apps/local` | The server (CONTRACT §6): MCP over stdio with the runtime and the robots (twin, ev3dev over SSH, stock EV3 behind the bridge page, a robot with no body whose devices pages lend) in one bun process. With pages on: the page listener on loopback, the pairing token, the Host and Origin checks, the page state machine. Serves the catalog verbatim, validates inputs and results, owns the link and activity state of its robots (the `looping` activity included), the backstop behind every call and behind a loop, a loop's attention window, and the stop at exit. | Device semantics, kinematics, condition evaluation, robot-specific limits (they come from the profile). |
 | `apps/robot-page` | The bridge page a person opens in Chrome or Edge to lend a stock EV3 over USB: WebHID reports ⇄ one WebSocket on `127.0.0.1`, and a brake of every motor when that socket closes. | Running a runtime, timers on the path of a command. |
 | `deployments/<name>/` | Robot files (profile, hardware, and `pair` for a robot with a synchronized motor pair) and worlds. | Code. |
 
@@ -34,5 +36,5 @@ driver-ev3 ← apps/robot-page
 
 - A new device kind = a manifest. A new robot = a profile. A new use = a deployment folder. None of them changes a package.
 - Limits and thresholds come from the profile; packages ship no use-specific defaults beyond a documented example profile for each provider.
-- Each FSM has exactly one owner (`apps/local`: link, activity and life of the robots in its process; runtime: execution of one call; `apps/robot-page`: the page's device and socket). Others read state, never write it.
+- Each FSM has exactly one owner (`apps/local`: link, activity and life of the robots in its process, and each page's state; runtime: execution of one call; `apps/robot-page`: the page's device and socket). Others read state, never write it.
 - Errors cross boundaries only as contract `ErrorCode`s.

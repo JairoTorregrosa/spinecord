@@ -1,0 +1,9 @@
+{
+  "name": "@spinecord/page-hub",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "test": "bun test"
+  }
+}

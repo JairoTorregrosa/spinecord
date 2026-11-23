@@ -23,6 +23,11 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
       `spinecord: to lend the EV3, open ${fleet.bridge.url} in Chrome or Edge and press "Connect EV3"\n`,
     );
 
+  if (fleet.pages)
+    process.stderr.write(
+      `spinecord: pages join the robots on ${fleet.pages.url} (this computer only); list_robots says how in \`join\`\n`,
+    );
+
   let ending: Promise<never> | null = null;
   /** Stops every motor, says so on stderr, exits. Runs once whatever asks for it. */
   function end(why: string, code = 0): Promise<never> {

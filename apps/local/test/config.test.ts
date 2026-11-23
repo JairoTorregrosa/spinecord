@@ -2,7 +2,16 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, posix, relative, win32 } from "node:path";
-import { DEFAULT_PORT, EXAMPLE, REPO, USAGE, loadConfig, parseSshTarget, pathFrom } from "../src/config";
+import {
+  DEFAULT_PORT,
+  EXAMPLE,
+  REPO,
+  USAGE,
+  loadConfig,
+  parseSshTarget,
+  pathFrom,
+  type RobotSource,
+} from "../src/config";
 import { addCommand } from "../src/print-add";
 
 const tmp = mkdtempSync(join(tmpdir(), "spinecord-local-"));
@@ -99,7 +108,7 @@ describe("robots without a robot file", () => {
         {
           source: "ev3dev",
           id: "r1",
-          robot: loadConfig(["--ev3"]).robots[0]!.robot,
+          robot: (loadConfig(["--ev3"]).robots[0] as Extract<RobotSource, { source: "ev3" }>).robot,
           hardware: { low_battery_v: 6.5, max_tone_ms: 5000, speech_volume_pct: 100 },
           ssh: { user: "robot", host: "ev3dev.local" },
           installBridge: true,

@@ -56,6 +56,8 @@ export interface RobotOptions {
   onLoopEnd?: (line: LoopEndLine) => void;
   /** The clock of the attention window and of the backstop behind a loop. Default: real time. */
   clock?: Clock;
+  /** With pages enabled: how a person lends this robot a page's devices, and its pages for describe_robot. */
+  pages?: { join(): string; view(): unknown[] };
 }
 /** What the log keeps of a loop that ended: no signal value and no trace. */
 export interface LoopEndLine {
@@ -180,6 +182,7 @@ export class LocalRobot {
       ...this.view(),
       fault_reason: this.activity === "fault" ? this.faultReason : null,
       connect: this.link === "online" ? null : this.connectHint,
+      join: this.o.pages?.join() ?? null,
     };
   }
   runtime(): LocalRuntime | null {
@@ -283,6 +286,11 @@ export class LocalRobot {
     if (tool === "reset_fault") return this.resetFault(rt);
     if (tool === "run_loop") return this.runLoop(rt, args, cancel);
     if (tool === "supervise_loop") return this.superviseLoop(args, cancel);
+    if (tool === "describe_robot" && this.o.pages) {
+      // the pages of the robot are this process's (their state machine is apps/local's): added to the runtime's answer
+      const out = await this.bounded(rt, tool, args, null, cancel);
+      return { ...out, data: { ...(out.data as Record<string, unknown>), pages: this.o.pages.view() } };
+    }
     const moving = this.moves(rt, tool, args);
     const reads = !moving && tool !== "command_device";
     if (!reads && this.activity === "fault")

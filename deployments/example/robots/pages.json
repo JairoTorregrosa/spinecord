@@ -1,0 +1,14 @@
+{
+  "description": "Example robot (not a default): a robot with no body. It has no hardware, no pair and no drivetrain; every device it has is lent by a browser page that joins it (CONTRACT.md §2.4), so it is online from the start with zero devices. drive, turn and arc answer `unsupported`. `profile` is a contract RobotProfile (CONTRACT.md §3); its limits bound a page's commands and programs like any robot's.",
+  "profile": {
+    "id": "pages",
+    "roles": {},
+    "limits": {
+      "max_speed_pct": 100,
+      "max_command_ms": 10000,
+      "max_program_ms": 120000,
+      "max_loop_ms": 60000
+    },
+    "notes": ["Every device of this robot lives in a browser page a person opened; describe_robot lists the pages."]
+  }
+}
