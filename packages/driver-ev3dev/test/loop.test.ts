@@ -635,7 +635,7 @@ describe("the provider's loop", () => {
       // a refused plan, and one with a command no loop drives on the brick, send nothing
       const run = provider.loop.start(localPlan(), () => {}).catch((e: unknown) => e);
       if (!loops) expect(((await run) as RuntimeError).code).toBe("misconfigured");
-      else await sleep(20);
+      else for (let t0 = Date.now(); !sent.includes("loop_start") && Date.now() - t0 < 5000;) await sleep(5);
       expect(sent.filter((op) => op === "loop_start").length).toBe(loops ? 1 : 0);
       await provider.close();
     }

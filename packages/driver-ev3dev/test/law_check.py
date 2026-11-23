@@ -8,6 +8,7 @@ mismatch, and per case what the bridge's statistics (stats_record, stats_take) c
 the caller to compare with loop.ts's own. Runs on Python 3.5 and later.
 """
 import importlib.util
+import io
 import json
 import sys
 
@@ -15,7 +16,7 @@ spec = importlib.util.spec_from_file_location("ev3dev_bridge", sys.argv[1])
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
-with open(sys.argv[2]) as f:
+with io.open(sys.argv[2], encoding="utf-8") as f:
     golden = json.load(f)
 
 failures = []
