@@ -3,7 +3,16 @@
 // declared only where the browser has speech recognition, `level_pct` only where the page has an audio stream and
 // an audio worklet; a microphone with neither is not lent.
 import type { CommandSpec, Value } from "../../../../packages/protocol/types";
-import type { AudioContextLike, RecognitionLike, StreamLike, Win, WorkletNodeLike } from "../browser";
+import {
+  refusal,
+  type AudioContextLike,
+  type AudioNodeLike,
+  type RecognitionLike,
+  type StreamLike,
+  type TrackLike,
+  type Win,
+  type WorkletNodeLike,
+} from "../browser";
 import { ended, PageError, type DeviceDef, type Ended, type Kit, type Measured } from "../kit";
 
 /** Case, accents and spacing ignored: "Ya me la TOMÉ " and "ya me la tome" are the same phrase. */
@@ -121,6 +130,8 @@ export interface Microphone {
   stream(): StreamLike | null;
   /** Starts the level meter; resolves false where the page has no audio worklet. */
   meter(): Promise<boolean>;
+  /** The page is visible again: a track the browser ended while it was hidden is asked for again. */
+  reacquire(): Promise<void>;
   close(): void;
 }
 
@@ -129,6 +140,23 @@ export function microphone(o: MicrophoneOptions): Microphone {
   let stream = "stream" in o.got ? o.got.stream : null;
   const refused = "why" in o.got ? o.got.why : null;
   let node: WorkletNodeLike | null = null;
+  let source: AudioNodeLike | null = null;
+  const track = (): TrackLike | null => stream?.getAudioTracks()[0] ?? null;
+  // events of a track other than the lent one say nothing about the microphone
+  const watch = (t: TrackLike | null) => {
+    t?.addEventListener("mute", () => t === track() && kit.down("mic", "the microphone stopped sending sound"));
+    t?.addEventListener("unmute", () => t === track() && kit.up("mic"));
+    t?.addEventListener("ended", () => t === track() && kit.down("mic", "the microphone was turned off or unplugged"));
+  };
+  watch(track());
+  const connect = () => {
+    source?.disconnect();
+    source = null;
+    if (stream && node && o.audio) {
+      source = o.audio.createMediaStreamSource(stream);
+      source.connect(node);
+    }
+  };
   let metered = false;
   let heard = 0;
   const listen: CommandSpec = {
@@ -232,19 +260,37 @@ export function microphone(o: MicrophoneOptions): Microphone {
       if (!stream || !o.audio?.audioWorklet || !Node) return false;
       await o.audio.audioWorklet.addModule(o.workletUrl);
       const n = new Node(o.audio, "spinecord-level");
-      o.audio.createMediaStreamSource(stream).connect(n);
+      node = n;
+      connect();
       n.port.onmessage = (ev) => {
         const v = Number(ev.data);
         if (stream && metered && Number.isFinite(v))
           kit.push("mic", { level_pct: Math.max(0, Math.min(100, Math.round(v))) });
       };
-      node = n;
       metered = true;
       kit.announce();
       kit.push("mic", { level_pct: 0 });
       return true;
     },
+    async reacquire() {
+      const t = track();
+      const md = o.win.navigator.mediaDevices;
+      if (!t || t.readyState !== "ended" || !md?.getUserMedia) return;
+      try {
+        const next = await md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        if (stream === null) return void next.getTracks().forEach((x) => x.stop()); // the person stopped lending meanwhile
+        for (const old of stream.getTracks()) old.stop();
+        stream = next;
+        watch(track());
+        connect();
+        kit.up("mic");
+      } catch (e) {
+        kit.down("mic", `the page could not get the microphone back: ${refusal(e, "microphone")}`);
+      }
+    },
     close() {
+      source?.disconnect();
+      source = null;
       node?.disconnect();
       node = null;
       for (const t of stream?.getTracks() ?? []) t.stop();

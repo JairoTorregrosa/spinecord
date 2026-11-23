@@ -10,6 +10,9 @@ export interface TrackLike {
   enabled: boolean;
   stop(): void;
   getSettings(): { width?: number; height?: number; facingMode?: string; deviceId?: string };
+  /** What the track can be set to; `torch` where the browser can switch the camera's light. */
+  getCapabilities?(): { torch?: boolean };
+  applyConstraints?(c: { advanced: { torch: boolean }[] }): Promise<void>;
   addEventListener(type: "mute" | "unmute" | "ended", cb: () => void): void;
 }
 export interface StreamLike {
@@ -89,6 +92,31 @@ export interface AudioContextLike {
   audioWorklet?: { addModule(url: string): Promise<void> };
 }
 
+/** One sample of the motion sensors, as a DeviceOrientationEvent or a DeviceMotionEvent carries it. */
+export interface OrientationEventLike {
+  alpha: number | null;
+  beta: number | null;
+  gamma: number | null;
+  absolute?: boolean;
+  /** Safari on iOS: the compass heading, clockwise from north. */
+  webkitCompassHeading?: number;
+}
+export interface MotionEventLike {
+  acceleration?: { x: number | null; y: number | null; z: number | null } | null;
+  accelerationIncludingGravity?: { x: number | null; y: number | null; z: number | null } | null;
+  rotationRate?: { alpha: number | null; beta: number | null; gamma: number | null } | null;
+}
+/** DeviceMotionEvent or DeviceOrientationEvent: Safari on iOS asks the person through requestPermission. */
+export interface MotionPermissionLike {
+  requestPermission?(): Promise<string>;
+}
+export interface WakeLockSentinelLike {
+  readonly released: boolean;
+  release(): Promise<void>;
+  addEventListener?(type: "release", cb: () => void): void;
+}
+export type MotionEventType = "deviceorientation" | "deviceorientationabsolute" | "devicemotion";
+
 /** The part of `window` the page uses. Every member a browser may lack is optional. */
 export interface Win {
   navigator: {
@@ -97,8 +125,14 @@ export interface Win {
       getUserMedia?(c: { video?: unknown; audio?: unknown }): Promise<StreamLike>;
       enumerateDevices?(): Promise<{ kind: string }[]>;
     };
-    wakeLock?: { request(type: "screen"): Promise<unknown> };
+    wakeLock?: { request(type: "screen"): Promise<WakeLockSentinelLike> };
+    vibrate?(pattern: number | number[]): boolean;
   };
+  matchMedia?(query: string): { matches: boolean };
+  addEventListener?(type: MotionEventType, cb: (ev: OrientationEventLike & MotionEventLike) => void): void;
+  removeEventListener?(type: MotionEventType, cb: (ev: OrientationEventLike & MotionEventLike) => void): void;
+  DeviceMotionEvent?: MotionPermissionLike;
+  DeviceOrientationEvent?: MotionPermissionLike;
   isSecureContext?: boolean;
   SpeechRecognition?: new () => RecognitionLike;
   webkitSpeechRecognition?: new () => RecognitionLike;
@@ -115,6 +149,8 @@ export interface Win {
 export interface Unlocked {
   camera: { stream: StreamLike; facings: string[] } | { why: string };
   mic: { stream: StreamLike } | { why: string };
+  /** The motion sensors: allowed (or no permission to ask), or why not. */
+  motion: true | { why: string };
   audio: AudioContextLike | null;
   Recognition: (new () => RecognitionLike) | null;
   synth: { synth: SynthLike; Utterance: new (text: string) => UtteranceLike; voices: VoiceLike[] } | null;
@@ -141,8 +177,29 @@ export function voices(synth: SynthLike, waitMs = 1500): Promise<VoiceLike[]> {
 }
 
 /**
- * The one tap ("Lend this device"): asks for the camera and the microphone, starts audio and warms speech up,
- * takes the wake lock. Call it from the click handler: a browser gates each of these behind a gesture.
+ * Whether the page may have motion events. Safari on iOS (and Chrome from 152) asks the person through
+ * DeviceMotionEvent.requestPermission, which a browser allows only inside a tap: call this before any await.
+ */
+export function motionPermission(win: Win): Promise<true | { why: string }> {
+  const kinds = [win.DeviceMotionEvent, win.DeviceOrientationEvent].filter((k) => k !== undefined);
+  if (!kinds.length || !win.addEventListener) return Promise.resolve({ why: "this browser has no motion sensors" });
+  const asks = kinds.filter((k) => typeof k.requestPermission === "function");
+  if (!asks.length) return Promise.resolve(true);
+  return Promise.all(
+    asks.map((k) =>
+      k.requestPermission!().then(
+        (r) => r,
+        (e: unknown) => (e && typeof e === "object" && "name" in e ? String(e.name) : "denied"),
+      ),
+    ),
+  ).then((answers) =>
+    answers.some((a) => a === "granted") ? true : { why: "the person did not allow the motion sensors" },
+  );
+}
+
+/**
+ * The one tap ("Lend this device"): asks for the camera, the microphone and the motion sensors, starts audio and
+ * warms speech up. Call it from the click handler: a browser gates each of these behind a gesture.
  */
 export async function unlock(win: Win): Promise<Unlocked> {
   const md = win.navigator.mediaDevices;
@@ -160,8 +217,8 @@ export async function unlock(win: Win): Promise<Unlocked> {
     win.speechSynthesis && win.SpeechSynthesisUtterance
       ? { synth: win.speechSynthesis, Utterance: win.SpeechSynthesisUtterance }
       : null;
-  void win.navigator.wakeLock?.request("screen").catch(() => {});
-  const [camera, mic, voiceList] = await Promise.all([
+  const [motion, camera, mic, voiceList] = await Promise.all([
+    motionPermission(win),
     md?.getUserMedia
       ? md.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } } }).then(
           async (stream) => ({ stream, facings: await facings(win, stream) }),
@@ -179,6 +236,7 @@ export async function unlock(win: Win): Promise<Unlocked> {
   return {
     camera,
     mic,
+    motion,
     audio,
     Recognition: win.SpeechRecognition ?? win.webkitSpeechRecognition ?? null,
     synth: synth ? { ...synth, voices: voiceList } : null,

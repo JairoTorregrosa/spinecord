@@ -2,7 +2,7 @@
 // its size and quality. The frame comes from the track itself (ImageCapture.grabFrame), so its age is the time
 // since that grab and never the age of a picture a hidden tab stopped painting.
 import type { CommandSpec, Value } from "../../../../packages/protocol/types";
-import type { BitmapLike, StreamLike, TrackLike, Win } from "../browser";
+import { refusal, type BitmapLike, type StreamLike, type TrackLike, type Win } from "../browser";
 import { PageError, type DeviceDef, type Frame, type Kit } from "../kit";
 
 export const CAMERA_DEFAULTS = { max_side_px: 640, quality: 0.7 };
@@ -27,6 +27,12 @@ export interface Camera {
   stream(): StreamLike | null;
   /** The current frame as a bitmap, for an extension (the caller closes it). */
   bitmap(): Promise<BitmapLike>;
+  /** The live video track, or null. */
+  track(): TrackLike | null;
+  /** Called after the track changes: a configure, a re-acquire, stop lending. */
+  onTrack(cb: () => void): void;
+  /** The page is visible again: a track the browser ended while it was hidden is asked for again. */
+  reacquire(): Promise<void>;
   /** Closes the stream: the browser's camera indicator goes off. */
   close(): void;
 }
@@ -41,10 +47,21 @@ export function camera(o: CameraOptions): Camera {
   const Canvas = win.OffscreenCanvas;
   const track = (): TrackLike | null => stream?.getVideoTracks()[0] ?? null;
 
+  const changed: (() => void)[] = [];
+  // an ended track may report no settings: the facing to ask for again is kept here
+  let lastFacing = track()?.getSettings().facingMode;
+  // events of a track other than the lent one say nothing about the camera
   const watch = (t: TrackLike | null) => {
-    t?.addEventListener("mute", () => kit.down("camera", "the camera stopped sending pictures"));
-    t?.addEventListener("unmute", () => kit.up("camera"));
-    t?.addEventListener("ended", () => kit.down("camera", "the camera was turned off or unplugged"));
+    t?.addEventListener("mute", () => t === track() && kit.down("camera", "the camera stopped sending pictures"));
+    t?.addEventListener("unmute", () => t === track() && kit.up("camera"));
+    t?.addEventListener("ended", () => t === track() && kit.down("camera", "the camera was turned off or unplugged"));
+  };
+  const swap = (next: StreamLike | null) => {
+    for (const t of stream?.getTracks() ?? []) t.stop();
+    stream = next;
+    watch(track());
+    lastFacing = track()?.getSettings().facingMode ?? lastFacing;
+    for (const cb of changed) cb();
   };
   watch(track());
 
@@ -135,9 +152,7 @@ export function camera(o: CameraOptions): Camera {
         const next = await md.getUserMedia({ video: { facingMode: { exact: args.facing } } }).catch(() => {
           throw new PageError("unsupported", `this device has no camera facing ${String(args.facing)}`);
         });
-        for (const t of stream?.getTracks() ?? []) t.stop();
-        stream = next;
-        watch(track());
+        swap(next);
       }
       const s = size();
       return {
@@ -154,9 +169,26 @@ export function camera(o: CameraOptions): Camera {
     def,
     stream: () => stream,
     bitmap,
+    track,
+    onTrack: (cb) => void changed.push(cb),
+    async reacquire() {
+      const t = track();
+      const md = win.navigator.mediaDevices;
+      if (!t || t.readyState !== "ended" || !md?.getUserMedia) return;
+      const want = lastFacing;
+      try {
+        const next = await md.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...(want ? { facingMode: want } : {}) },
+        });
+        if (stream === null) return void next.getTracks().forEach((x) => x.stop()); // the person stopped lending meanwhile
+        swap(next);
+        kit.up("camera");
+      } catch (e) {
+        kit.down("camera", `the page could not get the camera back: ${refusal(e, "camera")}`);
+      }
+    },
     close() {
-      for (const t of stream?.getTracks() ?? []) t.stop();
-      stream = null;
+      swap(null);
     },
   };
 }

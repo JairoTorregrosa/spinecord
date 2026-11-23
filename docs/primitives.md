@@ -16,7 +16,7 @@ Legend: ✅ shipped · 🟡 partial · ⬜ missing. **Where** = the package that
 | Wheel odometry pose (x, y, heading) from encoders | `pose` channel on the drivetrain | ⬜ | runtime |
 | First-person camera frame | `camera` device, image channel | 🟡 twin only | sim-world · a camera provider |
 | Overhead pose of every robot (fiducial markers) | `pose_tracker` device | ⬜ | a camera provider |
-| Phone IMU, compass, shake | `imu` device | ⬜ | a phone provider |
+| Phone IMU, compass, shake | `imu` device of a peripheral page: tilt, heading, acceleration, rotation rate, `shaken` (pushed) | 🟡 fake browser and Chrome's sensor emulation only | apps/peripheral-page |
 | Listen: speech to text, loudness | `microphone` device | ⬜ | a phone provider |
 | Sensor calibration (color white/black, gyro zero) | `calibrate{}` command per sensor | ⬜ | drivers |
 

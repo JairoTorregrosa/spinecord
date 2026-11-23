@@ -8,6 +8,7 @@ import { fakeBrowser, type FakeBrowserOptions } from "../../peripheral-page/test
 import { loadConfig } from "../src/config";
 import { buildFleet, type Fleet } from "../src/sources";
 import { TOOL, callTool } from "../src/tools";
+import type { PageTimes } from "../src/pages";
 import { until } from "./client";
 import { servedToken } from "./pages";
 
@@ -19,8 +20,8 @@ afterEach(async () => {
   }
 });
 
-async function rig() {
-  const fleet = await buildFleet(loadConfig(["--twin", "--pages"]), { log: () => {}, pagePort: 0 });
+async function rig(pageTimes: Partial<PageTimes> = {}) {
+  const fleet = await buildFleet(loadConfig(["--twin", "--pages"]), { log: () => {}, pagePort: 0, pageTimes });
   const entry = { fleet, pages: [] as Page[] };
   open.push(entry);
   const call = async (name: string, args: Record<string, unknown> = {}): Promise<any> => {
@@ -35,12 +36,20 @@ async function rig() {
   const lend = async (o: FakeBrowserOptions = {}, name = "desk") => {
     const browser = fakeBrowser(o);
     const host = new URL(url).host;
+    // a locked phone: its page runs no script, so the process's messages wait unanswered
+    const life = { frozen: false, visible: true };
     const page = createPage({
       win: browser.win,
       url: `ws://${host}/page`,
       token: await servedToken(url),
-      openSocket: (u) => new WebSocket(u, { headers: { Origin: `http://${host}` } } as unknown as string[]) as never,
-      visible: () => true,
+      openSocket: (u) => {
+        const ws = new WebSocket(u, { headers: { Origin: `http://${host}` } } as unknown as string[]);
+        const add = ws.addEventListener.bind(ws) as (t: string, cb: (ev: unknown) => void) => void;
+        (ws as unknown as { addEventListener: typeof add }).addEventListener = (t, cb) =>
+          add(t, (ev) => (t === "message" && life.frozen ? undefined : cb(ev)));
+        return ws as never;
+      },
+      visible: () => life.visible,
       lang: "es-ES",
       workletUrl: "level.js",
       render: () => {},
@@ -52,7 +61,15 @@ async function rig() {
       const d = await call("describe_robot");
       return d.data.pages.some((p: { name: string; state: string }) => p.name === name && p.state === "active");
     });
-    return { page, browser };
+    /** The phone is locked (hidden, frozen) or unlocked (visible, running). */
+    const lock = (locked: boolean) => {
+      // a browser releases the wake lock of a page it hides
+      if (locked) browser.wake.sentinels.at(-1)?.fireRelease();
+      life.visible = !locked;
+      life.frozen = locked;
+      page.visibilityChanged();
+    };
+    return { page, browser, lock };
   };
   return { call, url, lend };
 }
@@ -88,7 +105,15 @@ describe("the peripheral page against the listener and the hub", () => {
         name: "desk",
         state: "active",
         devices: ["desk.screen", "desk.touch", "desk.camera", "desk.speaker"],
-        unavailable: [{ kind: "microphone", why: "microphone: the person did not allow it" }],
+        unavailable: [
+          { kind: "microphone", why: "microphone: the person did not allow it" },
+          { kind: "imu", why: "imu: this browser has no motion sensors" },
+          { kind: "vibrator", why: "vibrator: this browser has no vibration" },
+          {
+            kind: "torch",
+            why: "torch: the lent camera has no torch the browser can switch (on a phone the torch is usually next to the camera facing environment)",
+          },
+        ],
         last_seen_ms: expect.any(Number),
       },
     ]);
@@ -148,7 +173,9 @@ describe("the peripheral page against the listener and the hub", () => {
       return !d.data.devices.some((x: { id: string }) => x.id === "desk.camera");
     });
     const d = await r.call("describe_robot");
-    expect(d.data.pages[0].unavailable).toEqual([
+    expect(
+      d.data.pages[0].unavailable.filter((u: { kind: string }) => ["camera", "microphone"].includes(u.kind)),
+    ).toEqual([
       { kind: "camera", why: "camera: the person stopped lending it" },
       { kind: "microphone", why: "microphone: the person stopped lending it" },
     ]);
@@ -165,5 +192,88 @@ describe("the peripheral page against the listener and the hub", () => {
     page.kit.resume();
     await until("the page to wake", async () => (await r.call("describe_robot")).data.pages[0].state === "active");
     expect((await r.call("read_device", { device: "desk.camera", channels: ["width_px"] })).ok).toBe(true);
+  });
+
+  test("a muted camera track: the camera answers device_offline, the page's other devices work; unmuted it works", async () => {
+    const r = await rig();
+    const { browser } = await r.lend();
+    browser.video.fire("mute");
+    await until("the camera to be down", async () => {
+      const d = await r.call("read_device", { device: "desk.camera", channels: ["width_px"] });
+      return d.error?.code === "device_offline";
+    });
+    const off = await r.call("read_device", { device: "desk.camera", channels: ["width_px"] });
+    expect(off.error).toMatchObject({ code: "device_offline", retryable: true, retry_after_ms: 2000 });
+    expect(off.error.message).toContain("the camera stopped sending pictures");
+    expect((await r.call("read_device", { device: "desk.screen", channels: ["showing"] })).ok).toBe(true);
+    browser.video.fire("unmute");
+    await until(
+      "the camera to be up",
+      async () => (await r.call("read_device", { device: "desk.camera", channels: ["width_px"] })).ok,
+    );
+  });
+
+  test("a locked phone: pings unanswered, the page is asleep and device_offline; unlocked, active and the wake lock asked again", async () => {
+    const r = await rig({ ping_ms: 50, asleep_ms: 300 });
+    const { browser, lock } = await r.lend(
+      { motion: "events", vibrate: true, pointer: "coarse", torch: true },
+      "phone",
+    );
+    expect(browser.wake.requests).toBe(1);
+    lock(true);
+    await until("the page to sleep", async () => (await r.call("describe_robot")).data.pages[0].state === "asleep");
+    const d = await r.call("describe_robot");
+    expect(d.data.pages[0].why).toContain("did not answer a ping");
+    for (const device of ["phone.camera", "phone.imu", "phone.touch"]) {
+      const off = await r.call("read_device", { device });
+      expect(off.error).toMatchObject({ code: "device_offline", retry_after_ms: 2000 });
+    }
+    lock(false);
+    expect(browser.wake.requests).toBe(2);
+    await until("the page to wake", async () => (await r.call("describe_robot")).data.pages[0].state === "active");
+    await until(
+      "the imu to be up",
+      async () => (await r.call("read_device", { device: "phone.imu", channels: ["pitch_deg"] })).ok,
+    );
+  });
+
+  test("a phone's imu, vibrator and torch through the tools", async () => {
+    const r = await rig();
+    // motion events without a compass: the first sample comes after the page joined, and announces the imu
+    const { browser } = await r.lend({ motion: "silent", vibrate: true, pointer: "coarse", torch: true }, "phone");
+    browser.orient({ alpha: 0, beta: 25, gamma: -5, absolute: false });
+    await until("the tilt to arrive", async () => {
+      const d = await r.call("read_device", { device: "phone.imu", channels: ["pitch_deg"] });
+      return d.data?.readings[0].value === 25;
+    });
+    const tilt = await r.call("read_device", {
+      device: "phone.imu",
+      channels: ["pitch_deg", "roll_deg", "heading_deg"],
+    });
+    expect(tilt.data.readings[1]).toMatchObject({ channel: "roll_deg", value: -5 });
+    // no compass: the heading is absent, and that null is an answer
+    expect(tilt.data.readings[2]).toMatchObject({ channel: "heading_deg", value: null, absent: true });
+    const met = await r.call("wait_until", {
+      condition: { device: "phone.imu", channel: "pitch_deg", op: "gt", value: 20 },
+      timeout_ms: 1000,
+    });
+    expect(met.data).toMatchObject({ met: true });
+
+    const buzz = await r.call("command_device", { device: "phone.vibrator", command: "vibrate", args: { ms: 50 } });
+    expect(buzz.data).toMatchObject({ reason: "completed", measured: { vibrated_ms: 50 } });
+    expect(browser.vibrations).toEqual([50]);
+
+    // the longest ms is not cut by the robot's motion limit: set returns at once
+    const lit = await r.call("command_device", {
+      device: "phone.torch",
+      command: "set",
+      args: { on: true, ms: 30000 },
+    });
+    expect(lit.data).toMatchObject({ reason: "completed", measured: { on: true }, applied: { on: true, ms: 30000 } });
+    expect(lit.data.clamped ?? false).toBe(false);
+    expect(browser.video.torchOn).toBe(true);
+    const stop = await r.call("stop");
+    expect(stop.ok).toBe(true);
+    expect(browser.video.torchOn).toBe(false);
   });
 });
