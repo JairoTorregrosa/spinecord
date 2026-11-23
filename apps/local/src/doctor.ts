@@ -245,13 +245,11 @@ async function checkClaude(p: Probes, robotArgs: string[], portHeld: boolean): P
       reason: `spinecord is registered (${scope} scope), but it runs ${args.split(" ")[0] || "nothing"}, not this clone's ${main}`,
       next: again,
     };
-  if (scope !== "user")
-    return {
-      status: "fail",
-      check: "claude code",
-      reason: `spinecord is registered in ${scope} scope: Claude Code sees it in one folder only, not in the folder of your own`,
-      next: again,
-    };
+  // local and project scope are deliberate: only sessions opened in this folder start a robot link
+  const where =
+    scope === "user"
+      ? "for every folder (user scope)"
+      : `in ${scope} scope: only sessions opened in this folder see it`;
   const flags = norm(args)
     .slice(mains.find((m) => norm(args).startsWith(m))!.length)
     .trim();
@@ -260,13 +258,13 @@ async function checkClaude(p: Probes, robotArgs: string[], portHeld: boolean): P
     return {
       status: portHeld ? "warn" : "fail",
       check: "claude code",
-      reason: `spinecord is registered (user scope), but Claude Code could not start it${portHeld ? ": the held port above is the likely cause" : ""}`,
+      reason: `spinecord is registered (${scope} scope), but Claude Code could not start it${portHeld ? ": the held port above is the likely cause" : ""}`,
       next: portHeld ? "fix the port above" : `bun "${main}" ${flags} --help, then claude --debug`,
     };
   return {
     status: "ok",
     check: "claude code",
-    reason: `spinecord is registered for every folder (user scope) with this clone's main.ts${flags ? ` ${flags}` : ""}`,
+    reason: `spinecord is registered ${where}, with this clone's main.ts${flags ? ` ${flags}` : ""}`,
   };
 }
 

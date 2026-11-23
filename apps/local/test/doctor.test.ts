@@ -109,7 +109,7 @@ describe("--doctor", () => {
     expect(line((await run(["--ev3"], linux)).lines, "browser")!.reason).toContain("/usr/bin/google-chrome");
   });
 
-  test("claude code: missing, not registered, another clone, a folder's scope, failing to start", async () => {
+  test("claude code: missing, not registered, another clone, a folder's own scope, failing to start", async () => {
     const lines = async (p: Probes, args = ["--twin"]) => line((await run(args, p)).lines, "claude code")!;
     expect(await lines(probes({ which: () => null }))).toMatchObject({
       status: "fail",
@@ -129,10 +129,13 @@ describe("--doctor", () => {
     expect(other.status).toBe("fail");
     expect(other.reason).toContain("/elsewhere/spinecord/apps/local/main.ts");
     expect(other.next).toStartWith("claude mcp remove -s user spinecord");
-    const local = await lines(probes({ runs: { "claude mcp get spinecord": registered("Local", MAIN) } }));
-    expect(local).toMatchObject({ status: "fail" });
-    expect(local.reason).toContain("local scope");
-    expect(local.next).toStartWith("claude mcp remove -s local spinecord");
+    // a folder's own registration, seen from that folder, is deliberate: only its sessions start a robot link
+    for (const scope of ["Local", "Project"]) {
+      const folder = await lines(probes({ runs: { "claude mcp get spinecord": registered(scope, `${MAIN} --ev3`) } }));
+      expect(folder.status).toBe("ok");
+      expect(folder.reason).toContain(`${scope.toLowerCase()} scope: only sessions opened in this folder see it`);
+      expect(folder.next).toBeUndefined();
+    }
     const broken = await lines(
       probes({ runs: { "claude mcp get spinecord": registered("User", MAIN, "✘ Failed to connect") } }),
     );
