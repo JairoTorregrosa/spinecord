@@ -197,16 +197,23 @@ Write the brick's address in place of `HOST`. The flags are the server's own: [C
 
 ## What it costs
 
-Measured on 2026-11-22 with `claude-opus-5-5`, the pill assistant and the twin. The numbers are the SDK's estimate, not a bill.
+Measured on 2026-11-22 with `claude-opus-5-5`, the pill assistant and the twin. The numbers are the SDK's estimate, not a bill. Each row says how it was paid (step 2): A is a Console login with an `ant` profile, the way a workshop pays; "login" is this computer's Claude Code login.
 
-| Turn | Cost |
-|---|---|
-| A chat answer that reads the robot (2 tool calls) | $0.05 |
-| A chat turn that does the mission (4 tool calls) | $0.05 |
-| A wake-up that does the mission from the start (8 tool calls) | $0.11 |
-| A wake-up that answers `nothing to do` | $0.004 to $0.005 |
+| Turn | Paid by | Cost | Tokens read (from cache) |
+|---|---|---|---|
+| A chat answer that reads the robot (2 tool calls) | A | $0.031 | 33,906 (29,922) |
+| A chat turn that does the mission (6 tool calls) | A | $0.050 | 72,857 (69,623) |
+| A wake-up that does the mission from the start (6 to 8 tool calls) | A | $0.074 to $0.077 | 93,697 to 103,321 (86,668 to 97,017) |
+| A wake-up that answers `nothing to do`, `--every 60` | A | $0.0038 to $0.0042 | about 16,000 (15,821 to 16,005) |
+| A wake-up that answers `nothing to do`, `--every 330` | A | $0.034, then $0.076 | 15,153 (8,689), then 15,238 (0) |
+| A chat answer that reads the robot (2 tool calls) | login | $0.05 | 33,645 (28,637) |
+| A chat turn that does the mission (4 tool calls) | login | $0.05 | 67,627 (65,569) |
+| A wake-up that does the mission from the start (8 tool calls) | login | $0.11 | 105,384 (98,265) |
+| A wake-up that answers `nothing to do` | login | $0.004 to $0.005 | about 15,700 (15,493) |
 
-`--every 60` with nothing to do is about $0.30 an hour, an estimate from the wake-ups above (60 an hour at $0.005). Claude keeps what it has already read in a cache at a lower price. These runs used a Claude Code login, whose cache lasts an hour; with an API key it lasts 5 minutes, so `--every` above 300 reads everything at full price at every wake-up and costs more (not measured here). The program ends at the first turn that reaches `--max-usd`, and that turn can pass it by about one step.
+Claude keeps what it has already read in a cache at a lower price. With a Console login or an API key the cache lasts 5 minutes: at `--every 330` the later wake-ups read nothing from the cache, and a `nothing to do` costs $0.076, about 19 times the $0.004 of `--every 60`. So keep `--every` at 300 or less. From the wake-ups above, `--every 60` with nothing to do is about $0.24 an hour (60 at $0.004), and `--every 330` about $0.83 an hour (11 at $0.076); both are sums, not hours that were run. A Claude Code login keeps its cache for an hour.
+
+The program ends at the first turn that reaches `--max-usd`, and that turn can pass it by about one step.
 
 ## What the agent may do
 
