@@ -1,0 +1,6 @@
+{
+  "name": "@spinecord/peripheral-page",
+  "private": true,
+  "description": "The page a person opens in a browser to lend a robot of the spinecord process its camera, microphone, speaker, screen and buttons",
+  "type": "module"
+}

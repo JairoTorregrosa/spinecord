@@ -5,6 +5,7 @@
 // which state each page is in and tells the hub. Nothing of it listens beyond loopback.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { PageHub, PageLink } from "../../../packages/page-hub/hub";
+import { META_PLACEHOLDER, type PeripheralPageFiles } from "../../peripheral-page/page-build";
 import {
   PAGE_CLOSE,
   PAGE_TRANSITIONS,
@@ -59,6 +60,8 @@ export interface PagesServer {
   stop(): void;
 }
 export interface PagesOptions {
+  /** The page served at `/` and the files next to it (apps/peripheral-page). */
+  page: PeripheralPageFiles;
   log: (ev: string, fields?: Record<string, unknown>) => void;
   times?: Partial<PageTimes>;
   /** Resolves when the robot's registry holds what its hub announced (the runtime scanned again). */
@@ -321,7 +324,7 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
             : new Response("expected a WebSocket upgrade", { status: 426 });
         }
         if (url.pathname === "/")
-          return new Response(pageHtml(token, [...hubs.keys()]), {
+          return new Response(pageHtml(o.page.html, token, [...hubs.keys()]), {
             headers: {
               "content-type": "text/html; charset=utf-8",
               "cache-control": "no-store",
@@ -330,6 +333,13 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
               "permissions-policy":
                 "camera=(self), microphone=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)",
             },
+          });
+        const file = Object.hasOwn(o.page.files, url.pathname.slice(1))
+          ? o.page.files[url.pathname.slice(1)]
+          : undefined;
+        if (file)
+          return new Response(file.body, {
+            headers: { "content-type": file.type, "cache-control": "no-store", "x-content-type-options": "nosniff" },
           });
         return new Response("not found", { status: 404 });
       },
@@ -378,20 +388,9 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
 }
 
 /** The page served at `/`. It carries the token: whoever reaches this loopback listener is on this computer. */
-function pageHtml(token: string, robots: string[]): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="spinecord-token" content="${token}">
-<meta name="spinecord-robots" content="${robots.join(" ")}">
-<title>spinecord page</title>
-</head>
-<body>
-<h1>spinecord</h1>
-<p>A page lends its devices to a robot of this server through the socket at <code>/page</code>. Robots that take pages: ${robots.join(", ")}.</p>
-</body>
-</html>
-`;
+function pageHtml(template: string, token: string, robots: string[]): string {
+  return template.replace(
+    META_PLACEHOLDER,
+    `<meta name="spinecord-token" content="${token}">\n    <meta name="spinecord-robots" content="${robots.join(" ")}">`,
+  );
 }

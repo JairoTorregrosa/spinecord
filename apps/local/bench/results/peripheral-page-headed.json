@@ -1,0 +1,72 @@
+{
+  "schema": "spinecord/peripheral-page@1",
+  "at": "2026-11-23T19:17:03.863Z",
+  "browser": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "headless": false,
+  "os": "darwin arm64",
+  "note": "Chrome's fake camera and microphone; the microphone plays \"hola robot\" spoken by macOS say; the fleet runs in this process; a headed window while this Mac's display was asleep, so the page was hidden in every window state",
+  "offered": {
+    "devices": ["desk.screen", "desk.touch", "desk.camera", "desk.mic", "desk.speaker"],
+    "unavailable": []
+  },
+  "recognizer_events": ["1 start", "253 audiostart", "7718 error:aborted", "7718 end"],
+  "results": [
+    {
+      "window": "front",
+      "page_visibility": "hidden",
+      "frame": {
+        "ok": true,
+        "detail": "640x360 jpeg, 5 KiB, age 1020 ms",
+        "ms": 1039
+      },
+      "speak": {
+        "ok": true,
+        "detail": "reason completed, spoken true",
+        "ms": 1108
+      },
+      "listen": {
+        "ok": false,
+        "detail": "reason timeout, heard false, transcript \"\", match \"\"",
+        "ms": 6004
+      }
+    },
+    {
+      "window": "covered by another window",
+      "page_visibility": "hidden",
+      "frame": {
+        "ok": true,
+        "detail": "640x360 jpeg, 5 KiB, age 1006 ms",
+        "ms": 1007
+      },
+      "speak": {
+        "ok": true,
+        "detail": "reason completed, spoken true",
+        "ms": 944
+      },
+      "listen": {
+        "ok": false,
+        "detail": "reason timeout, heard false, transcript \"\", match \"\"",
+        "ms": 6001
+      }
+    },
+    {
+      "window": "hidden behind another tab",
+      "page_visibility": "hidden",
+      "frame": {
+        "ok": true,
+        "detail": "640x360 jpeg, 4 KiB, age 1008 ms",
+        "ms": 1032
+      },
+      "speak": {
+        "ok": true,
+        "detail": "reason completed, spoken true",
+        "ms": 868
+      },
+      "listen": {
+        "ok": false,
+        "detail": "reason timeout, heard false, transcript \"\", match \"\"",
+        "ms": 6001
+      }
+    }
+  ]
+}

@@ -37,6 +37,12 @@ const FORBIDDEN: Record<string, string[]> = {
     ...["protocol", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
     "apps/local",
   ],
+  // the peripheral page speaks the page protocol and nothing else: protocol's types, never a runtime or the hub
+  "apps/peripheral-page": [
+    ...["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime", "page-hub"].map((p) => `packages/${p}`),
+    "apps/local",
+    "apps/robot-page",
+  ],
 };
 
 function* walk(dir: string): Generator<string> {

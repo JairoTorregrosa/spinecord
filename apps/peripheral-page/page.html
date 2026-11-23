@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- the language of listen and speak when a command names none; a join link's #lang= overrides it -->
+    <meta name="spinecord-lang" content="es-ES" />
+    <!-- spinecord:meta -->
+    <title>Lend this device · spinecord</title>
+    <link rel="stylesheet" href="page.css" />
+  </head>
+  <body>
+    <div id="banner" class="banner" role="status" aria-live="polite" hidden>
+      <span class="dot" aria-hidden="true"></span>
+      <div class="banner-text">
+        <strong id="banner-what"></strong>
+        <span id="banner-frame"></span>
+        <span id="banner-speech"
+          >Speech recognition runs in the browser's speech service and may send what the microphone hears to the browser
+          vendor.</span
+        >
+      </div>
+      <div class="banner-actions">
+        <button type="button" id="pause">Pause</button>
+        <button type="button" id="stop-lending" class="danger">Stop lending</button>
+      </div>
+    </div>
+
+    <header class="top">
+      <span class="brand">spinecord</span>
+      <span id="status" class="pill" data-state="idle">Not lent</span>
+    </header>
+
+    <main>
+      <section id="setup" class="card">
+        <h1>Lend this device to a robot</h1>
+        <p>
+          The robot gets this page's camera, microphone, speaker, screen and four buttons. One tap asks the browser for
+          the camera and the microphone; refuse either and the robot gets the rest.
+        </p>
+        <div class="fields">
+          <label
+            >Page name
+            <input id="name" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="16" />
+          </label>
+          <label id="robot-row"
+            >Robot
+            <select id="robot"></select>
+          </label>
+        </div>
+        <p class="robot-one">Robot <strong id="robot-one"></strong></p>
+        <button type="button" id="lend" class="primary">Lend this device</button>
+        <p id="setup-error" class="error" role="alert"></p>
+        <p class="fine">
+          Nothing is stored: a frame or a phrase goes only to the program that asked for it. While the camera or the
+          microphone is lent a red banner says so, with Pause and Stop lending.
+        </p>
+      </section>
+
+      <section id="closed" class="card" hidden>
+        <h2>Not lending</h2>
+        <p id="closed-why"></p>
+        <button type="button" id="reload" class="primary">Reload</button>
+      </section>
+
+      <section class="screen-wrap" aria-label="The robot's face">
+        <div id="face" class="screen"></div>
+        <button type="button" id="be-face" class="ghost">Fill the screen with the face</button>
+        <button type="button" id="leave-face" class="leave-face" aria-label="Leave the face">×</button>
+      </section>
+
+      <section id="pads" class="pads" aria-label="Buttons the robot reads">
+        <button type="button">1</button>
+        <button type="button">2</button>
+        <button type="button">3</button>
+        <button type="button">4</button>
+      </section>
+
+      <section id="lent" class="card" hidden>
+        <h2>What this page lends</h2>
+        <ul id="lent-list" class="lent-list"></ul>
+        <video id="preview" class="preview" autoplay muted playsinline hidden></video>
+      </section>
+    </main>
+    <script type="module" src="page.js"></script>
+  </body>
+</html>
