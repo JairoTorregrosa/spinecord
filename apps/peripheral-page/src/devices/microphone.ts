@@ -142,7 +142,7 @@ export function microphone(o: MicrophoneOptions): Microphone {
   let node: WorkletNodeLike | null = null;
   let source: AudioNodeLike | null = null;
   const track = (): TrackLike | null => stream?.getAudioTracks()[0] ?? null;
-  // events of a track that is no longer the lent one say nothing about the microphone
+  // events of a track other than the lent one say nothing about the microphone
   const watch = (t: TrackLike | null) => {
     t?.addEventListener("mute", () => t === track() && kit.down("mic", "the microphone stopped sending sound"));
     t?.addEventListener("unmute", () => t === track() && kit.up("mic"));

@@ -50,7 +50,7 @@ export function camera(o: CameraOptions): Camera {
   const changed: (() => void)[] = [];
   // an ended track may report no settings: the facing to ask for again is kept here
   let lastFacing = track()?.getSettings().facingMode;
-  // events of a track that is no longer the lent one say nothing about the camera
+  // events of a track other than the lent one say nothing about the camera
   const watch = (t: TrackLike | null) => {
     t?.addEventListener("mute", () => t === track() && kit.down("camera", "the camera stopped sending pictures"));
     t?.addEventListener("unmute", () => t === track() && kit.up("camera"));

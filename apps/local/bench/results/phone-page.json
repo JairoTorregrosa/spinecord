@@ -1,0 +1,112 @@
+{
+  "schema": "spinecord/phone-page@1",
+  "at": "2026-11-23T20:02:45.857Z",
+  "browser": "Google Chrome",
+  "headless": true,
+  "os": "darwin arm64",
+  "note": "Chrome with a phone's viewport and touch, its fake camera and microphone, and the motion sensors overridden through the DevTools protocol; the fleet runs in this process",
+  "offered": {
+    "devices": [
+      "phone.screen",
+      "phone.touch",
+      "phone.camera",
+      "phone.mic",
+      "phone.imu",
+      "phone.vibrator",
+      "phone.speaker"
+    ],
+    "unavailable": [
+      {
+        "kind": "torch",
+        "why": "torch: the lent camera has no torch the browser can switch (on a phone the torch is usually next to the camera facing environment)"
+      }
+    ]
+  },
+  "steps": {
+    "sensor_overrides": {
+      "accelerometer": "ok",
+      "linear-acceleration": "ok",
+      "gravity": "ok",
+      "gyroscope": "ok",
+      "relative-orientation": "ok",
+      "absolute-orientation": "ok"
+    },
+    "readings_before_tap": {
+      "relative-orientation": "ok",
+      "absolute-orientation": "ok",
+      "accelerometer": "ok",
+      "gravity": "ok",
+      "linear-acceleration": "ok",
+      "gyroscope": "ok"
+    },
+    "page_sees": {
+      "coarse": true,
+      "motion": "function",
+      "requestPermission": "function",
+      "vibrate": "function",
+      "wakeLock": true
+    },
+    "sensor_path": "Emulation.setSensorOverrideEnabled",
+    "tilt_flat": {
+      "pitch_deg": 0,
+      "roll_deg": 0,
+      "heading_deg": 0,
+      "accel_z_m_s2": 9.8
+    },
+    "readings_tilted": {
+      "relative-orientation": "ok",
+      "absolute-orientation": "ok",
+      "accelerometer": "ok",
+      "gravity": "ok",
+      "linear-acceleration": "ok",
+      "gyroscope": "ok"
+    },
+    "tilt_pitch30_roll_minus15": {
+      "pitch_deg": 30,
+      "roll_deg": -15,
+      "heading_deg": 0,
+      "accel_z_m_s2": 9.8
+    },
+    "tilt_flat_again": {
+      "pitch_deg": 0,
+      "roll_deg": 0,
+      "heading_deg": 0,
+      "accel_z_m_s2": 9.8
+    },
+    "wait_until_pitch_gt_20": {
+      "met": true,
+      "reason": "condition_met",
+      "ms": 357,
+      "readings": [
+        {
+          "device": "phone.imu",
+          "channel": "pitch_deg",
+          "unit": "deg",
+          "value": 40,
+          "ts": 1795464162488
+        }
+      ]
+    },
+    "vibrate": {
+      "reason": "completed",
+      "measured": {
+        "vibrated_ms": 200
+      }
+    },
+    "torch": "torch: the lent camera has no torch the browser can switch (on a phone the torch is usually next to the camera facing environment)",
+    "hidden_visibility": "hidden",
+    "hidden_imu": "device_offline: Device phone.imu is down: the page is hidden: the browser sends it no motion events. The page's other devices work. Ask the person at the page named phone to bring it to the front, keep its screen on and keep it open, then send the call again.",
+    "hidden_page": "active",
+    "visible_again_visibility": "visible",
+    "visible_again_imu": {
+      "pitch_deg": 40,
+      "roll_deg": 0,
+      "heading_deg": 0,
+      "accel_z_m_s2": 9.8
+    },
+    "counters": {
+      "wake": ["refused: NotAllowedError", "refused: NotAllowedError"],
+      "vibrate": [[200, true]]
+    }
+  }
+}

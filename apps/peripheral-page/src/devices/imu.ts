@@ -90,7 +90,7 @@ export function imu(o: ImuOptions): Imu {
   let lastPush = -Infinity;
   let jolt = -Infinity;
   let shaken = false;
-  let compass = false; // a heading came once: a sample without one no longer clears it
+  let compass = false; // a heading came once: a sample without one keeps it
   let waiting: (() => void)[] = [];
 
   const def: DeviceDef = {

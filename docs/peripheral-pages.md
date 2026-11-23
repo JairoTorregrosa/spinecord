@@ -1,6 +1,6 @@
 # Peripheral pages
 
-A peripheral page is a browser page that lends a robot of the spinecord process the devices of the computer or phone it runs on: eyes, ears, a voice, a face and buttons. No tool is added. The model finds the devices with `describe_robot` and `describe_device`, reads them with `read_device`, `read_all` and `wait_until`, commands them with `command_device`, and names them in `until` and in programs, like any other device. The contract is CONTRACT.md §2.4; the page is `apps/peripheral-page`.
+A peripheral page is a browser page that lends a robot of the spinecord process the devices of the computer or phone it runs on: eyes, ears, a voice, a face and buttons and, on a phone, motion sensors, vibration and a torch. No tool is added. The model finds the devices with `describe_robot` and `describe_device`, reads them with `read_device`, `read_all` and `wait_until`, commands them with `command_device`, and names them in `until` and in programs, like any other device. The contract is CONTRACT.md §2.4; the page is `apps/peripheral-page`.
 
 ## Start it
 
@@ -10,7 +10,7 @@ bun apps/local/main.ts --twin --pages
 
 `--pages` turns the page listener on (`127.0.0.1`, port 8768; `--page-port <n>` picks another) and adds a robot with no body, `pages`, whose every device a page lends. Every other robot of the process takes pages too. `list_robots` gives each robot a `join` sentence that says what to open.
 
-On this computer open `http://127.0.0.1:8768/` in Chrome or Edge, choose the page's name (`desk` by default, `phone` on a touch screen) and, when the process has more than one robot, the robot. Then tap **Lend this device**. That one tap asks the browser for the camera and the microphone, starts the page's audio and its speech voices, and joins. Refuse the camera or the microphone and the robot gets the rest: the page lists what it could not lend, and why, and so does `describe_robot`.
+On this computer open `http://127.0.0.1:8768/` in Chrome or Edge, choose the page's name (`desk` by default, `phone` on a touch screen) and, when the process has more than one robot, the robot. Then tap **Lend this device**. That one tap asks the browser for the camera, the microphone and, where the browser asks (Safari on iOS), the motion sensors, starts the page's audio and its speech voices, keeps the screen on, and joins. Refuse any of them and the robot gets the rest: the page lists what it could not lend, and why, and so does `describe_robot`.
 
 The page while it lends, on a phone and on a laptop:
 
@@ -50,7 +50,7 @@ TLS here gives the phone a secure context, not secrecy: the key of the local-ip.
 
 ## What the page lends
 
-Devices are `<page name>.<id>`. With the name `desk`:
+Devices are `<page name>.<id>`. With the name `desk` on a computer, and `phone` on a phone for the last three:
 
 | device | kind | role | channels | commands |
 |---|---|---|---|---|
@@ -59,6 +59,9 @@ Devices are `<page name>.<id>`. With the name `desk`:
 | `desk.speaker` | speaker | voice | `speaking`, `last_spoken`, `spoken_count` (pushed) | `speak{text, lang?, voice?, rate_wpm?}`, `tone{frequency_hz, duration_ms}` |
 | `desk.screen` | display | face | `showing` (pushed) | `text{lines}`, `clear{}`, `face{expression}`, `color{color, ms}` |
 | `desk.touch` | touch_panel | touch | `b1`..`b4`, `b1_presses`..`b4_presses` (pushed) | `set_labels{labels}` |
+| `phone.imu` | imu | | `pitch_deg`, `roll_deg`, `heading_deg`, `accel_x_m_s2`..`accel_z_m_s2`, `rate_x_deg_s`..`rate_z_deg_s`, `shaken` (pushed, at most 20 per second) | |
+| `phone.vibrator` | vibrator | | | `vibrate{ms ≤ 2000}` |
+| `phone.torch` | torch | | `on` (pushed) | `set{on, ms?}` |
 
 Each one is declared only where it works:
 
@@ -67,16 +70,25 @@ Each one is declared only where it works:
 - **Speaker**: `speak` with the voices this browser lists (its `lang` and `voice` enums are what `describe_device` shows: never assume one), `tone` through Web Audio.
 - **Screen**: text, a face (`neutral`, `happy`, `sad`, `thinking`, `listening`, `speaking`, plus any an extension adds) or a color. **Fill the screen with the face** makes it the robot's face, full screen.
 - **Buttons**: four large buttons, pressed with a finger or the mouse.
+- **Motion sensors** (`imu`): where the browser sends motion events with values, and where it asks (Safari on iOS) the person allowed them in the tap. A computer's browser has the events and no sensor behind them, so it lends no imu. Each channel is declared once a sample carried it: `heading_deg` is absent (null) where the browser gives no compass. Tilt is in degrees about the phone's own axes: `pitch_deg` 0 lying flat and positive with the top edge raised, `roll_deg` positive with the right edge lowered; the heading is counter-clockwise from north; acceleration includes gravity (flat, screen up: `accel_z_m_s2` about 9.8); `shaken` is true for a second after a jolt. While the page is hidden the imu is down: a browser sends a hidden page no motion events.
+- **Vibrator**: on a phone or tablet whose browser has `navigator.vibrate` (Chrome on Android; Safari on iOS has none). `vibrate` returns when the vibration has ended; `stop` ends it.
+- **Torch**: the light next to the lent camera, through the camera track's `torch` constraint, declared only while that track says it has one. On most phones it is next to the camera facing the environment: `configure{facing: "environment"}` on the camera can make the torch appear. `set{on: true}` returns at once and the torch goes off by itself after `ms` (default 30 s), at `stop`, and when the camera changes.
 
 ## Privacy
 
 - Nothing is lent before the tap, and nothing is stored: no frame, no audio, no transcript. A frame or a phrase goes only to the program that asked, in the result of its call.
-- While the camera or the microphone is lent, a red banner says so. It flashes on each frame taken and says "listening…" for the whole of a `listen`. **Pause** makes every device of the page answer `device_offline` until **Resume**. **Stop lending** closes the camera and the microphone and takes them out of the robot.
+- While the camera, the microphone or the motion sensors are lent, a red banner says so. It flashes on each frame taken and says "listening…" for the whole of a `listen`. **Pause** makes every device of the page answer `device_offline` until **Resume**. **Stop lending** closes the camera and the microphone, stops reading the motion sensors and takes them out of the robot (the torch goes with the camera).
 - Point a camera at the table, not at people who did not agree to it.
 
 ## A page in the background
 
 `apps/local/bench/peripheral-page.ts` asks for a frame, a `speak` and a `listen` with the page's tab in front, covered by another window and hidden behind another tab, in Chrome with its fake camera and microphone (results in `apps/local/bench/results/peripheral-page*.json`). Measured on macOS with Chrome: frames and `speak` work in all three states; a tab the browser reports hidden encodes a frame about once a second, so that frame's `age_ms` is about 1000. The `listen` of that run timed out in all three states: Chrome's recognizer started and opened audio but heard no sound from the fake microphone, so whether a covered or hidden tab still recognizes speech is not measured yet. When a page stops answering, its devices answer `device_offline` and say what the person must do.
+
+## A locked phone
+
+A phone that locks its screen, or a browser that freezes a hidden tab, stops the page: it answers no ping, and after 3 s the page is `asleep` and every device of it answers `device_offline` until it answers again. The page keeps the screen on with a wake lock while it lends, and the list of what is lent says whether it holds one; a browser drops the lock whenever the page is hidden, and the page takes it again when it is visible. A camera or microphone track that the browser mutes is that device down (`device_offline` for it alone) until it is unmuted. A track the browser ended while the page was hidden (Safari on iOS does) is asked for again when the page is visible: the device is up again when the browser gives it back, and stays down with the reason when it does not.
+
+`apps/local/bench/phone-page.ts` runs the phone kinds in Chrome with a phone's viewport and touch and its motion sensors overridden through the DevTools protocol (`Emulation.setSensorOverrideEnabled`), results in `apps/local/bench/results/phone-page.json`. Measured headless on macOS: the page lends the imu and the vibrator, the tilt of the override reads back (pitch 30, roll -15), `wait_until` on `pitch_deg` is met, `vibrate` completes, the imu is down while the tab is hidden and up when it is in front again, and the wake lock is asked for in the tap and again when the tab is visible (headless Chrome refuses it both times). Chrome's fake camera has no torch, so the torch is listed as unavailable. On a real phone none of this is verified yet: [`docs/hardware-log.md`](hardware-log.md).
 
 ## Add a device: the extension API
 

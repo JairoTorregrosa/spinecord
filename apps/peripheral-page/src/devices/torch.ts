@@ -70,7 +70,7 @@ export function torch(o: TorchOptions): { def: DeviceDef } {
     },
     async run(_command, args) {
       const t = o.track();
-      if (!hasTorch(t)) throw new PageError("device_offline", "the lent camera has no torch now");
+      if (!hasTorch(t)) throw new PageError("device_offline", "the lent camera has no torch at the moment");
       if (args.on !== true) {
         switchOff();
         return { on: false };
