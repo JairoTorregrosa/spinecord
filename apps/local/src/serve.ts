@@ -5,6 +5,7 @@ import { log, logTo } from "./stderr"; // first: it moves console output off std
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import type { LocalConfig } from "./config";
 import { LISTED_TOOLS, buildServer } from "./mcp";
+import { linksText } from "./pages";
 import { buildFleet, type Fleet, type FleetOptions } from "./sources";
 
 /** `fleetOptions`: what buildFleet takes besides `log`. main.ts passes none. */
@@ -23,10 +24,31 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
       `spinecord: to lend the EV3, open ${fleet.bridge.url} in Chrome or Edge and press "Connect EV3"\n`,
     );
 
-  if (fleet.pages)
+  if (fleet.pages) {
+    const p = fleet.pages;
     process.stderr.write(
-      `spinecord: pages join the robots on ${fleet.pages.url} (this computer only); list_robots says how in \`join\`\n`,
+      p.lanUrl || p.tunnelUrl
+        ? `spinecord: pages join the robots on ${p.url} (this computer)${p.lanUrl ? `, on ${p.lanUrl} (this network)` : ""}${p.tunnelUrl ? `, and through the tunnel that forwards to ${p.tunnelUrl}` : ""}; list_robots says how in \`join\`\n`
+        : `spinecord: pages join the robots on ${p.url} (this computer only); list_robots says how in \`join\`\n`,
     );
+    if (fleet.lan)
+      process.stderr.write(
+        `spinecord: --lan listens on ${fleet.lan.address} (${fleet.lan.interface}) as ${fleet.lan.host}, certificate from ${fleet.lan.source}. ${fleet.lan.nameCheck.ok ? "" : "WARNING: "}${fleet.lan.nameCheck.text}.\n` +
+          (process.platform === "win32"
+            ? "spinecord: Windows may ask whether bun may accept connections on this network: allow it on private networks, or phones cannot join.\n"
+            : ""),
+      );
+    if (p.tunnelUrl)
+      process.stderr.write(
+        `spinecord: --page-origin: every frame, transcript and command of a page that joins through the tunnel crosses the tunnel's operator and the internet.\n`,
+      );
+    // the links carry the token: written to stderr only, never through log() and so never to --log-file
+    const links = p.links();
+    if (links.length)
+      process.stderr.write(
+        `spinecord: to add a phone, scan a code below or the one at ${p.consoleUrl}; each link carries the pairing token of this start.\n${linksText(links)}`,
+      );
+  }
 
   let ending: Promise<never> | null = null;
   /** Stops every motor, says so on stderr, exits. Runs once whatever asks for it. */
