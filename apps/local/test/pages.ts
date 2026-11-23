@@ -141,6 +141,23 @@ export const FAKE_SCREEN: PageDevice = {
   ],
 };
 
+/**
+ * A motion sensor for a fake that tilts: add it to `devices`. It pushes pitch and roll 0 on joining, then what
+ * `push` gives it, and declares the 20 Hz a phone's motion events are pushed at.
+ */
+export const FAKE_IMU: PageDevice = {
+  id: "imu",
+  kind: "imu",
+  roles: ["tilt"],
+  description: "The motion sensor of this test page; it tilts when the test says so.",
+  channels: [
+    { name: "pitch_deg", type: "number", pushed: true, unit: "deg", max_rate_hz: 20, description: "Tilt forward." },
+    { name: "roll_deg", type: "number", pushed: true, unit: "deg", max_rate_hz: 20, description: "Tilt sideways." },
+    { name: "shaken", type: "boolean", pushed: true, max_rate_hz: 20, description: "The page was shaken." },
+  ],
+  commands: [],
+};
+
 export interface FakePageOptions {
   /** The page's address, as list_robots' join names it: http://127.0.0.1:<port>/, or a join link with the token in
    * its fragment (#t=<token>), as the network listener's QR code carries it. */
@@ -173,6 +190,8 @@ export interface FakePage {
   received: ServerToPage[];
   press(): void;
   release(): void;
+  /** Pushes values of a device's pushed channels, as the browser event that changed them would. */
+  push(device: string, values: Record<string, number | boolean>): void;
   /** Stops answering pings, reads and commands (a locked phone, a frozen tab). */
   silence(): void;
   pause(): void;
@@ -240,6 +259,8 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
     if (m.t === "welcome") {
       send({ t: "state", device: "touch", values: { b1: false, b1_presses: 0 } });
       send({ t: "state", device: "speaker", values: { spoken_count: 0 } });
+      if (devices.some((d) => d.id === "imu"))
+        send({ t: "state", device: "imu", values: { pitch_deg: 0, roll_deg: 0, shaken: false } });
       return onWelcome(m);
     }
     if (silent) return;
@@ -306,6 +327,9 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
     },
     release() {
       send({ t: "state", device: "touch", values: { b1: false } });
+    },
+    push(device, values) {
+      send({ t: "state", device, values });
     },
     silence() {
       silent = true;

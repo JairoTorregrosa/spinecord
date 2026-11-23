@@ -58,6 +58,10 @@ const square = () => new Function(`${example("square")}\nreturn square;`)() as S
 beforeAll(async () => {
   s = await startServer([], VIRTUAL_TIME_MAIN);
 });
+
+test("the server runs its twin on virtual time: its ready line says so", () => {
+  expect(s.events("ready")).toMatchObject([{ clock: "virtual" }]);
+});
 afterAll(async () => {
   expect(await s.closeStdin()).toBe(0);
 });

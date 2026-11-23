@@ -83,6 +83,52 @@ const code = async (p: Promise<unknown>) => {
 };
 
 describe("PageHub", () => {
+  test("a loop's tick reads pushed values only, writes nothing, and keeps the page watched until the loop ends", async () => {
+    const r = rig();
+    const loop = r.hub.loop;
+    if (loop.runs_on !== "host") throw new Error("the hub runs loops on the host");
+    expect([loop.max_rate_hz, loop.inputs]).toEqual([PAGE_LIMITS.loop_rate_hz, "pushed"]);
+    const reads = [
+      { device: "desk.touch", channel: "b1" },
+      { device: "desk.touch", channel: "b1_presses" },
+      { device: "desk.camera", channel: "width_px" },
+      { device: "gone.touch", channel: "b1" },
+    ];
+    // nothing pushed yet: ticks without a value
+    expect(await loop.tick([], reads, 0)).toEqual([null, null, null, null]);
+    expect(r.link.receive({ t: "state", device: "touch", values: { b1: true, b1_presses: 3 } })).toBeNull();
+    // a boolean is 0 or 1; a channel that is not pushed is never asked of the page
+    expect(await loop.tick([], reads, 0)).toEqual([1, 3, null, null]);
+    expect(r.link.receive({ t: "state", device: "touch", values: { b1: false } })).toBeNull();
+    expect(await loop.tick([], reads.slice(0, 2), 0)).toEqual([0, 3]);
+    expect(r.reqs()).toEqual([]);
+    // watched for the whole loop, at any rate: a tick every 2 s still keeps the 100 ms ping
+    r.advance(2000);
+    expect(r.link.watched()).toBe(true);
+    // silent: from 100 ms before the oldest unanswered ping, stale_ms on, every value is no value
+    r.link.ping();
+    r.advance(PAGE_LIMITS.stale_ms - 100 - 1);
+    expect(await loop.tick([], reads.slice(0, 2), 0)).toEqual([0, 3]);
+    r.advance(1);
+    expect(await loop.tick([], reads.slice(0, 2), 0)).toEqual([null, null]);
+    expect(r.link.receive({ t: "pong", n: 1, visible: true })).toBeNull();
+    expect(await loop.tick([], reads.slice(0, 2), 0)).toEqual([0, 3]);
+    // a device down, then a page asleep: no value
+    expect(r.link.receive({ t: "down", device: "touch", why: "test" })).toBeNull();
+    expect(await loop.tick([], reads.slice(0, 1), 0)).toEqual([null]);
+    expect(r.link.receive({ t: "up", device: "touch" })).toBeNull();
+    r.link.setState("asleep", "paused");
+    expect(await loop.tick([], reads.slice(0, 1), 0)).toEqual([null]);
+    // a page moves nothing
+    expect(
+      (await code(loop.tick([{ device: "desk.speaker", command: "speak", args: { text: "x" } }], [], 100))).code,
+    ).toBe("internal");
+    // the loop's end releases the page: it is watched only while a read keeps it so
+    await loop.end([]);
+    r.advance(PAGE_LIMITS.watched_ms);
+    expect(r.link.watched()).toBe(false);
+  });
+
   test("devices are <page>.<local>, the page is their provider, and a join or a removal asks for a scan", async () => {
     const r = rig();
     expect(r.changes()).toBe(1); // the join

@@ -5,12 +5,20 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { connect } from "node:net";
 import { networkInterfaces } from "node:os";
 import { firstViolation } from "../../../packages/protocol/schema";
-import { loadConfig } from "../src/config";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { LoopSpec } from "../../../packages/protocol/types";
+import { REPO, loadConfig } from "../src/config";
 import { PAGE_TIMES, type PageTimes } from "../src/pages";
 import { buildFleet, twinRuntime, type Fleet } from "../src/sources";
 import { TOOL, callTool } from "../src/tools";
-import { startServer, until, type TestServer } from "./client";
-import { fakePage, servedToken, testJpeg, type FakePage } from "./pages";
+import { sleep, startServer, until, type TestServer } from "./client";
+import { FAKE_DEVICES, FAKE_IMU, FAKE_SCREEN, fakePage, servedToken, testJpeg, type FakePage } from "./pages";
+
+/** C5 of docs/loops.md, as printed there. */
+const C5 = [...readFileSync(join(REPO, "docs", "loops.md"), "utf8").matchAll(/```json\r?\n([\s\S]*?)```/g)].map(
+  (m) => JSON.parse(m[1]!) as LoopSpec,
+)[4]!;
 
 const open: { fleet?: Fleet; pages: FakePage[]; server?: TestServer }[] = [];
 afterEach(async () => {
@@ -240,19 +248,100 @@ describe("peripheral pages", () => {
     expect((await r.twin("read_device", { device: "desk.touch" })).ok).toBe(true);
   });
 
-  test("a loop that names a page device is refused: the hub runs no loops", async () => {
+  test("C5 on real time: the fake page's roll steers the twin's wheels proportionally, roll 0 holds, a silent page ends it with input_lost", async () => {
     const r = await rig();
-    await r.joined();
-    const run = await r.twin("run_loop", {
+    const p = await r.joined({ name: "phone", devices: [...FAKE_DEVICES, FAKE_IMU] });
+    // the page joins the robot's loop as inputs: it does not change where a loop runs, or how fast
+    expect((await r.twin("describe_robot")).data.loop).toEqual({ runs_on: "host", max_rate_hz: 100 });
+    // 10 Hz, not C5's 20: on real time a loaded runner must not end the loop with overrun
+    const started = await r.twin("run_loop", { ...C5, rate_hz: 10, duration_ms: 20000 });
+    expect(started).toMatchObject({ ok: true, robot: { activity: "looping" }, data: { state: "running" } });
+    expect(started.data.outputs.map((o: { last: number }) => o.last)).toEqual([0, 0]);
+    const outputs = async () =>
+      ((await r.twin("supervise_loop")).data.outputs as { last: number }[]).map((o) => o.last);
+    const speeds = async () =>
+      (await r.twin("read_all")).data.readings
+        .filter((x: { device: string; channel: string }) => x.channel === "speed_deg_s")
+        .reduce(
+          (m: Record<string, number>, x: { device: string; value: number }) => ({ ...m, [x.device]: x.value }),
+          {},
+        );
+
+    // roll 10 → ±5 % (k_left 0.5, k_right -0.5); roll 20 → ±10 %: the output follows the roll, and the wheels turn
+    p.push("imu", { roll_deg: 10 });
+    await until("the outputs to follow a roll of 10", async () => (await outputs()).join() === "5,-5");
+    p.push("imu", { roll_deg: 20 });
+    await until("the outputs to follow a roll of 20", async () => (await outputs()).join() === "10,-10");
+    await until("the wheels to turn apart", async () => {
+      const v = await speeds();
+      return v["ev3.B"] > 0 && v["ev3.C"] < 0;
+    });
+    // while the loop reads the page, the server pings it every 100 ms
+    const pings = () => p.received.filter((m) => m.t === "ping").length;
+    const before = pings();
+    await sleep(1000);
+    expect(pings() - before).toBeGreaterThanOrEqual(5);
+    // roll 0: both outputs at 0 and the wheels hold
+    p.push("imu", { roll_deg: 0 });
+    await until("the outputs to rest", async () => (await outputs()).join() === "0,0");
+    await until("the wheels to stop", async () => {
+      const v = await speeds();
+      return v["ev3.B"] === 0 && v["ev3.C"] === 0;
+    });
+
+    // the page falls silent while it steers: 300 ms after its last answer, three ticks without a value
+    p.push("imu", { roll_deg: 20 });
+    await until("the outputs to follow a roll of 20", async () => (await outputs()).join() === "10,-10");
+    const quiet = Date.now();
+    p.silence();
+    const end = await r.twin("supervise_loop", { wait_ms: 5000 });
+    const took = Date.now() - quiet;
+    expect(end).toMatchObject({ robot: { activity: "idle" }, data: { state: "ended", reason: "input_lost" } });
+    expect(end.data.outputs.map((o: { last: number }) => o.last)).toEqual([0, 0]);
+    expect(took).toBeGreaterThanOrEqual(200);
+    expect(took).toBeLessThan(3000);
+    const v = await speeds();
+    expect([v["ev3.B"], v["ev3.C"]]).toEqual([0, 0]);
+  }, 30_000);
+
+  test("a page is a loop input only: a page device as an output, or a channel it does not push, is refused and nothing is sent", async () => {
+    const r = await rig();
+    const p = await r.joined({ devices: [...FAKE_DEVICES, FAKE_SCREEN, FAKE_IMU] });
+    const sent = () => p.received.filter((m) => m.t === "req").length;
+    const before = sent();
+    const output = await r.twin("run_loop", {
       rate_hz: 20,
       duration_ms: 1000,
-      signals: { pressed: { device: "desk.touch", channel: "b1" } },
-      outputs: [{ device: "left_wheel", command: "run_time", terms: [{ signal: "pressed", gain: 10 }] }],
+      signals: { roll: { device: "desk.imu", channel: "roll_deg" } },
+      outputs: [{ device: "desk.screen", command: "clear", terms: [{ signal: "roll", gain: 1 }] }],
     });
-    expect(run).toMatchObject({ ok: false, error: { code: "unsupported" } });
-    expect(run.error.message).toContain("provider pages runs no loops");
+    expect(output).toMatchObject({ ok: false, error: { code: "unsupported" } });
+    expect(output.error.message).toContain("loop inputs only");
+    const asked = await r.twin("run_loop", {
+      rate_hz: 20,
+      duration_ms: 1000,
+      signals: { width: { device: "desk.camera", channel: "width_px" } },
+      outputs: [{ device: "left_wheel", command: "run_time", terms: [{ signal: "width", gain: 0.1 }] }],
+    });
+    expect(asked).toMatchObject({ ok: false, error: { code: "unsupported" } });
+    expect(asked.error.message).toContain("width_px of desk.camera is not pushed");
+    expect(sent()).toBe(before);
     expect((await r.twin("read_all")).robot.activity).toBe("idle");
-  });
+    // a touch button is an input like a tilt: a boolean reads 0 or 1
+    const pressed = await r.twin("run_loop", {
+      rate_hz: 10,
+      duration_ms: 3000,
+      signals: { b1: { device: "desk.touch", channel: "b1" } },
+      outputs: [{ device: "left_wheel", command: "run_time", terms: [{ signal: "b1", gain: 10 }] }],
+      guards: [{ name: "pressed", signal: "b1", op: "gt", value: 0.5 }],
+    });
+    expect(pressed).toMatchObject({ ok: true, data: { state: "running" } });
+    p.press();
+    const end = await r.twin("supervise_loop", { wait_ms: 5000 });
+    expect(end.data).toMatchObject({ state: "ended", reason: "guard", guard: "pressed" });
+    // the robot without a body runs no loop: it has nothing to drive
+    expect((await r.call("describe_robot", { robot_id: "pages" })).data.loop).toBeNull();
+  }, 30_000);
 
   test("a device reported down answers device_offline for it alone", async () => {
     const r = await rig();

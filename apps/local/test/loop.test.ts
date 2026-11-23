@@ -12,14 +12,17 @@ import type { DeviceSpec, Provider, RobotProfile } from "../../../packages/proto
 import { LocalRobot } from "../src/robot";
 import { EXAMPLE, REPO, loadConfig } from "../src/config";
 import { callLine } from "../src/mcp";
-import { buildFleet } from "../src/sources";
+import { buildFleet, twinRuntime } from "../src/sources";
+import { PageHub } from "../../../packages/page-hub/hub";
+import type { ServerToPage } from "../../../packages/protocol/types";
+import { FAKE_IMU } from "./pages";
 import { TOOL, callTool } from "../src/tools";
 import { ARM } from "./arm";
 
 /** The specs of docs/loops.md, as printed there. */
-const [, C2, , C4] = [
+const [, C2, , C4, C5] = [
   ...readFileSync(join(REPO, "docs", "loops.md"), "utf8").matchAll(/```json\r?\n([\s\S]*?)```/g),
-].map((m) => JSON.parse(m[1]!) as LoopSpec) as [LoopSpec, LoopSpec, LoopSpec, LoopSpec];
+].map((m) => JSON.parse(m[1]!) as LoopSpec) as [LoopSpec, LoopSpec, LoopSpec, LoopSpec, LoopSpec];
 const LINE_OVAL = join(REPO, "packages", "sim-world", "examples", "line-oval.json");
 
 async function twin(argv: string[]) {
@@ -600,5 +603,167 @@ describe("the backstop behind a loop", () => {
     expect(clock.now() - t0).toBe(1000 + 2000 + 150);
     expect(stops).toBeGreaterThanOrEqual(2); // the stop at attach, and the one that ended the loop
     expect(ends).toMatchObject([{ reason: "timeout", ticks: 29 }]);
+  }, 30_000);
+});
+
+/**
+ * The twin with a page joined to its hub, all on one virtual clock. The page is the hub's end of a socket that the
+ * test answers by hand: apps/local's page machine (pings on Date.now and setInterval, a real WebSocket) cannot run
+ * on a virtual clock, which would run the loop ahead of every message of the socket; pages.test.ts runs C5 through
+ * it on real time. Here a silent page is a ping the test leaves unanswered.
+ */
+async function tiltRig(extra: Provider[] = []) {
+  const clock = new FakeClock();
+  const hub = new PageHub({ now: () => clock.now() });
+  const sent: ServerToPage[] = [];
+  const source = loadConfig(["--twin"]).robots[0]! as Parameters<typeof twinRuntime>[0];
+  const profile: RobotProfile = {
+    id: "r1-sim",
+    roles: {},
+    notes: [],
+    limits: { max_speed_pct: 80, max_command_ms: 10000, max_program_ms: 20000, max_loop_ms: 60000 },
+  };
+  const runtime = extra.length
+    ? createRuntime({ profile, providers: [...extra, hub], clock })
+    : twinRuntime(source, clock, hub).runtime;
+  const robot = new LocalRobot({ id: "r1-sim", clock });
+  // the page answers a stop at once, as the fake page client does; it answers nothing else
+  const socket = {
+    send: (m: ServerToPage) => {
+      sent.push(m);
+      if (m.t === "req" && m.op === "stop") queueMicrotask(() => link.receive({ t: "res", id: m.id, ok: true }));
+    },
+  };
+  const link = hub.join("phone", socket, [structuredClone(FAKE_IMU)], []);
+  link.setState("active", null);
+  const push = (values: Record<string, number | boolean>) =>
+    expect(link.receive({ t: "state", device: "imu", values, ts: 0 })).toBeNull();
+  push({ pitch_deg: 0, roll_deg: 0, shaken: false });
+  await robot.attach(runtime);
+  const tool = async (name: string, args: Record<string, unknown> = {}) => {
+    const out = await callTool([robot], name, { robot_id: "r1-sim", ...args });
+    expect(validateSchema(TOOL.get(name)!.output, out.envelope, name)).toEqual([]);
+    return out.envelope as any;
+  };
+  while (!(await tool("describe_robot")).data.devices.some((d: { id: string }) => d.id === "phone.imu"))
+    await clock.sleep(10);
+  return { clock, hub, link, sent, robot, tool, push };
+}
+
+describe("C5 on virtual time: a page's tilt steers the twin", () => {
+  test("a roll moves the wheels in proportion, roll 0 holds, and a page silent for 300 ms ends the loop with input_lost", async () => {
+    const t = await tiltRig();
+    const started = await t.tool("run_loop", { ...C5 });
+    expect(started).toMatchObject({ ok: true, data: { state: "running", rate_hz: 20, ticks: 20 } });
+    // the imu pushes at 20 Hz, the loop's own rate: no note; describe_robot's loop is the twin's
+    expect(started.data.notes ?? []).toEqual([]);
+    expect((await t.tool("describe_robot")).data.loop).toEqual({ runs_on: "host", max_rate_hz: 100 });
+    const read = async (device: string) =>
+      (await t.tool("read_device", { device, channels: ["speed_deg_s"] })).data.readings[0].value as number;
+    const report = async () => (await t.tool("supervise_loop", { wait_ms: 500 })).data;
+    for (const [roll, left, right] of [
+      [10, 5, -5],
+      [20, 10, -10],
+      [-20, -10, 10],
+    ] as const) {
+      t.push({ roll_deg: roll });
+      const r = await report();
+      expect(r.outputs.map((o: { last: number }) => o.last)).toEqual([left, right]);
+      // the wheels turn apart, at speeds in the ratio of the roll
+      expect(Math.sign(await read("ev3.B"))).toBe(Math.sign(left));
+      expect(Math.sign(await read("ev3.C"))).toBe(Math.sign(right));
+    }
+    const at10 = (t.push({ roll_deg: 10 }), await report(), await read("ev3.B"));
+    const at20 = (t.push({ roll_deg: 20 }), await report(), await read("ev3.B"));
+    expect(at20 / at10).toBeGreaterThan(1.6);
+    expect(at20 / at10).toBeLessThan(2.4);
+    t.push({ roll_deg: 0 });
+    expect((await report()).outputs.map((o: { last: number }) => o.last)).toEqual([0, 0]);
+    expect([await read("ev3.B"), await read("ev3.C")]).toEqual([0, 0]);
+    // the hub keeps the page watched for the whole loop: apps/local pings it every 100 ms meanwhile
+    expect(t.link.watched()).toBe(true);
+
+    // silent: a ping goes unanswered; 300 ms on, its values are ticks without a value, and the third ends the loop
+    t.push({ roll_deg: 20 });
+    await report();
+    const quiet = t.clock.now();
+    t.link.ping();
+    const end = await t.tool("supervise_loop", { wait_ms: 5000 });
+    expect(end).toMatchObject({ robot: { activity: "idle" }, data: { state: "ended", reason: "input_lost" } });
+    expect(end.data.outputs.map((o: { last: number }) => o.last)).toEqual([0, 0]);
+    // silence counts from 100 ms before the unanswered ping, so its values are no answer 200 ms after it; then 3
+    // ticks of 50 ms without a value
+    const took = t.clock.now() - quiet;
+    expect(took).toBeGreaterThanOrEqual(200 + 2 * 50);
+    expect(took).toBeLessThanOrEqual(200 + 3 * 50 + 50);
+    expect([await read("ev3.B"), await read("ev3.C")]).toEqual([0, 0]);
+    // the loop's end released the page: it is pinged at the slow rate again
+    await t.clock.sleep(600);
+    expect(t.link.watched()).toBe(false);
+  }, 30_000);
+
+  test("C5 at 50 Hz: the plan notes that the imu holds its value between its 20 Hz pushes", async () => {
+    const t = await tiltRig();
+    const started = await t.tool("run_loop", { ...C5, rate_hz: 50 });
+    expect(started).toMatchObject({ ok: true, data: { state: "running", rate_hz: 50 } });
+    expect(started.data.notes.join(" ")).toContain("signal roll: channel roll_deg of phone.imu updates at 20 Hz");
+    expect((await t.tool("stop")).data.motors_stopped).toBe(true);
+  }, 30_000);
+
+  test("a page input beside a provider that runs loops on its device is refused with unsupported, and nothing is sent", async () => {
+    let starts = 0;
+    let commands = 0;
+    const motor: DeviceSpec = {
+      id: "d.m",
+      provider: "d",
+      kind: "motor",
+      roles: [],
+      description: "a motor whose loops run on its device",
+      channels: [{ name: "position_deg", type: "number", description: "encoder" }],
+      commands: [
+        {
+          name: "power",
+          description: "timed power",
+          moves: true,
+          bound: { kind: "ms", params: ["ms"], max: 250 },
+          params: { type: "object", properties: { power_pct: { type: "number", minimum: -100, maximum: 100 } } },
+          drives: { arg: "power_pct", max_hold_ms: 250 },
+        },
+      ],
+    };
+    const onDevice: Provider = {
+      id: "d",
+      backend: "sim",
+      stop_worst_ms: 100,
+      devices: async () => [structuredClone(motor)],
+      read: async () => [],
+      command: async () => {
+        commands++;
+        throw new Error("not used");
+      },
+      stop: async () => ({ motors_stopped: true }),
+      loop: {
+        runs_on: "device",
+        max_rate_hz: 100,
+        start: async () => {
+          starts++;
+          throw new Error("never started");
+        },
+      },
+    };
+    const t = await tiltRig([onDevice]);
+    // the page does not change where this robot's loops run
+    expect((await t.tool("describe_robot")).data.loop).toEqual({ runs_on: "device", max_rate_hz: 100 });
+    const before = t.sent.length;
+    const run = await t.tool("run_loop", {
+      rate_hz: 20,
+      duration_ms: 1000,
+      signals: { roll: { device: "phone.imu", channel: "roll_deg" } },
+      outputs: [{ device: "d.m", command: "power", terms: [{ signal: "roll", gain: 1 }] }],
+    });
+    expect(run).toMatchObject({ ok: false, error: { code: "unsupported" }, robot: { activity: "idle" } });
+    expect(run.error.message).toContain("provider d runs loops on its device");
+    expect(run.error.message).toContain("pages");
+    expect([starts, commands, t.sent.length - before]).toEqual([0, 0, 0]);
   }, 30_000);
 });

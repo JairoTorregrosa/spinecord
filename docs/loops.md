@@ -1,10 +1,10 @@
 # Loops: worked examples
 
-A loop (CONTRACT §5a) is a control law given as data: signals to read, outputs to refresh, the terms that make each output, guards that end it, and params that can change while it runs. The four specs below are complete `LoopSpec` values. The device names are roles and ids of an example robot; a loop takes whatever the robot's devices are called.
+A loop (CONTRACT §5a) is a control law given as data: signals to read, outputs to refresh, the terms that make each output, guards that end it, and params that can change while it runs. The five specs below are complete `LoopSpec` values. The device names are roles and ids of an example robot; a loop takes whatever the robot's devices are called.
 
 Every gain here is a plausible starting point of the right order of magnitude, not a measured one. Each must be tuned on the robot: read the trace of a short run, change one param, look again. Signs depend on how a sensor and a motor are mounted; the first run of any law uses a short `duration_ms`, a low `limit` and a hand near the robot.
 
-`packages/protocol/loop.test.ts` runs these specs as they are printed here through `validateLoop`, and runs C1, C2 and C4, as printed, against small simulated plants. `apps/local/test/loop.test.ts` runs C2 and C4, as printed, through `run_loop` on the twin.
+`packages/protocol/loop.test.ts` runs these specs as they are printed here through `validateLoop`, and runs C1, C2 and C4, as printed, against small simulated plants. `apps/local/test/loop.test.ts` runs C2, C4 and C5, as printed, through `run_loop` on the twin, and `apps/local/test/pages.test.ts` runs C5 at 10 Hz on real time, with a fake page client joined over the page socket.
 
 A spec is the input of `run_loop` with `robot_id` added. How a model runs one and supervises it is at the end of this page.
 
@@ -110,6 +110,31 @@ Wall on the right: farther than `gap` → the left wheel speeds up and the right
 ```
 
 A PID: three terms on one signal. Setting `{target: 90}` over a ramp of 1000 ms moves the arm and keeps holding. The gains are negative because the motor raises the angle it is regulated on (§5a, Law). `clamp: 10` (degree-seconds) bounds what the integral term can add to 40 % of power.
+
+## C5. Tilt-steering with a phone (20 Hz)
+
+A phone joins the robot as a peripheral page named `phone` and lends its motion sensor (`phone.imu`, CONTRACT §2.4). Tilting the phone forward drives the robot, tilting it sideways steers it, shaking it ends the loop.
+
+```json
+{ "rate_hz": 20, "duration_ms": 60000,
+  "signals": { "pitch": { "device": "phone.imu", "channel": "pitch_deg" },
+               "roll":  { "device": "phone.imu", "channel": "roll_deg" },
+               "shake": { "device": "phone.imu", "channel": "shaken" } },
+  "params": { "k_drive": 1, "k_left": 0.5, "k_right": -0.5 },
+  "outputs": [
+    { "device": "left_wheel",  "command": "run_time", "limit": [-40, 40], "terms": [
+        { "signal": "pitch", "gain": "k_drive" },
+        { "signal": "roll",  "gain": "k_left" } ] },
+    { "device": "right_wheel", "command": "run_time", "limit": [-40, 40], "terms": [
+        { "signal": "pitch", "gain": "k_drive" },
+        { "signal": "roll",  "gain": "k_right" } ] }
+  ],
+  "guards": [ { "name": "shaken", "signal": "shake", "op": "gt", "value": 0.5 } ] }
+```
+
+Only value terms. A page pushes a channel when its browser event fires, and the imu declares `max_rate_hz: 20`: a loop faster than that reads the same value on several ticks (the plan says so in `notes`, as for any sensor slower than the loop), so a derivative term on a pushed channel is 0 between pushes and a spike at each one. A phone held flat gives 0 on both wheels; 20° of roll gives ±10 % of speed, the robot turning toward the lower side. Signs depend on how the phone is held: the first run uses a short `duration_ms` and reads the trace.
+
+The page is an input and nothing more: a page moves nothing, so its devices are never an output, and a channel it does not push (a camera's `width_px`) is refused with `unsupported`. While the loop runs, the server pings the phone every 100 ms. A phone that locks its screen or loses the network is silent: 300 ms after its last answer its values are ticks without a value, and three of those end the loop with `input_lost`, both wheels braked. A paused page or a sensor reported down ends it the same way. The loop runs in the server's process, beside the robot's own provider: a robot whose provider runs loops on the device would never see the phone's values, and the mix is refused with `unsupported`.
 
 ## The same data, other uses
 
