@@ -501,7 +501,7 @@ export class Ev3Provider implements Provider {
         this.o.pollMs +
         this.o.timeoutMs,
     );
-    this.link = new Ev3Link(transport, { timeoutMs: this.o.timeoutMs });
+    this.link = new Ev3Link(transport, { timeoutMs: this.o.timeoutMs, now: this.o.now });
   }
 
   /** Called when the device list or a channel's `active` flag changed (a sensor mode switch, a swapped sensor). */

@@ -67,12 +67,15 @@ export class Ev3Link {
   readonly timeoutMs: number;
   /** Direct commands sent so far (a shared packet counts once). */
   packets = 0;
+  private readonly now: () => number;
 
+  /** `now`: the clock round trips are measured on, ms. Default performance.now. */
   constructor(
     private readonly transport: Transport,
-    opts: { timeoutMs?: number } = {},
+    opts: { timeoutMs?: number; now?: () => number } = {},
   ) {
     this.timeoutMs = opts.timeoutMs ?? 1000;
+    this.now = opts.now ?? (() => performance.now());
     if (!(this.timeoutMs > 0)) throw new Ev3Error("bad_param", "timeoutMs must be > 0");
   }
 
@@ -233,7 +236,7 @@ export class Ev3Link {
     });
     let raw: Uint8Array;
     this.packets++;
-    const t0 = performance.now();
+    const t0 = this.now();
     try {
       const sent = this.transport.send(packet);
       sent.catch(() => {}); // a late failure after the timeout must not become an unhandled rejection
@@ -245,7 +248,7 @@ export class Ev3Link {
       clearTimeout(timer);
     }
     if (job.timeoutMs === this.timeoutMs) {
-      const ms = performance.now() - t0;
+      const ms = this.now() - t0;
       this.rtt = this.rtt === null ? ms : this.rtt + 0.25 * (ms - this.rtt);
     }
     let reply;
