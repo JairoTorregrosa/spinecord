@@ -299,10 +299,17 @@ async function main(): Promise<number> {
       }
     }
   })();
+  // the SDK throws when Claude Code cannot start or dies; the session ending by itself is also a way out
+  reading.then(
+    () => stop("the session ended"),
+    (error) => stop(`the session failed: ${error instanceof Error ? error.message : String(error)}`, true),
+  );
+
   // ---- who pays, from Claude Code itself, before anything is sent. The init message only says "none" for every
   // login and token; accountInfo() names the token or the claude.ai plan in use.
   const account = await Promise.race([
     session.accountInfo(),
+    untilStopped.then(() => null), // the session failed, or Ctrl+C: nothing to wait for
     new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`no answer in ${ACCOUNT_WAIT_MS / 1000} s`)), ACCOUNT_WAIT_MS),
     ),
@@ -318,12 +325,6 @@ async function main(): Promise<number> {
       stop(error instanceof Error ? error.message : String(error), true);
     }
   }
-
-  // the SDK throws when Claude Code cannot start or dies; the session ending by itself is also a way out
-  reading.then(
-    () => stop("the session ended"),
-    (error) => stop(`the session failed: ${error instanceof Error ? error.message : String(error)}`, true),
-  );
 
   /** One turn: hand a message to Claude and wait until its answer is complete (or the program is stopping). */
   const takeTurn = async (text: string): Promise<void> => {
