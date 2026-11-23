@@ -9,6 +9,9 @@ Legend: ✅ shipped · 🟡 partial · ⬜ missing. **Where** = the package that
 | Primitive | How the model reaches it | State | Where |
 |---|---|---|---|
 | Read any channel, all channels, sample over time | `read_device` `read_all` `sample_device` | ✅ | runtime |
+| A sensor without an entry (third-party, NXT color, any type the firmware or driver reports) | kind `sensor`: `values` of its current mode, `mode`, `set_mode{mode}`, `send{command}` when the driver lists commands | 🟡 emulator and fake sysfs only | drivers |
+| NXT touch, light, sound, ultrasonic, temperature | kinds `touch`, `light`, `sound`, `ultrasonic`, `temperature` | 🟡 emulator and fake sysfs only | drivers |
+| Infrared beacon and remote on channels 1-4 | `hardware.ir_channel` in the robot file; `beacon_heading`, `beacon_distance_pct`, `remote_buttons` read that channel | 🟡 emulator and fake sysfs only | drivers |
 | Wait for a condition, stop a move on a condition | `wait_until`, `until` | ✅ | runtime |
 | Wheel odometry pose (x, y, heading) from encoders | `pose` channel on the drivetrain | ⬜ | runtime |
 | First-person camera frame | `camera` device, image channel | 🟡 twin only | sim-world · a camera provider |
@@ -53,7 +56,7 @@ What has run on a real brick, with dates and commits, and the checklist of what 
 |---|---|---|
 | EV3 stock firmware over USB (WebHID bridge page) | 🟡 tested against the byte-level emulator; not run on a real brick | driver-ev3 · apps/robot-page · apps/local |
 | EV3 over Bluetooth (Web Serial) | ⬜ | driver-ev3 |
-| EV3 on ev3dev over SSH | 🟡 bridge version 4 ran on a real brick on 2026-11-22 (stop, `Esc`, the square, `kill -9`, the guard); version 5 (a hello that may leave out `pair`) has not; `until`, the watchdog and brick off at start tested against a fake sysfs tree only | driver-ev3dev |
+| EV3 on ev3dev over SSH | 🟡 bridge version 4 ran on a real brick on 2026-11-22 (stop, `Esc`, the square, `kill -9`, the guard); version 5 (a hello that may leave out `pair`) and version 6 (NXT and generic sensors, an infrared channel other than 1) have not; `until`, the watchdog and brick off at start tested against a fake sysfs tree only | driver-ev3dev |
 | Twin in the server's process | ✅ | apps/local · sim-ev3 |
 | Phone or microcontroller as extra devices | ⬜ | a new provider |
 | Model docs as MCP resources (robot notes, device specs) | ⬜ | apps/local |

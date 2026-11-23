@@ -10,6 +10,7 @@ import {
   EXAMPLE_EV3DEV_HARDWARE,
   MIN_BRIDGE_VERSION,
   MIN_PAIRLESS_BRIDGE_VERSION,
+  MIN_SENSORS_BRIDGE_VERSION,
   readOnlyTransport,
   type Ev3devProviderOptions,
   type LineTransport,
@@ -62,7 +63,7 @@ afterEach(async () => {
   }
 });
 
-/** Motors B (motor0) and C (motor1); gyro on port 2 (sensor0), ultrasonic on 3 (sensor1), infrared on 4 (sensor2), an unmapped sensor on 1 (sensor3). */
+/** Motors B (motor0) and C (motor1); gyro on port 2 (sensor0), ultrasonic on 3 (sensor1), infrared on 4 (sensor2), an NXT sound sensor on 1 (sensor3). */
 function setup(opts: Partial<Ev3devProviderOptions> = {}) {
   const brick = new FakeBrick({
     motors: [{ port: "B" }, { port: "C" }],
@@ -207,7 +208,7 @@ describe("fake brick", () => {
       "ev3.B:motor",
       "ev3.C:motor",
       "ev3.pair:motor_pair",
-      "ev3.S1:unknown",
+      "ev3.S1:sound",
       "ev3.S2:gyro",
       "ev3.S3:ultrasonic",
       "ev3.S4:infrared",
@@ -239,8 +240,11 @@ describe("fake brick", () => {
         .channels.filter((c) => c.null_when_absent)
         .map((c) => c.name),
     ).toEqual(["beacon_heading", "beacon_distance_pct"]);
-    expect(byId(specs, "ev3.S1").description).toContain("lego-nxt-sound");
-    expect(byId(specs, "ev3.S1").channels).toEqual([]);
+    expect(byId(specs, "ev3.S1").description).toContain("NXT sound");
+    expect(byId(specs, "ev3.S1").channels.map((c) => `${c.name}:${c.active}`)).toEqual([
+      "sound_db_pct:true",
+      "sound_dba_pct:false",
+    ]);
     for (const s of specs)
       for (const c of s.commands) {
         expect(c.bound.max).toBeGreaterThanOrEqual(0);
@@ -250,6 +254,7 @@ describe("fake brick", () => {
         }
       }
     expect(provider.inventory()!.sensors.map((s) => s.driver_name)).toEqual([
+      "lego-nxt-sound",
       "lego-ev3-gyro",
       "lego-ev3-us",
       "lego-ev3-ir",
@@ -857,8 +862,18 @@ describe("fake brick", () => {
     sent.length = 0;
     const together = await Promise.all(specs.map((d) => provider.read(d.id)));
     expect(sent.map((m) => m.op)).toEqual(["read_many"]);
-    // devices without channels (speaker, display, led, the unknown sensor) are not asked about
-    expect(sent[0]!.reads!.map((r) => r.device)).toEqual(["B", "C", "pair", "S2", "S3", "S4", "buttons", "battery"]);
+    // devices without channels (speaker, display, led) are not asked about
+    expect(sent[0]!.reads!.map((r) => r.device)).toEqual([
+      "B",
+      "C",
+      "pair",
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "buttons",
+      "battery",
+    ]);
     const plain = (rs: typeof together) => rs.map((r) => r.map(({ ts: _ts, ...rest }) => rest));
     expect(plain(together)).toEqual(plain(alone));
     const flat = together.flat();
@@ -1000,7 +1015,7 @@ describe("fake brick", () => {
       });
     expect(await ask({ op: "hello", id: 4, config: { bounds } })).toMatchObject({
       ok: true,
-      bridge: String(MIN_PAIRLESS_BRIDGE_VERSION),
+      bridge: String(MIN_SENSORS_BRIDGE_VERSION),
     });
     expect(await ask({ op: "read", id: 5, device: "pair" })).toMatchObject({
       ok: false,
@@ -1039,6 +1054,129 @@ describe("fake brick", () => {
     expect(out.timed_long).toBe(out.tick!);
     expect(out.timed_short).toBeCloseTo(0.004, 9);
     expect(out.timed_over).toBe(out.motion_tick!);
+  });
+});
+
+describe("sensors from discovery (G7, G8, G9)", () => {
+  /** An NXT ultrasonic on port 1, a HiTechnic compass on 2, a HiTechnic accelerometer on 3 (no entries for the last two). */
+  const discovery = (opts: Partial<Ev3devProviderOptions> = {}) => {
+    const brick = new FakeBrick({
+      motors: [],
+      sensors: [
+        {
+          port: 1,
+          driver: "lego-nxt-us",
+          mode: "US-DIST-CM",
+          modes: ["US-DIST-CM", "US-DIST-IN", "US-SI-CM", "US-SI-IN", "US-LISTEN"],
+          values: [42],
+        },
+        {
+          port: 2,
+          driver: "ht-nxt-compass",
+          mode: "COMPASS",
+          modes: ["COMPASS"],
+          values: [271],
+          units: "deg",
+          commands: ["BEGIN-CAL", "END-CAL"],
+        },
+        { port: 3, driver: "ht-nxt-accel", mode: "ACCEL", modes: ["ACCEL", "ALL"], values: [-12] },
+      ],
+    });
+    const provider = new Ev3devProvider(brick.transport(python!), { ...OPTS, pair: undefined, ...opts });
+    open.push({ brick, provider });
+    return { brick, provider };
+  };
+
+  brickTest("lego-nxt-us is read through its entry", async () => {
+    const { provider } = discovery();
+    const s1 = byId(await provider.devices(), "ev3.S1");
+    expect(s1.kind).toBe("ultrasonic");
+    expect(s1.description).toContain("NXT ultrasonic");
+    expect(s1.channels.map((c) => `${c.name}:${c.unit}:${c.active}`)).toEqual(["distance_cm:cm:true"]);
+    expect(await provider.read("ev3.S1")).toMatchObject([{ channel: "distance_cm", value: 42, unit: "cm" }]);
+  });
+
+  brickTest(
+    "ht-nxt-compass has no entry: the generic manifest from sysfs reads it and sends its commands",
+    async () => {
+      const { provider, brick } = discovery();
+      const s2 = byId(await provider.devices(), "ev3.S2");
+      expect(s2.kind).toBe("sensor");
+      expect(s2.description).toContain("ht-nxt-compass");
+      expect(s2.channels.map((c) => [c.name, c.type, c.length, c.unit])).toEqual([
+        ["values", "vector", 1, "deg"],
+        ["mode", "string", undefined, undefined],
+      ]);
+      expect(s2.commands.map((c) => c.name)).toEqual(["set_mode", "send"]);
+      expect((s2.commands[1]!.params.properties.command as { enum: string[] }).enum).toEqual(["BEGIN-CAL", "END-CAL"]);
+      expect((await provider.read("ev3.S2")).map((r) => [r.value, r.unit])).toEqual([
+        [[271], "deg"],
+        ["COMPASS", undefined],
+      ]);
+      const r = await provider.command("ev3.S2", "send", { command: "BEGIN-CAL" }, never);
+      expect(r).toMatchObject({ reason: "completed", measured: { command: "BEGIN-CAL" } });
+      expect(brick.sensor(1, "command")).toBe("BEGIN-CAL");
+      expect(await code(provider.command("ev3.S2", "send", { command: "RESET" }, never))).toBe("invalid_argument");
+    },
+  );
+
+  brickTest("set_mode on a generic sensor reshapes values from what the driver reports for the new mode", async () => {
+    const { provider, brick } = discovery();
+    const s3 = byId(await provider.devices(), "ev3.S3");
+    expect(s3.commands.map((c) => c.name)).toEqual(["set_mode"]); // the driver lists no commands
+    expect(s3.channels[0]!.length).toBe(1);
+    let told = 0;
+    provider.onDevicesChanged(() => told++);
+    // play the kernel: a write of mode ALL makes the driver report its six values
+    const kernel = setInterval(() => {
+      try {
+        if (brick.sensor(2, "mode") !== "ALL" || brick.sensor(2, "num_values") === "6") return;
+      } catch {
+        return;
+      }
+      for (const [i, v] of [3, -12, 40, 1, 2, 3].entries()) brick.setSensor(2, `value${i}`, v);
+      brick.setSensor(2, "num_values", 6);
+    }, 3);
+    try {
+      const r = await provider.command("ev3.S3", "set_mode", { mode: "ALL" }, never);
+      expect(r).toMatchObject({ reason: "completed", measured: { mode: "ALL" } });
+    } finally {
+      clearInterval(kernel);
+    }
+    expect(told).toBe(1);
+    const values = byId(await provider.devices(), "ev3.S3").channels[0]!;
+    expect(values.length).toBe(6);
+    expect((await provider.read("ev3.S3")).map((x) => x.value)).toEqual([[3, -12, 40, 1, 2, 3], "ALL"]);
+    expect(await code(provider.command("ev3.S3", "set_mode", { mode: "NOPE" }, never))).toBe("invalid_argument");
+  });
+
+  brickTest("the infrared remote and beacon are read on the robot file's channel", async () => {
+    const brick = new FakeBrick({
+      motors: [],
+      sensors: [
+        { port: 4, driver: "lego-ev3-ir", mode: "IR-SEEK", modes: IR_MODES, values: [-7, 33, 0, -128, 5, 60, 0, -128] },
+      ],
+    });
+    const provider = new Ev3devProvider(brick.transport(python!), {
+      ...OPTS,
+      hardware: { ...EXAMPLE_EV3DEV_HARDWARE, ir_channel: 3 },
+    });
+    open.push({ brick, provider });
+    const s4 = byId(await provider.devices(), "ev3.S4");
+    expect(s4.channels.find((c) => c.name === "beacon_heading")!.description).toContain("channel 3");
+    expect(provider.inventory()!.ir_channel).toBe(3);
+    expect((await provider.read("ev3.S4", ["beacon_heading", "beacon_distance_pct"])).map((r) => r.value)).toEqual([
+      -5, 60,
+    ]);
+    brick.setSensor(0, "value4", 0);
+    brick.setSensor(0, "value5", -128);
+    const none = await provider.read("ev3.S4", ["beacon_heading"]);
+    expect([none[0]!.value, none[0]!.absent, none[0]!.error]).toEqual([null, true, "no beacon in view on channel 3"]);
+    for (const [i, v] of [1, 0, 4, 0].entries()) brick.setSensor(0, `value${i}`, v);
+    // the remote's mode: the read switches to it, and the kernel then reports its four values
+    const r = await provider.read("ev3.S4", ["remote_buttons"], { allow_mode_switch: true });
+    expect(brick.sensor(0, "mode")).toBe("IR-REMOTE");
+    expect(r[0]!.value).toBe(4);
   });
 });
 
@@ -1130,6 +1268,56 @@ describe("bridge version", () => {
     )) as RuntimeError;
     expect(other.message).toContain("config.bounds.max_op_ms");
     expect(other.message).not.toContain("--install-bridge");
+  });
+  test("an infrared channel other than 1 needs version 6; a robot on channel 1 keeps working on version 5", async () => {
+    expect(MIN_SENSORS_BRIDGE_VERSION).toBe(6);
+    const sent: { ir_channel?: unknown }[] = [];
+    const v = (bridge: string, ir?: number) =>
+      answering((hello) => {
+        sent.push(hello.config as { ir_channel?: unknown });
+        return { ...inventory(bridge), ...(ir === undefined ? {} : { ir_channel: ir }) };
+      });
+    const on3 = { ...OPTS, hardware: { ...EXAMPLE_EV3DEV_HARDWARE, ir_channel: 3 as const } };
+    const old = (await helloOf(v("5"), on3)) as RuntimeError;
+    expect(old.code).toBe("misconfigured");
+    expect(old.message).toContain('version "5", this driver needs 6 or newer for a robot whose infrared channel is 3');
+    expect(old.message).toContain("--install-bridge");
+    expect(sent.at(-1)!.ir_channel).toBe(3);
+    expect(Array.isArray(await helloOf(v("6", 3), on3))).toBe(true);
+    // a bridge that says 6 but reads another channel is refused
+    const wrong = (await helloOf(v("6", 1), on3)) as RuntimeError;
+    expect(wrong.message).toContain("reads infrared channel 1, the robot file names 3");
+    // channel 1, named or not, is what every bridge reads: nothing is sent, and version 5 serves it
+    for (const ir of [undefined, 1 as const]) {
+      const opts = { ...OPTS, hardware: { ...EXAMPLE_EV3DEV_HARDWARE, ...(ir ? { ir_channel: ir } : {}) } };
+      expect(Array.isArray(await helloOf(v("5"), opts))).toBe(true);
+      expect("ir_channel" in sent.at(-1)!).toBe(false);
+    }
+    expect(
+      () => new Ev3devProvider(v("6"), { ...OPTS, hardware: { ...EXAMPLE_EV3DEV_HARDWARE, ir_channel: 5 as 1 } }),
+    ).toThrow("ir_channel must be 1, 2, 3 or 4");
+  });
+  test("a version 5 bridge lists an NXT or other sensor as unknown, and says version 6 reads it", async () => {
+    const withSensor = (bridge: string) =>
+      answering(() => ({
+        ...inventory(bridge),
+        unknown: [
+          {
+            local: "S1",
+            class: "lego-sensor",
+            address: "ev3-ports:in1",
+            driver_name: "lego-nxt-us",
+            modes: ["US-DIST-CM"],
+          },
+        ],
+      }));
+    const provider = new Ev3devProvider(withSensor("5"), OPTS);
+    const s1 = (await provider.devices()).find((d) => d.id === "ev3.S1")!;
+    await provider.close();
+    expect(s1.kind).toBe("unknown");
+    expect(s1.description).toContain("lego-nxt-us");
+    expect(s1.description).toContain("version 6 reads this one");
+    expect(s1.description).toContain("--install-bridge");
   });
   test("a bridge older than read_many fails loud at hello and names the fix", async () => {
     let onLine: (line: string) => void = () => {};

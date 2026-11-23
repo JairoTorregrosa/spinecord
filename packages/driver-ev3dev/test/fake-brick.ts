@@ -64,6 +64,10 @@ export interface FakeSensor {
   modes: string[];
   values: number[];
   decimals?: number;
+  /** The `units` attribute of the current mode; absent = the driver writes none. */
+  units?: string;
+  /** The `commands` attribute (a calibration, a reset); absent = the driver has none. */
+  commands?: string[];
 }
 /** LED directory names contain ":", which Windows file systems reject, so the fake has no LEDs there. */
 export const FAKE_HAS_LEDS = process.platform !== "win32";
@@ -144,6 +148,8 @@ export class FakeBrick {
         modes: s.modes.join(" "),
         decimals: String(s.decimals ?? 0),
         num_values: String(s.values.length),
+        ...(s.units === undefined ? {} : { units: s.units }),
+        ...(s.commands === undefined ? {} : { commands: s.commands.join(" "), command: "" }),
       };
       s.values.forEach((v, n) => {
         files[`value${n}`] = String(v);

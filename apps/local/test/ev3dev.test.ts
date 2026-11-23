@@ -152,7 +152,7 @@ describe("an ev3dev brick over ssh", () => {
   });
 
   test.skipIf(!runs)("an older bridge without run is misconfigured, with the reinstall hint", async () => {
-    const older = withoutRun(BRIDGE).replace('VERSION = "5"', 'VERSION = "3"');
+    const older = withoutRun(BRIDGE).replace('VERSION = "6"', 'VERSION = "3"');
     expect(older).toContain('VERSION = "3"');
     const events: string[] = [];
     const { fleet, done } = await preinstalled(older, events);
@@ -169,7 +169,7 @@ describe("an ev3dev brick over ssh", () => {
 
   /** A version 4 bridge: it says "4" and asks every hello for a pair, in version 4's words. */
   const version4 = () => {
-    const v4 = BRIDGE.replace('VERSION = "5"', 'VERSION = "4"')
+    const v4 = BRIDGE.replace('VERSION = "6"', 'VERSION = "4"')
       .replace("        if pair is not None:\n", "        if True:\n")
       .replace("config.pair, when given, needs two", "config.pair needs two");
     expect(v4).toContain('VERSION = "4"');

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { RuntimeError } from "../protocol/types";
-import type { CommandSpec, DeviceSpec } from "../protocol/types";
+import type { CommandSpec, DeviceSpec, LoopRead } from "../protocol/types";
 import * as E from "./encode";
 import { EmulatedClock, FakeEV3 } from "./fake";
 import {
@@ -29,6 +29,11 @@ function rig(opts: { fake?: ConstructorParameters<typeof FakeEV3>[0]; provider?:
   return { fake, ev3 };
 }
 const never = () => new AbortController().signal;
+/** One tick of a stock brick's host loop that only reads. */
+const hostTick = (ev3: Ev3Provider, reads: LoopRead[], hold_ms: number) => {
+  if (ev3.loop.runs_on !== "host") throw new Error("a stock brick runs its loops on the host");
+  return ev3.loop.tick([], reads, hold_ms);
+};
 const code = (p: Promise<unknown>) =>
   p.then(
     () => "resolved",
@@ -655,7 +660,7 @@ describe("sensors from discovery (G7, G8, G9)", () => {
     expect(s2.commands.map((c) => c.name)).toEqual(["set_mode"]);
     const setMode = s2.commands[0]!;
     expect(setMode).toMatchObject({ moves: false, bound: { kind: "instant", max: 0 } });
-    expect(setMode.params.properties.mode.enum).toEqual([
+    expect((setMode.params.properties.mode as { enum: string[] }).enum).toEqual([
       "ES-IN-VOLT",
       "ES-IN-AMP",
       "ES-OUT-VOLT",
@@ -683,7 +688,7 @@ describe("sensors from discovery (G7, G8, G9)", () => {
     expect([values.length, values.unit]).toEqual([7, undefined]);
     expect((await ev3.read("ev3.S2")).map((x) => x.value)).toEqual([[7.4, 0.12, 7.3, 0.1, 40, 0.9, 0.7], "ES-ALL"]);
     // one value of a generic vector is a loop input, read in the tick's packet
-    expect(await ev3.loop.tick([], [{ device: "ev3.S2", channel: "values", index: 4 }], 60)).toEqual([40]);
+    expect(await hostTick(ev3, [{ device: "ev3.S2", channel: "values", index: 4 }], 60)).toEqual([40]);
     expect(await code(ev3.command("ev3.S2", "set_mode", { mode: "ES-NOPE" }, never()))).toBe("invalid_argument");
     expect(fake.errors).toEqual([]);
   });
@@ -729,7 +734,7 @@ describe("sensors from discovery (G7, G8, G9)", () => {
     expect([none[0].value, none[0].absent, none[0].error]).toEqual([null, true, "no beacon in view on channel 3"]);
     // a loop reads the same channel
     await ev3.read("ev3.S4", ["remote_buttons"], { allow_mode_switch: true });
-    expect(await ev3.loop.tick([], [{ device: "ev3.S4", channel: "remote_buttons" }], 60)).toEqual([4]);
+    expect(await hostTick(ev3, [{ device: "ev3.S4", channel: "remote_buttons" }], 60)).toEqual([4]);
     for (const bad of [0, 5, 1.5])
       expect(() => rig({ provider: { hardware: { ...EXAMPLE_EV3_HARDWARE, ir_channel: bad as 1 } } })).toThrow(
         "ir_channel must be 1, 2, 3 or 4",

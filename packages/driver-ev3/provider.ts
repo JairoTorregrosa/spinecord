@@ -1638,7 +1638,7 @@ export class Ev3Provider implements Provider {
           const port = Number(local.slice(1)) - 1;
           const g = this.generic[port];
           if (!g || !("modes" in g))
-            throw new RuntimeError("unknown_device", `${where}: the sensor is no longer there`);
+            throw new RuntimeError("unknown_device", `${where}: the sensor has left the port; list the devices again`);
           const mode = g.modes.indexOf(String(args.mode));
           if (mode < 0)
             throw new RuntimeError(

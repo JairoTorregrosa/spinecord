@@ -31,6 +31,11 @@ export const BRICK_WATCHDOG_MS = 1000;
 export const MIN_BRIDGE_VERSION = 4;
 /** Oldest bridge that takes a hello without `pair`: a robot that declares no motor pair needs this one. */
 export const MIN_PAIRLESS_BRIDGE_VERSION = 5;
+/**
+ * Oldest bridge that reads an infrared channel other than 1 (hello's `ir_channel`): a robot file that names one needs
+ * this one. It is also the first that serves NXT sensors and generic sensors; an older bridge lists those as unknown.
+ */
+export const MIN_SENSORS_BRIDGE_VERSION = 6;
 /** How long the bridge waits for every motor to read speed 0 after a stop. */
 export const BRIDGE_STOP_VERIFY_MS = 800;
 export const MODE_SWITCH_REQUIRED = "mode_switch_required";
@@ -60,7 +65,7 @@ export interface LineTransport {
   close(): Promise<void>;
 }
 
-/** Facts about this brick that are not motion limits. Every field is required. */
+/** Facts about this brick that are not motion limits. Every field is required, except `ir_channel`. */
 export interface Ev3devHardware {
   /** battery.low is true under this voltage. */
   low_battery_v: number;
@@ -68,6 +73,11 @@ export interface Ev3devHardware {
   max_tone_ms: number;
   /** Loudness of `speak`, 1..100 (espeak amplitude; 100 is its loudest). `tone` and `beep` have no volume control. */
   speech_volume_pct: number;
+  /**
+   * The remote and beacon channel (1-4, the switch on the remote) that every infrared sensor's beacon_heading,
+   * beacon_distance_pct and remote_buttons read. Absent: channel 1. Another channel needs bridge version 6.
+   */
+  ir_channel?: IrChannel;
 }
 /** Documented example, NOT a default: a brick with the LEGO rechargeable battery. */
 export const EXAMPLE_EV3DEV_HARDWARE: Ev3devHardware = {
@@ -137,7 +147,13 @@ export interface BridgeInventory {
     mode: string | null;
     modes: string[] | null;
     channel_modes: Record<string, string>;
+    /** A generic sensor (kind "sensor", version 6): the current mode's number of values and unit, and its commands. */
+    num_values?: number | null;
+    units?: string | null;
+    commands?: string[] | null;
   }[];
+  /** The infrared channel the bridge reads (version 6; an older bridge reads channel 1). */
+  ir_channel?: number;
   unknown: {
     local: string;
     class: string;
@@ -183,25 +199,29 @@ const err = (code: ErrorCode, message: string) => new RuntimeError(code, message
 
 const MODE_NOTE =
   "Shares the sensor with the other channels of its mode_group: only the channels of the current mode are active. Reading another one needs a mode switch, done only when a read names that channel while the robot is idle; it takes about 0.1 s.";
-const SENSOR_KINDS: Record<string, { description: string; channels: ChannelSpec[]; reset?: boolean }> = {
-  touch: {
-    description: "EV3 touch sensor (a button).",
+const pressesChannel: ChannelSpec = {
+  name: "presses",
+  type: "number",
+  unit: "count",
+  range: [0, 999999],
+  max_rate_hz: 20,
+  approx:
+    "Counted by the bridge on the brick, which samples the button about 50 times a second since it started; a tap shorter than 20 ms can be missed.",
+  description: "Number of press-and-release bumps since the bridge started.",
+};
+/** NXT sensors (S2: ev3dev sensor_data); the bridge serves them from version 6. */
+const NXT_ENTRIES: Record<string, SensorEntry> = {
+  "lego-nxt-touch": {
+    kind: "touch",
+    description: "NXT touch sensor (a button).",
     channels: [
       { name: "pressed", type: "boolean", max_rate_hz: 20, description: "true while the button is held in." },
-      {
-        name: "presses",
-        type: "number",
-        unit: "count",
-        range: [0, 999999],
-        max_rate_hz: 20,
-        approx:
-          "Counted by the bridge on the brick, which samples the button about 50 times a second since it started; a tap shorter than 20 ms can be missed.",
-        description: "Number of press-and-release bumps since the bridge started.",
-      },
+      pressesChannel,
     ],
   },
-  color: {
-    description: "EV3 color sensor. Works at 0.5-2 cm from the surface.",
+  "lego-nxt-light": {
+    kind: "light",
+    description: "NXT light sensor: reflected light with its lamp on, ambient light with it off.",
     channels: [
       {
         name: "reflected_pct",
@@ -211,7 +231,7 @@ const SENSOR_KINDS: Record<string, { description: string; channels: ChannelSpec[
         noise: 5,
         max_rate_hz: 20,
         approx: `Depends on distance and surface; calibrate on the actual floor. ${MODE_NOTE}`,
-        description: "Reflected red light, 0 dark to 100 bright.",
+        description: "Reflected light with the sensor's lamp on, 0 dark to 100 bright, in steps of 0.1.",
       },
       {
         name: "ambient_pct",
@@ -219,120 +239,234 @@ const SENSOR_KINDS: Record<string, { description: string; channels: ChannelSpec[
         unit: "pct",
         range: [0, 100],
         noise: 5,
-        max_rate_hz: 5,
+        max_rate_hz: 20,
         approx: MODE_NOTE,
-        description: "Ambient light, 0 dark to 100 bright.",
-      },
-      {
-        name: "color",
-        type: "number",
-        range: [0, 7],
-        max_rate_hz: 5,
-        approx: `LEGO colors only, unreliable beyond 2 cm. ${MODE_NOTE}`,
-        description: "Color id: 0 none, 1 black, 2 blue, 3 green, 4 yellow, 5 red, 6 white, 7 brown.",
-      },
-      {
-        name: "rgb",
-        type: "vector",
-        length: 3,
-        range: [0, 1020],
-        noise: 30,
-        max_rate_hz: 5,
-        approx: `Raw uncalibrated counts, not 0-255. ${MODE_NOTE}`,
-        description: "Raw reflected red, green, blue.",
+        description: "Ambient light with the lamp off, 0 dark to 100 bright, in steps of 0.1.",
       },
     ],
   },
-  ultrasonic: {
-    description: "EV3 ultrasonic distance sensor.",
+  "lego-nxt-sound": {
+    kind: "sound",
+    description:
+      "NXT sound sensor (a microphone that measures loudness). ev3dev loads it only when the port is set to it.",
+    channels: [
+      {
+        name: "sound_db_pct",
+        type: "number",
+        unit: "pct",
+        range: [0, 100],
+        noise: 5,
+        max_rate_hz: 20,
+        approx: MODE_NOTE,
+        description: "Sound pressure level, flat weighting, 0 quiet to 100 loud.",
+      },
+      {
+        name: "sound_dba_pct",
+        type: "number",
+        unit: "pct",
+        range: [0, 100],
+        noise: 5,
+        max_rate_hz: 20,
+        approx: MODE_NOTE,
+        description: "Sound pressure level, A weighting (the ear's sensitivity), 0 quiet to 100 loud.",
+      },
+    ],
+  },
+  "lego-nxt-us": {
+    kind: "ultrasonic",
+    description: "NXT ultrasonic distance sensor.",
     channels: [
       {
         name: "distance_cm",
         type: "number",
         unit: "cm",
-        range: [3, 255],
-        noise: 2,
-        max_rate_hz: 20,
-        approx: "About +-1 cm from 3 to 250 cm; 255 means nothing detected; soft or angled surfaces read long.",
+        range: [0, 255],
+        noise: 3,
+        max_rate_hz: 10,
+        approx: "Whole centimetres; 255 means nothing detected; soft or angled surfaces read long.",
         description: "Distance to the nearest object in front.",
       },
     ],
   },
-  gyro: {
-    reset: true,
-    description: "EV3 gyro sensor (single axis). Must be still when the brick powers it, or it drifts.",
+  "lego-nxt-temp": {
+    kind: "temperature",
+    description: "NXT temperature sensor.",
     channels: [
       {
-        name: "angle_deg",
+        name: "temperature_c",
         type: "number",
-        unit: "deg",
-        range: [-32767, 32768],
-        noise: 2,
-        max_rate_hz: 20,
-        approx: `About +-3 deg per 90 deg turn; drifts over time. ${MODE_NOTE}`,
-        description:
-          "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the driver negates the sensor's native clockwise-positive value.",
-      },
-      {
-        name: "rate_deg_s",
-        type: "number",
-        unit: "deg_s",
-        range: [-440, 440],
-        noise: 3,
-        max_rate_hz: 5,
-        approx: `Switching between rate and angle resets the angle to 0. ${MODE_NOTE}`,
-        description:
-          "Rotation speed. Positive = counter-clockwise (left) seen from above; the driver negates the sensor's native clockwise-positive value.",
-      },
-    ],
-  },
-  infrared: {
-    description: "EV3 infrared sensor: proximity, beacon seeking and remote buttons (beacon channel 1).",
-    channels: [
-      {
-        name: "proximity_pct",
-        type: "number",
-        unit: "pct",
-        range: [0, 100],
-        noise: 3,
-        max_rate_hz: 20,
-        approx: `Not a distance: roughly 0.7 cm per unit, depends strongly on surface color; 100 means nothing in range (~70 cm). ${MODE_NOTE}`,
-        description: "Proximity of the nearest object, 0 touching to 100 far.",
-      },
-      {
-        name: "beacon_heading",
-        null_when_absent: true,
-        type: "number",
-        range: [-25, 25],
-        noise: 2,
-        max_rate_hz: 5,
-        approx: `Unitless, positive = beacon to the left (counter-clockwise), 0 = straight ahead. ${MODE_NOTE}`,
-        description:
-          "Direction of the remote beacon (channel 1). The bridge negates the sensor's native value, which is negative to the left.",
-      },
-      {
-        name: "beacon_distance_pct",
-        null_when_absent: true,
-        type: "number",
-        unit: "pct",
-        range: [0, 100],
-        noise: 3,
-        max_rate_hz: 5,
-        approx: `Relative, not centimetres. ${MODE_NOTE}`,
-        description: "Closeness of the remote beacon (channel 1), 0 near to 100 far.",
-      },
-      {
-        name: "remote_buttons",
-        type: "number",
-        range: [0, 11],
-        max_rate_hz: 5,
-        approx: MODE_NOTE,
-        description:
-          "Remote button code on channel 1: 0 none, 1 red up, 2 red down, 3 blue up, 4 blue down, 5-8 two-button combinations, 9 beacon on, 10-11 same-side pairs.",
+        unit: "c",
+        range: [-55, 128],
+        noise: 0.5,
+        max_rate_hz: 2,
+        description: "Temperature at the sensor's tip, degrees Celsius.",
       },
     ],
   },
 };
+/** What the provider knows of one sensor driver: its kind, and the channels the bridge's entry for it serves. */
+interface SensorEntry {
+  kind: string;
+  description: string;
+  channels: ChannelSpec[];
+  reset?: boolean;
+}
+/** The remote and beacon channels an EV3 infrared sensor tells apart; the robot file's hardware picks one. */
+export const IR_CHANNELS = [1, 2, 3, 4] as const;
+export type IrChannel = (typeof IR_CHANNELS)[number];
+/**
+ * The sensor entries by ev3dev driver name, mirrored by the bridge's SENSORS table (which says which mode and values
+ * each channel is). `ir` is the remote channel the infrared entry reads. A driver without an entry is a generic
+ * sensor when the bridge serves it (version 6), else `unknown`.
+ */
+function sensorEntries(ir: IrChannel): Record<string, SensorEntry> {
+  const nxt = NXT_ENTRIES;
+  return {
+    "lego-ev3-touch": {
+      kind: "touch",
+      description: "EV3 touch sensor (a button).",
+      channels: [
+        { name: "pressed", type: "boolean", max_rate_hz: 20, description: "true while the button is held in." },
+        pressesChannel,
+      ],
+    },
+    "lego-ev3-color": {
+      kind: "color",
+      description: "EV3 color sensor. Works at 0.5-2 cm from the surface.",
+      channels: [
+        {
+          name: "reflected_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 5,
+          max_rate_hz: 20,
+          approx: `Depends on distance and surface; calibrate on the actual floor. ${MODE_NOTE}`,
+          description: "Reflected red light, 0 dark to 100 bright.",
+        },
+        {
+          name: "ambient_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 5,
+          max_rate_hz: 5,
+          approx: MODE_NOTE,
+          description: "Ambient light, 0 dark to 100 bright.",
+        },
+        {
+          name: "color",
+          type: "number",
+          range: [0, 7],
+          max_rate_hz: 5,
+          approx: `LEGO colors only, unreliable beyond 2 cm. ${MODE_NOTE}`,
+          description: "Color id: 0 none, 1 black, 2 blue, 3 green, 4 yellow, 5 red, 6 white, 7 brown.",
+        },
+        {
+          name: "rgb",
+          type: "vector",
+          length: 3,
+          range: [0, 1020],
+          noise: 30,
+          max_rate_hz: 5,
+          approx: `Raw uncalibrated counts, not 0-255. ${MODE_NOTE}`,
+          description: "Raw reflected red, green, blue.",
+        },
+      ],
+    },
+    "lego-ev3-us": {
+      kind: "ultrasonic",
+      description: "EV3 ultrasonic distance sensor.",
+      channels: [
+        {
+          name: "distance_cm",
+          type: "number",
+          unit: "cm",
+          range: [3, 255],
+          noise: 2,
+          max_rate_hz: 20,
+          approx: "About +-1 cm from 3 to 250 cm; 255 means nothing detected; soft or angled surfaces read long.",
+          description: "Distance to the nearest object in front.",
+        },
+      ],
+    },
+    "lego-ev3-gyro": {
+      kind: "gyro",
+      reset: true,
+      description: "EV3 gyro sensor (single axis). Must be still when the brick powers it, or it drifts.",
+      channels: [
+        {
+          name: "angle_deg",
+          type: "number",
+          unit: "deg",
+          range: [-32767, 32768],
+          noise: 2,
+          max_rate_hz: 20,
+          approx: `About +-3 deg per 90 deg turn; drifts over time. ${MODE_NOTE}`,
+          description:
+            "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the driver negates the sensor's native clockwise-positive value.",
+        },
+        {
+          name: "rate_deg_s",
+          type: "number",
+          unit: "deg_s",
+          range: [-440, 440],
+          noise: 3,
+          max_rate_hz: 5,
+          approx: `Switching between rate and angle resets the angle to 0. ${MODE_NOTE}`,
+          description:
+            "Rotation speed. Positive = counter-clockwise (left) seen from above; the driver negates the sensor's native clockwise-positive value.",
+        },
+      ],
+    },
+    "lego-ev3-ir": {
+      kind: "infrared",
+      description: `EV3 infrared sensor: proximity, beacon seeking and remote buttons (beacon channel ${ir}, set by the robot file's hardware.ir_channel).`,
+      channels: [
+        {
+          name: "proximity_pct",
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 3,
+          max_rate_hz: 20,
+          approx: `Not a distance: roughly 0.7 cm per unit, depends strongly on surface color; 100 means nothing in range (~70 cm). ${MODE_NOTE}`,
+          description: "Proximity of the nearest object, 0 touching to 100 far.",
+        },
+        {
+          name: "beacon_heading",
+          null_when_absent: true,
+          type: "number",
+          range: [-25, 25],
+          noise: 2,
+          max_rate_hz: 5,
+          approx: `Unitless, positive = beacon to the left (counter-clockwise), 0 = straight ahead. ${MODE_NOTE}`,
+          description: `Direction of the remote beacon (channel ${ir}). The bridge negates the sensor's native value, which is negative to the left.`,
+        },
+        {
+          name: "beacon_distance_pct",
+          null_when_absent: true,
+          type: "number",
+          unit: "pct",
+          range: [0, 100],
+          noise: 3,
+          max_rate_hz: 5,
+          approx: `Relative, not centimetres. ${MODE_NOTE}`,
+          description: `Closeness of the remote beacon (channel ${ir}), 0 near to 100 far.`,
+        },
+        {
+          name: "remote_buttons",
+          type: "number",
+          range: [0, 11],
+          max_rate_hz: 5,
+          approx: MODE_NOTE,
+          description: `Remote button code on channel ${ir}: 0 none, 1 red up, 2 red down, 3 blue up, 4 blue down, 5-8 two-button combinations, 9 beacon on, 10-11 same-side pairs.`,
+        },
+      ],
+    },
+    ...nxt,
+  };
+}
 const MOTOR_SIZES: Record<string, string> = { "lego-ev3-l-motor": "large", "lego-ev3-m-motor": "medium" };
 const BRAKE_PARAM = {
   type: "boolean",
@@ -374,6 +508,9 @@ interface Lookup {
 interface ReadReply {
   readings?: { channel: string; value: Value | null; error?: string; absent?: boolean }[];
   mode?: unknown;
+  /** A generic sensor: the current mode's number of values and unit. */
+  num_values?: unknown;
+  units?: unknown;
 }
 /** A read waiting to leave with the others of the same turn. */
 interface QueuedRead {
@@ -409,6 +546,10 @@ export class Ev3devProvider implements Provider {
   private inv: BridgeInventory | null = null;
   private specs: Map<string, DeviceSpec> | null = null;
   private readonly modes = new Map<number, string | null>(); // current mode per sensor port
+  /** Generic sensors: the current mode's number of values and unit, as the bridge last reported them. */
+  private readonly described = new Map<number, { num_values: number | null; units: string | null }>();
+  /** Sensor entries by driver name, for this robot's infrared channel. */
+  private readonly entries: Record<string, SensorEntry>;
   private readonly pending = new Map<number, Pending>();
   private readQueue: QueuedRead[] = [];
   private readonly listeners = new Set<() => void>();
@@ -436,6 +577,10 @@ export class Ev3devProvider implements Provider {
         fail(`config.hardware.${k} is required and must be a number > 0, got ${JSON.stringify(opts.hardware[k])}`);
     }
     if (opts.hardware.speech_volume_pct > 100) fail("config.hardware.speech_volume_pct must be 1..100");
+    const ir = opts.hardware.ir_channel;
+    if (ir !== undefined && !IR_CHANNELS.includes(ir))
+      fail(`config.hardware.ir_channel must be 1, 2, 3 or 4, got ${JSON.stringify(ir)}`);
+    this.entries = sensorEntries(ir ?? 1);
     this.id = opts.id ?? "ev3";
     if (!/^[a-z0-9_-]+$/i.test(this.id)) fail(`id "${this.id}" must be letters, digits, _ or -`);
     this.roles = { ...opts.roles };
@@ -450,6 +595,7 @@ export class Ev3devProvider implements Provider {
         low_battery_v: opts.hardware.low_battery_v,
         max_tone_ms: Math.round(opts.hardware.max_tone_ms),
         speech_volume_pct: opts.hardware.speech_volume_pct,
+        ...(ir === undefined ? {} : { ir_channel: ir }),
       },
       heartbeatMs: opts.heartbeatMs ?? 300,
       helloTimeoutMs: opts.helloTimeoutMs ?? 60000,
@@ -551,8 +697,21 @@ export class Ev3devProvider implements Provider {
         speech_volume_pct: this.o.hw.speech_volume_pct,
       },
       ...(this.o.pair ? { pair: this.o.pair } : {}),
+      // channel 1 is what every bridge reads: only another one is sent, and it needs version 6
+      ...(this.irChannel() !== 1 ? { ir_channel: this.irChannel() } : {}),
     };
-    const needs = this.o.pair ? MIN_BRIDGE_VERSION : MIN_PAIRLESS_BRIDGE_VERSION;
+    const needs =
+      this.irChannel() !== 1
+        ? MIN_SENSORS_BRIDGE_VERSION
+        : this.o.pair
+          ? MIN_BRIDGE_VERSION
+          : MIN_PAIRLESS_BRIDGE_VERSION;
+    const why =
+      this.irChannel() !== 1
+        ? ` for a robot whose infrared channel is ${this.irChannel()}`
+        : this.o.pair
+          ? ""
+          : " for a robot without a motor pair";
     const reinstall = `Reinstall it: start the server with --install-bridge (in a config file: "install_bridge": true), or call installBridge() from code. Every connection attempt fails here until then.`;
     const inv = (await this.request({ op: "hello", config }, timeoutMs).reply.catch((e: unknown) => {
       // A version 4 bridge refuses a hello without a pair by asking for one, and so never says its version.
@@ -577,7 +736,12 @@ export class Ev3devProvider implements Provider {
     if (!(Number(inv.bridge) >= needs))
       throw err(
         "misconfigured",
-        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${needs} or newer${this.o.pair ? "" : " for a robot without a motor pair"}. ${reinstall}`,
+        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${needs} or newer${why}. ${reinstall}`,
+      );
+    if (this.irChannel() !== 1 && inv.ir_channel !== this.irChannel())
+      throw err(
+        "misconfigured",
+        `ev3dev: the bridge reads infrared channel ${JSON.stringify(inv.ir_channel)}, the robot file names ${this.irChannel()}. ${reinstall}`,
       );
     if (inv.guard !== true)
       throw err(
@@ -591,8 +755,68 @@ export class Ev3devProvider implements Provider {
       );
     this.inv = inv;
     this.modes.clear();
-    for (const s of inv.sensors) this.modes.set(s.port, s.mode);
+    this.described.clear();
+    for (const s of inv.sensors) {
+      this.modes.set(s.port, s.mode);
+      if (s.kind === "sensor") this.described.set(s.port, { num_values: s.num_values ?? null, units: s.units ?? null });
+    }
     this.rebuild();
+  }
+
+  /** The generic manifest (CONTRACT §2.3, kind `sensor`) of a sensor the bridge serves without an entry. */
+  private generic(local: string, s: BridgeInventory["sensors"][number]): DeviceSpec {
+    const mode = this.modes.get(s.port) ?? null;
+    const d = this.described.get(s.port) ?? { num_values: null, units: null };
+    const modes = s.modes ?? [];
+    const commands = s.commands ?? [];
+    const count = typeof d.num_values === "number" && d.num_values > 0 ? d.num_values : null;
+    const values: ChannelSpec = {
+      name: "values",
+      type: "vector",
+      ...(count === null ? {} : { length: count }),
+      ...(d.units ? { unit: d.units } : {}),
+      description: `The ${count === 1 ? "value" : count === null ? "values" : `${count} values`} of the current mode (${mode ?? "unreadable"}), in the driver's scale${d.units ? ` and unit (${d.units})` : ""}. Another mode (set_mode) has its own values, number and unit.`,
+    };
+    const spec: DeviceSpec = {
+      id: `${this.id}.${local}`,
+      provider: this.id,
+      kind: "sensor",
+      roles: Object.keys(this.roles).filter((r) => this.roles[r] === `${this.id}.${local}`),
+      channels: [
+        values,
+        { name: "mode", type: "string", description: "The sensor's current mode: one of the modes set_mode takes." },
+      ],
+      commands: [
+        {
+          name: "set_mode",
+          moves: false,
+          bound: { kind: "instant", max: 0 },
+          params: obj({ mode: { type: "string", enum: modes, description: "A mode the driver lists." } }, ["mode"]),
+          description:
+            "Switches the sensor to another of its modes; values then holds that mode's values, and describe_device shows their number and unit.",
+        },
+        ...(commands.length
+          ? [
+              {
+                name: "send",
+                moves: false,
+                bound: { kind: "instant" as const, max: 0 },
+                params: obj(
+                  { command: { type: "string", enum: commands, description: "A command the driver lists." } },
+                  ["command"],
+                ),
+                description: `Sends one of the driver's commands (${commands.join(", ")}): a calibration or a reset, as the driver defines it.`,
+              },
+            ]
+          : []),
+      ],
+      description: `Sensor with ev3dev driver ${s.driver_name} on ${s.address}, which this provider has no entry for: values are what the driver reports in the current mode. Modes: ${modes.join(", ") || "none listed"}. Input port ${s.port}.`,
+    };
+    return spec;
+  }
+
+  private irChannel(): IrChannel {
+    return this.o.hw.ir_channel ?? 1;
   }
 
   /** Opens the link if it is closed: start the transport, start the heartbeat, send hello. */
@@ -898,14 +1122,23 @@ export class Ev3devProvider implements Provider {
       ...inv.unknown.filter((x) => x.class !== "tacho-motor").map((u) => ({ at: u.local, u })),
       // oxlint-disable-next-line unicorn/no-array-sort -- a fresh array; toSorted needs lib ES2023, the repo targets ES2022
     ].sort((a, b) => a.at.localeCompare(b.at));
+    // a bridge older than version 6 serves only the five EV3 sensors: the others it lists are readable after a reinstall
+    const older = !(Number(inv.bridge) >= MIN_SENSORS_BRIDGE_VERSION);
+    const REINSTALL_SENSORS = `The installed bridge (version ${inv.bridge}) serves only the EV3 sensors; version ${MIN_SENSORS_BRIDGE_VERSION} reads this one: reinstall the bridge (--install-bridge)`;
     for (const e of sensors) {
       if ("u" in e) {
-        out.push(unknown(e.u!));
+        const u = e.u!;
+        const plugged = u.class === "lego-sensor" && /^S[1-4]$/.test(u.local) && !u.error;
+        out.push(unknown(older && plugged ? { ...u, error: REINSTALL_SENSORS } : u));
         continue;
       }
       const s = e.s!;
-      const k = SENSOR_KINDS[s.kind];
-      if (!k) {
+      if (s.kind === "sensor") {
+        out.push(this.generic(e.at, s));
+        continue;
+      }
+      const k = this.entries[s.driver_name];
+      if (!k || k.kind !== s.kind) {
         out.push(unknown({ local: e.at, address: s.address, driver_name: s.driver_name, modes: s.modes }));
         continue;
       }
@@ -913,7 +1146,7 @@ export class Ev3devProvider implements Provider {
       out.push(
         mk(
           e.at,
-          s.kind,
+          k.kind,
           `${k.description} Input port ${s.port}.`,
           k.channels.map((c) =>
             c.name in s.channel_modes ? { ...c, mode_group: e.at, active: s.channel_modes[c.name] === mode } : { ...c },
@@ -1086,12 +1319,25 @@ export class Ev3devProvider implements Provider {
     return { spec, local: spec.id.slice(this.id.length + 1) };
   }
 
-  /** Records the mode a sensor reported; a change flips `active` flags, so listeners are told. */
-  private noteMode(local: string, mode: unknown): void {
+  /**
+   * Records the mode a sensor reported, and for a generic sensor its number of values and unit; a change flips
+   * `active` flags or reshapes `values`, so listeners are told.
+   */
+  private noteMode(local: string, res: { mode?: unknown; num_values?: unknown; units?: unknown }): void {
+    const mode = res.mode;
     if (!/^S[1-4]$/.test(local) || typeof mode !== "string") return;
     const port = Number(local[1]);
-    if (this.modes.get(port) === mode) return;
+    const was = this.described.get(port);
+    const seen = was
+      ? {
+          num_values: typeof res.num_values === "number" ? res.num_values : null,
+          units: typeof res.units === "string" && res.units ? res.units : null,
+        }
+      : undefined;
+    const reshaped = was && seen && (was.num_values !== seen.num_values || was.units !== seen.units);
+    if (this.modes.get(port) === mode && !reshaped) return;
     this.modes.set(port, mode);
+    if (seen) this.described.set(port, seen);
     this.rebuild();
     for (const cb of this.listeners) cb();
   }
@@ -1136,7 +1382,7 @@ export class Ev3devProvider implements Provider {
       if (reading.value === null && r?.absent === true) reading.absent = true;
       return reading;
     });
-    this.noteMode(local, res.mode);
+    this.noteMode(local, res);
     return out;
   }
 
@@ -1237,7 +1483,7 @@ export class Ev3devProvider implements Provider {
         | { measured: Record<string, Value>; clamped: boolean; reason: StopReason; ms: number }
         | undefined;
       if (!r || typeof r.reason !== "string") throw err("internal", `ev3dev: ${spec.id}.${command} returned no result`);
-      this.noteMode(local, res.mode);
+      this.noteMode(local, res);
       return { requested: args, measured: r.measured ?? {}, clamped: r.clamped === true, reason: r.reason, ms: r.ms };
     } finally {
       signal.removeEventListener("abort", abort);
