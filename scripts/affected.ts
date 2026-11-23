@@ -2,15 +2,16 @@
 // A package is affected when one of its files changed or when it depends, directly or not, on a package that
 // changed. The dependency graph is read from the code (relative imports that cross into another package, and
 // workspace names in package.json), so it follows ARCHITECTURE.md without a second copy of it.
-// Apps (apps/<name>) are units like packages: they have tests and import packages, and nothing imports them.
+// Apps (apps/<name>) and examples (examples/<name>) are units like packages: they have tests and import
+// packages, and nothing imports them.
 // A change in packages/protocol, or in anything at the repo root that is not documentation, affects everything.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 export const root = join(import.meta.dir, "..");
-/** Folders whose children are units with their own tests. A unit's name is unique across both. */
-const UNIT_ROOTS = ["packages", "apps"] as const;
-const UNIT_PATH = /^(?:packages|apps)\/([^/]+)\//;
+/** Folders whose children are units with their own tests. A unit's name is unique across all of them. */
+const UNIT_ROOTS = ["packages", "apps", "examples"] as const;
+const UNIT_PATH = /^(?:packages|apps|examples)\/([^/]+)\//;
 const CODE = /\.(ts|tsx|js|mjs|cjs)$/;
 /** Root paths that no test can reach (deployments/ is not one: the local server's tests read its robot file). Everything else at the root (config, scripts, lockfile, CI) reaches all. */
 const DOCS = [/^[^/]+\.md$/, /^docs\//, /^LICENSE$/, /^\.gitleaksignore$/, /^\.gitattributes$/, /^\.gitignore$/];

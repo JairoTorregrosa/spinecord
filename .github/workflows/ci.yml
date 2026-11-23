@@ -111,6 +111,24 @@ jobs:
           no-cache: true
       - run: bun install --filter @spinecord/local --frozen-lockfile
       - run: bun test ./apps/local
+  # The install a person does to build an assistant (examples/assistant/README.md): the server and the example,
+  # nothing of the development toolchain, then the example's tests against it. None of them calls the Claude API.
+  assistant-install:
+    name: assistant install ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+          no-cache: true
+      - run: bun install --filter @spinecord/local --filter @spinecord/assistant-example --frozen-lockfile
+      - run: bun test ./examples/assistant
   # The local server end to end (apps/local/test/stdio.test.ts: a spawned server, MCP over stdio, a twin) with the
   # other app tests. It runs on every pull request, whatever the diff reaches.
   e2e:

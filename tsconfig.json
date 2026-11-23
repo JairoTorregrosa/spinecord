@@ -19,7 +19,8 @@
     "packages/driver-ev3dev/**/*.ts",
     "scripts/**/*.ts",
     "bench/**/*.ts",
-    "apps/**/*.ts"
+    "apps/**/*.ts",
+    "examples/**/*.ts"
   ],
   "exclude": ["**/node_modules/**", "**/dist/**"]
 }

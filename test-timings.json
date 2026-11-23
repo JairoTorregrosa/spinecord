@@ -7,6 +7,7 @@
     "apps/local/test/ev3dev.test.ts": 3125,
     "apps/local/test/robot.test.ts": 2388,
     "apps/local/test/stdio.test.ts": 1945,
+    "examples/assistant/test/assistant.test.ts": 120,
     "packages/driver-ev3/batch.test.ts": 986,
     "packages/driver-ev3/encode.test.ts": 21,
     "packages/driver-ev3/link-fake-transport.test.ts": 520,
