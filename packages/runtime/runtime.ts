@@ -1565,8 +1565,9 @@ class RuntimeImpl implements LocalRuntime {
   // ---------- stop / reset_fault ----------
   async stop(): Promise<{ motors_stopped: boolean }> {
     for (const c of this.inflight) c.abort();
-    // a loop takes no tick from here on; its brake goes out beside the providers' own
-    const loop = this.loopRun?.running ? this.loopRun.stop({ reason: "preempted" }) : undefined;
+    // a loop takes no tick from here on; its brake goes out beside the providers' own. A loop already ending by
+    // itself keeps its reason, and this stop joins its brake (bounded by HostLoop's endWithinMs).
+    const loop = this.loopRun?.stop({ reason: "preempted" });
     // Each provider gets its own announced worst case; one that takes longer counts as not stopped.
     const results = await Promise.all(
       this.local.map(async (p) => {

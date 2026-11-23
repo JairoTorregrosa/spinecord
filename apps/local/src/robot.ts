@@ -598,8 +598,9 @@ export class LocalRobot {
       return Promise.reject(e);
     }
     const cameFromFault = this.activity === "fault";
-    // a loop this stop ends: a failed end brake of it leaves the robot in fault, as for a loop that ends by itself
-    const ending = this.loop?.loop.running ? this.loop.loop : null;
+    // the loop of a robot still looping (running, or ending with its brake pending): this stop joins its end, and a
+    // failed end brake leaves the robot in fault, as for a loop that ends by itself
+    const ending = this.activity === "looping" && this.loop ? this.loop.loop : null;
     const preempted = this.move;
     this.move = null;
     this.toActivity("stopping", "stop");

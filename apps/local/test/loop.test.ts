@@ -490,6 +490,30 @@ describe("every end of a loop takes the verified stop", () => {
     expect(await h.tool("run_loop", h.spec)).toMatchObject({ ok: false });
   }, 30_000);
 
+  test("stop while a loop that ended by itself is still braking: it joins that brake, and its failure leaves a fault", async () => {
+    let release!: () => void;
+    let ends = 0;
+    const h = await hostRobot({
+      end: () =>
+        ++ends === 1
+          ? new Promise<void>((resolve) => (release = resolve)).then(() => {
+              throw new Error("late brake failed");
+            })
+          : Promise.resolve(),
+    });
+    expect(await h.tool("run_loop", { ...h.spec, duration_ms: 400 })).toMatchObject({ ok: true });
+    while (ends === 0) await h.clock.sleep(10); // the loop completed; its end brake has not answered
+    expect(h.robot.view().activity).toBe("looping");
+    const stop = h.tool("stop");
+    await h.clock.sleep(20);
+    release();
+    expect(await stop).toMatchObject({ data: { motors_stopped: true, activity: "fault" } });
+    const end = await h.tool("supervise_loop");
+    expect(end.data).toMatchObject({ state: "ended", reason: "completed" });
+    expect(h.robot.listing().fault_reason).toContain("late brake failed");
+    expect(await h.tool("run_loop", h.spec)).toMatchObject({ ok: false });
+  }, 30_000);
+
   test("stop ends a loop whose end brake fails: the stop verifies, and the robot is still left in fault", async () => {
     const h = await hostRobot({ end: () => Promise.reject(new Error("the brick refused the brake")) });
     expect(await h.tool("run_loop", { ...h.spec, duration_ms: 10000 })).toMatchObject({ ok: true });
