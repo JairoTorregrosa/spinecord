@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO, USAGE } from "../src/config";
-import { doctor, FIREWALL, MIN_BUN, report, type Line, type Probes, type RunResult } from "../src/doctor";
+import { doctor, FIREWALL, MIN_BUN, report, runBounded, type Line, type Probes, type RunResult } from "../src/doctor";
 
 const MAIN = join(REPO, "apps", "local", "main.ts");
 const ok = (out: string): RunResult => ({ code: 0, out, timedOut: false });
@@ -281,6 +281,24 @@ describe("--doctor", () => {
     expect(USAGE).toContain("--doctor [robots...]");
     expect(USAGE).toContain("--assistant");
   });
+
+  test("a probe command that outlives its bound is stopped with what it started, and answers at the bound", async () => {
+    // the child starts a grandchild that keeps the output open for 5 s
+    const script =
+      "Bun.spawn([process.execPath, '-e', 'await Bun.sleep(5000)'], { stdout: 'inherit' }); await Bun.sleep(5000)";
+    const t = Date.now();
+    const slow = await runBounded([process.execPath, "-e", script], 300);
+    expect(slow).toMatchObject({ code: null, timedOut: true });
+    expect(Date.now() - t).toBeLessThan(2000);
+    // a command that exits while a grandchild still holds its output answers once it exits
+    const left =
+      "Bun.spawn([process.execPath, '-e', 'await Bun.sleep(5000)'], { stdout: 'inherit' }).unref(); console.log('done')";
+    const t2 = Date.now();
+    const quick = await runBounded([process.execPath, "-e", left], 10_000);
+    expect(quick).toMatchObject({ code: 0, timedOut: false });
+    expect(quick.out).toContain("done");
+    expect(Date.now() - t2).toBeLessThan(4000);
+  }, 20_000);
 
   test("the entry point: one line per check, the summary last, exit 0 or 1", () => {
     const r = Bun.spawnSync(["bun", MAIN, "--doctor", "--twin"], { cwd: REPO, stdout: "pipe", stderr: "pipe" });

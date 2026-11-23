@@ -2,6 +2,7 @@
 // line (ok, warn or fail, why, and the next command), the last line is `doctor: ok` or `doctor: <n> to fix` (n
 // counts the fails), and the exit code is 1 when anything fails. It writes no file and prints no secret; the only
 // network it touches is a port probe on 127.0.0.1. Every probe is injected, so the tests run none of them.
+import { spawn, spawnSync } from "node:child_process";
 import { createConnection, createServer } from "node:net";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir, networkInterfaces, type NetworkInterfaceInfo } from "node:os";
@@ -429,26 +430,62 @@ async function portFree(port: number): Promise<boolean> {
   return !answers;
 }
 
-async function run(cmd: string[], timeoutMs: number): Promise<RunResult> {
-  let child: ReturnType<typeof Bun.spawn>;
+/** Stops a probe and every process it started: its process group on macOS and Linux, its tree on Windows. */
+function killTree(pid: number | undefined): void {
+  if (pid === undefined) return;
   try {
-    child = Bun.spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  } catch (e) {
-    return { code: null, out: (e as Error).message, timedOut: false };
+    if (process.platform === "win32")
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 3000 });
+    else process.kill(-pid, "SIGKILL");
+  } catch {
+    // already gone
   }
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill();
-  }, timeoutMs);
-  const [out, err, code] = await Promise.all([
-    new Response(child.stdout as ReadableStream).text(),
-    new Response(child.stderr as ReadableStream).text(),
-    child.exited,
-  ]);
-  clearTimeout(timer);
-  return { code: timedOut ? null : code, out: out + err, timedOut };
 }
+
+/**
+ * One probe command, bounded: at `timeoutMs` it and everything it started are stopped. The answer comes when the
+ * command exits; a process it left behind that still holds its output is stopped too, at most DRAIN_MS later.
+ */
+export function runBounded(cmd: string[], timeoutMs: number): Promise<RunResult> {
+  return new Promise((resolve) => {
+    let out = "";
+    let timedOut = false;
+    let settled = false;
+    let drain: ReturnType<typeof setTimeout> | undefined;
+    // its own process group on macOS and Linux, so that killTree reaches what it starts
+    const child = spawn(cmd[0]!, cmd.slice(1), {
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+      windowsHide: true,
+    });
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(drain);
+      resolve({ code: timedOut ? null : code, out, timedOut });
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+      finish(null);
+    }, timeoutMs);
+    child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+    child.stderr.on("data", (d: Buffer) => (out += d.toString()));
+    child.once("error", (e) => {
+      out += e.message;
+      finish(null);
+    });
+    child.once("close", (code) => finish(code));
+    child.once("exit", (code) => {
+      drain = setTimeout(() => {
+        killTree(child.pid);
+        finish(code);
+      }, DRAIN_MS);
+    });
+  });
+}
+const DRAIN_MS = 500;
 
 export const realProbes = (): Probes => ({
   platform: process.platform,
@@ -466,7 +503,7 @@ export const realProbes = (): Probes => ({
     }
   },
   which: (cmd) => Bun.which(cmd),
-  run,
+  run: runBounded,
   portFree,
   interfaces: networkInterfaces,
   defaultRoute: defaultRouteAddress,
