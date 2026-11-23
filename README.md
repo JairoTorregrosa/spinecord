@@ -96,6 +96,16 @@ Claude Code asks before the first use of each tool, and spinecord has 16. A scri
 
 Then ask: "list the robots, then drive until 15 cm from the wall".
 
+### Check a computer
+
+In the `spinecord` folder, with the robot arguments of your registration:
+
+```sh
+bun apps/local/main.ts --doctor --ev3
+```
+
+It changes nothing and starts no robot. It checks bun, Chrome or Edge, the registration in Claude Code (that this folder's sessions see it, and that it runs this clone's `main.ts`; at local or project scope only sessions opened in this folder see it, which is `ok`), that no other spinecord holds the ports, that the robot files parse, and with `--lan` the private address and the firewall. Add `--assistant` to check who pays for the [example assistant](examples/assistant): it names the variables that are set, never their values, and with `ANTHROPIC_PROFILE` it asks `ant auth status` whether that profile is logged in. Each line is `ok`, `warn` or `fail`, why, and after `->` the command that fixes it. The last line is `doctor: ok`, or `doctor: <n> to fix` with the number of `fail` lines and exit code 1; a `warn` alone keeps `doctor: ok`.
+
 ### Choose the robots
 
 Without arguments the server runs a simulated twin of the example robot (`r1-sim`) in an empty room. Arguments after `--print-add` choose the robots:

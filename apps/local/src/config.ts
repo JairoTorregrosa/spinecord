@@ -44,6 +44,11 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
   --print-add [robots...]        print the "claude mcp add" command that registers this server with those
                                  robots, with absolute paths, quoted for this computer's shells (on Windows:
                                  PowerShell and cmd.exe); starts nothing
+  --doctor [robots...]           check this computer for those robots, read-only: bun, Chrome or Edge, the
+                                 Claude Code registration, the ports, the robot files, --lan's address and
+                                 firewall; one line per check with the next command, last line "doctor: ok"
+                                 or "doctor: <n> to fix" (exit 1); starts nothing
+    --assistant                  also check who pays for examples/assistant (names of variables, never values)
 
   (no arguments)                 the example robot's twin (deployments/example/robots/r1.json) in
                                  apps/local/examples/room.json

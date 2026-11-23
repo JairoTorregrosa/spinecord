@@ -255,6 +255,10 @@ const PROVIDERS: Record<string, string> = {
   gateway: "an enterprise gateway",
 };
 
+/** The first variable set that pays ahead of an ant profile (a cloud switch, a key or a token), or null. */
+export const paysBeforeProfile = (env: Env): string | null =>
+  CLOUD_SWITCHES.find((name) => isOn(env, name)) ?? ABOVE_PROFILE.find((name) => isSet(env, name)) ?? null;
+
 /** The profile named in ANTHROPIC_PROFILE, or null. */
 const namedProfile = (env: Env): string | null =>
   isSet(env, "ANTHROPIC_PROFILE") ? value(env, "ANTHROPIC_PROFILE") : null;
@@ -266,7 +270,7 @@ const namedProfile = (env: Env): string | null =>
 export function checkEnv(env: Env): void {
   const profile = namedProfile(env);
   if (profile === null) return;
-  const first = CLOUD_SWITCHES.find((name) => isOn(env, name)) ?? ABOVE_PROFILE.find((name) => isSet(env, name));
+  const first = paysBeforeProfile(env);
   if (first)
     throw new Error(
       `ANTHROPIC_PROFILE=${profile} is set, but ${first} is set too and would pay first. Unset one of the two (README, step 2).`,
