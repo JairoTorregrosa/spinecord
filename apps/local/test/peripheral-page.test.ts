@@ -263,8 +263,14 @@ describe("the peripheral page against the listener and the hub", () => {
     expect(buzz.data).toMatchObject({ reason: "completed", measured: { vibrated_ms: 50 } });
     expect(browser.vibrations).toEqual([50]);
 
-    const lit = await r.call("command_device", { device: "phone.torch", command: "set", args: { on: true, ms: 5000 } });
-    expect(lit.data).toMatchObject({ reason: "completed", measured: { on: true } });
+    // the longest ms is not cut by the robot's motion limit: set returns at once
+    const lit = await r.call("command_device", {
+      device: "phone.torch",
+      command: "set",
+      args: { on: true, ms: 30000 },
+    });
+    expect(lit.data).toMatchObject({ reason: "completed", measured: { on: true }, applied: { on: true, ms: 30000 } });
+    expect(lit.data.clamped ?? false).toBe(false);
     expect(browser.video.torchOn).toBe(true);
     const stop = await r.call("stop");
     expect(stop.ok).toBe(true);

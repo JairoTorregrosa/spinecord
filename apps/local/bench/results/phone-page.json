@@ -1,6 +1,6 @@
 {
   "schema": "spinecord/phone-page@1",
-  "at": "2026-11-23T20:02:45.857Z",
+  "at": "2026-11-23T20:11:09.099Z",
   "browser": "Google Chrome",
   "headless": true,
   "os": "darwin arm64",
@@ -76,14 +76,14 @@
     "wait_until_pitch_gt_20": {
       "met": true,
       "reason": "condition_met",
-      "ms": 357,
+      "ms": 356,
       "readings": [
         {
           "device": "phone.imu",
           "channel": "pitch_deg",
           "unit": "deg",
           "value": 40,
-          "ts": 1795464162488
+          "ts": 1795464665759
         }
       ]
     },

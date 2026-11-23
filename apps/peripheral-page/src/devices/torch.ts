@@ -57,7 +57,8 @@ export function torch(o: TorchOptions): { def: DeviceDef } {
           required: ["on"],
           additionalProperties: false,
         },
-        bound: { kind: "ms", params: ["ms"], max: TORCH_MAX_MS },
+        // no bound params: `set` returns at once, and ms is how long the torch stays on, not how long the call runs
+        bound: { kind: "ms", max: TORCH_MAX_MS },
         moves: false,
       },
     ],
