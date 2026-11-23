@@ -9,6 +9,7 @@ import {
   Ev3devProvider,
   EXAMPLE_EV3DEV_HARDWARE,
   MIN_BRIDGE_VERSION,
+  MIN_PAIRLESS_BRIDGE_VERSION,
   readOnlyTransport,
   type Ev3devProviderOptions,
   type LineTransport,
@@ -999,7 +1000,7 @@ describe("fake brick", () => {
       });
     expect(await ask({ op: "hello", id: 4, config: { bounds } })).toMatchObject({
       ok: true,
-      bridge: String(MIN_BRIDGE_VERSION),
+      bridge: String(MIN_PAIRLESS_BRIDGE_VERSION),
     });
     expect(await ask({ op: "read", id: 5, device: "pair" })).toMatchObject({
       ok: false,
@@ -1042,6 +1043,94 @@ describe("fake brick", () => {
 });
 
 describe("bridge version", () => {
+  /** A bridge that answers every hello the way `answer` says, and nothing else. */
+  const answering = (answer: (hello: { id?: number; config: { pair?: unknown } }) => Record<string, unknown>) => {
+    let onLine: (line: string) => void = () => {};
+    const transport: LineTransport = {
+      open: async () => {},
+      close: async () => {},
+      onLine: (cb) => {
+        onLine = cb;
+      },
+      onClose: () => {},
+      send(line) {
+        const msg = JSON.parse(line) as { op: string; id?: number; config: { pair?: unknown } };
+        if (msg.op === "hello") queueMicrotask(() => onLine(JSON.stringify({ id: msg.id, ...answer(msg) })));
+      },
+    };
+    return transport;
+  };
+  const inventory = (bridge: string) => ({
+    ok: true,
+    bridge,
+    guard: true,
+    watchdog_ms: BRICK_WATCHDOG_MS,
+    motors: [],
+    sensors: [],
+    unknown: [],
+    capabilities: {},
+    speech: null,
+  });
+  const helloOf = async (transport: LineTransport, opts: Ev3devProviderOptions) => {
+    const provider = new Ev3devProvider(transport, opts);
+    const e = await provider.devices().catch((x: unknown) => x);
+    await provider.close();
+    return e;
+  };
+  test("version 4 serves a robot with a pair; a robot without one needs version 5", async () => {
+    expect([MIN_BRIDGE_VERSION, MIN_PAIRLESS_BRIDGE_VERSION]).toEqual([4, 5]);
+    // what a version 4 bridge answers to a hello: an inventory with a pair, a request for a pair without one
+    const v4 = () =>
+      answering((hello) =>
+        hello.config.pair
+          ? inventory("4")
+          : {
+              ok: false,
+              code: "misconfigured",
+              message: "config.pair needs two different ports A-D as left and right",
+            },
+      );
+    expect(Array.isArray(await helloOf(v4(), OPTS))).toBe(true);
+    const e = (await helloOf(v4(), { ...OPTS, pair: undefined })) as RuntimeError;
+    expect(e).toBeInstanceOf(RuntimeError);
+    expect(e.code).toBe("misconfigured");
+    expect(e.message).toContain("older than version 5");
+    expect(e.message).toContain("--install-bridge");
+    expect(e.message).toContain('"install_bridge": true');
+    expect(e.message).toContain("add no pair");
+    // a bridge that says 4 and answers a hello without a pair is refused by its version
+    const says4 = (await helloOf(
+      answering(() => inventory("4")),
+      { ...OPTS, pair: undefined },
+    )) as RuntimeError;
+    expect(says4.code).toBe("misconfigured");
+    expect(says4.message).toContain('version "4", this driver needs 5 or newer for a robot without a motor pair');
+    expect(says4.message).toContain("--install-bridge");
+    // version 5 serves both; version 3 serves neither
+    for (const pair of [OPTS.pair, undefined]) {
+      expect(
+        Array.isArray(
+          await helloOf(
+            answering(() => inventory("5")),
+            { ...OPTS, pair },
+          ),
+        ),
+      ).toBe(true);
+      const old = (await helloOf(
+        answering(() => inventory("3")),
+        { ...OPTS, pair },
+      )) as RuntimeError;
+      expect(old.code).toBe("misconfigured");
+      expect(old.message).toContain("--install-bridge");
+    }
+    // a refusal that is not about the pair stays what the bridge said
+    const other = (await helloOf(
+      answering(() => ({ ok: false, code: "misconfigured", message: "config.bounds.max_op_ms is required" })),
+      { ...OPTS, pair: undefined },
+    )) as RuntimeError;
+    expect(other.message).toContain("config.bounds.max_op_ms");
+    expect(other.message).not.toContain("--install-bridge");
+  });
   test("a bridge older than read_many fails loud at hello and names the fix", async () => {
     let onLine: (line: string) => void = () => {};
     const sent: string[] = [];

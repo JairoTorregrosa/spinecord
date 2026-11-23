@@ -95,7 +95,7 @@ Installs the bridge, then prints the inventory and one read of every device as J
 
 ## Not verified on hardware
 
-Bridge version 4 ran on a brick on 2026-11-22, on its Python 3.5.3: connect, stop, the square, `kill -9` of the bridge and the guard (`docs/hardware-log.md`, with the checklist of what to run). Version 5, the one in this folder, is version 4 plus a hello that may leave out `pair`; it has not run on a brick. Everything else here is tested against the fake tree with the computer's Python.
+Bridge version 4 ran on a brick on 2026-11-22, on its Python 3.5.3: connect, stop, the square, `kill -9` of the bridge and the guard (`docs/hardware-log.md`, with the checklist of what to run). Version 5, the one in this folder, is version 4 plus a hello that may leave out `pair` (the provider asks for version 5 only when it sends no pair, and for version 4 otherwise); it has not run on a brick. Everything else here is tested against the fake tree with the computer's Python.
 
 To confirm on a brick:
 

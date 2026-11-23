@@ -98,12 +98,12 @@ describe("an ev3dev brick over ssh", () => {
   });
 
   /** The fleet of one ev3dev robot reached through fake-ssh, with the bridge already on the brick. */
-  const preinstalled = async (bridge: string, events: string[]) => {
+  const preinstalled = async (bridge: string, events: string[], robotFile = EXAMPLE.robot) => {
     const home2 = mkdtempSync(join(tmpdir(), "spinecord-local-home-"));
     mkdirSync(join(home2, "spinecord"));
     writeFileSync(join(home2, "spinecord", "ev3dev_bridge.py"), bridge);
     Object.assign(process.env, { BENCH_FAKE_HOME: home2, SYSFS_ROOT: brick!.root });
-    const robot = parseRobotFile(await Bun.file(EXAMPLE.robot).json(), EXAMPLE.robot);
+    const robot = parseRobotFile(await Bun.file(robotFile).json(), robotFile);
     const fleet = await buildFleet(
       {
         port: 0,
@@ -152,7 +152,8 @@ describe("an ev3dev brick over ssh", () => {
   });
 
   test.skipIf(!runs)("an older bridge without run is misconfigured, with the reinstall hint", async () => {
-    const older = withoutRun(BRIDGE).replace('VERSION = "5"', 'VERSION = "4"');
+    const older = withoutRun(BRIDGE).replace('VERSION = "5"', 'VERSION = "3"');
+    expect(older).toContain('VERSION = "3"');
     const events: string[] = [];
     const { fleet, done } = await preinstalled(older, events);
     try {
@@ -165,6 +166,51 @@ describe("an ev3dev brick over ssh", () => {
       done();
     }
   });
+
+  /** A version 4 bridge: it says "4" and asks every hello for a pair, in version 4's words. */
+  const version4 = () => {
+    const v4 = BRIDGE.replace('VERSION = "5"', 'VERSION = "4"')
+      .replace("        if pair is not None:\n", "        if True:\n")
+      .replace("config.pair, when given, needs two", "config.pair needs two");
+    expect(v4).toContain('VERSION = "4"');
+    expect(v4).toContain("        if True:\n");
+    expect(v4).toContain('"config.pair needs two different ports A-D as left and right"');
+    return v4;
+  };
+
+  test.skipIf(!runs)("a version 4 bridge serves a robot with a pair: the base example comes online", async () => {
+    const events: string[] = [];
+    const { fleet, done } = await preinstalled(version4(), events);
+    try {
+      await online(fleet);
+      expect(events).not.toContain("ev3dev_attach_failed");
+      const described = (await callTool(fleet.robots, "describe_robot", { robot_id: "dev" })).envelope;
+      expect(described).toMatchObject({ ok: true, data: { drivetrain: { pair_device: "ev3.pair" } } });
+    } finally {
+      await fleet.shutdown();
+      done();
+    }
+  });
+
+  test.skipIf(!runs)(
+    "a version 4 bridge and a robot without a pair: the reinstall hint, never a request for a pair",
+    async () => {
+      const events: string[] = [];
+      const { fleet, done } = await preinstalled(version4(), events, ARM);
+      try {
+        await until("an attempt failed", () => events.includes("ev3dev_attach_failed"), 20_000);
+        const dev = await listed(fleet, "dev");
+        expect(dev.link).toBe("offline");
+        expect(dev.connect).toContain("does not come online by itself");
+        expect(dev.connect).toContain("--install-bridge");
+        expect(dev.connect).toContain("older than version 5");
+        expect(dev.connect).toContain("add no pair");
+      } finally {
+        await fleet.shutdown();
+        done();
+      }
+    },
+  );
 
   test.skipIf(!runs)("ssh failing puts the robot offline with its hint; ssh back brings it online", async () => {
     const down = join(home, "host-is-down");
