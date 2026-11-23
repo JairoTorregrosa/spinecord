@@ -1127,22 +1127,12 @@ describe("sensors from discovery (G7, G8, G9)", () => {
     expect(s3.channels[0]!.length).toBe(1);
     let told = 0;
     provider.onDevicesChanged(() => told++);
-    // play the kernel: a write of mode ALL makes the driver report its six values
-    const kernel = setInterval(() => {
-      try {
-        if (brick.sensor(2, "mode") !== "ALL" || brick.sensor(2, "num_values") === "6") return;
-      } catch {
-        return;
-      }
-      for (const [i, v] of [3, -12, 40, 1, 2, 3].entries()) brick.setSensor(2, `value${i}`, v);
-      brick.setSensor(2, "num_values", 6);
-    }, 3);
-    try {
-      const r = await provider.command("ev3.S3", "set_mode", { mode: "ALL" }, never);
-      expect(r).toMatchObject({ reason: "completed", measured: { mode: "ALL" } });
-    } finally {
-      clearInterval(kernel);
-    }
+    // play the kernel: what the driver reports in mode ALL, written ahead; the bridge reads it after its switch
+    for (const [i, v] of [3, -12, 40, 1, 2, 3].entries()) brick.setSensor(2, `value${i}`, v);
+    brick.setSensor(2, "num_values", 6);
+    const r = await provider.command("ev3.S3", "set_mode", { mode: "ALL" }, never);
+    expect(r).toMatchObject({ reason: "completed", measured: { mode: "ALL" } });
+    expect(brick.sensor(2, "mode")).toBe("ALL");
     expect(told).toBe(1);
     const values = byId(await provider.devices(), "ev3.S3").channels[0]!;
     expect(values.length).toBe(6);
