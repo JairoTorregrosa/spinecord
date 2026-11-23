@@ -105,8 +105,14 @@ export const FAKE_DEVICES: PageDevice[] = [
 ];
 
 export interface FakePageOptions {
-  /** The page's address, as list_robots' join names it: http://127.0.0.1:<port>/ */
+  /** The page's address, as list_robots' join names it: http://127.0.0.1:<port>/, or a join link with the token in
+   * its fragment (#t=<token>), as the network listener's QR code carries it. */
   url: string;
+  /** Where the socket connects when it is not `url`'s host (the network listener's name resolves nowhere in a
+   * test): wss://127.0.0.1:<port>. `url`'s host is then sent as `Host`. */
+  dial?: string;
+  /** The certificate the client trusts (a test certificate). */
+  ca?: string;
   robot?: string;
   name?: string;
   devices?: PageDevice[];
@@ -149,9 +155,12 @@ export async function servedToken(url: string): Promise<string> {
 
 export async function fakePage(o: FakePageOptions): Promise<FakePage> {
   const base = new URL(o.url);
-  const token = o.token ?? (await servedToken(o.url));
-  const ws = new WebSocket(`ws://${base.host}/page`, {
-    headers: { Origin: o.origin ?? `http://${base.host}` },
+  const fragment = new URLSearchParams(base.hash.slice(1)).get("t");
+  const token = o.token ?? fragment ?? (await servedToken(o.url));
+  const secure = base.protocol === "https:";
+  const ws = new WebSocket(o.dial ? `${o.dial}/page` : `${secure ? "wss" : "ws"}://${base.host}/page`, {
+    headers: { Origin: o.origin ?? `${base.protocol}//${base.host}`, ...(o.dial ? { Host: base.host } : {}) },
+    ...(o.ca ? { tls: { ca: o.ca } } : {}),
   } as unknown as string[]);
   ws.binaryType = "arraybuffer";
   const devices = o.devices ?? FAKE_DEVICES;

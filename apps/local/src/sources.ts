@@ -22,6 +22,7 @@ import { buildPeripheralPage } from "../../peripheral-page/page-build";
 import { buildBridgePage } from "../../robot-page/bridge-build";
 import type { LocalConfig, RobotSource } from "./config";
 import { serveBridge, type BridgePageFiles, type BridgeServer } from "./hid-bridge";
+import { prepareLan, type LanDeps, type LanSetup } from "./lan";
 import { servePages, type PagesServer, type PageTimes } from "./pages";
 import { LocalRobot, type LoopEndLine } from "./robot";
 
@@ -33,6 +34,8 @@ export interface Fleet {
   bridge: BridgeServer | null;
   /** The page listener; null when pages are off. */
   pages: PagesServer | null;
+  /** What --lan chose: the address, the name and where the certificate came from; null without --lan. */
+  lan: LanSetup | null;
   /** The page hub of each robot, by robot id, when pages are on. */
   hubs: Map<string, PageHub>;
   /** Stops every robot that can be reached, then closes links. One entry per robot: null = no link to stop through. */
@@ -116,6 +119,8 @@ export interface FleetOptions {
   /** Shorter times of the page state machine and the hub (tests). */
   pageTimes?: Partial<PageTimes>;
   pageHub?: PageHubOptions;
+  /** What `--lan` takes from the network, the clock and the disk (tests replace them). */
+  lan?: LanDeps;
 }
 
 /** One link to a robot's hardware: the runtime that talks through it, and the news that it closed. */
@@ -216,6 +221,8 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
   let bridge: BridgeServer | null = null;
   // pages: one hub per robot, and the listener the pages join through
   const hubs = new Map<string, PageHub>();
+  // --lan: the interface and the certificate first, so that a start that cannot have them binds nothing
+  const lan: LanSetup | undefined = config.pages?.lan ? await prepareLan(config.pages.lan, o.lan) : undefined;
   if (config.pages) for (const s of config.robots) hubs.set(s.id, new PageHub(o.pageHub));
   const byId = new Map<string, LocalRobot>();
   const pages = config.pages
@@ -223,6 +230,8 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         page: await buildPeripheralPage(),
         log: o.log,
         times: o.pageTimes,
+        ...(lan ? { lan } : {}),
+        ...(config.pages.origin ? { origin: config.pages.origin } : {}),
         // the runtime scans again when a hub announces a change; a robot offline has no registry to wait for
         scanned: async (id) => void (await byId.get(id)?.runtime()?.ready()),
       })
@@ -346,6 +355,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     bricks,
     bridge,
     pages,
+    lan: lan ?? null,
     hubs,
     async shutdown() {
       // every robot refuses calls before the first stop is issued

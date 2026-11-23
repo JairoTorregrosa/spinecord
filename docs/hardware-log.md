@@ -13,8 +13,9 @@ Runs on real robots. A row counts for the commit it names: a check passes for a 
 | EV3 on ev3dev, bridge version 5: version 4 plus a hello that may leave out `pair` | not run |
 | EV3 on ev3dev, bridge version 4 | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard (log below); direction by eye, `until`, the watchdog and brick off at start not yet |
 | EV3 on ev3dev, a bridge before version 4 | run on 2026-11-21 (log below) |
+| A phone as peripheral page over `--lan` (iPhone and Android, each as hotspot) **[hw]** | not run: the TLS listener, the token, the QR code and the certificate of local-ip.sh are tested with a fake page client and a test certificate; a real phone's resolver, its trust in the certificate and its camera, microphone and speech over that listener are unverified |
 
-Everything else about these paths is tested without a brick: the stock driver against the byte-level emulator (`packages/sim-ev3`), the ev3dev bridge against a fake sysfs tree with the local Python (`packages/driver-ev3dev/test`).
+Everything else about these paths is tested without a brick (and without a phone): the stock driver against the byte-level emulator (`packages/sim-ev3`), the ev3dev bridge against a fake sysfs tree with the local Python (`packages/driver-ev3dev/test`).
 
 ## To run
 
@@ -38,6 +39,7 @@ One pass per path (USB through the bridge page; ev3dev with the bridge in this r
 | brick off at start | start the server with the brick off, then turn it on | the server starts; the robot is `offline` with its hint, then `online` | n/a | ☐ |
 | an NXT sensor | plug an NXT light sensor (USB) or an NXT ultrasonic sensor (ev3dev); `describe_robot`, then `read_device` on its port | kind `light` (USB) or `ultrasonic` (ev3dev); the reading follows a hand in front of it | ☐ | ☐ |
 | a sensor without an entry | plug a sensor neither driver has an entry for (an NXT color sensor on USB, a HiTechnic one on ev3dev); `describe_device`, `read_device`, `command_device` `set_mode` | kind `sensor`; `values` has the length and unit the brick reports and follows the sensor; after `set_mode` the next `describe_device` shows the new length | ☐ | ☐ |
+| a phone over `--lan` **[hw]** | two runs, one per phone: an iPhone, then an Android phone, each sharing its own hotspot with the computer joined to it. `--twin --pages --lan`; scan the QR code of `http://127.0.0.1:8768/console` with the phone's camera, open the link in Safari or Chrome; lend the camera and the microphone; `read_device` a frame; `command_device` `speak` "hola, ¿cómo estás?"; `listen` with `expect: ["buenos días"]` while a person says "buenos días" | the page joins (`describe_robot` lists it `active`); the frame is a picture of the room; the phone says the phrase in Spanish; `listen` answers `match: "buenos días"`. Write one row per phone: OS and browser version, whether the name resolved on the hotspot (the console's name check and the phone), where recognition ran, the Spanish voices listed | iPhone ☐ | Android ☐ |
 | an infrared remote on channel 2 | `hardware.ir_channel: 2` in the robot file, the remote's switch on 2; `read_device` `remote_buttons` with `allow_mode_switch` while a button is held | the button's code; with the switch on 1 the reading is 0 | ☐ | ☐ |
 
 ## Log

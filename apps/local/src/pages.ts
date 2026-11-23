@@ -1,8 +1,13 @@
-// The page listener (CONTRACT §2.4, §6): an HTTP + WebSocket server on 127.0.0.1 that peripheral pages join, the
-// pairing token, the Host and Origin checks, and the page state machine of every page with its ping timer.
+// The page listeners (CONTRACT §2.4, §6): HTTP + WebSocket servers that peripheral pages join, the pairing token,
+// the Host and Origin checks, the limit on wrong tokens, and the page state machine of every page with its ping
+// timer.
 //   announced → active ↔ asleep → gone        (PAGE_TRANSITIONS, asserted on every transition)
 // The hub of each robot (packages/page-hub) holds the pages' devices and answers the runtime; this file decides
-// which state each page is in and tells the hub. Nothing of it listens beyond loopback.
+// which state each page is in and tells the hub. Three listeners share the pages, the token and the machine:
+//   loopback  127.0.0.1:<port>, always: the page with the token in it, and the pairing console
+//   lan       <interface address>:<port + 1>, TLS, with --lan only: the page without the token, and the socket
+//   tunnel    127.0.0.1:<port + 2>, with --page-origin only: the same as lan, for the person's tunnel program
+// Without --lan nothing of it listens beyond loopback.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { PageHub, PageLink } from "../../../packages/page-hub/hub";
 import { META_PLACEHOLDER, type PeripheralPageFiles } from "../../peripheral-page/page-build";
@@ -19,6 +24,8 @@ import {
   validatePageManifest,
   validatePageUnavailable,
 } from "../../../packages/protocol/validate";
+import type { LanSetup } from "./lan";
+import { qrEncode, qrSvg, qrText } from "./qr";
 
 export const DEFAULT_PAGE_PORT = 8768;
 /** The times of the page state machine (CONTRACT §1, §4). Tests shorten them. */
@@ -35,11 +42,16 @@ export const PAGE_TIMES = {
   hello_ms: 3000,
   /** How often the state machine looks at its pages. */
   tick_ms: 25,
+  /** Wrong tokens are counted per listener and remote address over this window... */
+  attempt_window_ms: 60_000,
+  /** ...and an address that sent MAX_WRONG_TOKENS of them is refused this long. */
+  lockout_ms: 60_000,
 } as const;
 export type PageTimes = { [K in keyof typeof PAGE_TIMES]: number };
 export const MAX_PAGES = 8;
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
 export const MAX_MESSAGES_PER_S = 100;
+export const MAX_WRONG_TOKENS = 5;
 
 /** One page as describe_robot lists it. */
 export interface PageView {
@@ -50,9 +62,23 @@ export interface PageView {
   unavailable: { kind: string; why: string }[];
   last_seen_ms: number;
 }
+/** A link a page joins by: it carries the token in its fragment, so it goes to the person, never to a log. */
+export interface JoinLink {
+  via: "lan" | "tunnel";
+  robot: string;
+  url: string;
+}
 export interface PagesServer {
   url: string;
   port: number;
+  /** The pairing console, on loopback. */
+  consoleUrl: string;
+  /** `https://<name>:<port>/` of the network listener, without the token; null without --lan. */
+  lanUrl: string | null;
+  /** The tunnel listener's address on this computer, for the tunnel program; null without --page-origin. */
+  tunnelUrl: string | null;
+  /** The links with the token, per robot and listener: for stderr and the console, never for a log or a tool. */
+  links(): JoinLink[];
   /** One sentence for a person: how to lend this robot a page's devices. Never holds the token. */
   join(robotId: string): string;
   /** The pages of a robot, gone ones included. */
@@ -66,6 +92,23 @@ export interface PagesOptions {
   times?: Partial<PageTimes>;
   /** Resolves when the robot's registry holds what its hub announced (the runtime scanned again). */
   scanned?: (robotId: string) => Promise<void>;
+  /** `--lan`: the network listener's address, name and certificate. */
+  lan?: LanSetup;
+  /** `--page-origin`: the origin of the person's tunnel. */
+  origin?: string;
+}
+
+/** What a listener answers to, and what it serves. */
+interface Listener {
+  name: "loopback" | "lan" | "tunnel";
+  /** `Host` values it answers. */
+  hosts: () => string[];
+  /** `Origin` values whose socket it accepts. */
+  origins: () => string[];
+  /** Only the loopback listener writes the token into its page and serves the console. */
+  loopback: boolean;
+  /** Wrong tokens per remote address. */
+  attempts: Map<string, { wrong: number[]; refusedUntil: number }>;
 }
 
 /** A page that joined, from its hello until the process ends. */
@@ -79,6 +122,9 @@ interface Page {
   devices: string[]; // ids, kept for the view of a page that is gone
 }
 interface Conn {
+  listener: Listener;
+  /** The remote address of the socket. */
+  peer: string;
   page: Page | null;
   helloTimer: ReturnType<typeof setTimeout> | null;
   window: { start: number; count: number };
@@ -105,8 +151,36 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
   const pages: Page[] = [];
   const now = () => Date.now();
   let bound = port;
+  let lanPort = 0;
+  let tunnelPort = 0;
   const own = () => [`127.0.0.1:${bound}`, `localhost:${bound}`];
-  const origins = () => own().map((h) => `http://${h}`);
+  const loopback: Listener = {
+    name: "loopback",
+    hosts: own,
+    origins: () => own().map((h) => `http://${h}`),
+    loopback: true,
+    attempts: new Map(),
+  };
+  const lanHost = () => `${o.lan!.host}:${lanPort}`;
+  const lan: Listener | null = o.lan
+    ? {
+        name: "lan",
+        hosts: () => [lanHost()],
+        origins: () => [`https://${lanHost()}`],
+        loopback: false,
+        attempts: new Map(),
+      }
+    : null;
+  const tunnelOrigin = o.origin ? new URL(o.origin) : null;
+  const tunnel: Listener | null = tunnelOrigin
+    ? {
+        name: "tunnel",
+        hosts: () => [tunnelOrigin.host],
+        origins: () => [tunnelOrigin.origin],
+        loopback: false,
+        attempts: new Map(),
+      }
+    : null;
 
   const to = (p: Page, next: PageState, why: string | null): void => {
     const from = p.link.state;
@@ -135,9 +209,31 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
     const conn = ws.data;
     if (msg.t !== "hello" || msg.v !== 1)
       return refuse(ws, PAGE_CLOSE.bad_message, 'the first message must be {"t":"hello","v":1,...}');
+    const t = now();
+    const tries = conn.listener.attempts.get(conn.peer) ?? { wrong: [], refusedUntil: 0 };
+    if (tries.refusedUntil > t)
+      return refuse(
+        ws,
+        PAGE_CLOSE.too_many,
+        `too many wrong tokens from this address: try again in ${Math.ceil((tries.refusedUntil - t) / 1000)} s`,
+      );
     const given = typeof msg.token === "string" ? Buffer.from(msg.token) : Buffer.alloc(0);
-    if (given.length !== tokenBytes.length || !timingSafeEqual(given, tokenBytes))
-      return refuse(ws, PAGE_CLOSE.bad_token, "bad or missing token: open the page this server serves");
+    if (given.length !== tokenBytes.length || !timingSafeEqual(given, tokenBytes)) {
+      tries.wrong = tries.wrong.filter((at) => t - at < times.attempt_window_ms);
+      tries.wrong.push(t);
+      if (tries.wrong.length >= MAX_WRONG_TOKENS) {
+        tries.refusedUntil = t + times.lockout_ms;
+        tries.wrong = [];
+      }
+      conn.listener.attempts.set(conn.peer, tries);
+      return refuse(
+        ws,
+        PAGE_CLOSE.bad_token,
+        conn.listener.loopback
+          ? "bad or missing token: open the page this server serves"
+          : "bad or missing token: open the join link the server shows (its QR code), not the bare address",
+      );
+    }
     let robot = msg.robot;
     if (robot === undefined && hubs.size === 1) robot = [...hubs.keys()][0];
     const hub = typeof robot === "string" ? hubs.get(robot) : undefined;
@@ -282,6 +378,9 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
   // The page machine's clock: pings, sleep, gone. A browser's timers are never on this path.
   const tick = setInterval(() => {
     const t = now();
+    for (const l of [loopback, lan, tunnel])
+      for (const [peer, a] of l?.attempts ?? [])
+        if (a.refusedUntil <= t && a.wrong.every((at) => t - at >= times.attempt_window_ms)) l!.attempts.delete(peer);
     for (const p of pages) {
       const state = p.link.state;
       if (state === "gone") continue;
@@ -304,93 +403,223 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
   }, times.tick_ms);
   (tick as { unref?: () => void }).unref?.();
 
-  let server: ReturnType<typeof Bun.serve<Conn, never>>;
-  try {
-    server = Bun.serve<Conn, never>({
-      port,
-      hostname: "127.0.0.1",
-      fetch(req, srv) {
-        // whoever reaches this listener with a loopback Host is on this computer; a name made to resolve here is not
-        if (!own().includes(req.headers.get("host") ?? ""))
-          return new Response("forbidden: this listener answers only to its loopback name", { status: 403 });
-        const url = new URL(req.url);
-        if (url.pathname === "/page") {
-          const origin = req.headers.get("origin");
-          if (!origin || !origins().includes(origin))
-            return new Response("forbidden: this socket is for the page served here", { status: 403 });
-          const conn: Conn = { page: null, helloTimer: null, window: { start: now(), count: 0 } };
-          return srv.upgrade(req, { data: conn })
-            ? undefined
-            : new Response("expected a WebSocket upgrade", { status: 426 });
-        }
-        if (url.pathname === "/")
-          return new Response(pageHtml(o.page.html, token, [...hubs.keys()]), {
-            headers: {
-              "content-type": "text/html; charset=utf-8",
-              "cache-control": "no-store",
-              "x-content-type-options": "nosniff",
-              "content-security-policy": "default-src 'self'; connect-src 'self'",
-              "permissions-policy":
-                "camera=(self), microphone=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)",
-            },
-          });
-        const file = Object.hasOwn(o.page.files, url.pathname.slice(1))
-          ? o.page.files[url.pathname.slice(1)]
-          : undefined;
-        if (file)
-          return new Response(file.body, {
-            headers: { "content-type": file.type, "cache-control": "no-store", "x-content-type-options": "nosniff" },
-          });
-        return new Response("not found", { status: 404 });
-      },
-      websocket: {
-        maxPayloadLength: MAX_MESSAGE_BYTES,
-        open(ws) {
-          ws.data.helloTimer = setTimeout(() => {
-            if (!ws.data.page) refuse(ws, PAGE_CLOSE.bad_message, `no valid hello within ${times.hello_ms} ms`);
-          }, times.hello_ms);
-        },
-        message: (ws, data) => message(ws, data),
-        close: (ws) => closed(ws),
-      },
+  const pageHeaders = {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'self'; connect-src 'self'",
+    "permissions-policy":
+      "camera=(self), microphone=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)",
+  };
+  const links = (): JoinLink[] =>
+    [...hubs.keys()].flatMap((robot) => {
+      const out: JoinLink[] = [];
+      const fragment = `#t=${token}&robot=${encodeURIComponent(robot)}`;
+      if (lan) out.push({ via: "lan", robot, url: `https://${lanHost()}/${fragment}` });
+      if (tunnelOrigin) out.push({ via: "tunnel", robot, url: `${tunnelOrigin.origin}/${fragment}` });
+      return out;
     });
-  } catch (e) {
+
+  /** One listener's answers: its Host and Origin rules, what it serves, and the socket. */
+  const handler =
+    (l: Listener) =>
+    (
+      req: Request,
+      srv: { upgrade(req: Request, o: { data: Conn }): boolean; requestIP(req: Request): { address: string } | null },
+    ) => {
+      // a Host of another name is a page of another site whose name was made to resolve here
+      if (!l.hosts().includes(req.headers.get("host") ?? ""))
+        return new Response(`forbidden: this listener answers only to ${l.hosts().join(" and ")}`, { status: 403 });
+      const url = new URL(req.url);
+      if (url.pathname === "/page") {
+        const origin = req.headers.get("origin");
+        if (!origin || !l.origins().includes(origin))
+          return new Response("forbidden: this socket is for the page served here", { status: 403 });
+        const conn: Conn = {
+          listener: l,
+          peer: srv.requestIP(req)?.address ?? "unknown",
+          page: null,
+          helloTimer: null,
+          window: { start: now(), count: 0 },
+        };
+        return srv.upgrade(req, { data: conn })
+          ? undefined
+          : new Response("expected a WebSocket upgrade", { status: 426 });
+      }
+      if (url.pathname === "/")
+        return new Response(pageHtml(o.page.html, l.loopback ? token : null, [...hubs.keys()]), {
+          headers: pageHeaders,
+        });
+      if (url.pathname === "/console" && l.loopback)
+        return new Response(
+          consoleHtml(links(), (id) => view(id), o.lan ?? null),
+          {
+            headers: { ...pageHeaders, "content-security-policy": "default-src 'self'" },
+          },
+        );
+      const file = Object.hasOwn(o.page.files, url.pathname.slice(1)) ? o.page.files[url.pathname.slice(1)] : undefined;
+      if (file)
+        return new Response(file.body, {
+          headers: { "content-type": file.type, "cache-control": "no-store", "x-content-type-options": "nosniff" },
+        });
+      return new Response("not found", { status: 404 });
+    };
+  const websocket = {
+    maxPayloadLength: MAX_MESSAGE_BYTES,
+    open(ws: Ws) {
+      ws.data.helloTimer = setTimeout(() => {
+        if (!ws.data.page) refuse(ws, PAGE_CLOSE.bad_message, `no valid hello within ${times.hello_ms} ms`);
+      }, times.hello_ms);
+    },
+    message: (ws: Ws, data: string | Buffer) => message(ws, data),
+    close: (ws: Ws) => closed(ws),
+  };
+  const servers: { stop(close?: boolean): unknown }[] = [];
+  const bind = (l: Listener, hostname: string, at: number, tls?: { cert: string; key: string }) => {
+    const server = Bun.serve<Conn, never>({
+      port: at,
+      hostname,
+      ...(tls ? { tls } : {}),
+      fetch: handler(l),
+      websocket,
+    });
+    servers.push(server);
+    return server.port ?? at;
+  };
+  const view = (robotId: string): PageView[] =>
+    pages
+      .filter((p) => p.robot === robotId)
+      .map((p) => ({
+        name: p.link.name,
+        state: p.link.state,
+        ...(p.link.why ? { why: p.link.why } : {}),
+        devices: p.link.state === "gone" ? [] : p.devices,
+        unavailable: p.link.unavailable,
+        last_seen_ms: Math.max(0, now() - p.link.seenAt),
+      }));
+  const end = () => {
     clearInterval(tick);
+    for (const s of servers) void s.stop(true);
+  };
+
+  try {
+    bound = bind(loopback, "127.0.0.1", port);
+  } catch (e) {
+    end();
     throw new Error(
       `cannot listen on 127.0.0.1:${port} for pages (${(e as Error).message}). Another process holds that port, often another spinecord: close it, or pick another port with --page-port.`,
       { cause: e },
     );
   }
-  bound = server.port ?? port;
+  const next = (k: number) => (port === 0 ? 0 : port + k);
+  if (o.lan) {
+    try {
+      lanPort = bind(lan!, o.lan.address, next(1), { cert: o.lan.cert, key: o.lan.key });
+    } catch (e) {
+      end();
+      throw new Error(
+        `--lan: cannot listen on ${o.lan.address}:${next(1)} (${(e as Error).message}). Another process holds that port, or the address left this computer: pick another port with --page-port, or another interface with --lan-interface.`,
+        { cause: e },
+      );
+    }
+  }
+  if (tunnel) {
+    try {
+      tunnelPort = bind(tunnel, "127.0.0.1", next(2));
+    } catch (e) {
+      end();
+      throw new Error(
+        `--page-origin: cannot listen on 127.0.0.1:${next(2)} for the tunnel (${(e as Error).message}); pick another port with --page-port.`,
+        { cause: e },
+      );
+    }
+  }
   const url = `http://127.0.0.1:${bound}/`;
+  const consoleUrl = `${url}console`;
+  const lanUrl = o.lan ? `https://${lanHost()}/` : null;
   return {
     url,
     port: bound,
-    join: (robotId) =>
-      `On this computer open ${url} in Chrome or Edge and lend robot ${robotId} the devices of that page.`,
-    view: (robotId) =>
-      pages
-        .filter((p) => p.robot === robotId)
-        .map((p) => ({
-          name: p.link.name,
-          state: p.link.state,
-          ...(p.link.why ? { why: p.link.why } : {}),
-          devices: p.link.state === "gone" ? [] : p.devices,
-          unavailable: p.link.unavailable,
-          last_seen_ms: Math.max(0, now() - p.link.seenAt),
-        })),
+    consoleUrl,
+    lanUrl,
+    tunnelUrl: tunnel ? `http://127.0.0.1:${tunnelPort}/` : null,
+    links,
+    join: (robotId) => {
+      const here = `On this computer open ${url} in Chrome or Edge and lend robot ${robotId} the devices of that page.`;
+      const other = [
+        ...(lanUrl ? [`a phone on the same network joins at ${lanUrl}`] : []),
+        ...(tunnelOrigin ? [`a phone anywhere joins through the tunnel at ${tunnelOrigin.origin}/`] : []),
+      ];
+      return other.length
+        ? `${here} To add a phone: ${other.join("; ")}, with the link of the QR code at ${consoleUrl} (also on the server's stderr), which carries the pairing token.`
+        : here;
+    },
+    view,
     stop() {
-      clearInterval(tick);
       for (const p of pages) if (p.socket) p.socket.close(1001, "the process is ending");
-      void server.stop(true);
+      end();
     },
   };
 }
 
-/** The page served at `/`. It carries the token: whoever reaches this loopback listener is on this computer. */
-function pageHtml(template: string, token: string, robots: string[]): string {
+/**
+ * The page served at `/`. On loopback it carries the token: whoever reaches this loopback listener is on this
+ * computer. On the network and tunnel listeners it carries none: the page takes it from its link's fragment.
+ */
+function pageHtml(template: string, token: string | null, robots: string[]): string {
   return template.replace(
     META_PLACEHOLDER,
-    `<meta name="spinecord-token" content="${token}">\n    <meta name="spinecord-robots" content="${robots.join(" ")}">`,
+    `${token === null ? "" : `<meta name="spinecord-token" content="${token}">
+    `}<meta name="spinecord-robots" content="${robots.join(" ")}">`,
   );
+}
+
+const esc = (t: string): string =>
+  t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** The pairing console, on loopback only: the join links as QR codes, and the pages that joined. */
+function consoleHtml(links: JoinLink[], view: (robot: string) => PageView[], lan: LanSetup | null): string {
+  const robots = [...new Set(links.map((l) => l.robot))];
+  const codes = links
+    .map(
+      (l) => `<section>
+<h2>Robot ${esc(l.robot)}${l.via === "tunnel" ? " (through the tunnel)" : ""}</h2>
+${qrSvg(qrEncode(l.url), 288)}
+<p><a href="${esc(l.url)}">${esc(l.url)}</a></p>
+</section>`,
+    )
+    .join("\n");
+  const joined = robots
+    .flatMap((r) =>
+      view(r).map((p) => `<li>${esc(r)}: ${esc(p.name)}, ${p.state}${p.why ? ` (${esc(p.why)})` : ""}</li>`),
+    )
+    .join("\n");
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spinecord pairing</title>
+</head>
+<body>
+<h1>Add a phone</h1>
+${
+  links.length === 0
+    ? "<p>This server listens on this computer only. Start it with <code>--lan</code> so that a phone on the same network can join.</p>"
+    : `<p>Point the phone's camera at a code and open the link. The link carries the pairing token of this start: share it only with phones you trust.</p>
+${lan ? `<p>Name check: ${esc(lan.nameCheck.text)}.</p>` : ""}
+${codes}`
+}
+<h2>Pages that joined</h2>
+${joined ? `<ul>\n${joined}\n</ul>` : "<p>None yet. Reload this page to see new ones.</p>"}
+</body>
+</html>
+`;
+}
+
+/** The join link and its QR code for a terminal, one block per link, for stderr. */
+export function linksText(links: JoinLink[]): string {
+  return links
+    .map((l) => `robot ${l.robot}${l.via === "tunnel" ? " (tunnel)" : ""}: ${l.url}\n${qrText(qrEncode(l.url))}\n`)
+    .join("\n");
 }

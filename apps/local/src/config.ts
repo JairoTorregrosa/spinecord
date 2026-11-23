@@ -11,6 +11,7 @@ import type { Ev3devHardware } from "../../../packages/driver-ev3dev/src/provide
 import type { SshOptions } from "../../../packages/driver-ev3dev/src/ssh";
 import type { RobotProfile } from "../../../packages/protocol/types";
 import { parseWorld } from "../../../packages/sim-world/world";
+import type { LanConfig } from "./lan";
 import { DEFAULT_PAGE_PORT } from "./pages";
 
 export const DEFAULT_PORT = 8767;
@@ -62,10 +63,22 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  every robot of the process takes pages
     --page-port <n>              port of the page listener on 127.0.0.1 (default ${DEFAULT_PAGE_PORT}; 0 takes
                                  a free port, and list_robots' join names it)
+    --lan                        also listen on this computer's private network address (HTTPS, port
+                                 --page-port + 1) so a phone on the same network joins; the join link and
+                                 its QR code are on stderr and on http://127.0.0.1:<page-port>/console. The
+                                 certificate is the public one of local-ip.sh, fetched at start (cached)
+      --lan-interface <name|ip>  the interface to listen on (default: the only private one, else the one of
+                                 the default route)
+      --lan-cert <cert> <key>    a certificate of your own (PEM files, e.g. from mkcert);
+                                 local-ip.sh's is then not fetched
+      --lan-host <name>          the name that certificate is for, when it does not name the address itself
+    --page-origin <https url>    the origin of a tunnel you run yourself (cloudflared, pinggy): pages join through
+                                 it at a listener on 127.0.0.1, port --page-port + 2
   --log-file <path>              also append every JSON log line of stderr to this file; its folder is
                                  created, and a file that cannot be opened ends the start
   --config <file.json>           the robots and the port as a file, for more than one robot of a kind:
-                                 {"port"?: n, "pages"?: {"port"?: n}, "robots": [
+                                 {"port"?: n, "pages"?: {"port"?: n, "lan"?: true | {"interface"?: s,
+                                   "cert"?: path, "key"?: path, "host"?: s}, "origin"?: url}, "robots": [
                                    {"source": "twin", "robot": path, "world": path, "seed"?: n, "id"?: s},
                                    {"source": "ev3", "robot": path, "id"?: s},
                                    {"source": "ev3dev", "robot": path, "id"?: s, "install_bridge"?: bool,
@@ -104,7 +117,15 @@ export interface LocalConfig {
   /** `--log-file`, absolute: the file that gets every JSON log line of stderr too. */
   logFile?: string;
   /** Peripheral pages (CONTRACT §2.4): null when off. On, every robot gets a page hub, and the page listener binds this port. */
-  pages?: { port: number } | null;
+  pages?: PagesConfig | null;
+}
+
+export interface PagesConfig {
+  port: number;
+  /** `--lan`: the network listener. Absent when off. */
+  lan?: LanConfig;
+  /** `--page-origin`: the origin of the person's tunnel. Absent when off. */
+  origin?: string;
 }
 
 const ROBOT_ID = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -129,6 +150,37 @@ function int(where: string, raw: unknown, min: number, max: number): number {
     throw new Error(`${where} must be an integer ${min}..${max}, got ${JSON.stringify(raw)}`);
   return n;
 }
+/** `--page-origin`: an https origin and nothing else (no path, query or fragment). */
+export function parseOrigin(where: string, raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error(`${where} must be an https origin such as https://name.example, got ${raw}`);
+  }
+  if (
+    u.protocol !== "https:" ||
+    u.username ||
+    u.password ||
+    u.search ||
+    u.hash ||
+    (u.pathname !== "/" && u.pathname !== "")
+  )
+    throw new Error(`${where} must be an https origin such as https://name.example (no path), got ${raw}`);
+  return u.origin;
+}
+/** A certificate and its key of the person's own, read at start: a file that is not there ends the start. */
+function ownCert(where: string, certPath: string, keyPath: string): NonNullable<LanConfig["own"]> {
+  const read = (path: string) => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch (e) {
+      throw new Error(`${where}: cannot read ${path}: ${(e as Error).message}`, { cause: e });
+    }
+  };
+  return { cert: read(certPath), key: read(keyPath), certPath, keyPath };
+}
+
 /** The file of a robot of source "pages": {profile: {id, roles, limits, notes}}, with no hardware, pair or drivetrain. */
 export function parsePagesRobot(json: unknown, where: string): RobotProfile {
   const fail = (field: string, why: string): never => {
@@ -219,13 +271,47 @@ function fromFile(file: string): LocalConfig {
   if (!isObj(json)) throw new Error(`${where}: must be an object {"robots": [...]}`);
   const unknown = Object.keys(json).filter((k) => k !== "port" && k !== "robots" && k !== "pages");
   if (unknown.length) throw new Error(`${where}: unknown field ${unknown.join(", ")}; allowed: port, pages, robots`);
-  let pages: { port: number } | null = null;
+  let pages: PagesConfig | null = null;
   if (json.pages !== undefined) {
-    if (!isObj(json.pages) || Object.keys(json.pages).some((k) => k !== "port"))
-      throw new Error(`${where}: pages must be {"port"?: n}`);
+    const shape = '{"port"?: n, "lan"?: true | {"interface"?, "cert"?, "key"?, "host"?}, "origin"?: url}';
+    if (!isObj(json.pages) || Object.keys(json.pages).some((k) => !["port", "lan", "origin"].includes(k)))
+      throw new Error(`${where}: pages must be ${shape}`);
+    const jp = json.pages;
     pages = {
-      port: json.pages.port === undefined ? DEFAULT_PAGE_PORT : int(`${where}: pages.port`, json.pages.port, 1, 65535),
+      port: jp.port === undefined ? DEFAULT_PAGE_PORT : int(`${where}: pages.port`, jp.port, 1, 65535),
     };
+    if (jp.lan !== undefined && jp.lan !== false) {
+      const l = jp.lan === true ? {} : jp.lan;
+      if (!isObj(l) || Object.keys(l).some((k) => !["interface", "cert", "key", "host"].includes(k)))
+        throw new Error(
+          `${where}: pages.lan must be true or {"interface"?: s, "cert"?: path, "key"?: path, "host"?: s}`,
+        );
+      for (const k of ["interface", "cert", "key", "host"] as const)
+        if (l[k] !== undefined && (typeof l[k] !== "string" || l[k] === ""))
+          throw new Error(`${where}: pages.lan.${k} must be a non-empty string`);
+      if ((l.cert === undefined) !== (l.key === undefined))
+        throw new Error(`${where}: pages.lan.cert and pages.lan.key go together`);
+      if (l.host !== undefined && l.cert === undefined)
+        throw new Error(`${where}: pages.lan.host names the host of pages.lan.cert: it needs cert and key`);
+      const base = dirname(file);
+      pages.lan = {
+        ...(l.interface !== undefined ? { interface: l.interface as string } : {}),
+        ...(l.cert !== undefined
+          ? {
+              own: ownCert(
+                `${where}: pages.lan.cert`,
+                pathFrom(base, l.cert as string),
+                pathFrom(base, l.key as string),
+              ),
+            }
+          : {}),
+        ...(l.host !== undefined ? { host: l.host as string } : {}),
+      };
+    }
+    if (jp.origin !== undefined) {
+      if (typeof jp.origin !== "string") throw new Error(`${where}: pages.origin must be a string`);
+      pages.origin = parseOrigin(`${where}: pages.origin`, jp.origin);
+    }
   }
   if (!Array.isArray(json.robots) || json.robots.length === 0)
     throw new Error(`${where}: robots must be a non-empty array`);
@@ -304,10 +390,20 @@ function withExampleRobot(argv: string[]): string[] {
   });
 }
 
+/** `--lan-cert <cert.pem> <key.pem>` takes two files: written here as `--lan-cert=<cert> --lan-key=<key>`. */
+function withLanCertPair(argv: string[]): string[] {
+  const i = argv.indexOf("--lan-cert");
+  if (i === -1) return argv;
+  const [cert, key] = [argv[i + 1], argv[i + 2]];
+  if (cert === undefined || cert.startsWith("-") || key === undefined || key.startsWith("-"))
+    throw new Error("--lan-cert needs two files: --lan-cert <cert.pem> <key.pem>");
+  return [...argv.slice(0, i), `--lan-cert=${cert}`, `--lan-key=${key}`, ...argv.slice(i + 3)];
+}
+
 /** Reads the command line and every file it names. Throws with a message for the person at the terminal. */
 export function loadConfig(argv: string[]): LocalConfig {
   const { values } = parseArgs({
-    args: withExampleRobot(argv),
+    args: withLanCertPair(withExampleRobot(argv)),
     strict: true,
     allowPositionals: false,
     options: {
@@ -325,6 +421,12 @@ export function loadConfig(argv: string[]): LocalConfig {
       "log-file": { type: "string" },
       pages: { type: "string" },
       "page-port": { type: "string" },
+      lan: { type: "boolean" },
+      "lan-interface": { type: "string" },
+      "lan-cert": { type: "string" },
+      "lan-key": { type: "string" },
+      "lan-host": { type: "string" },
+      "page-origin": { type: "string" },
     },
   });
   if (values.help) throw new HelpAsked();
@@ -350,6 +452,14 @@ export function loadConfig(argv: string[]): LocalConfig {
     if (values.seed !== undefined) needs("seed", "twin", values.twin !== undefined);
     if (values.port !== undefined) needs("port", "ev3", values.ev3 !== undefined);
     if (values["page-port"] !== undefined) needs("page-port", "pages", values.pages !== undefined);
+    if (values.lan !== undefined) needs("lan", "pages", values.pages !== undefined);
+    if (values["page-origin"] !== undefined) needs("page-origin", "pages", values.pages !== undefined);
+    for (const flag of ["lan-interface", "lan-cert", "lan-key", "lan-host"] as const)
+      if (values[flag] !== undefined) needs(flag, "lan", values.lan === true);
+    if ((values["lan-cert"] === undefined) !== (values["lan-key"] === undefined))
+      throw new Error("--lan-cert needs two files: --lan-cert <cert.pem> <key.pem>");
+    if (values["lan-host"] !== undefined && values["lan-cert"] === undefined)
+      throw new Error("--lan-host names the host of a certificate of your own: it needs --lan-cert");
     for (const flag of ["ssh", "ssh-key", "install-bridge"] as const)
       if (values[flag] !== undefined) needs(flag, "ev3dev", values.ev3dev !== undefined);
     if (given.length === 0)
@@ -408,9 +518,33 @@ export function loadConfig(argv: string[]): LocalConfig {
                 values["page-port"] === undefined
                   ? DEFAULT_PAGE_PORT
                   : int("--page-port", values["page-port"], 0, 65535),
+              ...(values.lan
+                ? {
+                    lan: {
+                      ...(values["lan-interface"] !== undefined ? { interface: values["lan-interface"] } : {}),
+                      ...(values["lan-cert"] !== undefined
+                        ? {
+                            own: ownCert(
+                              "--lan-cert",
+                              fromRepo(values["lan-cert"]),
+                              fromRepo(values["lan-key"] as string),
+                            ),
+                          }
+                        : {}),
+                      ...(values["lan-host"] !== undefined ? { host: values["lan-host"] } : {}),
+                    },
+                  }
+                : {}),
+              ...(values["page-origin"] !== undefined
+                ? { origin: parseOrigin("--page-origin", values["page-origin"]) }
+                : {}),
             },
     };
   }
+  if (config.pages && (config.pages.lan || config.pages.origin) && config.pages.port > 65533)
+    throw new Error(
+      `the page port is ${config.pages.port}: --lan takes the port after it and --page-origin the one after that; pick one up to 65533`,
+    );
   const ids = config.robots.map((r) => r.id);
   for (const id of ids)
     if (!ROBOT_ID.test(id))

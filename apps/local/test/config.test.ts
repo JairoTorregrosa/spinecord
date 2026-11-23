@@ -424,9 +424,9 @@ describe("pages", () => {
     expect(() =>
       loadConfig([
         "--config",
-        file("pb.json", { pages: { lan: true }, robots: [{ source: "ev3", robot: EXAMPLE.robot }] }),
+        file("pb.json", { pages: { ext: "x" }, robots: [{ source: "ev3", robot: EXAMPLE.robot }] }),
       ]),
-    ).toThrow('pages must be {"port"?: n}');
+    ).toThrow('pages must be {"port"?: n, "lan"?');
   });
   test("a robot file of source pages is {profile} alone: hardware, pair and drivetrain are refused", () => {
     const where = "test";

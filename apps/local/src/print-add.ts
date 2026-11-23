@@ -6,7 +6,9 @@ import { posix, win32 } from "node:path";
 import { pathFrom } from "./config";
 
 /** Flags whose value is a file. `--twin`, `--ev3` and `--ev3dev` may stand alone (the example robot). */
-const PATH_FLAGS = ["--twin", "--world", "--ev3", "--ev3dev", "--config", "--ssh-key", "--log-file"];
+const PATH_FLAGS = ["--twin", "--world", "--ev3", "--ev3dev", "--config", "--ssh-key", "--log-file", "--lan-key"];
+/** `--lan-cert <cert.pem> <key.pem>`: a flag with two files. */
+const TWO_PATH_FLAGS = ["--lan-cert"];
 const PLAIN = /^[A-Za-z0-9_@+=:,./-]+$/;
 
 /** One argument as a POSIX shell (sh, bash, zsh) reads it back unchanged. */
@@ -54,7 +56,11 @@ export function addCommand({ platform, repo, args }: AddCommandInput, home: stri
     const arg = args[i]!;
     const eq = arg.indexOf("=");
     const flag = eq === -1 ? arg : arg.slice(0, eq);
-    if (PATH_FLAGS.includes(flag)) {
+    if (TWO_PATH_FLAGS.includes(arg)) {
+      out.push(arg);
+      for (let k = 0; k < 2 && args[i + 1] !== undefined && !args[i + 1]!.startsWith("-"); k++)
+        out.push(quote(pathFrom(repo, args[++i]!, rules, home)));
+    } else if (PATH_FLAGS.includes(flag)) {
       const next = args[i + 1];
       const value = eq !== -1 ? arg.slice(eq + 1) : next !== undefined && !next.startsWith("-") ? args[++i]! : null;
       out.push(flag);
