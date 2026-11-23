@@ -413,8 +413,18 @@ const profile = (drivetrain?: { wheel_diameter_cm: number; axle_track_cm: number
   id: "t",
   roles: {},
   notes: [],
-  limits: { max_speed_pct: 60, max_command_ms: 15000, max_drive_cm: 100, max_turn_deg: 360, max_program_ms: 60000 },
-  ...(drivetrain ? { drivetrain: { type: "differential" as const, pair_device: "ev3.pair", ...drivetrain } } : {}),
+  limits: { max_speed_pct: 60, max_command_ms: 15000, max_program_ms: 60000 },
+  ...(drivetrain
+    ? {
+        drivetrain: {
+          type: "differential" as const,
+          pair_device: "ev3.pair",
+          max_drive_cm: 100,
+          max_turn_deg: 360,
+          ...drivetrain,
+        },
+      }
+    : {}),
 });
 describe("the robot's geometry comes from the profile, not from the world", () => {
   test("SimBrick refuses to be built without the drivetrain decision", () => {
@@ -464,6 +474,10 @@ describe("the robot's geometry comes from the profile, not from the world", () =
   test("a profile without a drivetrain gives a twin whose motors just turn", async () => {
     const dt = drivetrainFromProfile(profile(), { left: "B", right: "C" });
     expect(dt).toBeNull();
+    // and a robot without a pair has no wheels to roll on, whatever its profile says
+    expect(
+      drivetrainFromProfile(profile({ wheel_diameter_cm: 5.6, axle_track_cm: 12, forward_sign: 1 }), undefined),
+    ).toBeNull();
     const { call, run, world, brick } = rig(quietWorld(), dt);
     await call(E.outputStepSync(BC, 50, 0, 720, true));
     run(3000);

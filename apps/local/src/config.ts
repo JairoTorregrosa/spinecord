@@ -62,8 +62,9 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                    {"source": "ev3dev", "robot": path, "id"?: s, "install_bridge"?: bool,
                                     "ssh": {"host": s, "user": s, "port"?: n, "identity_file"?: path}}]}
 
-A robot file is {pair, hardware, profile}; for --ev3dev its hardware also needs speech_volume_pct. --twin, --ev3
-and --ev3dev without a file use the example robot, deployments/example/robots/r1.json.
+A robot file is {hardware, profile, pair?}; for --ev3dev its hardware also needs speech_volume_pct. pair and
+profile.drivetrain are for a robot with a synced pair of wheels: deployments/example/robots/arm.json has neither.
+--twin, --ev3 and --ev3dev without a file use the example robot, deployments/example/robots/r1.json.
 
 Paths: an absolute path is used as it is, and a leading ~ is the home folder. A relative path on the command line is taken from the repository
 root, a relative path inside a --config file from that file's folder. The folder the server is started in

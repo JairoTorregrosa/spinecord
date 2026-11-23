@@ -101,6 +101,7 @@ Without arguments the server runs a simulated twin of the example robot (`r1-sim
 | a LEGO EV3 on stock firmware, USB | `--ev3`, then open `http://127.0.0.1:8767/` in Chrome or Edge and press "Connect EV3". Keep that tab open; it may be covered or in the background |
 | a LEGO EV3 on ev3dev | `--ev3dev --ssh robot@<host> --install-bridge`, after the ssh key below |
 | an EV3 and its twin | `--ev3 --twin` |
+| the twin of the example arm: two free motors and a touch sensor, no wheels | `--twin deployments/example/robots/arm.json` |
 | a robot file of your own | `--ev3 <robot.json>`, `--twin <robot.json>`, `--ev3dev <robot.json>` |
 | several robots of a kind | `--config <file.json>` |
 
@@ -113,7 +114,7 @@ bun apps/local/main.ts --print-add --ev3 --twin
 
 and run the line it prints.
 
-`--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](CONTRACT.md). The server logs on stderr (`claude --debug` shows it); `--log-file <path>` keeps the log in a file ([Troubleshooting](#troubleshooting)).
+`--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C driven as one pair, heading from its gyro. The other example, [`deployments/example/robots/arm.json`](deployments/example/robots/arm.json), declares no `pair` and no `drivetrain`: its motors are devices for `command_device`, and `drive`, `turn` and `arc` answer `unsupported`. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](CONTRACT.md). The server logs on stderr (`claude --debug` shows it); `--log-file <path>` keeps the log in a file ([Troubleshooting](#troubleshooting)).
 
 ### An EV3 on ev3dev: the ssh key first
 
@@ -160,7 +161,8 @@ Keep a hand near the robot on a first run. These paths are tested against the tw
 | Path | On a real brick |
 |---|---|
 | Stock EV3 over USB through the bridge page (`--ev3`) | not run |
-| EV3 on ev3dev with bridge version 4, the one in this repository (`--ev3dev`) | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard |
+| EV3 on ev3dev with bridge version 5, the one in this repository (`--ev3dev`): version 4 plus a hello that may leave out `pair`. A robot without a `pair` needs it; a robot with one runs on version 4 too | not run |
+| EV3 on ev3dev with bridge version 4 | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard |
 | EV3 on ev3dev with a bridge before version 4 | run on 2026-11-21 |
 
 The dated log and the checklist of what to run: [`docs/hardware-log.md`](docs/hardware-log.md).

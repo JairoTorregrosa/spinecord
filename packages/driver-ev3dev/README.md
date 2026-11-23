@@ -24,13 +24,14 @@ await installBridge(ssh); // copies the bridge to ~/spinecord/ev3dev_bridge.py
 const ev3 = new Ev3devProvider(new SshLineTransport(ssh), {
   limits: profile.limits, // required: the robot profile's limits
   hardware: myDeployment.ev3dev.hardware, // required: { low_battery_v, max_tone_ms, speech_volume_pct }
+  pair: { left: "B", right: "C" }, // optional: only for a robot with a motor pair; `ev3.pair` exists only then
 });
 const devices = await ev3.devices();
 await ev3.command("ev3.pair", "run_pair", { left_deg: 40, right_deg: 40, speed_pct: 30, brake: false }, signal);
 await ev3.close(); // stops the heartbeat; the brick brakes
 ```
 
-`limits` and `hardware` are required; a missing or non-positive field throws `RuntimeError("misconfigured")`. `EXAMPLE_EV3DEV_HARDWARE` is a documented example and is never applied by itself. Other options: `id` (default `ev3`), `pair` (default B left, C right), `roles`, `heartbeatMs` (300), `helloTimeoutMs` (60000, covers the ssh handshake and Python start), `requestTimeoutMs` (2000), `linkSilenceMs` (3000), `stopLinkMs` (700).
+`limits` and `hardware` are required; a missing or non-positive field throws `RuntimeError("misconfigured")`. `EXAMPLE_EV3DEV_HARDWARE` is a documented example and is never applied by itself. Other options: `id` (default `ev3`), `pair` (no default: without it the bridge's hello carries none and there is no `ev3.pair`), `roles`, `heartbeatMs` (300), `helloTimeoutMs` (60000, covers the ssh handshake and Python start), `requestTimeoutMs` (2000), `linkSilenceMs` (3000), `stopLinkMs` (700).
 
 ### ssh
 
@@ -53,7 +54,7 @@ await ev3.close(); // stops the heartbeat; the brick brakes
 | Device                           | ev3dev source                                                   | Notes                                                                                                                                                                                                                                                                                                                                  |
 | -------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ev3.A`..`ev3.D` motor           | `/sys/class/tacho-motor/motorN` by `address`                    | degrees = counts x 360 / `count_per_rot`; speed percent = share of the motor's own `max_speed`. `stalled` = the last operation moved under 0.5 degrees when 4 or more were expected by its end.                                                                                                                                                   |
-| `ev3.pair` motor_pair            | the two pair motors                                             | See below.                                                                                                                                                                                                                                                                                                                             |
+| `ev3.pair` motor_pair            | the two motors of the declared `pair`; absent without one       | See below.                                                                                                                                                                                                                                                                                                                             |
 | `ev3.S1`..`ev3.S4`               | `/sys/class/lego-sensor/sensorN` by `address` and `driver_name` | touch `TOUCH`; color `COL-REFLECT`, `COL-AMBIENT`, `COL-COLOR`, `RGB-RAW`; ultrasonic `US-DIST-CM` scaled by `decimals`; gyro `GYRO-ANG`, `GYRO-RATE`, negated to counter-clockwise-positive; infrared `IR-PROX`, `IR-SEEK` (heading negated: positive = beacon to the left), `IR-REMOTE`. A mode the sensor does not list in `modes` gives a null reading that names the modes it has. |
 | touch `presses`                  | counted by the bridge                                           | ev3dev has no bump-count mode; the bridge samples the button about 50 times a second.                                                                                                                                                                                                                                                  |
 | any other sensor or motor driver | —                                                               | Listed as kind `unknown` with its driver name; never skipped.                                                                                                                                                                                                                                                                          |
@@ -73,7 +74,7 @@ One JSON object per line. Device names are local (`B`, `pair`, `S4`, `battery`).
 
 | Request                                                                                                           | Reply                                                                                                                                    |
 | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `{"op":"hello","id","config":{"bounds":{max_speed_pct,max_op_ms,low_battery_v,max_tone_ms,speech_volume_pct},"pair":{left,right}}}` | inventory: `bridge` (version), `guard` (the guard process is running; `guard_pid`; `no_guard` says why not), `motors`, `sensors` (with raw `driver_name`, `mode`, `modes`), `unknown`, `ports`, `capabilities`, `speech` (`voices`, `default_voice`, limits; null with `no_speech` saying why), `watchdog_ms`, `max_op_ms` |
+| `{"op":"hello","id","config":{"bounds":{max_speed_pct,max_op_ms,low_battery_v,max_tone_ms,speech_volume_pct},"pair"?:{left,right}}}` (`pair` only for a robot with a motor pair) | inventory: `bridge` (version), `guard` (the guard process is running; `guard_pid`; `no_guard` says why not), `motors`, `sensors` (with raw `driver_name`, `mode`, `modes`), `unknown`, `ports`, `capabilities`, `speech` (`voices`, `default_voice`, limits; null with `no_speech` saying why), `watchdog_ms`, `max_op_ms` |
 | `{"op":"read","id","device","channels","allow_mode_switch"}`                                                      | `readings:[{channel,value,error?,absent?}]` (`absent: true` = the sensor answered that it sees nothing, e.g. no beacon), `mode` for sensors                                                                                  |
 | `{"op":"read_many","id","reads":[{device,channels}]}`                                                             | `results:[...]`, one per read in order: what `read` answers for it alone (`ok`, `readings`, `mode`, or `ok:false`, `code`, `message`). Never switches a sensor mode |
 | `{"op":"command","id","device","command","args"}`                                                                 | `result:{measured,clamped,reason,ms}`                                                                                                    |
@@ -94,7 +95,7 @@ Installs the bridge, then prints the inventory and one read of every device as J
 
 ## Not verified on hardware
 
-Bridge version 4 ran on a brick on 2026-11-22, on its Python 3.5.3: connect, stop, the square, `kill -9` of the bridge and the guard (`docs/hardware-log.md`, with the checklist of what to run). Everything else here is tested against the fake tree with the computer's Python.
+Bridge version 4 ran on a brick on 2026-11-22, on its Python 3.5.3: connect, stop, the square, `kill -9` of the bridge and the guard (`docs/hardware-log.md`, with the checklist of what to run). Version 5, the one in this folder, is version 4 plus a hello that may leave out `pair` (the provider asks for version 5 only when it sends no pair, and for version 4 otherwise); it has not run on a brick. Everything else here is tested against the fake tree with the computer's Python.
 
 To confirm on a brick:
 

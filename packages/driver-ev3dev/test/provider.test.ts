@@ -8,6 +8,8 @@ import {
   BRICK_WATCHDOG_MS,
   Ev3devProvider,
   EXAMPLE_EV3DEV_HARDWARE,
+  MIN_BRIDGE_VERSION,
+  MIN_PAIRLESS_BRIDGE_VERSION,
   readOnlyTransport,
   type Ev3devProviderOptions,
   type LineTransport,
@@ -35,6 +37,7 @@ const OPTS: Ev3devProviderOptions = {
   maxOpMs: OP_MS,
   limits: { max_speed_pct: 60, max_command_ms: 15000 },
   hardware: EXAMPLE_EV3DEV_HARDWARE,
+  pair: { left: "B", right: "C" },
 };
 const IR_MODES = ["IR-PROX", "IR-SEEK", "IR-REMOTE", "IR-REM-A", "IR-S-ALT", "IR-CAL"];
 const GYRO_MODES = ["GYRO-ANG", "GYRO-RATE", "GYRO-FAS", "GYRO-G&A", "GYRO-CAL"];
@@ -178,6 +181,23 @@ describe("fake brick", () => {
     // Target still ahead: one absolute move to (position read just before the write) + delta.
     expect(out.ahead).toMatchObject({ command: "run-to-abs-pos", position_sp: "-67" });
     expect(out.ahead.reply.result).toMatchObject({ reason: "completed", measured: { degrees: -27 } });
+  });
+
+  brickTest("a robot that declares no pair: the hello carries none, and motors on B and C are two motors", async () => {
+    const { provider, brick, play } = setup({ pair: undefined, maxOpMs: PATIENT_OP_MS });
+    const specs = await provider.devices();
+    expect(specs.filter((s) => s.kind === "motor").map((s) => s.id)).toEqual(["ev3.B", "ev3.C"]);
+    expect(specs.some((s) => s.kind === "motor_pair")).toBe(false);
+    expect(await code(provider.read("ev3.pair"))).toBe("unknown_device");
+    const args = { left_deg: 40, right_deg: 40, speed_pct: 30 };
+    expect(await code(provider.command("ev3.pair", "run_pair", args, never))).toBe("unknown_device");
+    for (const i of [0, 1]) {
+      play(i);
+      const r = await provider.command(`ev3.${"BC"[i]}`, "run_degrees", { degrees: 40, speed_pct: 30 }, never);
+      expect(r).toMatchObject({ reason: "completed", measured: { degrees: 40 } });
+      expect(brick.motor(i, "position_sp")).toBe("40");
+    }
+    expect(await provider.stop()).toEqual({ motors_stopped: true });
   });
 
   brickTest("inventory becomes DeviceSpecs with the contract's kinds, ids and bounds", async () => {
@@ -954,6 +974,45 @@ describe("fake brick", () => {
     },
   );
 
+  brickTest("the bridge's hello: `pair` may be left out, and a pair that is given must be two ports", async () => {
+    const brick = new FakeBrick({ motors: [{ port: "B" }, { port: "C" }], sensors: [], battery_uv: 7000000 });
+    const transport = brick.transport(python!);
+    open.push({ brick, transport });
+    const lines: Record<string, unknown>[] = [];
+    transport.onLine((l) => lines.push(JSON.parse(l) as Record<string, unknown>));
+    transport.onClose(() => {});
+    await transport.open();
+    const ask = async (msg: Record<string, unknown>) => {
+      transport.send(JSON.stringify(msg));
+      expect(await until(() => lines.some((l) => l.id === msg.id), 5000)).toBe(true);
+      return lines.find((l) => l.id === msg.id)!;
+    };
+    const bounds = { max_speed_pct: 60, max_op_ms: 250, low_battery_v: 6.5, max_tone_ms: 5000, speech_volume_pct: 80 };
+    for (const [id, pair] of [
+      [1, { left: "B" }],
+      [2, { left: "B", right: "B" }],
+      [3, "BC"],
+    ] as const)
+      expect(await ask({ op: "hello", id, config: { bounds, pair } })).toMatchObject({
+        ok: false,
+        code: "misconfigured",
+        message: expect.stringContaining("config.pair"),
+      });
+    expect(await ask({ op: "hello", id: 4, config: { bounds } })).toMatchObject({
+      ok: true,
+      bridge: String(MIN_PAIRLESS_BRIDGE_VERSION),
+    });
+    expect(await ask({ op: "read", id: 5, device: "pair" })).toMatchObject({
+      ok: false,
+      code: "unknown_device",
+      message: expect.stringContaining("devices: B, C, speaker"),
+    });
+    expect((await ask({ op: "read", id: 6, device: "C", channels: ["position_deg"] })).ok).toBe(true);
+    // the same brick with the pair declared has the pair device
+    expect((await ask({ op: "hello", id: 7, config: { bounds, pair: { left: "B", right: "C" } } })).ok).toBe(true);
+    expect((await ask({ op: "read", id: 8, device: "pair" })).ok).toBe(true);
+  });
+
   brickTest("a read-only transport lets a shared read through", async () => {
     const { provider, sent } = tapped(readOnlyTransport);
     await provider.devices();
@@ -984,6 +1043,94 @@ describe("fake brick", () => {
 });
 
 describe("bridge version", () => {
+  /** A bridge that answers every hello the way `answer` says, and nothing else. */
+  const answering = (answer: (hello: { id?: number; config: { pair?: unknown } }) => Record<string, unknown>) => {
+    let onLine: (line: string) => void = () => {};
+    const transport: LineTransport = {
+      open: async () => {},
+      close: async () => {},
+      onLine: (cb) => {
+        onLine = cb;
+      },
+      onClose: () => {},
+      send(line) {
+        const msg = JSON.parse(line) as { op: string; id?: number; config: { pair?: unknown } };
+        if (msg.op === "hello") queueMicrotask(() => onLine(JSON.stringify({ id: msg.id, ...answer(msg) })));
+      },
+    };
+    return transport;
+  };
+  const inventory = (bridge: string) => ({
+    ok: true,
+    bridge,
+    guard: true,
+    watchdog_ms: BRICK_WATCHDOG_MS,
+    motors: [],
+    sensors: [],
+    unknown: [],
+    capabilities: {},
+    speech: null,
+  });
+  const helloOf = async (transport: LineTransport, opts: Ev3devProviderOptions) => {
+    const provider = new Ev3devProvider(transport, opts);
+    const e = await provider.devices().catch((x: unknown) => x);
+    await provider.close();
+    return e;
+  };
+  test("version 4 serves a robot with a pair; a robot without one needs version 5", async () => {
+    expect([MIN_BRIDGE_VERSION, MIN_PAIRLESS_BRIDGE_VERSION]).toEqual([4, 5]);
+    // what a version 4 bridge answers to a hello: an inventory with a pair, a request for a pair without one
+    const v4 = () =>
+      answering((hello) =>
+        hello.config.pair
+          ? inventory("4")
+          : {
+              ok: false,
+              code: "misconfigured",
+              message: "config.pair needs two different ports A-D as left and right",
+            },
+      );
+    expect(Array.isArray(await helloOf(v4(), OPTS))).toBe(true);
+    const e = (await helloOf(v4(), { ...OPTS, pair: undefined })) as RuntimeError;
+    expect(e).toBeInstanceOf(RuntimeError);
+    expect(e.code).toBe("misconfigured");
+    expect(e.message).toContain("older than version 5");
+    expect(e.message).toContain("--install-bridge");
+    expect(e.message).toContain('"install_bridge": true');
+    expect(e.message).toContain("add no pair");
+    // a bridge that says 4 and answers a hello without a pair is refused by its version
+    const says4 = (await helloOf(
+      answering(() => inventory("4")),
+      { ...OPTS, pair: undefined },
+    )) as RuntimeError;
+    expect(says4.code).toBe("misconfigured");
+    expect(says4.message).toContain('version "4", this driver needs 5 or newer for a robot without a motor pair');
+    expect(says4.message).toContain("--install-bridge");
+    // version 5 serves both; version 3 serves neither
+    for (const pair of [OPTS.pair, undefined]) {
+      expect(
+        Array.isArray(
+          await helloOf(
+            answering(() => inventory("5")),
+            { ...OPTS, pair },
+          ),
+        ),
+      ).toBe(true);
+      const old = (await helloOf(
+        answering(() => inventory("3")),
+        { ...OPTS, pair },
+      )) as RuntimeError;
+      expect(old.code).toBe("misconfigured");
+      expect(old.message).toContain("--install-bridge");
+    }
+    // a refusal that is not about the pair stays what the bridge said
+    const other = (await helloOf(
+      answering(() => ({ ok: false, code: "misconfigured", message: "config.bounds.max_op_ms is required" })),
+      { ...OPTS, pair: undefined },
+    )) as RuntimeError;
+    expect(other.message).toContain("config.bounds.max_op_ms");
+    expect(other.message).not.toContain("--install-bridge");
+  });
   test("a bridge older than read_many fails loud at hello and names the fix", async () => {
     let onLine: (line: string) => void = () => {};
     const sent: string[] = [];

@@ -43,14 +43,15 @@ export interface BrickDrivetrain {
 }
 /**
  * Builds the brick's drivetrain from a robot profile plus the ports of its motor pair (the same `pair` the EV3
- * provider is configured with). A profile without a drivetrain gives null: the twin's motors turn, the robot stays.
+ * provider is configured with). A robot without a drivetrain or without a pair gives null: the twin's motors
+ * turn, the robot stays.
  */
 export function drivetrainFromProfile(
   profile: RobotProfile,
-  pair: { left: MotorPort; right: MotorPort },
+  pair: { left: MotorPort; right: MotorPort } | undefined,
 ): BrickDrivetrain | null {
   const d = profile.drivetrain;
-  if (!d) return null;
+  if (!d || !pair) return null;
   return {
     left: pair.left,
     right: pair.right,

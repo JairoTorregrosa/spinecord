@@ -51,6 +51,7 @@ try {
   provider = new Ev3devProvider(logged, {
     limits: { max_speed_pct: 1, max_command_ms: 1 },
     hardware: { low_battery_v: 6.5, max_tone_ms: 1, speech_volume_pct: 1 },
+    pair: { left: "B", right: "C" }, // the ports of the example base; the pair is listed when both hold a motor
   });
   const t0 = Date.now();
   const devices = await provider.devices();

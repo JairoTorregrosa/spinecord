@@ -1,5 +1,5 @@
 {
-  "description": "Example twin configuration (not a default): a two-wheel driving base with large motors on B and C, a free medium motor on A, and four sensors. `pair` are the ports of the synced motor pair, the same value the EV3 provider is configured with; `profile` is a contract RobotProfile.",
+  "description": "Example twin configuration (not a default): a two-wheel driving base with large motors on B and C, a free medium motor on A, and four sensors. `pair` are the ports of the synced motor pair, the same value the EV3 provider is configured with; `profile` is a contract RobotProfile, whose `drivetrain.heading` names the gyro's angle by its role.",
   "pair": {
     "left": "B",
     "right": "C"
@@ -20,13 +20,17 @@
       "pair_device": "ev3.pair",
       "wheel_diameter_cm": 5.6,
       "axle_track_cm": 12,
-      "forward_sign": 1
+      "forward_sign": 1,
+      "max_drive_cm": 100,
+      "max_turn_deg": 360,
+      "heading": {
+        "device": "gyro",
+        "channel": "angle_deg"
+      }
     },
     "limits": {
       "max_speed_pct": 60,
       "max_command_ms": 15000,
-      "max_drive_cm": 100,
-      "max_turn_deg": 360,
       "max_program_ms": 120000
     },
     "notes": [

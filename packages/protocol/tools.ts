@@ -100,7 +100,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Describe robot",
     annotations: ro,
     description:
-      "Returns everything needed to use one robot: {id, backend, devices:[{id, kind, roles, channels (names), commands (names), description}], roles (role → device id), drivetrain (wheel geometry, or null if the robot cannot drive), limits:{max_speed_pct, max_command_ms, max_drive_cm, max_turn_deg, max_program_ms}, notes (facts about how it is built), scan_error (null when the device list is current; else why the latest device scan failed, and devices is then the list of the last scan that succeeded)}. Call before acting and again after an error mentioning unknown_device, since attached devices can come and go.",
+      "Returns everything needed to use one robot: {id, backend, devices:[{id, kind, roles, channels (names), commands (names), description}], roles (role → device id), drivetrain ({type, pair_device, wheel_diameter_cm, axle_track_cm, forward_sign, max_drive_cm, max_turn_deg, heading?:{device, channel}}: the wheel geometry, the longest drive and the largest turn of one call, and the channel that measures the heading, absent when the wheel encoders do; null → the robot has no drivetrain: drive, turn and arc answer unsupported, and its motors are devices for command_device), limits:{max_speed_pct, max_command_ms, max_program_ms}, notes (facts about how it is built), heading_error (null, or why the heading channel the drivetrain names cannot be used as the devices stand: drive, turn and arc then measure the heading from the wheel encoders), scan_error (null when the device list is current; else why the latest device scan failed, and devices is then the list of the last scan that succeeded)}. Call before acting and again after an error mentioning unknown_device, since attached devices can come and go.",
     input: { type: "object", properties: { robot_id: robotId }, required: ["robot_id"], additionalProperties: false },
   },
   {
@@ -205,7 +205,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Drive straight",
     annotations: act,
     description:
-      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, clamps, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. completed = the whole distance was driven, also when clamped is true because only the speed was cut (clamps lists each cut argument); reason clamped = distance_cm itself was cut to max_drive_cm and that shorter distance was driven. A nonzero distance under the drivetrain's smallest move (one degree of wheel rotation; either sign) sends nothing and answers ok with reason completed, measured of about 0, applied.distance_cm 0 and `note`, a sentence that names the minimum: a computed correction that small needs no check of its own. 0 is no motion, without a note. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. data.readings then holds the readings that met the condition: use them, since a read made after the stop can sit on the other side of the threshold by the noise of the sensor (approx in describe_device). A condition channel that returns no value fails the call with condition_unreadable: the move was braked and error.measured holds what it had done. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported). Clamped to max_drive_cm.",
+      "Drives straight by distance_cm (negative = backwards) using the robot's drivetrain, then brakes. Returns {requested:{distance_cm, speed_pct}, applied (the request after clamping), measured:{distance_cm, heading_change_deg, source, left_deg, right_deg}, clamped, clamps, reason, ms}; reason ∈ completed | condition_met | clamped | stalled | preempted | timeout. completed = the whole distance was driven, also when clamped is true because only the speed was cut (clamps lists each cut argument); reason clamped = distance_cm itself was cut to max_drive_cm and that shorter distance was driven. A nonzero distance under the drivetrain's smallest move (one degree of wheel rotation; either sign) sends nothing and answers ok with reason completed, measured of about 0, applied.distance_cm 0 and `note`, a sentence that names the minimum: a computed correction that small needs no check of its own. 0 is no motion, without a note. With `until`, stops early when the condition becomes true (reason condition_met) and distance_cm is then the maximum. data.readings then holds the readings that met the condition: use them, since a read made after the stop can sit on the other side of the threshold by the noise of the sensor (approx in describe_device). A condition channel that returns no value fails the call with condition_unreadable: the move was braked and error.measured holds what it had done. Measured values come from wheel encoders, not the request. Requires: online, idle (one moving call at a time, else busy), a drivetrain (else unsupported, with next naming describe_robot and command_device). Clamped to the drivetrain's max_drive_cm.",
     input: {
       type: "object",
       properties: {
@@ -224,7 +224,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Turn in place",
     annotations: act,
     description:
-      "Rotates in place by angle_deg (positive = counter-clockwise/left, negative = right), then brakes. Returns the shape drive returns: {requested:{angle_deg, speed_pct}, applied, measured:{distance_cm, heading_change_deg (the angle turned), source (gyro if present, else encoders), left_deg, right_deg}, clamped, clamps, reason, ms}, with the reasons of drive. This is the tool for turning by an angle: it measures the change of heading itself, wherever the gyro's angle stands. Supports `until` like drive; there a gyro's angle_deg is the cumulative angle since the gyro's last reset, not the angle of this turn, so on a robot that has already turned send the gyro's reset command first or compare against a value read just before. A nonzero angle under the drivetrain's smallest move sends nothing and answers ok like drive: reason completed, applied.angle_deg 0 and `note` naming the minimum. Requires a drivetrain. Clamped to max_turn_deg.",
+      "Rotates in place by angle_deg (positive = counter-clockwise/left, negative = right), then brakes. Returns the shape drive returns: {requested:{angle_deg, speed_pct}, applied, measured:{distance_cm, heading_change_deg (the angle turned), source (gyro when the drivetrain names a heading channel and it was read, else encoders), left_deg, right_deg, heading_error (only when the drivetrain names a heading channel that did not measure this move: the reason)}, clamped, clamps, reason, ms}, with the reasons of drive. This is the tool for turning by an angle: it measures the change of heading itself, wherever the heading channel's angle stands. Supports `until` like drive; there a gyro's angle_deg is the cumulative angle since the gyro's last reset, not the angle of this turn, so on a robot that has already turned send the gyro's reset command first or compare against a value read just before. A nonzero angle under the drivetrain's smallest move sends nothing and answers ok like drive: reason completed, applied.angle_deg 0 and `note` naming the minimum. Requires a drivetrain (else unsupported). Clamped to the drivetrain's max_turn_deg.",
     input: {
       type: "object",
       properties: {
@@ -243,7 +243,7 @@ const CATALOG: Omit<ToolDef, "output">[] = [
     title: "Drive along an arc",
     annotations: act,
     description:
-      "Drives along a circular arc, then brakes. radius_cm (> 0) is measured to the robot's center. angle_deg is the heading change: positive = curve left (counter-clockwise), negative = curve right. direction forward (default) or backward. Example: a quarter circle to the right while moving forward = {radius_cm: 20, angle_deg: -90}. Returns the same shape as drive with measured distance and heading change. A nonzero angle_deg under the drivetrain's smallest move sends nothing and answers ok like drive, with `note` naming the minimum. Supports `until`. Requires a drivetrain.",
+      "Drives along a circular arc, then brakes. radius_cm (> 0) is measured to the robot's center. angle_deg is the heading change: positive = curve left (counter-clockwise), negative = curve right. direction forward (default) or backward. Example: a quarter circle to the right while moving forward = {radius_cm: 20, angle_deg: -90}. Returns the same shape as drive with measured distance and heading change. A nonzero angle_deg under the drivetrain's smallest move sends nothing and answers ok like drive, with `note` naming the minimum. Supports `until`. Requires a drivetrain (else unsupported). angle_deg is clamped to the drivetrain's max_turn_deg and the path of the robot's center to its max_drive_cm.",
     input: {
       type: "object",
       properties: {
@@ -460,7 +460,7 @@ const commandResult = obj({
   requested: freeform("What was asked."),
   applied: freeform("What was sent after clamping to the limits."),
   measured: freeform(
-    "What happened. drive, turn and arc give the same fields: distance_cm, heading_change_deg, source (gyro | encoders: where the heading comes from), left_deg and right_deg (wheel rotation). command_device gives what the command's device reports.",
+    "What happened. drive, turn and arc give the same fields: distance_cm, heading_change_deg, source (gyro: the heading channel the drivetrain names in describe_robot; encoders: the wheels, when it names none or that channel gave no number; heading_error then says why a named channel was not used), left_deg and right_deg (wheel rotation). command_device gives what the command's device reports.",
   ),
   clamped: {
     type: "boolean",
@@ -548,15 +548,43 @@ const DATA: Record<string, Schema> = {
       obj({ ...deviceFields, channels: list(str, "Channel names."), commands: list(str, "Command names.") }),
     ),
     roles: { type: "object", additionalProperties: str, description: "role → device id" },
-    drivetrain: nullable("object", { description: "null → drive, turn and arc are unsupported." }),
+    drivetrain: nullable("object", {
+      description:
+        "null → the robot has no drivetrain: drive, turn and arc are unsupported, and its motors are devices for command_device.",
+      properties: {
+        type: str,
+        pair_device: { ...str, description: "The device drive, turn and arc command." },
+        wheel_diameter_cm: num,
+        axle_track_cm: num,
+        forward_sign: num,
+        max_drive_cm: { ...num, description: "Longest distance of one drive or arc." },
+        max_turn_deg: { ...num, description: "Largest angle of one turn or arc." },
+        heading: obj(
+          { device: str, channel: str },
+          ["device", "channel"],
+          "The channel that measures the heading of a move (measured.source gyro). Absent → the wheel encoders do.",
+        ),
+      },
+      required: [
+        "type",
+        "pair_device",
+        "wheel_diameter_cm",
+        "axle_track_cm",
+        "forward_sign",
+        "max_drive_cm",
+        "max_turn_deg",
+      ],
+    }),
     limits: obj({
       max_speed_pct: num,
       max_command_ms: num,
-      max_drive_cm: num,
-      max_turn_deg: num,
       max_program_ms: num,
     }),
     notes: strings,
+    heading_error: nullable("string", {
+      description:
+        "null when the drivetrain names no heading or the named channel can be used. Else why it cannot (device not attached, no numeric channel of that name, channel not active): moves then measure the heading from the wheel encoders and carry measured.heading_error.",
+    }),
     scan_error: nullable("string", {
       description:
         "null when the device list is current. Else why the latest device scan failed; the list is then the one of the last scan that succeeded.",

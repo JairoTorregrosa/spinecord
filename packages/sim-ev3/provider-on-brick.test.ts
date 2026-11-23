@@ -22,6 +22,8 @@ function twin(world: World = quietWorld(), drivetrain: BrickDrivetrain | null = 
   const ev3 = new Ev3Provider(brick, {
     limits: { max_speed_pct: 60, max_command_ms: 15000 },
     hardware: EXAMPLE_EV3_HARDWARE,
+    // the robot file's pair: the same ports the brick's drivetrain rolls on, and none for a robot without one
+    ...(drivetrain ? { pair: { left: drivetrain.left, right: drivetrain.right } } : {}),
     degPerSecAt100: LARGE_DEG_S,
     pollMs: 2,
     now,
@@ -240,7 +242,14 @@ describe("Ev3Provider on SimBrick", () => {
 
   test("a profile without a drivetrain: the same commands turn the motors and the robot does not move", async () => {
     const { ev3, brick, world } = twin(quietWorld(), null);
-    await ev3.devices();
+    const devices = await ev3.devices();
+    // no pair declared: the motors on B and C are two motors, and there is no pair device to command
+    expect(devices.filter((d) => d.kind === "motor").map((d) => d.id)).toEqual(["ev3.A", "ev3.B", "ev3.C"]);
+    expect(devices.some((d) => d.kind === "motor_pair")).toBe(false);
+    await expect(ev3.read("ev3.pair", ["left_deg"])).rejects.toMatchObject({ code: "unknown_device" });
+    await expect(
+      ev3.command("ev3.pair", "run_pair", { left_deg: 90, right_deg: 90, speed_pct: 30 }, idle()),
+    ).rejects.toMatchObject({ code: "unknown_device" });
     const op = await ev3.command("ev3.B", "run_time", { ms: 200, speed_pct: 50 }, idle());
     expect(op.reason).toBe("completed");
     expect(op.measured.degrees as number).toBeGreaterThan(80);

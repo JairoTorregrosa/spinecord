@@ -37,7 +37,7 @@ async function load(path: string): Promise<unknown> {
   return res.json();
 }
 interface TwinConfig {
-  pair: { left: MotorPort; right: MotorPort };
+  pair?: { left: MotorPort; right: MotorPort };
   profile: RobotProfile;
 }
 let twin: TwinConfig, worlds: { name: string }[], specs: { name: string }[];

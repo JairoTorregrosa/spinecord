@@ -25,10 +25,10 @@ driver-ev3 ← apps/robot-page
 | `driver-ev3dev` | ev3dev bridge (Python 3.5, stdlib) over SSH stdio, on-brick watchdog, `Ev3devProvider` with the same device ids as `driver-ev3`. | Anything `driver-ev3` does not expose to a model. |
 | `sim-world` | World model loaded from JSON, physics, sensor models, `SimWorldProvider` (`sim.world`, `sim.camera`, `sim.speaker`), declarative training, viewer pieces. | Hardware protocols; hardcoded worlds or tasks. |
 | `sim-ev3` | `SimBrick`: byte-level EV3 firmware emulator implementing the `driver-ev3` Transport on top of `sim-world`; demo page. | Tool semantics: the twin runs the real `Ev3Provider`. |
-| `runtime` | Executes the tools that address one robot, next to the hardware: device registry, role resolution, reads, sampling, conditions, kinematics for any `motor_pair` drivetrain, arg validation and clamping, chunking, program interpreter. | MCP, link and activity state, anything EV3-specific. |
+| `runtime` | Executes the tools that address one robot, next to the hardware: device registry, role resolution, reads, sampling, conditions, kinematics for any `motor_pair` drivetrain the profile declares (heading from the channel the profile names, else from the wheel encoders), arg validation and clamping, chunking, program interpreter. | MCP, link and activity state, anything EV3-specific. |
 | `apps/local` | The server (CONTRACT §6): MCP over stdio with the runtime and the robots (twin, ev3dev over SSH, stock EV3 behind the bridge page) in one bun process. Serves the catalog verbatim, validates inputs and results, owns the link and activity state of its robots, the backstop behind every call and the stop at exit. | Device semantics, kinematics, condition evaluation, robot-specific limits (they come from the profile). |
 | `apps/robot-page` | The bridge page a person opens in Chrome or Edge to lend a stock EV3 over USB: WebHID reports ⇄ one WebSocket on `127.0.0.1`, and a brake of every motor when that socket closes. | Running a runtime, timers on the path of a command. |
-| `deployments/<name>/` | Robot files (profile, pair, hardware) and worlds. | Code. |
+| `deployments/<name>/` | Robot files (profile, hardware, and `pair` for a robot with a synchronized motor pair) and worlds. | Code. |
 
 ## Rules
 

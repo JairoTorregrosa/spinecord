@@ -29,6 +29,8 @@ export const MAX_MOTION_MS = 3000;
 export const BRICK_WATCHDOG_MS = 1000;
 /** Oldest bridge this driver talks to (its hello's `bridge`): the first one whose `beacon_heading` is counter-clockwise-positive and that starts the guard process. */
 export const MIN_BRIDGE_VERSION = 4;
+/** Oldest bridge that takes a hello without `pair`: a robot that declares no motor pair needs this one. */
+export const MIN_PAIRLESS_BRIDGE_VERSION = 5;
 /** How long the bridge waits for every motor to read speed 0 after a stop. */
 export const BRIDGE_STOP_VERIFY_MS = 800;
 export const MODE_SWITCH_REQUIRED = "mode_switch_required";
@@ -82,7 +84,7 @@ export interface Ev3devProviderOptions {
   hardware: Ev3devHardware;
   /** Provider id and device id prefix. Default "ev3", so device ids match a stock-firmware brick. */
   id?: string;
-  /** Ports of the pair `<id>.pair`. Default B (left) + C (right). */
+  /** Ports of the pair `<id>.pair`. Absent: the robot has no pair, and its motors are single motors. */
   pair?: { left: OutputPort; right: OutputPort };
   /** role -> device id (from the robot profile); copied into DeviceSpec.roles. */
   roles?: Record<string, string>;
@@ -388,7 +390,7 @@ export class Ev3devProvider implements Provider {
   /** Upper bound for stop() to resolve: the bridge's verification window plus a link round trip. */
   readonly stop_worst_ms: number;
   private readonly o: {
-    pair: { left: OutputPort; right: OutputPort };
+    pair: { left: OutputPort; right: OutputPort } | undefined;
     maxSpeedPct: number;
     boundMs: number;
     hw: Ev3devHardware;
@@ -438,7 +440,7 @@ export class Ev3devProvider implements Provider {
     if (!/^[a-z0-9_-]+$/i.test(this.id)) fail(`id "${this.id}" must be letters, digits, _ or -`);
     this.roles = { ...opts.roles };
     this.o = {
-      pair: opts.pair ?? { left: "B", right: "C" },
+      pair: opts.pair,
       maxSpeedPct: opts.limits.max_speed_pct,
       boundMs: Math.max(
         1,
@@ -454,13 +456,12 @@ export class Ev3devProvider implements Provider {
       requestTimeoutMs: opts.requestTimeoutMs ?? 2000,
       linkSilenceMs: opts.linkSilenceMs ?? 3000,
     };
-    const ports = ["A", "B", "C", "D"];
-    if (
-      !ports.includes(this.o.pair.left) ||
-      !ports.includes(this.o.pair.right) ||
-      this.o.pair.left === this.o.pair.right
-    )
-      fail("pair needs two different ports A-D");
+    const ports: unknown[] = ["A", "B", "C", "D"];
+    const pair: unknown = this.o.pair;
+    if (pair !== undefined) {
+      const { left, right } = (typeof pair === "object" && pair !== null ? pair : {}) as Record<string, unknown>;
+      if (!ports.includes(left) || !ports.includes(right) || left === right) fail("pair needs two different ports A-D");
+    }
     if (opts.maxOpMs !== undefined && !(positive(opts.maxOpMs) && opts.maxOpMs <= MAX_MOTION_MS))
       fail(`maxOpMs must be 1..${MAX_MOTION_MS}`);
     for (const k of ["heartbeatMs", "helloTimeoutMs", "requestTimeoutMs", "linkSilenceMs"] as const)
@@ -549,9 +550,19 @@ export class Ev3devProvider implements Provider {
         max_tone_ms: this.o.hw.max_tone_ms,
         speech_volume_pct: this.o.hw.speech_volume_pct,
       },
-      pair: this.o.pair,
+      ...(this.o.pair ? { pair: this.o.pair } : {}),
     };
-    const inv = (await this.request({ op: "hello", config }, timeoutMs).reply) as unknown as BridgeInventory;
+    const needs = this.o.pair ? MIN_BRIDGE_VERSION : MIN_PAIRLESS_BRIDGE_VERSION;
+    const reinstall = `Reinstall it: start the server with --install-bridge (in a config file: "install_bridge": true), or call installBridge() from code. Every connection attempt fails here until then.`;
+    const inv = (await this.request({ op: "hello", config }, timeoutMs).reply.catch((e: unknown) => {
+      // A version 4 bridge refuses a hello without a pair by asking for one, and so never says its version.
+      if (!this.o.pair && e instanceof RuntimeError && e.code === "misconfigured" && /config\.pair/.test(e.message))
+        throw err(
+          "misconfigured",
+          `ev3dev: the installed bridge is older than version ${needs}, the first one that serves a robot without a motor pair (it answered: ${e.message}). The robot file is right as it is: add no pair. ${reinstall}`,
+        );
+      throw e;
+    })) as unknown as BridgeInventory;
     if (!Array.isArray(inv.motors) || !Array.isArray(inv.sensors) || !Array.isArray(inv.unknown) || !inv.capabilities) {
       throw err(
         "internal",
@@ -563,10 +574,10 @@ export class Ev3devProvider implements Provider {
         "misconfigured",
         "ev3dev: the bridge's hello does not say whether the brick can speak; the installed bridge is older than this driver. Copy this version's bridge to the brick: start the server with --install-bridge (installBridge() in code).",
       );
-    if (!(Number(inv.bridge) >= MIN_BRIDGE_VERSION))
+    if (!(Number(inv.bridge) >= needs))
       throw err(
         "misconfigured",
-        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${MIN_BRIDGE_VERSION} or newer. Reinstall it: start the server with --install-bridge (in a config file: "install_bridge": true), or call installBridge() from code. Every connection attempt fails here until then.`,
+        `ev3dev: the installed bridge is version ${JSON.stringify(inv.bridge)}, this driver needs ${needs} or newer${this.o.pair ? "" : " for a robot without a motor pair"}. ${reinstall}`,
       );
     if (inv.guard !== true)
       throw err(
@@ -810,26 +821,27 @@ export class Ev3devProvider implements Provider {
         ),
       );
     }
-    if (motors.has(o.pair.left) && motors.has(o.pair.right)) {
+    const pair = o.pair;
+    if (pair && motors.has(pair.left) && motors.has(pair.right)) {
       out.push(
         mk(
           "pair",
           "motor_pair",
-          `Motor pair: left = port ${o.pair.left}, right = port ${o.pair.right}.`,
+          `Motor pair: left = port ${pair.left}, right = port ${pair.right}.`,
           [
             {
               name: "left_deg",
               type: "number",
               unit: "deg",
               max_rate_hz: 50,
-              description: `Encoder position of the left motor (port ${o.pair.left}). Positive = the motor's own forward direction, the same sign run_pair uses.`,
+              description: `Encoder position of the left motor (port ${pair.left}). Positive = the motor's own forward direction, the same sign run_pair uses.`,
             },
             {
               name: "right_deg",
               type: "number",
               unit: "deg",
               max_rate_hz: 50,
-              description: `Encoder position of the right motor (port ${o.pair.right}). Positive = the motor's own forward direction, the same sign run_pair uses.`,
+              description: `Encoder position of the right motor (port ${pair.right}). Positive = the motor's own forward direction, the same sign run_pair uses.`,
             },
           ],
           [
