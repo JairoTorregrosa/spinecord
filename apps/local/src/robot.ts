@@ -527,17 +527,20 @@ export class LocalRobot {
       runs_on: "host",
       ...l.loop.counts(),
     });
-    // every end takes the verified stop; a loop whose own brake failed leaves the robot in fault whatever it reads
-    if (this.loop === l && this.activity === "looping" && this.rt === rt)
-      void this.stop()
-        .catch(() => {})
-        .then(() => {
-          const failed = l.loop.brakeFailed;
-          if (failed && this.loop === l && this.activity === "idle")
-            this.fault(`the brake at the end of the loop failed: ${failed}`);
-        })
-        .then(l.settle);
-    else void (this.stopRun ?? Promise.resolve()).catch(() => {}).then(l.settle);
+    // every end takes the verified stop (its own, or the stop that ended the loop); a loop whose own brake failed
+    // leaves the robot in fault whatever the motors read
+    const stopping =
+      this.loop === l && this.activity === "looping" && this.rt === rt
+        ? this.stop()
+        : (this.stopRun ?? Promise.resolve());
+    void stopping
+      .catch(() => {})
+      .then(() => {
+        const failed = l.loop.brakeFailed;
+        if (failed && this.loop === l && this.rt === rt && this.activity === "idle")
+          this.fault(`the brake at the end of the loop failed: ${failed}`);
+      })
+      .then(l.settle);
   }
 
   /** supervise_loop: the report, after the params are set and the wait has passed; it renews the attention window. */
@@ -595,6 +598,8 @@ export class LocalRobot {
       return Promise.reject(e);
     }
     const cameFromFault = this.activity === "fault";
+    // a loop this stop ends: a failed end brake of it leaves the robot in fault, as for a loop that ends by itself
+    const ending = this.loop?.loop.running ? this.loop.loop : null;
     const preempted = this.move;
     this.move = null;
     this.toActivity("stopping", "stop");
@@ -626,6 +631,7 @@ export class LocalRobot {
       this.disarm();
       // a verified stop does not clear a fault: reset_fault does
       if (!stopped) this.fault(why);
+      else if (ending?.brakeFailed) this.fault(`the brake at the end of the loop failed: ${ending.brakeFailed}`);
       else if (cameFromFault) this.fault(this.faultReason ?? "fault before the stop");
       else this.toActivity("idle", "stop verified");
       return { motors_stopped: stopped, activity: this.activity };
