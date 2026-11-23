@@ -31,7 +31,8 @@
     "limits": {
       "max_speed_pct": 60,
       "max_command_ms": 15000,
-      "max_program_ms": 120000
+      "max_program_ms": 120000,
+      "max_loop_ms": 60000
     },
     "notes": [
       "Colour sensor points down, 7 cm ahead of the axle.",

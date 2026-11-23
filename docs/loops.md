@@ -4,7 +4,9 @@ A loop (CONTRACT §5a) is a control law given as data: signals to read, outputs 
 
 Every gain here is a plausible starting point of the right order of magnitude, not a measured one. Each must be tuned on the robot: read the trace of a short run, change one param, look again. Signs depend on how a sensor and a motor are mounted; the first run of any law uses a short `duration_ms`, a low `limit` and a hand near the robot.
 
-`packages/protocol/loop.test.ts` runs these specs as they are printed here through `validateLoop`, and runs C1, C2 and C4, as printed, against small simulated plants.
+`packages/protocol/loop.test.ts` runs these specs as they are printed here through `validateLoop`, and runs C1, C2 and C4, as printed, against small simulated plants. `apps/local/test/loop.test.ts` runs C2 and C4, as printed, through `run_loop` on the twin.
+
+A spec is the input of `run_loop` with `robot_id` added. How a model runs one and supervises it is at the end of this page.
 
 ## C1. Balancing on two wheels (100 Hz)
 
@@ -115,3 +117,29 @@ A PID: three terms on one signal. Setting `{target: 90}` over a ramp of 1000 ms 
 - Hold a speed: a term `of: derivative` on an encoder with the speed as its setpoint.
 - Two independent motors at once: two outputs with one `feed` term each, no feedback term; `params` are the two speeds; guards on each motor's `position_deg` end it.
 - A turntable that tracks a beacon: one output, one term on `beacon_heading`.
+
+## Running and supervising C2 on a stock EV3
+
+On a stock EV3 over USB, a loop runs in the server's process (CONTRACT §5a): `describe_robot` shows `loop: {runs_on: "host", max_rate_hz: 50}` (the twin: 100). Each tick is one packet through the bridge page: a timed refresh of each wheel's `run_time` for `hold_ms` (3 periods, 60 ms at 50 Hz), then the reads of the color and touch sensors. The model is never inside the loop: it starts it, reads its reports and changes its params.
+
+1. Look. `describe_device` on `left_wheel` shows `run_time` with `drives: {arg: "speed_pct", max_hold_ms: 250}`: a loop can refresh it. `describe_device` on `color` shows whether `reflected_pct` is the active channel; if it is not, `read_device` names it while the robot is idle (a loop never switches a mode).
+2. Calibrate. With the sensor over the line, then beside it, `read_device` on `color`; `edge` is the midpoint of the two readings.
+3. Start. `run_loop` with C2, `robot_id` and that `edge` in `params`. It answers after 20 ticks (0.4 s) with the first report: `state: running`, `runs_on: host`, and a note that the touch sensor updates at 20 Hz, under the loop's 50. The robot is `looping`.
+4. Supervise. Call `supervise_loop` with `wait_ms` (at most 30000) in a row: each call answers when the loop ends or the time passes, and renews the attention window (`attention_ms`, 15 s by default). A loop nobody supervises for that long ends with `unattended`. Each report holds the statistics since the previous one and a trace at `trace_hz` (`t_ms`, `light`, `bumper`, `out0`, `out1`). Steer through the params only: sharper steering is `{params: {k_left: 0.7, k_right: -0.7}}`, a slower robot for a tight curve `{params: {speed: 15}, ramp_ms: 500}`.
+5. Meanwhile. `read_device` and `read_all` run while the loop does. `drive`, `turn`, `arc`, `run_program`, a second `run_loop` and a moving `command_device` answer `busy`, and so does any command on a wheel the loop drives; the message names `supervise_loop` and `stop`.
+6. The end. `stop` ends it (`preempted`). It also ends by itself: `completed` at `duration_ms`, `guard` with the guard's name (`line_lost`, `bumper`), `unattended`, `overrun` when the link cannot keep 50 ticks a second, `input_lost` when a sensor stops answering. Every end brakes both wheels and takes the path of `stop`: the robot is `idle` once every motor reads 0, else `fault`. The next `supervise_loop` returns the final report, with `reason`, until the next `run_loop`.
+7. If the process, the page or the cable goes. The brick ends each refresh by itself 60 ms after the latest one, and the bridge page brakes every motor when its socket closes. The robot is `offline`, and the report is gone with the link.
+
+The calls in order, as a script would make them:
+
+```text
+describe_robot   {robot_id: "r1"}                              → loop: {runs_on: "host", max_rate_hz: 50}
+read_device      {robot_id: "r1", device: "color"}             → on the line, then beside it: edge = midpoint
+run_loop         {robot_id: "r1", ...C2, params: {...C2.params, edge}}   → {state: "running", ticks: 20, ...}
+supervise_loop   {robot_id: "r1", wait_ms: 10000}              → {state: "running", trace, signals, outputs, ...}
+supervise_loop   {robot_id: "r1", params: {speed: 15}, ramp_ms: 500, wait_ms: 10000}
+stop             {robot_id: "r1"}                              → {motors_stopped: true, activity: "idle"}
+supervise_loop   {robot_id: "r1"}                              → {state: "ended", reason: "preempted", ...}
+```
+
+The same calls run on the twin, `--twin` with `--world packages/sim-world/examples/line-oval.json`: C2 as printed goes once around the oval in about 16 s of simulated time, with the axle within 2.7 cm of the line's centre, and the stock code path carries every tick (`apps/local/test/loop.test.ts`). The 50 Hz of the stock path has not been measured on a real brick (`docs/hardware-log.md`).

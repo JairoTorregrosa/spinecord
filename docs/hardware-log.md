@@ -7,6 +7,7 @@ Runs on real robots. A row counts for the commit it names: a check passes for a 
 | Path | On a real brick |
 | --- | --- |
 | Stock EV3 over USB through the bridge page (`apps/local --ev3`) | not run |
+| Loops on the stock path (`run_loop` through the bridge page, host executor) | not run: the declared `max_rate_hz` of 50 is a conservative figure, not a measurement; the tick round trip over real USB, and whether a refreshed timed command runs smoothly on the firmware, are unmeasured |
 | EV3 on ev3dev, bridge version 5 (`apps/local --ev3dev`): version 4 plus a hello that may leave out `pair` | not run |
 | EV3 on ev3dev, bridge version 4 | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard (log below); direction by eye, `until`, the watchdog and brick off at start not yet |
 | EV3 on ev3dev, a bridge before version 4 | run on 2026-11-21 (log below) |
@@ -30,6 +31,8 @@ One pass per path (USB through the bridge page; ev3dev with the bridge in this r
 | the guard | with the robot online: `ssh robot@<host> "pgrep -af 'python3 -S'"`, then `kill` the process it lists | the guard is listed (the provider refuses a bridge without one); after the kill the bridge brakes every motor and ends, the robot is `offline`, then `online` with a new guard | n/a | ☑ 2026-11-22 |
 | watchdog | during a 100 cm `drive`: take the brick off the network | both motors brake about 1 s after the last message | n/a | ☐ |
 | a robot without a pair | start with `deployments/example/robots/arm.json` on a brick with motors on B and C; `describe_robot`, then `command_device` `run_degrees` on each | two `motor` devices and no `motor_pair`; `drivetrain: null`; `drive` answers `unsupported`; each motor turns by itself | ☐ | ☐ |
+| loop rate | `run_loop` C4 on a free motor at 50 Hz for 10 s; time each tick's round trip | the report's `overruns` is 0 and `period_ms.p95` stays under 20 ms; the declared 50 Hz holds | ☐ | n/a |
+| a loop's cable | pull USB during `run_loop` | the motors end within `hold_ms` (60 ms at 50 Hz); `list_robots` shows `offline` | ☐ | n/a |
 | brick off at start | start the server with the brick off, then turn it on | the server starts; the robot is `offline` with its hint, then `online` | n/a | ☐ |
 
 ## Log

@@ -20,6 +20,8 @@ describe("catalog", () => {
       "stop",
       "reset_fault",
       "run_program",
+      "run_loop",
+      "supervise_loop",
     ]);
   });
   test("every input uses only the keywords the validator implements", () => {

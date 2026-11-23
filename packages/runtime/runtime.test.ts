@@ -19,6 +19,7 @@ const LIMITS = {
   max_speed_pct: 80,
   max_command_ms: 10000,
   max_program_ms: 20000,
+  max_loop_ms: 30000,
 };
 function setup(
   o: {

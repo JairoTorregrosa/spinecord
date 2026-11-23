@@ -104,6 +104,42 @@ describe("a stock EV3 lent by the page", () => {
     expect(r.entry.page.status().socket).not.toBe("open");
   });
 
+  test("a loop over the page: one packet per tick; the socket closes mid-loop and the page brakes every motor", async () => {
+    const r = await rig();
+    r.entry.page = r.openPage();
+    await r.online();
+    const d = await r.tool("describe_robot");
+    expect(d).toMatchObject({ ok: true, data: { loop: { runs_on: "host", max_rate_hz: 50 } } });
+    // real time over a real socket: nothing here depends on the pace of the ticks
+    const run = r.tool("run_loop", {
+      rate_hz: 20,
+      duration_ms: 30000,
+      attention_ms: 120000,
+      signals: { left: { device: "left_wheel", channel: "position_deg" } },
+      params: { speed: 20 },
+      outputs: [{ device: "left_wheel", command: "run_time", terms: [{ feed: "speed" }] }],
+    });
+    const refreshes = () => r.usb.brick.sent.filter((p) => p.opcodes.includes(OP.OUTPUT_TIME_SPEED));
+    await until("a refresh to reach the brick", () => refreshes().length > 0);
+    const sent = r.usb.brick.sent.length;
+    r.bridge.stop(); // the socket closes, as when the process is killed or the cable goes
+    await until("the page's brake to reach the brick", () =>
+      r.usb.brick.sent.slice(sent).some((s) => s.type === 0x80 && s.packet[7] === OP.OUTPUT_STOP),
+    );
+    // each tick was the refresh and the read in one direct command, and none overlapped another
+    for (const p of refreshes()) expect(p.opcodes).toEqual([OP.OUTPUT_TIME_SPEED, OP.OUTPUT_GET_COUNT]);
+    expect(r.usb.brick.overlaps).toBe(0);
+    // the brick ends the motion by itself hold_ms (3 periods) after the latest refresh, whatever the page does
+    await until("the motor to stop", () => !r.usb.brick.busy());
+    await until("the robot to be offline", () => r.fleet.robots[0]!.view().link === "offline");
+    await run;
+    // the report is gone with the link, and the robot is in fault until a new link's verified stop
+    await until("the robot to be in fault", () => r.fleet.robots[0]!.listing().activity === "fault");
+    expect(r.fleet.robots[0]!.listing().fault_reason).toBeString();
+    expect(await r.tool("supervise_loop")).toMatchObject({ ok: false, error: { code: "robot_offline" } });
+    await until("the loop's end to be logged", () => r.events.includes("loop_end"));
+  });
+
   test("the automatic open and the button together open the EV3 once", async () => {
     const r = await rig();
     const { hid } = fakeHid({ granted: [r.usb.device], chooser: [r.usb.device] });

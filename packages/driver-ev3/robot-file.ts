@@ -54,6 +54,7 @@ export function parseRobotFile(json: unknown, where: string): RobotFile {
     max_speed_pct: positive(lim.max_speed_pct, "profile.limits.max_speed_pct"),
     max_command_ms: positive(lim.max_command_ms, "profile.limits.max_command_ms"),
     max_program_ms: positive(lim.max_program_ms, "profile.limits.max_program_ms"),
+    max_loop_ms: positive(lim.max_loop_ms, "profile.limits.max_loop_ms"),
   };
   if (!Array.isArray(p.notes) || p.notes.some((n) => typeof n !== "string"))
     fail("profile.notes", "must be an array of strings");

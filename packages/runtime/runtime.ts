@@ -28,7 +28,10 @@ import type {
 import { TOOLS } from "../protocol/tools";
 import { type Clock, linkAbort, realClock } from "./clock";
 import { compileCondition, makeEvaluator, type CompiledCondition } from "./conditions";
-import { validateProgram } from "../protocol/validate";
+import { validateLoop, validateProgram } from "../protocol/validate";
+import { planLoop, type LoopContext } from "../protocol/loop";
+import type { LoopPlan, LoopSpec } from "../protocol/types";
+import { HostLoop, type HostLoopPart, type HostProviderLoop } from "./host-loop";
 import { validateSchema } from "../protocol/schema";
 
 export const STALE_IMAGE_MS = 1500; // CONTRACT §7 stale_image
@@ -91,6 +94,20 @@ export interface LocalRuntime extends Runtime {
   // succeeded stays in use meanwhile, calls keep working on it, and the scan is tried again by itself.
   refresh(): Promise<void>;
   dispose(): void; // unsubscribe from every provider
+  /** Where a loop of this robot runs and its fastest rate (describe_robot's `loop`); null → none. */
+  loopInfo(): { runs_on: "host" | "device"; max_rate_hz: number } | null;
+  /**
+   * Checks a loop against the devices as they stand, synchronously: every typed refusal (CONTRACT §5a, Planning)
+   * is thrown here, and nothing has been sent.
+   */
+  planLoop(spec: unknown): PlannedLoop;
+  /** Starts a planned loop on the host executor. One loop at a time; `stop()` ends it with reason preempted. */
+  startLoop(planned: PlannedLoop): HostLoop;
+}
+/** A loop checked against the robot, with each provider's share of a tick. */
+export interface PlannedLoop {
+  plan: LoopPlan;
+  parts: HostLoopPart[];
 }
 export interface ProgramStep {
   path: string;
@@ -199,7 +216,7 @@ class RuntimeImpl implements LocalRuntime {
   constructor(o: RuntimeOptions) {
     if (!o.profile) throw rerr("misconfigured", "createRuntime: profile is required");
     if (!o.providers?.length) throw rerr("misconfigured", "createRuntime: at least one provider is required");
-    for (const k of ["max_speed_pct", "max_command_ms", "max_program_ms"] as const) {
+    for (const k of ["max_speed_pct", "max_command_ms", "max_program_ms", "max_loop_ms"] as const) {
       if (!(o.profile.limits?.[k] > 0))
         throw rerr("misconfigured", `createRuntime: profile.limits.${k} must be a positive number`);
     }
@@ -1548,6 +1565,9 @@ class RuntimeImpl implements LocalRuntime {
   // ---------- stop / reset_fault ----------
   async stop(): Promise<{ motors_stopped: boolean }> {
     for (const c of this.inflight) c.abort();
+    // a loop takes no tick from here on; its brake goes out beside the providers' own. A loop already ending by
+    // itself keeps its reason, and this stop joins its brake (bounded by HostLoop's endWithinMs).
+    const loop = this.loopRun?.stop({ reason: "preempted" });
     // Each provider gets its own announced worst case; one that takes longer counts as not stopped.
     const results = await Promise.all(
       this.local.map(async (p) => {
@@ -1566,7 +1586,121 @@ class RuntimeImpl implements LocalRuntime {
         }
       }),
     );
+    if (loop) {
+      const late = new AbortController();
+      await Promise.race([loop, this.clock.sleep(this.stop_worst_ms, late.signal)]);
+      late.abort();
+    }
     return { motors_stopped: results.every(Boolean) };
+  }
+
+  // ---------- loops ----------
+  private loopRun: HostLoop | null = null;
+  loopInfo(): { runs_on: "host" | "device"; max_rate_hz: number } | null {
+    const loops = this.local.map((p) => p.loop).filter((l) => l !== undefined);
+    if (!loops.length) return null;
+    const host = loops.filter((l) => l.runs_on === "host");
+    if (host.length === loops.length)
+      return { runs_on: "host", max_rate_hz: Math.min(...host.map((l) => l.max_rate_hz)) };
+    return { runs_on: loops[0]!.runs_on, max_rate_hz: loops[0]!.max_rate_hz };
+  }
+  planLoop(spec: unknown): PlannedLoop {
+    const issues = validateLoop(spec);
+    if (issues.length) throw rerr("invalid_argument", issues.map((i) => `${i.path}: ${i.message}`).join("; "));
+    const loop = spec as LoopSpec;
+    const used = new Map<Provider, { signals: number[]; outputs: number[] }>();
+    const use = (e: Entry) => {
+      let u = used.get(e.provider);
+      if (!u) used.set(e.provider, (u = { signals: [], outputs: [] }));
+      return u;
+    };
+    const ctx: LoopContext = { signals: {}, outputs: [], max_rate_hz: 0, max_loop_ms: this.prof.limits.max_loop_ms };
+    Object.entries(loop.signals).forEach(([name, s], i) => {
+      const e = this.entry(s.device, `loop.signals.${name}.device`);
+      const ch = e.spec.channels.find((c) => c.name === s.channel);
+      if (!ch)
+        throw rerr(
+          "unknown_channel",
+          `loop.signals.${name}.channel: device ${e.spec.id} has no channel "${s.channel}". Valid channels: ${e.spec.channels.map((c) => `${c.name} (${c.type})`).join(", ") || "(none)"}.`,
+        );
+      const { type, range, active, noise, length, max_rate_hz } = ch;
+      ctx.signals[name] = {
+        device: e.spec.id,
+        type,
+        ...(range ? { range } : {}),
+        ...(active === undefined ? {} : { active }),
+        ...(noise === undefined ? {} : { noise }),
+        ...(length === undefined ? {} : { length }),
+        ...(max_rate_hz === undefined ? {} : { max_rate_hz }),
+      };
+      use(e).signals.push(i);
+    });
+    loop.outputs.forEach((o, i) => {
+      const e = this.entry(o.device, `loop.outputs[${i}].device`);
+      const cmd = e.spec.commands.find((c) => c.name === o.command);
+      if (!cmd)
+        throw rerr(
+          "unknown_command",
+          `loop.outputs[${i}].command: device ${e.spec.id} has no command "${o.command}". Commands a loop can drive: ${
+            e.spec.commands
+              .filter((c) => c.drives)
+              .map((c) => c.name)
+              .join(", ") || "(none)"
+          }.`,
+        );
+      // the arguments a loop holds fixed: each one a param of the command, valid by its schema, or nothing is sent
+      const props = cmd.params.properties as Record<string, unknown>;
+      for (const [k, v] of Object.entries(o.args ?? {})) {
+        if (cmd.drives && k === cmd.drives.arg) continue; // refused by validateLoop: the loop computes it
+        const where = `loop.outputs[${i}].args.${k}`;
+        if (!Object.hasOwn(props, k))
+          throw rerr(
+            "invalid_argument",
+            `${where}: ${e.spec.id} ${cmd.name} has no param "${k}". Params schema: ${JSON.stringify(cmd.params)}`,
+          );
+        const errs = validateSchema(props[k], v, where);
+        if (errs.length)
+          throw rerr("invalid_argument", `${errs.join("; ")}. Params schema: ${JSON.stringify(cmd.params)}`);
+      }
+      const arg = cmd.drives ? (cmd.params.properties[cmd.drives.arg] as { minimum?: unknown; maximum?: unknown }) : {};
+      const range: [number, number] | undefined =
+        typeof arg?.minimum === "number" && typeof arg?.maximum === "number" ? [arg.minimum, arg.maximum] : undefined;
+      ctx.outputs.push({
+        device: e.spec.id,
+        ...(cmd.drives ? { drives: cmd.drives } : {}),
+        ...(range ? { range } : {}),
+      });
+      use(e).outputs.push(i);
+    });
+    // the devices decide the executor: all on host providers → the runtime, at the slowest of their rates
+    const parts: HostLoopPart[] = [];
+    for (const [p, u] of used) {
+      const l = p.loop;
+      if (!l)
+        throw rerr(
+          "unsupported",
+          `provider ${p.id} runs no loops, and the loop names its devices (${[...u.signals.map((i) => Object.values(loop.signals)[i]!.device), ...u.outputs.map((i) => loop.outputs[i]!.device)].join(", ")}). describe_robot gives where a loop runs.`,
+        );
+      if (l.runs_on !== "host")
+        throw rerr(
+          "unsupported",
+          `provider ${p.id} runs loops on its device, and this runtime has no executor that hands a loop to a device`,
+        );
+      parts.push({ provider: p as Provider & { loop: HostProviderLoop }, ...u });
+    }
+    ctx.max_rate_hz = Math.min(...parts.map((x) => x.provider.loop.max_rate_hz));
+    return { plan: planLoop(spec, ctx), parts };
+  }
+  startLoop(planned: PlannedLoop): HostLoop {
+    if (this.loopRun?.running) throw rerr("busy", "a loop already runs on this robot: one loop at a time");
+    this.loopRun = new HostLoop({
+      plan: planned.plan,
+      parts: planned.parts,
+      clock: this.clock,
+      attached: (device) => this.entries.has(device),
+      endWithinMs: this.stop_worst_ms,
+    });
+    return this.loopRun;
   }
 
   private planResetFault(): Run {
@@ -1832,6 +1966,7 @@ class RuntimeImpl implements LocalRuntime {
       })),
       roles: this.roleMap(),
       drivetrain: this.prof.drivetrain ?? null, // null: no drivetrain tools, the motors are devices
+      loop: this.loopInfo(),
       limits: this.prof.limits,
       notes: this.prof.notes,
       heading_error: this.headingError(),

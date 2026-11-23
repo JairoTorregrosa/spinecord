@@ -355,6 +355,30 @@ export function outputTimeSpeed(
     ...brakeFlag(brake),
   ];
 }
+/** AD: unregulated power for ramp-up + constant + ramp-down milliseconds. */
+export function outputTimePower(
+  m: number,
+  power: number,
+  ms1: number,
+  ms2: number,
+  ms3: number,
+  brake = true,
+): number[] {
+  range(ms1, 0, 2147483647, "ms1");
+  range(ms2, 0, 2147483647, "ms2");
+  range(ms3, 0, 2147483647, "ms3");
+  positive(ms1 + ms2 + ms3, "ms1+ms2+ms3");
+  return [
+    OP.OUTPUT_TIME_POWER,
+    0,
+    ...mask(m),
+    ...pct(power, "power"),
+    ...lc(ms1),
+    ...lc(ms2),
+    ...lc(ms3),
+    ...brakeFlag(brake),
+  ];
+}
 /** B0: two motors in sync for `step` degrees. turn: 0 straight, +-100 one motor stopped, +-200 spin in place. */
 export const outputStepSync = (m: number, speed: number, turn: number, step: number, brake = true) => [
   OP.OUTPUT_STEP_SYNC,
