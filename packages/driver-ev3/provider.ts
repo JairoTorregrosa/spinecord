@@ -1641,7 +1641,7 @@ export class Ev3Provider implements Provider {
 
   // ------------------------------------------------------------- loop
 
-  /** The power applied on an output right now: what the latest power operation or loop refresh set, while it lasts. */
+  /** The power applied on an output at this moment: what the latest power operation or loop refresh set, while it lasts. */
   private powerNow(i: number): number {
     const p = this.powered[i]!;
     return this.o.now() < p.until ? p.pct : 0;
@@ -1649,7 +1649,7 @@ export class Ev3Provider implements Provider {
 
   /**
    * One tick of a host loop as ONE direct command: every output refresh (a timed operation of `hold_ms`, so the
-   * brick ends it by itself when no refresh follows), then every input read. A refresh replaces the operation in
+   * brick ends it by itself when no refresh follows), then every input read. A refresh supersedes the operation in
    * flight on its port. A value that rounds to 0 brakes the port. The packet waits in the queue like a start does:
    * what it carries is decided when it is built, so a tick that a stop overtook carries no refresh.
    */

@@ -452,7 +452,7 @@ export class LocalRobot {
 
   /**
    * run_loop: planned against the devices as they stand (a refusal sends nothing and leaves the robot idle), then
-   * idle → looping, then started, all before the first await. Answers after the loop's first ticks.
+   * idle → looping, then started, all ahead of the first await. Answers after the loop's first ticks.
    */
   private async runLoop(rt: LocalRuntime, args: Record<string, unknown>, cancel?: AbortSignal): Promise<RuntimeResult> {
     if (this.activity === "fault")

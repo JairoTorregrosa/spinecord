@@ -191,7 +191,7 @@ describe("the host executor", () => {
     expect(rt.loopInfo()).toEqual({ runs_on: "host", max_rate_hz: 50 });
   });
 
-  test("planning refuses what the executor cannot honor, before anything is sent", async () => {
+  test("planning refuses what the executor cannot honor, and nothing is sent", async () => {
     const { host, rt } = await rig({ extra: [new MockProvider({ clock: new FakeClock() })] });
     const code = (s: LoopSpec) => {
       try {

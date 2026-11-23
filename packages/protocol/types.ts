@@ -45,7 +45,7 @@ export interface CommandSpec {
   bound: { kind: BoundKind; params?: string[]; max: number };
   moves: boolean; // true → one at a time per robot: it needs activity idle, and stop preempts it
   // Present on a command a loop may refresh every tick (CONTRACT §2, Loop outputs): `arg` is the numeric argument
-  // the loop computes, `max_hold_ms` how long the device lets one refresh last before it ends the effect itself.
+  // the loop computes, `max_hold_ms` how long the device lets one refresh last; then it ends the effect itself.
   drives?: LoopDrives;
 }
 export interface DeviceSpec {

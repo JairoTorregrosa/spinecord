@@ -37,14 +37,14 @@ describe("Ev3Provider.loop: one packet per tick", () => {
     const { fake, ev3, loop } = rig();
     await ev3.devices();
     fake.motors[B]!.pos = 123;
-    const before = fake.sent.length;
+    const sent0 = fake.sent.length;
     const values = await loop.tick(
       [wheel(20), { device: "ev3.C", command: "power", args: { power_pct: -15 } }],
       [encoder, { device: "ev3.S3", channel: "reflected_pct" }],
       60,
     );
-    expect(fake.sent.length - before).toBe(1);
-    const cmd = E.decodeCommand(fake.sent[before]!.packet);
+    expect(fake.sent.length - sent0).toBe(1);
+    const cmd = E.decodeCommand(fake.sent[sent0]!.packet);
     expect(cmd.type).toBe(E.TYPE_DIRECT_REPLY);
     expect(cmd.globals).toBe(10);
     expect(E.toHex(cmd.bytecodes)).toBe(
@@ -99,9 +99,9 @@ describe("Ev3Provider.loop: one packet per tick", () => {
     await clock.sleep(1);
     expect(fake.busy(1 << B)).toBe(false);
     await loop.tick([wheel(30)], [encoder], 60);
-    const before = fake.sent.length;
+    const sent0 = fake.sent.length;
     await loop.tick([wheel(0.4)], [encoder], 60);
-    expect(E.toHex(E.decodeCommand(fake.sent[before]!.packet).bytecodes)).toStartWith("a3 00 02 01"); // A3 brake B
+    expect(E.toHex(E.decodeCommand(fake.sent[sent0]!.packet).bytecodes)).toStartWith("a3 00 02 01"); // A3 brake B
     expect(fake.busy(1 << B)).toBe(false);
     await loop.end([]);
   });

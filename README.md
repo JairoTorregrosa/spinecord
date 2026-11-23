@@ -83,11 +83,11 @@ claude
 
 Make the folder anywhere outside the clone (your home folder, the desktop). Inside the clone Claude Code reads this repository's `AGENTS.md` and source, which are written for people who change spinecord, not for driving a robot.
 
-`/mcp` inside Claude Code shows `spinecord` connected with 14 tools.
+`/mcp` inside Claude Code shows `spinecord` connected with 16 tools.
 
 ### 4. Allow its tools once
 
-Claude Code asks before the first use of each tool, and spinecord has 14. A script that drives the robot ([Code Mode](docs/code-mode.md)) waits at each of those questions. Allow the server's tools once: in the Claude Code you just started type `/permissions`, choose Allow, add the rule `mcp__spinecord`. The same rule as a line of `~/.claude/settings.json`:
+Claude Code asks before the first use of each tool, and spinecord has 16. A script that drives the robot ([Code Mode](docs/code-mode.md)) waits at each of those questions. Allow the server's tools once: in the Claude Code you just started type `/permissions`, choose Allow, add the rule `mcp__spinecord`. The same rule as a line of `~/.claude/settings.json`:
 
 ```json
 { "permissions": { "allow": ["mcp__spinecord"] } }
@@ -185,6 +185,7 @@ Sense → act loops in one model turn (Claude Code Code Mode): [`docs/code-mode.
 | sense | `read_device` `read_all` `sample_device` `wait_until` |
 | act | `drive` `turn` `arc` `command_device` `stop` `reset_fault` |
 | programs | `run_program` (the program inline, as data) |
+| loops | `run_loop` `supervise_loop` (a control law at a fixed rate next to the hardware, which the model supervises: [`docs/loops.md`](docs/loops.md)) |
 
 Full descriptions and schemas: [`packages/protocol/tools.ts`](packages/protocol/tools.ts). Behavior: [`CONTRACT.md`](CONTRACT.md). Boundaries: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 

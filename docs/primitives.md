@@ -34,6 +34,7 @@ Legend: ✅ shipped · 🟡 partial · ⬜ missing. **Where** = the package that
 | Primitive | How the model reaches it | State | Where |
 |---|---|---|---|
 | Programs as data, run next to the hardware | `run_program{body, success?}` | ✅ | runtime |
+| A control law at a fixed rate next to the hardware (hold an angle, follow a line), supervised by the model | `run_loop` `supervise_loop` ([`loops.md`](loops.md)) | 🟡 stock EV3 and twin (host executor; not run on a real brick); ev3dev ⬜ | runtime · apps/local · drivers |
 | Program parameters (`drive {distance_cm: $d}`) | `params` in program + `run_program{args}` | ⬜ | protocol · runtime |
 | Train a behavior from a declarative reward | training spec on the twin | 🟡 sim only, no tool | sim-world |
 

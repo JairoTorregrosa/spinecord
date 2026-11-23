@@ -125,10 +125,10 @@ describe("a stock EV3 lent by the page", () => {
     const ticks = r.usb.brick.sent.filter((p) => p.opcodes.includes(OP.OUTPUT_TIME_SPEED));
     expect(ticks.length).toBeGreaterThanOrEqual(19);
     for (const p of ticks) expect(p.opcodes).toEqual([OP.OUTPUT_TIME_SPEED, OP.OUTPUT_GET_COUNT]);
-    const before = r.usb.brick.sent.length;
+    const sent = r.usb.brick.sent.length;
     r.bridge.stop(); // the socket closes, as when the process is killed or the cable goes
     await until("the page's brake to reach the brick", () =>
-      r.usb.brick.sent.slice(before).some((s) => s.type === 0x80 && s.packet[7] === OP.OUTPUT_STOP),
+      r.usb.brick.sent.slice(sent).some((s) => s.type === 0x80 && s.packet[7] === OP.OUTPUT_STOP),
     );
     // and without it the brick ends the motion by itself hold_ms (3 periods) after the latest refresh
     await until("the motor to stop", () => !r.usb.brick.busy());
