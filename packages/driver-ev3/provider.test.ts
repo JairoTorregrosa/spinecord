@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { RuntimeError } from "../protocol/types";
 import type { CommandSpec, DeviceSpec } from "../protocol/types";
 import * as E from "./encode";
-import { FakeEV3 } from "./fake";
+import { EmulatedClock, FakeEV3 } from "./fake";
 import {
   EXAMPLE_EV3_HARDWARE,
   Ev3Provider,
@@ -328,7 +328,9 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
   });
 
   test("a robot that declares no pair has no pair device: motors on B and C are two motors", async () => {
-    const b = rig({ provider: { pair: undefined } });
+    // on emulated time: the travel past the target is the provider's, whatever the load on this machine
+    const clock = new EmulatedClock();
+    const b = rig({ fake: { now: clock.now }, provider: { pair: undefined, now: clock.now, sleep: clock.sleep } });
     const devices = await b.ev3.devices();
     expect(devices.filter((d) => d.kind === "motor").map((d) => d.id)).toEqual(["ev3.B", "ev3.C"]);
     expect(devices.some((d) => d.kind === "motor_pair")).toBe(false);
@@ -341,21 +343,26 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
     for (const port of ["B", "C"] as const) {
       const r = await b.ev3.command(`ev3.${port}`, "run_degrees", { degrees: 60, speed_pct: 40 }, never());
       expect(r.reason).toBe("completed");
-      expect(Math.abs(b.fake.tacho(port) - 60)).toBeLessThanOrEqual(15);
+      // in emulated time the overshoot is at most one 2 ms poll of travel at 40 %: 0.8 degrees
+      expect(Math.abs(b.fake.tacho(port) - 60)).toBeLessThanOrEqual(1);
     }
     expect(await b.ev3.stop()).toEqual({ motors_stopped: true });
     expectSafe(b.fake);
   });
 
   test("the pair is configurable", async () => {
-    const b = rig({ provider: { id: "r7", pair: { left: "A", right: "D" } } });
+    const clock = new EmulatedClock();
+    const b = rig({
+      fake: { now: clock.now },
+      provider: { id: "r7", pair: { left: "A", right: "D" }, now: clock.now, sleep: clock.sleep },
+    });
     b.fake.motors[0].type = 7;
     b.fake.motors[3].type = 7;
     const pair = (await b.ev3.devices()).find((d) => d.kind === "motor_pair")!;
     expect(pair.id).toBe("r7.pair");
     expect(pair.description).toContain("left = port A, right = port D");
     await b.ev3.command("r7.pair", "run_pair", { left_deg: 60, right_deg: 60, speed_pct: 40 }, never());
-    expect(Math.abs(b.fake.tacho("A") - 60)).toBeLessThanOrEqual(15);
+    expect(Math.abs(b.fake.tacho("A") - 60)).toBeLessThanOrEqual(1); // one 2 ms poll of travel, in emulated time
     expect(b.fake.tacho("A")).toBe(b.fake.tacho("D"));
     expect(b.fake.tacho("B")).toBe(0);
   });

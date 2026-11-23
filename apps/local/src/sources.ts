@@ -8,6 +8,7 @@ import type { Transport } from "../../../packages/driver-ev3/transport";
 import { RuntimeError } from "../../../packages/protocol/types";
 import { Ev3devProvider } from "../../../packages/driver-ev3dev/src/provider";
 import { SshLineTransport, installBridge } from "../../../packages/driver-ev3dev/src/ssh";
+import type { Clock } from "../../../packages/runtime/clock";
 import { createRuntime, type LocalRuntime } from "../../../packages/runtime/runtime";
 import { LARGE_DEG_S, SimBrick, drivetrainFromProfile } from "../../../packages/sim-ev3/brick";
 import { World, parseWorld } from "../../../packages/sim-world/world";
@@ -29,18 +30,31 @@ export interface Fleet {
 
 type Source<K extends RobotSource["source"]> = Extract<RobotSource, { source: K }>;
 
-export function twinRuntime(s: Source<"twin">): { runtime: LocalRuntime; brick: SimBrick } {
+/** `clock`: the one time source of the twin's brick, providers and runtime. Default: each runs on real time. */
+export function twinRuntime(s: Source<"twin">, clock?: Clock): { runtime: LocalRuntime; brick: SimBrick } {
   const { pair, hardware } = s.robot;
   const profile = { ...s.robot.profile, id: s.id };
   const config = parseWorld(s.world);
-  const brick = new SimBrick({ world: new World(config, s.seed), drivetrain: drivetrainFromProfile(profile, pair) });
+  const time = clock && { now: () => clock.now(), sleep: (ms: number) => clock.sleep(ms) };
+  const brick = new SimBrick({
+    world: new World(config, s.seed),
+    drivetrain: drivetrainFromProfile(profile, pair),
+    ...(time && { now: time.now }),
+  });
   const runtime = createRuntime({
     profile,
     providers: [
       // first, so the runtime's backend is "sim"
-      new SimWorldProvider({ host: brick, worlds: { [config.name]: s.world }, seed: s.seed }),
-      (limits) => new Ev3Provider(brick, { limits, hardware, pair, roles: profile.roles, degPerSecAt100: LARGE_DEG_S }),
+      new SimWorldProvider({
+        host: brick,
+        worlds: { [config.name]: s.world },
+        seed: s.seed,
+        ...(time && { now: time.now }),
+      }),
+      (limits) =>
+        new Ev3Provider(brick, { limits, hardware, pair, roles: profile.roles, degPerSecAt100: LARGE_DEG_S, ...time }),
     ],
+    ...(clock && { clock }),
   });
   return { runtime, brick };
 }
@@ -63,6 +77,8 @@ export interface FleetOptions {
   port?: number;
   /** Pause before an ev3dev link that closed is opened again, and between attempts, ms. Default 2000. */
   reconnectMs?: number;
+  /** Time source of every twin (see twinRuntime). Default: real time. */
+  clock?: Clock;
 }
 
 /** One link to a robot's hardware: the runtime that talks through it, and the news that it closed. */
@@ -169,7 +185,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
   for (const s of config.robots) {
     if (s.source === "twin") {
       const robot = new LocalRobot({ id: s.id, onTransition: transitions(s.id), onCancel: cancels(s.id) });
-      const { runtime, brick } = twinRuntime(s);
+      const { runtime, brick } = twinRuntime(s, o.clock);
       await robot.attach(runtime);
       bricks.set(s.id, brick);
       robots.push(robot);

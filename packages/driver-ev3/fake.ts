@@ -48,6 +48,44 @@ export interface SentRecord {
   opcodes: number[];
 }
 
+/**
+ * Emulated time for a FakeEV3 and the provider that drives it: pass `now` to both and `sleep` to the provider.
+ * Time moves only to the earliest pending wait, one macrotask at a time, so every promise chain settles first and
+ * a loaded machine cannot stretch a wait into extra travel. A wait that lost a race still fires later and only
+ * moves the clock.
+ */
+export class EmulatedClock {
+  private t = 0;
+  private seq = 0;
+  private timers: { at: number; seq: number; fire: () => void }[] = [];
+  private pumping = false;
+  readonly now = (): number => this.t;
+  /** Time that passes while no one waits on this clock, ms (a reply the test holds back, say). */
+  advance(ms: number): void {
+    if (!(ms >= 0)) throw new Error(`EmulatedClock.advance: ms must be >= 0, got ${ms}`);
+    this.t += ms;
+  }
+  readonly sleep = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      this.timers.push({ at: this.t + Math.max(0, ms), seq: this.seq++, fire: resolve });
+      this.pump();
+    });
+  private pump(): void {
+    if (this.pumping) return;
+    this.pumping = true;
+    setImmediate(() => {
+      this.pumping = false;
+      this.timers.sort((a, b) => a.at - b.at || a.seq - b.seq);
+      const next = this.timers.shift();
+      if (next) {
+        this.t = Math.max(this.t, next.at);
+        next.fire();
+      }
+      if (this.timers.length) this.pump();
+    });
+  }
+}
+
 export class FakeEV3 implements Transport {
   readonly motors: Motor[] = [0, 1, 2, 3].map((i) => ({
     pos: 0,

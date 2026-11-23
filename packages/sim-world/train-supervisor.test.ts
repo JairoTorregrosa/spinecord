@@ -15,6 +15,12 @@ const request = (spec: unknown = LINE, episodes = 40): TrainRequest => {
   const cfg = config();
   return { cfg, pose: cfg.start, drive: DRIVE, spec, bindings: { ...BINDINGS }, episodes, seed: 1 };
 };
+// The supervisor's budgets are wall-clock by design: they cut off a spec that is too expensive. A test that is
+// not about a budget passes budgets a loaded machine cannot reach (its default 2 s per episode, and for the
+// evaluation after the last one, can pass on a machine whose cores are shared many times over), and its test
+// timeout is a hang guard sized the same way.
+const ROOMY = { episode_budget_ms: 60_000, startup_budget_ms: 60_000 } as const;
+const HANG_GUARD_MS = 120_000;
 const failure = async (p: Promise<unknown>): Promise<TrainingError> => {
   try {
     await p;
@@ -26,16 +32,20 @@ const failure = async (p: Promise<unknown>): Promise<TrainingError> => {
 };
 
 describe("training in a worker with a hard time budget", () => {
-  test("a spec trains off-thread and reports progress", async () => {
-    const seen: number[] = [];
-    const r = await trainInWorker(request(LINE, 300), { createWorker, onProgress: (n) => seen.push(n) });
-    expect(r.result.curve.length).toBe(300);
-    expect(r.result.policy.q!.length).toBe(3);
-    expect(r.result.policy.spec.name).toBe("line-oval.follow-line");
-    expect(r.random_success_rate).toBe(0);
-    expect(seen.length).toBe(300);
-    expect(seen.at(-1)).toBe(300);
-  }, 20000);
+  test(
+    "a spec trains off-thread and reports progress",
+    async () => {
+      const seen: number[] = [];
+      const r = await trainInWorker(request(LINE, 300), { ...ROOMY, createWorker, onProgress: (n) => seen.push(n) });
+      expect(r.result.curve.length).toBe(300);
+      expect(r.result.policy.q!.length).toBe(3);
+      expect(r.result.policy.spec.name).toBe("line-oval.follow-line");
+      expect(r.random_success_rate).toBe(0);
+      expect(seen.length).toBe(300);
+      expect(seen.at(-1)).toBe(300);
+    },
+    HANG_GUARD_MS,
+  );
 
   test("a job that overruns its episode budget is cut off: the worker is terminated and the error says why", async () => {
     // Episodes that can only end at max_steps, with a budget far too small for 5000 steps each.
@@ -105,20 +115,24 @@ describe("training in a worker with a hard time budget", () => {
     expect(c.message).toMatch(/episode_budget_ms must be a number > 0/);
   });
 
-  test("every worker is terminated when its training ends, whatever the outcome", async () => {
-    live = [];
-    let terminations = 0;
-    const counting = (): TrainWorker => {
-      const w = createWorker(),
-        t = w.terminate.bind(w);
-      w.terminate = () => {
-        terminations++;
-        t();
+  test(
+    "every worker is terminated when its training ends, whatever the outcome",
+    async () => {
+      live = [];
+      let terminations = 0;
+      const counting = (): TrainWorker => {
+        const w = createWorker(),
+          t = w.terminate.bind(w);
+        w.terminate = () => {
+          terminations++;
+          t();
+        };
+        return w;
       };
-      return w;
-    };
-    await trainInWorker(request(LINE, 5), { createWorker: counting });
-    await failure(trainInWorker(request(7), { createWorker: counting }));
-    expect([live.length, terminations]).toEqual([2, 2]);
-  }, 20000);
+      await trainInWorker(request(LINE, 5), { ...ROOMY, createWorker: counting });
+      await failure(trainInWorker(request(7), { ...ROOMY, createWorker: counting }));
+      expect([live.length, terminations]).toEqual([2, 2]);
+    },
+    HANG_GUARD_MS,
+  );
 });
