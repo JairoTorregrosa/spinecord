@@ -122,6 +122,40 @@ function checkRobotFlags(robotFlags: string[]): void {
     );
 }
 
+/** What the clock needs from the program: a way to give a turn, and the single way out. */
+export type Clock = {
+  name: string;
+  everySeconds: number;
+  forMinutes: number | null;
+  takeTurn: (text: string) => Promise<void>;
+  stop: (why: string) => void;
+  untilStopped: Promise<unknown>;
+  isStopped: () => boolean;
+};
+
+/** Autonomous mode: a wake-up every everySeconds until --for is over or something else stops the program. */
+export async function autonomous(clock: Clock): Promise<void> {
+  const { name, everySeconds, forMinutes, takeTurn, stop, untilStopped, isStopped } = clock;
+  const why = `the ${forMinutes} min of --for are over`;
+  const end = forMinutes === null ? Infinity : Date.now() + forMinutes * 60_000;
+  console.log(`${name} wakes up every ${everySeconds} s${forMinutes === null ? "" : ` for ${forMinutes} min`}.`);
+  // the deadline has its own timer: a turn that is running when the time is up is interrupted by the end, like Ctrl+C
+  const deadline = forMinutes === null ? null : setTimeout(() => stop(why), end - Date.now());
+  try {
+    // wake-ups are on a fixed beat: when a turn takes longer than the beat, the next one starts right after it
+    for (let next = Date.now(); !isStopped() && next < end; next = Math.max(next + everySeconds * 1000, Date.now())) {
+      await Promise.race([new Promise((resolve) => setTimeout(resolve, next - Date.now())), untilStopped]);
+      if (isStopped()) return;
+      const now = new Date();
+      console.log(`tick ${localTime(now)}`);
+      await takeTurn(tickMessage(now));
+    }
+    stop(why);
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
+}
+
 // ---------------------------------------------------------------- 3, 4, 5: the program
 
 async function main(): Promise<number> {
@@ -244,23 +278,18 @@ async function main(): Promise<number> {
     stop("the chat is closed");
   };
 
-  const autonomous = async (everySeconds: number, forMinutes: number | null): Promise<void> => {
-    const end = forMinutes === null ? Infinity : Date.now() + forMinutes * 60_000;
-    console.log(
-      `${mission.name} wakes up every ${everySeconds} s${forMinutes === null ? "" : ` for ${forMinutes} min`}.`,
-    );
-    // wake-ups are on a fixed beat: when a turn takes longer than the beat, the next one starts right after it
-    for (let next = Date.now(); !stopped && next < end; next = Math.max(next + everySeconds * 1000, Date.now())) {
-      await Promise.race([new Promise((resolve) => setTimeout(resolve, next - Date.now())), untilStopped]);
-      const now = new Date();
-      console.log(`tick ${localTime(now)}`);
-      await takeTurn(tickMessage(now));
-    }
-    stop(`the ${forMinutes} min of --for are over`);
-  };
-
   void (
-    settings.mode.kind === "chat" ? chat() : autonomous(settings.mode.everySeconds, settings.mode.forMinutes)
+    settings.mode.kind === "chat"
+      ? chat()
+      : autonomous({
+          name: mission.name,
+          everySeconds: settings.mode.everySeconds,
+          forMinutes: settings.mode.forMinutes,
+          takeTurn,
+          stop,
+          untilStopped,
+          isStopped: () => stopped !== null,
+        })
   ).catch((error) => stop(`the program failed: ${error instanceof Error ? error.message : String(error)}`, true));
 
   // ---- 5. THE END. One path for Ctrl+C, the budget, --for, "bye" and every error.

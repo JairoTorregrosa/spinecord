@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  autonomous,
   buildOptions,
   BUILT_IN_TOOLS,
   DEFAULT_MISSION_FILE,
@@ -210,5 +211,59 @@ describe("what is printed and sent", () => {
     expect(costLine(3, 0.05, { total_cost_usd: 0.0625, usage }, 1)).toBe(
       "[turn 3: $0.0125, 9210 tokens read (9000 from cache), 55 written | total $0.0625 of $1.00]",
     );
+  });
+});
+
+describe("the clock", () => {
+  /** A program with one way out, as in agent.ts: stop() resolves untilStopped, the first reason wins. */
+  function program() {
+    const reasons: string[] = [];
+    let announce: (why: string) => void = () => {};
+    const untilStopped = new Promise<string>((done) => (announce = done));
+    const stop = (why: string) => {
+      reasons.push(why);
+      announce(why);
+    };
+    return { reasons, untilStopped, stop, isStopped: () => reasons.length > 0 };
+  }
+
+  test("--for ends a turn that is still running: the deadline calls the one way out", async () => {
+    const p = program();
+    const turns: string[] = [];
+    let inFlight = false;
+    const started = Date.now();
+    await autonomous({
+      name: "Test",
+      everySeconds: 10,
+      forMinutes: 0.002, // 120 ms
+      // a turn that never finishes by itself, the way a long drive keeps Claude busy
+      takeTurn: async (text) => {
+        turns.push(text);
+        inFlight = true;
+        await p.untilStopped;
+      },
+      ...p,
+    });
+    expect(turns).toHaveLength(1);
+    expect(inFlight).toBe(true);
+    expect(p.reasons[0]).toBe("the 0.002 min of --for are over");
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  test("a stop while the clock waits starts no more turns", async () => {
+    const p = program();
+    let turns = 0;
+    setTimeout(() => p.stop("Ctrl+C"), 50);
+    await autonomous({
+      name: "Test",
+      everySeconds: 10,
+      forMinutes: null,
+      takeTurn: async () => {
+        turns += 1;
+      },
+      ...p,
+    });
+    expect(turns).toBe(1);
+    expect(p.reasons).toEqual(["Ctrl+C"]);
   });
 });
