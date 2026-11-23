@@ -34,6 +34,10 @@ flowchart LR
 | [`local`](apps/local) | the server: MCP over stdio, the runtime and the robots (twin, ev3dev, stock EV3) in one bun process |
 | [`robot-page`](apps/robot-page) | the bridge page a person opens in Chrome or Edge to lend a stock EV3 over USB; `local` serves it on `127.0.0.1` |
 
+| Example | Does |
+|---|---|
+| [`assistant`](examples/assistant) | a personal robot assistant on the Claude Agent SDK, over the local server |
+
 ## Use it from Claude Code
 
 One process on your laptop: the MCP server, the runtime and the robots. No account, no network service. Needs [bun](https://bun.sh) ≥ 1.3.14, git and Claude Code.
@@ -48,7 +52,7 @@ cd spinecord
 bun install --filter @spinecord/local
 ```
 
-`--filter @spinecord/local` installs what the server needs and nothing of the development toolchain: 6 packages, 16 MB. Measured on a fresh clone with an empty cache: 0.7 s on macOS (Apple M1 Pro), 1.1 s on a Windows CI runner. A plain `bun install` is 30 packages, 95 MB, 1.9 s on the same Mac.
+`--filter @spinecord/local` installs what the server needs and nothing of the development toolchain: 6 packages, 16 MB. Measured on a fresh clone with an empty cache: 0.7 s on macOS (Apple M1 Pro), 1.1 s on a Windows CI runner. A plain `bun install` adds the development toolchain and the Claude Agent SDK of the [example assistant](examples/assistant): 202 packages, 456 MB on the same Mac.
 
 ### 2. Register it with Claude Code
 
@@ -168,6 +172,10 @@ Keep a hand near the robot on a first run. These paths are tested against the tw
 The dated log and the checklist of what to run: [`docs/hardware-log.md`](docs/hardware-log.md).
 
 Sense → act loops in one model turn (Claude Code Code Mode): [`docs/code-mode.md`](docs/code-mode.md).
+
+## Build an assistant on it
+
+[`examples/assistant`](examples/assistant) is a personal robot assistant on the Claude Agent SDK: one file of plain words says who it is and what its mission is, and a short program connects Claude to this server. It chats in a terminal, or wakes up on its own every N seconds and acts on its mission. It runs against the twin with no robot.
 
 ## Tools
 

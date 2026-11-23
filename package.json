@@ -8,7 +8,8 @@
   },
   "workspaces": [
     "packages/*",
-    "apps/local"
+    "apps/local",
+    "examples/assistant"
   ],
   "type": "module",
   "scripts": {
