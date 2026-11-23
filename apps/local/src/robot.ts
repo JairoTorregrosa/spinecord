@@ -490,13 +490,25 @@ export class LocalRobot {
     void loop.ended.then((end) => this.loopEnded(l, rt, end));
     try {
       // a device that refuses the loop at its start: the loop has ended, the robot takes the path of stop, and the
-      // call answers the device's error, with no loop to supervise
-      try {
-        await loop.accepted;
-      } catch (e) {
+      // call answers the device's error, with no loop to supervise. A cancel while the device is taking the loop
+      // stops the robot at once; the loop's end reaches the device once it has the loop.
+      const taken = await Promise.race([
+        loop.accepted.then(
+          () => ({ t: "accepted" as const }),
+          (e: unknown) => ({ t: "refused" as const, e }),
+        ),
+        this.cancelled(cancel).then(() => ({ t: "cancelled" as const })),
+      ]);
+      if (taken.t === "refused") {
         await l.settled;
         if (this.loop === l) this.loop = null;
-        throw e;
+        throw taken.e;
+      }
+      if (taken.t === "cancelled") {
+        this.o.onCancel?.("run_loop", true);
+        if (this.loop === l && (this.activity as RobotActivity) === "looping") await this.stop().catch(() => {});
+        if (!loop.running) await l.settled;
+        return { data: loop.report(), moved: true };
       }
       // the start window: the first ticks, or the loop's end; behind it the backstop of every call
       const window = LOOP_START_TICKS * loop.plan.period_ms + margin + rt.stop_worst_ms;

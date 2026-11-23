@@ -787,8 +787,10 @@ describe("C5 on virtual time: a page's tilt steers the twin", () => {
 });
 
 /** A robot whose loops run on its device; the device answers a param change only when the test lets it. */
-async function deviceRobot() {
+async function deviceRobot(o: { slowAccept?: boolean } = {}) {
   const clock = new FakeClock();
+  const accept: (() => void)[] | null = o.slowAccept ? [] : null;
+  const stops: number[] = [];
   const motor: DeviceSpec = {
     id: "d.m",
     provider: "d",
@@ -823,11 +825,15 @@ async function deviceRobot() {
     command: async () => {
       throw new Error("not used");
     },
-    stop: async () => ({ motors_stopped: true }),
+    stop: async () => {
+      stops.push(clock.now());
+      return { motors_stopped: true };
+    },
     loop: {
       runs_on: "device",
       max_rate_hz: 50,
       start: async (_plan, push) => {
+        if (accept) await new Promise<void>((resolve) => accept!.push(resolve));
         on = push;
         const ended = new Promise<LoopEnd>((resolve) => (finish = resolve));
         // the device's 20th tick: run_loop answers
@@ -872,7 +878,7 @@ async function deviceRobot() {
     params: { k: 1 },
     outputs: [{ device: "d.m", command: "power", terms: [{ signal: "x", gain: "k" }] }],
   };
-  return { clock, robot, tool, spec, sets };
+  return { clock, robot, tool, spec, sets, accept, stops };
 }
 
 describe("supervise_loop over a link to the device", () => {
@@ -897,5 +903,21 @@ describe("supervise_loop over a link to the device", () => {
       robot: { activity: "idle" },
       data: { state: "ended", reason: "preempted" },
     });
+  });
+
+  test("Esc while the device has not yet taken the loop: run_loop answers at once and the robot is stopped", async () => {
+    const d = await deviceRobot({ slowAccept: true });
+    const t0 = d.clock.now();
+    const atAttach = d.stops.length;
+    const esc = new AbortController();
+    void d.clock.sleep(100).then(() => esc.abort());
+    // the device takes it 20 ms after the cancel, and is told at once that the loop has ended
+    void d.clock.sleep(120).then(() => d.accept![0]!());
+    const out = await d.tool("run_loop", d.spec, esc.signal);
+    expect(out).toMatchObject({ ok: true, robot: { activity: "idle" }, data: { state: "ended", reason: "preempted" } });
+    expect(out.data.notes ?? []).toEqual([]);
+    // the robot was stopped at the cancel, ahead of the device taking the loop
+    expect(d.stops.length).toBeGreaterThan(atAttach);
+    expect(d.stops[atAttach]! - t0).toBeLessThan(120);
   });
 });
