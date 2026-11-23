@@ -4,7 +4,7 @@ A loop (CONTRACT §5a) is a control law given as data: signals to read, outputs 
 
 Every gain here is a plausible starting point of the right order of magnitude, not a measured one. Each must be tuned on the robot: read the trace of a short run, change one param, look again. Signs depend on how a sensor and a motor are mounted; the first run of any law uses a short `duration_ms`, a low `limit` and a hand near the robot.
 
-`packages/protocol/loop.test.ts` runs these specs as they are printed here through `validateLoop`, and runs C1, C2 and C4, as printed, against small simulated plants. `apps/local/test/loop.test.ts` runs C2, C4 and C5, as printed, through `run_loop` on the twin, and `apps/local/test/pages.test.ts` runs C5 at 10 Hz on real time, with a fake page client joined over the page socket.
+`packages/protocol/loop.test.ts` runs these specs as they are printed here through `validateLoop`, and runs C1, C2 and C4, as printed, against small simulated plants. `apps/local/test/loop.test.ts` runs C2, C4 and C5, as printed, through `run_loop` on the twin, and `apps/local/test/pages.test.ts` runs C5 at 5 Hz on real time, with a fake page client joined over the page socket.
 
 A spec is the input of `run_loop` with `robot_id` added. How a model runs one and supervises it is at the end of this page.
 

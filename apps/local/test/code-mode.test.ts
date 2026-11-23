@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { VIRTUAL_TIME_MAIN, startServer, type TestServer } from "./client";
+import { VIRTUAL_TIME_MAIN, startServer, until, type TestServer } from "./client";
 
 const DOC = join(import.meta.dir, "..", "..", "..", "docs", "code-mode.md");
 const R = "r1-sim";
@@ -59,7 +59,9 @@ beforeAll(async () => {
   s = await startServer([], VIRTUAL_TIME_MAIN);
 });
 
-test("the server runs its twin on virtual time: its ready line says so", () => {
+test("the server runs its twin on virtual time: its ready line says so", async () => {
+  // stderr is read apart from the replies on stdout: the line may come after the first reply
+  await until("the ready line", () => s.events("ready").length > 0);
   expect(s.events("ready")).toMatchObject([{ clock: "virtual" }]);
 });
 afterAll(async () => {

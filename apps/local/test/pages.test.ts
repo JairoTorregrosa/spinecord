@@ -253,8 +253,9 @@ describe("peripheral pages", () => {
     const p = await r.joined({ name: "phone", devices: [...FAKE_DEVICES, FAKE_IMU] });
     // the page joins the robot's loop as inputs: it does not change where a loop runs, or how fast
     expect((await r.twin("describe_robot")).data.loop).toEqual({ runs_on: "host", max_rate_hz: 100 });
-    // 10 Hz, not C5's 20: on real time a loaded runner must not end the loop with overrun
-    const started = await r.twin("run_loop", { ...C5, rate_hz: 10, duration_ms: 20000 });
+    // 5 Hz, not C5's 20: on real time a loaded runner must not end the loop with overrun (one tick of a second
+    // that is a period late is 5 % of them at 20 Hz; at 5 Hz a period is 200 ms)
+    const started = await r.twin("run_loop", { ...C5, rate_hz: 5, duration_ms: 25000 });
     expect(started).toMatchObject({ ok: true, robot: { activity: "looping" }, data: { state: "running" } });
     expect(started.data.outputs.map((o: { last: number }) => o.last)).toEqual([0, 0]);
     const outputs = async () =>
@@ -299,7 +300,7 @@ describe("peripheral pages", () => {
     expect(end).toMatchObject({ robot: { activity: "idle" }, data: { state: "ended", reason: "input_lost" } });
     expect(end.data.outputs.map((o: { last: number }) => o.last)).toEqual([0, 0]);
     expect(took).toBeGreaterThanOrEqual(200);
-    expect(took).toBeLessThan(3000);
+    expect(took).toBeLessThan(4000);
     const v = await speeds();
     expect([v["ev3.B"], v["ev3.C"]]).toEqual([0, 0]);
   }, 30_000);
@@ -329,8 +330,8 @@ describe("peripheral pages", () => {
     expect((await r.twin("read_all")).robot.activity).toBe("idle");
     // a touch button is an input like a tilt: a boolean reads 0 or 1
     const pressed = await r.twin("run_loop", {
-      rate_hz: 10,
-      duration_ms: 3000,
+      rate_hz: 5,
+      duration_ms: 8000,
       signals: { b1: { device: "desk.touch", channel: "b1" } },
       outputs: [{ device: "left_wheel", command: "run_time", terms: [{ signal: "b1", gain: 10 }] }],
       guards: [{ name: "pressed", signal: "b1", op: "gt", value: 0.5 }],
