@@ -376,6 +376,8 @@ describe("the looping activity", () => {
       expect(started.data.remaining_ms).toBeLessThanOrEqual(2000);
       const end = await superviseToEnd(t, 1000);
       expect(end.data).toMatchObject({ state: "ended", reason: "completed", age_ms: 2000, remaining_ms: 0 });
+      // the final report, again: the same trace and statistics
+      expect((await t.tool("supervise_loop")).data).toEqual(end.data);
       expect(t.robot.view().activity).toBe("idle");
       const long = await t.tool("run_loop", { ...C4, duration_ms: 90000 });
       expect(long.data.notes).toContain("duration_ms was cut from 90000 to 60000, the robot's max_loop_ms");

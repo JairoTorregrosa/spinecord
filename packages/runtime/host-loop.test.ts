@@ -149,6 +149,9 @@ describe("the host executor", () => {
     expect(r.period_ms).toEqual({ p50: 10, p95: 10, max: 10 });
     expect(r.remaining_ms).toBe(0);
     expect(r.age_ms).toBe(1000);
+    // the final report stays as it is, trace and periods included, however often it is asked for
+    expect(r.trace.t_ms.length).toBeGreaterThan(0);
+    expect(loop.report()).toEqual(r);
   });
 
   test("a tick of 30 ms at 100 Hz: three ticks in a row later than a period end the loop with overrun", async () => {

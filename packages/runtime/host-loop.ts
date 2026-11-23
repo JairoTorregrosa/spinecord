@@ -66,6 +66,7 @@ export class HostLoop {
   private endRun: Promise<void> | null = null;
   private brakeError: string | null = null;
   private failure: string | null = null;
+  private final: LoopReport | null = null;
   private readonly wake = new AbortController();
   private resolveStarted!: () => void;
   private resolveEnded!: (e: LoopEnd) => void;
@@ -138,8 +139,12 @@ export class HostLoop {
     return { ticks: this.ticks, overruns: this.overruns, ms: Math.round(this.age()) };
   }
 
-  /** The report since the previous one (CONTRACT §5a, What a loop reports). */
+  /**
+   * The report since the previous one (CONTRACT §5a, What a loop reports). Once the loop has ended, the first report
+   * after its end is the final one, and every later call returns it as it is.
+   */
   report(): LoopReport {
+    if (this.final) return structuredClone(this.final);
     const { signals, outputs, trace } = takeStats(this.stats);
     const sorted = this.periods.slice().sort((a, b) => a - b);
     this.periods = [];
@@ -151,7 +156,7 @@ export class HostLoop {
       ...(this.failure ? [`the executor failed: ${this.failure}`] : []),
       ...(this.brakeError ? [`the brake at the end of the loop failed: ${this.brakeError}`] : []),
     ];
-    return {
+    const report: LoopReport = {
       state: end ? "ended" : "running",
       ...(end ? { reason: end.reason } : {}),
       ...(end?.guard !== undefined ? { guard: end.guard } : {}),
@@ -172,6 +177,8 @@ export class HostLoop {
       trace,
       ...(notes.length ? { notes } : {}),
     };
+    if (end) this.final = structuredClone(report);
+    return report;
   }
 
   private async run(): Promise<void> {

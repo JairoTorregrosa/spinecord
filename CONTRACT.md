@@ -231,7 +231,7 @@ The devices a loop names decide the executor; the caller does not choose. A loop
 - `params` changes named numbers on a tick boundary (all of them on the same tick); `ramp_ms` (at most 10000 through the tool) moves them there linearly;
 - `wait_ms` holds the call open until the loop ends or the time passes, so a caller with nothing to change waits in one call.
 
-A report of an ended loop is answered once the robot has taken the path of `stop` after it (§1), so its `robot.activity` is `idle` or `fault`. After the end, `supervise_loop` keeps returning the final report until the next `run_loop`; on a robot that has run no loop on this link it answers `illegal_state`, with `next` starting at `run_loop`.
+A report of an ended loop is answered once the robot has taken the path of `stop` after it (§1), so its `robot.activity` is `idle` or `fault`. After the end, `supervise_loop` keeps returning the final report, unchanged (its trace and statistics included), until the next `run_loop`; on a robot that has run no loop on this link it answers `illegal_state`, with `next` starting at `run_loop`.
 
 The **attention window** makes supervision a duty: a loop ends with reason `unattended` when `attention_ms` have passed with no `supervise_loop` answered and none pending, counted from the answer of `run_loop`. A model that has moved on, or a person who interrupted it, therefore ends the loop.
 
