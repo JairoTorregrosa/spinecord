@@ -84,6 +84,7 @@ const page = createPage({
   onLabels: drawLabels,
   onStatus: draw,
   onActivity: activity,
+  onWake: () => draw(),
 });
 (window as unknown as { spinecord: unknown }).spinecord = page.spinecord;
 pads.forEach((b, i) => {
@@ -129,13 +130,16 @@ const KIND_NAMES: Record<string, string> = {
   speaker: "speaker",
   screen: "screen",
   touch: "buttons",
+  imu: "motion sensors",
+  vibrator: "vibration",
+  torch: "torch",
 };
 let listening = false;
 let lastFrame: number | null = null;
 
 function draw(s: KitStatus = page.kit.status()): void {
   const lending = s.state === "lending" || s.state === "paused";
-  const sensitive = s.devices.filter((d) => d === "camera" || d === "mic");
+  const sensitive = s.devices.filter((d) => d === "camera" || d === "mic" || d === "imu");
   el("setup").hidden = s.state !== "idle";
   el("lent").hidden = !lending && s.state !== "closed";
   el("closed").hidden = s.state !== "closed";
@@ -172,6 +176,7 @@ function draw(s: KitStatus = page.kit.status()): void {
   list.replaceChildren(
     ...s.devices.map((d) => li(`${KIND_NAMES[d] ?? d}`, `${s.name}.${d}`, "ok")),
     ...s.unavailable.map((u) => li(u.kind, u.why.replace(/^[^:]+: /, ""), "no")),
+    ...(lending ? [wakeItem()] : []),
   );
   const preview = el<HTMLVideoElement>("preview");
   const stream = page.live().camera;
@@ -180,6 +185,13 @@ function draw(s: KitStatus = page.kit.status()): void {
   document.title = lending
     ? `${s.state === "paused" ? "Paused" : "Lent"} · ${s.name} · spinecord`
     : "Lend this device · spinecord";
+}
+function wakeItem(): HTMLLIElement {
+  const w = page.wake();
+  if (w.t === "held") return li("screen", "kept on while lending", "ok");
+  if (w.t === "refused") return li("screen", `may lock: ${w.why}`, "no");
+  if (w.t === "unsupported") return li("screen", "may lock: this browser cannot keep it on; keep it on yourself", "no");
+  return li("screen", "may lock: bring the page to the front to keep it on", "no");
 }
 function li(what: string, detail: string, cls: string): HTMLLIElement {
   const item = document.createElement("li");
@@ -204,5 +216,8 @@ function activity(a: KitActivity): void {
   }
   draw();
 }
-document.addEventListener("visibilitychange", () => draw());
+document.addEventListener("visibilitychange", () => {
+  page.visibilityChanged();
+  draw();
+});
 draw();

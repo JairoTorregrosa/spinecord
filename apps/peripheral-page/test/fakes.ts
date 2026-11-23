@@ -4,6 +4,10 @@
 import type {
   AudioContextLike,
   BitmapLike,
+  MotionEventLike,
+  MotionEventType,
+  OrientationEventLike,
+  WakeLockSentinelLike,
   CanvasLike,
   RecognitionLike,
   StreamLike,
@@ -34,9 +38,16 @@ export function jpegHeader(w: number, h: number): Uint8Array {
   ]);
 }
 
-export function fakeTrack(kind: "video" | "audio", settings: ReturnType<TrackLike["getSettings"]> = {}) {
+export function fakeTrack(kind: "video" | "audio", settings: ReturnType<TrackLike["getSettings"]> = {}, torch = false) {
   const on: Record<string, (() => void)[]> = {};
-  const track: TrackLike & { fire(type: "mute" | "unmute" | "ended"): void; stopped: boolean } = {
+  const track: TrackLike & {
+    fire(type: "mute" | "unmute" | "ended"): void;
+    /** The browser ends the track (a phone locked): ended, then the event. */
+    end(): void;
+    stopped: boolean;
+    torchOn: boolean;
+    constraints: unknown[];
+  } = {
     kind,
     readyState: "live",
     muted: false,
@@ -46,9 +57,30 @@ export function fakeTrack(kind: "video" | "audio", settings: ReturnType<TrackLik
       track.stopped = true;
       (track as { readyState: string }).readyState = "ended";
     },
+    torchOn: false,
+    constraints: [],
     getSettings: () => settings,
+    ...(kind === "video"
+      ? {
+          // methods that check `this`, as a browser's do ("Illegal invocation")
+          getCapabilities(this: unknown) {
+            if (this !== track) throw new TypeError("Illegal invocation");
+            return torch ? { torch: true } : {};
+          },
+          async applyConstraints(this: unknown, c: { advanced: { torch: boolean }[] }) {
+            if (this !== track) throw new TypeError("Illegal invocation");
+            track.constraints.push(c);
+            if (!torch) throw Object.assign(new Error("torch is not supported"), { name: "OverconstrainedError" });
+            track.torchOn = c.advanced[0]!.torch;
+          },
+        }
+      : {}),
     addEventListener: (type, cb) => void (on[type] ??= []).push(cb),
     fire: (type) => on[type]?.forEach((cb) => cb()),
+    end() {
+      (track as { readyState: string }).readyState = "ended";
+      track.fire("ended");
+    },
   };
   return track;
 }
@@ -72,6 +104,21 @@ export interface FakeBrowserOptions {
   imageCapture?: boolean;
   /** How many cameras enumerateDevices lists. */
   cameras?: number;
+  /**
+   * The motion sensors: false, no event types at all; "events", a first sample of each event type is sent when the
+   * page listens; "silent", the event types and no sample (a desktop browser).
+   */
+  motion?: false | "events" | "silent";
+  /** Safari on iOS: DeviceMotionEvent.requestPermission answers this. */
+  motionPermission?: "granted" | "denied";
+  /** navigator.vibrate exists. */
+  vibrate?: boolean;
+  /** The primary pointer: coarse on a phone. */
+  pointer?: "coarse" | "fine";
+  /** The video track has a torch. */
+  torch?: boolean;
+  /** navigator.wakeLock: true grants, "denied" rejects, false absent. */
+  wakeLock?: boolean | "denied";
 }
 
 export const VOICES: VoiceLike[] = [
@@ -81,9 +128,40 @@ export const VOICES: VoiceLike[] = [
 ];
 
 export function fakeBrowser(o: FakeBrowserOptions = {}) {
-  const video = fakeTrack("video", { width: 1280, height: 720, facingMode: "user" });
-  const audioTrack = fakeTrack("audio");
+  const videos = [fakeTrack("video", { width: 1280, height: 720, facingMode: "user" }, o.torch)];
+  const audios = [fakeTrack("audio")];
   const asked: string[] = [];
+  // the getUserMedia calls after the first ones (a configure, a re-acquire) get new tracks
+  const nextVideo = (facing: string) => {
+    const t = fakeTrack("video", { width: 1280, height: 720, facingMode: facing }, o.torch);
+    videos.push(t);
+    return t;
+  };
+  let videoCalls = 0;
+  let audioCalls = 0;
+  let refuseAgain = false;
+  const winListeners: Partial<Record<MotionEventType, ((ev: any) => void)[]>> = {};
+  const vibrations: (number | number[])[] = [];
+  const wake = { requests: 0, sentinels: [] as (WakeLockSentinelLike & { fireRelease(): void })[] };
+  const permissionAsks: string[] = [];
+  let motionAllowed = o.motionPermission !== "denied";
+  const sample = (type: MotionEventType): OrientationEventLike & MotionEventLike =>
+    type === "devicemotion"
+      ? {
+          alpha: null,
+          beta: null,
+          gamma: null,
+          acceleration: { x: 0, y: 0, z: 0 },
+          accelerationIncludingGravity: { x: 0, y: 0, z: 9.81 },
+          rotationRate: { alpha: 0, beta: 0, gamma: 0 },
+        }
+      : {
+          alpha: type === "deviceorientationabsolute" ? 90 : 10,
+          beta: 0,
+          gamma: 0,
+          absolute: type === "deviceorientationabsolute",
+        };
+  const fireWin = (type: MotionEventType, ev: unknown) => winListeners[type]?.forEach((cb) => cb(ev));
   const recognizers: FakeRecognition[] = [];
   const spoken: UtteranceLike[] = [];
   const worklets: WorkletNodeLike[] = [];
@@ -207,17 +285,83 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
               async getUserMedia(c) {
                 if (c.video) {
                   asked.push("camera");
-                  const how = o.camera ?? "allow";
-                  return how === "allow" ? stream([video]) : reject(how);
+                  const how = refuseAgain && videoCalls > 0 ? "NotAllowedError" : (o.camera ?? "allow");
+                  if (how !== "allow") return reject(how);
+                  const facing = (c.video as { facingMode?: string | { exact: string } }).facingMode;
+                  const f = typeof facing === "string" ? facing : (facing?.exact ?? "user");
+                  return stream([videoCalls++ === 0 ? videos[0]! : nextVideo(f)]);
                 }
                 asked.push("microphone");
-                const how = o.microphone ?? "allow";
-                return how === "allow" ? stream([audioTrack]) : reject(how);
+                const how = refuseAgain && audioCalls > 0 ? "NotAllowedError" : (o.microphone ?? "allow");
+                if (how !== "allow") return reject(how);
+                if (audioCalls++ > 0) audios.push(fakeTrack("audio"));
+                return stream([audios.at(-1)!]);
               },
               enumerateDevices: async () => Array.from({ length: o.cameras ?? 1 }, () => ({ kind: "videoinput" })),
             },
           }),
+      ...(o.vibrate
+        ? {
+            vibrate(this: unknown, pattern: number | number[]) {
+              if (this !== win.navigator) throw new TypeError("Illegal invocation");
+              vibrations.push(pattern);
+              return true;
+            },
+          }
+        : {}),
+      ...(o.wakeLock === false
+        ? {}
+        : {
+            wakeLock: {
+              async request() {
+                wake.requests++;
+                if (o.wakeLock === "denied") throw Object.assign(new Error("not allowed"), { name: "NotAllowedError" });
+                const on: (() => void)[] = [];
+                const sentinel = {
+                  released: false,
+                  async release() {
+                    if (sentinel.released) return;
+                    sentinel.released = true;
+                    on.forEach((cb) => cb());
+                  },
+                  addEventListener: (_t: "release", cb: () => void) => void on.push(cb),
+                  fireRelease: () => void sentinel.release(),
+                };
+                wake.sentinels.push(sentinel);
+                return sentinel;
+              },
+            },
+          }),
     },
+    matchMedia: (q: string) => ({ matches: q === "(pointer: coarse)" && o.pointer === "coarse" }),
+    ...(o.motion
+      ? {
+          addEventListener(type: MotionEventType, cb: (ev: any) => void) {
+            const first = !winListeners[type]?.length;
+            (winListeners[type] ??= []).push(cb);
+            if (first && o.motion === "events") setTimeout(() => motionAllowed && fireWin(type, sample(type)), 1);
+          },
+          removeEventListener(type: MotionEventType, cb: (ev: any) => void) {
+            winListeners[type] = (winListeners[type] ?? []).filter((x) => x !== cb);
+          },
+          DeviceMotionEvent: o.motionPermission
+            ? {
+                requestPermission: async () => {
+                  permissionAsks.push("motion");
+                  return o.motionPermission!;
+                },
+              }
+            : {},
+          DeviceOrientationEvent: o.motionPermission
+            ? {
+                requestPermission: async () => {
+                  permissionAsks.push("orientation");
+                  return o.motionPermission!;
+                },
+              }
+            : {},
+        }
+      : {}),
     ...(o.recognition === false ? {} : { [o.recognition ?? "webkitSpeechRecognition"]: FakeRecognition }),
     ...(o.synthesis === false ? {} : { speechSynthesis: synth, SpeechSynthesisUtterance: FakeUtterance }),
     ...(o.audio === false ? {} : { AudioContext: FakeAudioContext }),
@@ -236,9 +380,30 @@ export function fakeBrowser(o: FakeBrowserOptions = {}) {
   };
   return {
     win,
-    video,
-    audioTrack,
+    /** The latest video and audio tracks getUserMedia gave. */
+    get video() {
+      return videos.at(-1)!;
+    },
+    get audioTrack() {
+      return audios.at(-1)!;
+    },
+    videos,
     asked,
+    vibrations,
+    wake,
+    permissionAsks,
+    /** Further getUserMedia calls are refused (the person revoked the permission). */
+    refuseAgain() {
+      refuseAgain = true;
+    },
+    /** A deviceorientation (or deviceorientationabsolute) event. */
+    orient(ev: OrientationEventLike, absolute = false) {
+      fireWin(absolute ? "deviceorientationabsolute" : "deviceorientation", ev);
+    },
+    /** A devicemotion event. */
+    move(ev: MotionEventLike) {
+      fireWin("devicemotion", ev);
+    },
     recognizers,
     spoken,
     synth,

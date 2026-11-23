@@ -18,6 +18,7 @@ function rig(o: FakeBrowserOptions = {}) {
   const sock = fakeSocket();
   const views: View[] = [];
   let labels: string[] = [];
+  let visible = true;
   const page = createPage({
     win: browser.win,
     url: "ws://127.0.0.1:1/page",
@@ -26,7 +27,7 @@ function rig(o: FakeBrowserOptions = {}) {
       sock.socket.opened++;
       return sock.socket;
     },
-    visible: () => true,
+    visible: () => visible,
     lang: "es-ES",
     workletUrl: "level.js",
     render: (v) => void views.push(v),
@@ -62,9 +63,17 @@ function rig(o: FakeBrowserOptions = {}) {
     }
     throw new Error(`no answer to request ${id}`);
   };
-  return { browser, sock, page, views, labels: () => labels, join, req };
+  /** The page is hidden (a locked phone) or visible again: the visibilitychange main.ts forwards. */
+  const setVisible = (v: boolean) => {
+    visible = v;
+    page.visibilityChanged();
+  };
+  return { browser, sock, page, views, labels: () => labels, join, req, setVisible };
 }
 const ids = (devices: PageDevice[]) => devices.map((d) => d.id);
+/** The kinds a phone has and a computer lacks: a test of the computer's kinds leaves them out. */
+const PHONE_KINDS = ["imu", "vibrator", "torch"];
+const own = (u: { kind: string; why: string }[]) => u.filter((x) => !PHONE_KINDS.includes(x.kind));
 const cmds = (devices: PageDevice[], id: string) => devices.find((d) => d.id === id)?.commands.map((c) => c.name);
 const chans = (devices: PageDevice[], id: string) => devices.find((d) => d.id === id)?.channels.map((c) => c.name);
 
@@ -74,7 +83,15 @@ describe("the manifest, from feature detection", () => {
     const hello = await join();
     expect(validatePageManifest(hello.devices)).toEqual([]);
     expect(ids(hello.devices).sort()).toEqual(["camera", "mic", "screen", "speaker", "touch"]);
-    expect(hello.unavailable).toEqual([]);
+    // a computer's browser: no motion sensors, no vibration, a webcam without a torch
+    expect(hello.unavailable).toEqual([
+      { kind: "imu", why: "imu: this browser has no motion sensors" },
+      { kind: "vibrator", why: "vibrator: this browser has no vibration" },
+      {
+        kind: "torch",
+        why: "torch: the lent camera has no torch the browser can switch (on a phone the torch is usually next to the camera facing environment)",
+      },
+    ]);
     expect(cmds(hello.devices, "mic")).toEqual(["listen"]);
     expect(chans(hello.devices, "mic")).toContain("level_pct");
     expect(cmds(hello.devices, "speaker")).toEqual(["speak", "tone"]);
@@ -106,7 +123,7 @@ describe("the manifest, from feature detection", () => {
   test("a microphone with neither recognition nor a level meter is not lent, with its reason", async () => {
     const hello = await rig({ recognition: false, worklet: false }).join();
     expect(ids(hello.devices)).not.toContain("mic");
-    expect(hello.unavailable).toEqual([
+    expect(own(hello.unavailable)).toEqual([
       { kind: "microphone", why: "microphone: this browser has neither speech recognition nor an audio level meter" },
     ]);
   });
@@ -116,7 +133,7 @@ describe("the manifest, from feature detection", () => {
     const hello = await join();
     expect(browser.asked.sort()).toEqual(["camera", "microphone"]);
     expect(ids(hello.devices).sort()).toEqual(["screen", "speaker", "touch"]);
-    expect(hello.unavailable).toEqual([
+    expect(own(hello.unavailable)).toEqual([
       { kind: "camera", why: "camera: the person did not allow it" },
       { kind: "microphone", why: "microphone: the person did not allow it" },
     ]);
@@ -125,19 +142,23 @@ describe("the manifest, from feature detection", () => {
 
   test("a computer with no camera says so", async () => {
     const hello = await rig({ camera: "NotFoundError" }).join();
-    expect(hello.unavailable).toEqual([{ kind: "camera", why: "camera: this computer has no camera" }]);
+    expect(own(hello.unavailable)).toEqual([{ kind: "camera", why: "camera: this computer has no camera" }]);
   });
 
   test("a browser without media devices, synthesis or audio lends the screen and the buttons only", async () => {
     const hello = await rig({ media: false, synthesis: false, audio: false }).join();
     expect(ids(hello.devices).sort()).toEqual(["screen", "touch"]);
-    expect(hello.unavailable.map((u) => u.kind).sort()).toEqual(["camera", "microphone", "speaker"]);
+    expect(
+      own(hello.unavailable)
+        .map((u) => u.kind)
+        .sort(),
+    ).toEqual(["camera", "microphone", "speaker"]);
     expect(hello.unavailable.find((u) => u.kind === "camera")!.why).toContain("mediaDevices.getUserMedia");
   });
 
   test("a camera without ImageCapture is not lent", async () => {
     const hello = await rig({ imageCapture: false }).join();
-    expect(hello.unavailable).toEqual([
+    expect(own(hello.unavailable)).toEqual([
       { kind: "camera", why: "camera: this browser cannot take a frame from the camera" },
     ]);
   });
@@ -276,7 +297,7 @@ describe("the wire protocol", () => {
       .filter((m) => m.t === "devices")
       .at(-1)!;
     expect(ids(devices.devices).sort()).toEqual(["screen", "speaker", "touch"]);
-    expect(devices.unavailable).toEqual([
+    expect(own(devices.unavailable)).toEqual([
       { kind: "camera", why: "camera: the person stopped lending it" },
       { kind: "microphone", why: "microphone: the person stopped lending it" },
     ]);
@@ -649,5 +670,295 @@ describe("the extension API", () => {
   test("fit keeps the aspect ratio under the longest side", () => {
     expect(fit(1280, 720, 640)).toEqual({ width: 640, height: 360 });
     expect(fit(480, 640, 1280)).toEqual({ width: 480, height: 640 });
+  });
+});
+
+/** A phone's browser: motion sensors, vibration, a touch screen, a camera with a torch. */
+const PHONE: FakeBrowserOptions = { motion: "events", vibrate: true, pointer: "coarse", torch: true };
+const states = (sock: ReturnType<typeof fakeSocket>, device: string) =>
+  sock
+    .json()
+    .filter((m) => m.t === "state" && m.device === device)
+    .map((m) => m.values);
+
+describe("the phone's kinds", () => {
+  test("a phone lends the imu, the vibrator and the torch too, and the manifest passes the process's check", async () => {
+    const hello = await rig(PHONE).join("phone");
+    expect(validatePageManifest(hello.devices)).toEqual([]);
+    expect(ids(hello.devices).sort()).toEqual([
+      "camera",
+      "imu",
+      "mic",
+      "screen",
+      "speaker",
+      "torch",
+      "touch",
+      "vibrator",
+    ]);
+    expect(hello.unavailable).toEqual([]);
+    expect(chans(hello.devices, "imu")).toEqual([
+      "pitch_deg",
+      "roll_deg",
+      "heading_deg",
+      "accel_x_m_s2",
+      "accel_y_m_s2",
+      "accel_z_m_s2",
+      "shaken",
+      "rate_x_deg_s",
+      "rate_y_deg_s",
+      "rate_z_deg_s",
+    ]);
+    const imuSpec = hello.devices.find((d) => d.id === "imu")!;
+    expect(imuSpec.channels.every((c) => c.pushed === true && c.max_rate_hz === 20)).toBe(true);
+    expect(imuSpec.channels.find((c) => c.name === "heading_deg")!.null_when_absent).toBe(true);
+    expect(cmds(hello.devices, "vibrator")).toEqual(["vibrate"]);
+    expect(cmds(hello.devices, "torch")).toEqual(["set"]);
+  });
+
+  test("the motion permission is asked in the tap; denied, the imu is unavailable and the rest is lent", async () => {
+    const { join, browser } = rig({ ...PHONE, motionPermission: "denied" });
+    const hello = await join("phone");
+    expect(browser.permissionAsks.sort()).toEqual(["motion", "orientation"]);
+    expect(ids(hello.devices)).not.toContain("imu");
+    expect(ids(hello.devices)).toContain("camera");
+    expect(hello.unavailable).toEqual([{ kind: "imu", why: "imu: the person did not allow the motion sensors" }]);
+  });
+
+  test("the motion permission granted lends the imu", async () => {
+    const hello = await rig({ ...PHONE, motionPermission: "granted" }).join("phone");
+    expect(ids(hello.devices)).toContain("imu");
+  });
+
+  test("a browser with the motion events and no sensor behind them does not lend an imu; a late first sample does", async () => {
+    const { join, browser, sock } = rig({ motion: "silent" });
+    const hello = await join();
+    expect(hello.unavailable.find((u) => u.kind === "imu")!.why).toBe(
+      "imu: this device sent no motion sample: it has no motion sensors, or the browser gives the page none",
+    );
+    browser.orient({ alpha: 0, beta: 5, gamma: 0 });
+    const devices = sock
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!;
+    expect(chans(devices.devices, "imu")).toEqual(["pitch_deg", "roll_deg", "heading_deg"]);
+    expect(validatePageManifest(devices.devices)).toEqual([]);
+    expect(states(sock, "imu").at(-1)).toEqual({ pitch_deg: 5, roll_deg: 0, heading_deg: null });
+  });
+
+  test("imu values are pushed from the events: tilt, heading counter-clockwise from north, acceleration, shaken", async () => {
+    const { join, browser, sock } = rig(PHONE);
+    await join("phone");
+    await tick(60);
+    browser.orient({ alpha: 200, beta: 30.04, gamma: -10, absolute: false });
+    expect(states(sock, "imu").at(-1)).toMatchObject({ pitch_deg: 30, roll_deg: -10 });
+    await tick(60);
+    browser.orient({ alpha: 90, beta: 31, gamma: -11 }, true); // deviceorientationabsolute: 90 = west
+    expect(states(sock, "imu").at(-1)).toMatchObject({ pitch_deg: 31, heading_deg: 90 });
+    await tick(60);
+    browser.orient({ alpha: 200, beta: 32, gamma: -12, absolute: false }); // a relative sample keeps the heading
+    expect(states(sock, "imu").at(-1)).toEqual({ pitch_deg: 32, roll_deg: -12 });
+    await tick(60);
+    browser.orient({ alpha: 0, beta: 0, gamma: 0, webkitCompassHeading: 90 }); // Safari: 90 clockwise = east
+    expect(states(sock, "imu").at(-1)).toMatchObject({ heading_deg: -90 });
+    await tick(60);
+    browser.move({
+      acceleration: { x: 20, y: 0, z: 0 },
+      accelerationIncludingGravity: { x: 20, y: 0, z: 9.81 },
+      rotationRate: { alpha: 45, beta: 1, gamma: 2 },
+    });
+    expect(states(sock, "imu").at(-1)).toEqual({
+      accel_x_m_s2: 20,
+      accel_y_m_s2: 0,
+      accel_z_m_s2: 9.81,
+      shaken: true,
+      rate_x_deg_s: 1,
+      rate_y_deg_s: 2,
+      rate_z_deg_s: 45,
+    });
+  });
+
+  test("the imu pushes at most once per 50 ms, the latest values merged", async () => {
+    const { join, browser, sock } = rig(PHONE);
+    await join("phone");
+    await tick(60);
+    const before = states(sock, "imu").length;
+    for (let i = 0; i < 30; i++) browser.orient({ alpha: 0, beta: i, gamma: 0 });
+    expect(states(sock, "imu").length - before).toBe(1);
+    await tick(60);
+    browser.move({ accelerationIncludingGravity: { x: 0, y: 0, z: 9.8 }, rotationRate: null });
+    const last = states(sock, "imu").at(-1)!;
+    expect(last).toMatchObject({ pitch_deg: 29, accel_z_m_s2: 9.8 });
+  });
+
+  test("vibrate vibrates for ms and returns; stop ends it", async () => {
+    const { join, req, browser } = rig(PHONE);
+    await join("phone");
+    const { res } = await req({
+      op: "command",
+      device: "vibrator",
+      command: "vibrate",
+      args: { ms: 30 },
+      deadline_ms: 30,
+    });
+    expect(res.result).toEqual({ measured: { vibrated_ms: 30 }, reason: "completed" });
+    expect(browser.vibrations).toEqual([30]);
+    const long = req({ op: "command", device: "vibrator", command: "vibrate", args: { ms: 2000 }, deadline_ms: 2000 });
+    await tick(20);
+    await req({ op: "stop" });
+    expect((await long).res.result.reason).toBe("preempted");
+    expect(browser.vibrations).toEqual([30, 2000, 0]);
+  });
+
+  test("a computer's browser with navigator.vibrate lends no vibrator", async () => {
+    const hello = await rig({ vibrate: true }).join();
+    expect(hello.unavailable.find((u) => u.kind === "vibrator")!.why).toBe(
+      "vibrator: this is not a phone or tablet: its browser can vibrate nothing",
+    );
+  });
+
+  test("the torch goes on through the camera track's constraint, and off by itself after ms and at stop", async () => {
+    const { join, req, browser, sock } = rig(PHONE);
+    await join("phone");
+    const on = await req({
+      op: "command",
+      device: "torch",
+      command: "set",
+      args: { on: true, ms: 100 },
+      deadline_ms: 100,
+    });
+    expect(on.res.result).toEqual({ measured: { on: true }, reason: "completed" });
+    expect(browser.video.torchOn).toBe(true);
+    expect(states(sock, "torch").at(-1)).toEqual({ on: true });
+    await tick(150);
+    expect(browser.video.torchOn).toBe(false);
+    expect(states(sock, "torch").at(-1)).toEqual({ on: false });
+    await req({ op: "command", device: "torch", command: "set", args: { on: true }, deadline_ms: 30000 });
+    expect(browser.video.torchOn).toBe(true);
+    await req({ op: "stop" });
+    expect(browser.video.torchOn).toBe(false);
+    expect(states(sock, "torch").at(-1)).toEqual({ on: false });
+    expect(browser.video.constraints).toEqual([
+      { advanced: [{ torch: true }] },
+      { advanced: [{ torch: false }] },
+      { advanced: [{ torch: true }] },
+      { advanced: [{ torch: false }] },
+    ]);
+  });
+
+  test("the torch follows the camera: stop lending takes it out", async () => {
+    const { join, page, sock } = rig(PHONE);
+    await join("phone");
+    page.stopLending();
+    const devices = sock
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!;
+    expect(ids(devices.devices).sort()).toEqual(["screen", "speaker", "touch", "vibrator"]);
+    expect(devices.unavailable.map((u: { kind: string }) => u.kind).sort()).toEqual([
+      "camera",
+      "imu",
+      "microphone",
+      "torch",
+    ]);
+    expect(devices.unavailable.find((u: { kind: string }) => u.kind === "torch").why).toBe(
+      "torch: the camera is not lent",
+    );
+  });
+});
+
+describe("sleep and waking up", () => {
+  test("the wake lock is taken in the tap and asked again each time the page is visible again", async () => {
+    const { join, browser, page, setVisible } = rig(PHONE);
+    await join("phone");
+    expect(browser.wake.requests).toBe(1);
+    await tick(1);
+    expect(page.wake()).toEqual({ t: "held" });
+    // a browser releases the lock when the page is hidden
+    setVisible(false);
+    browser.wake.sentinels[0]!.fireRelease();
+    await tick(1);
+    expect(page.wake()).toEqual({ t: "none" });
+    expect(browser.wake.requests).toBe(1);
+    setVisible(true);
+    expect(browser.wake.requests).toBe(2);
+    await tick(1);
+    expect(page.wake()).toEqual({ t: "held" });
+  });
+
+  test("a refused wake lock is said, not swallowed", async () => {
+    const { join, page } = rig({ wakeLock: "denied" });
+    await join();
+    await tick(1);
+    expect(page.wake()).toMatchObject({ t: "refused" });
+    expect((page.wake() as { why: string }).why).toContain("the browser refused to keep the screen on");
+  });
+
+  test("the lock is released when the page stops lending", async () => {
+    const { join, browser, sock } = rig();
+    await join();
+    await tick(1);
+    sock.closeFromServer(1001, "the process ended");
+    await tick(1);
+    expect(browser.wake.sentinels[0]!.released).toBe(true);
+  });
+
+  test("a hidden page's imu is down, and up when the page is visible again", async () => {
+    const { join, sock, setVisible } = rig(PHONE);
+    await join("phone");
+    setVisible(false);
+    expect(sock.json().at(-1)).toEqual({
+      t: "down",
+      device: "imu",
+      why: "the page is hidden: the browser sends it no motion events",
+    });
+    setVisible(true);
+    expect(sock.json().some((m) => m.t === "up" && m.device === "imu")).toBe(true);
+  });
+
+  test("a camera track the browser ended while hidden is asked for again when the page is visible", async () => {
+    const { join, sock, browser, setVisible, req } = rig(PHONE);
+    await join("phone");
+    const first = browser.video;
+    setVisible(false);
+    first.end();
+    expect(sock.json().at(-1)).toEqual({ t: "down", device: "camera", why: "the camera was turned off or unplugged" });
+    setVisible(true);
+    await tick(5);
+    expect(browser.video).not.toBe(first);
+    expect(sock.json().filter((m) => m.t === "up" && m.device === "camera").length).toBe(1);
+    const { res } = await req({ op: "read", device: "camera", channels: ["width_px"] });
+    expect(res.ok).toBe(true);
+    // the old track's events say nothing any more
+    first.fire("mute");
+    expect(sock.json().at(-1)).not.toMatchObject({ t: "down", device: "camera" });
+  });
+
+  test("a camera the browser refuses to give back stays down, with why", async () => {
+    const { join, sock, browser, setVisible } = rig(PHONE);
+    await join("phone");
+    browser.video.end();
+    browser.refuseAgain();
+    setVisible(true);
+    await tick(5);
+    expect(sock.json().at(-1)).toEqual({
+      t: "down",
+      device: "camera",
+      why: "the page could not get the camera back: the person did not allow it",
+    });
+  });
+
+  test("a muted microphone track is down, unmuted it is up; ended, it is asked for again", async () => {
+    const { join, sock, browser, setVisible } = rig();
+    await join();
+    browser.audioTrack.fire("mute");
+    expect(sock.json().at(-1)).toEqual({ t: "down", device: "mic", why: "the microphone stopped sending sound" });
+    browser.audioTrack.fire("unmute");
+    expect(sock.json().at(-1)).toEqual({ t: "up", device: "mic" });
+    const first = browser.audioTrack;
+    first.end();
+    setVisible(true);
+    await tick(5);
+    expect(browser.audioTrack).not.toBe(first);
+    expect(sock.json().at(-1)).toEqual({ t: "up", device: "mic" });
   });
 });

@@ -1,14 +1,23 @@
 // The page without its DOM: the kit, the kinds that need no permission (screen, touch) from the start, the kinds
-// the tap unlocks (camera, microphone, speaker), and `spinecord`, the extension API (docs/peripheral-pages.md).
-// main.ts draws it; a test drives it with a fake browser (test/fakes.ts).
+// the tap unlocks (camera, microphone, speaker, imu, vibrator, torch), the wake lock, and `spinecord`, the
+// extension API (docs/peripheral-pages.md). main.ts draws it; a test drives it with a fake browser (test/fakes.ts).
+// Hidden and visible again: a hidden page's imu is down; a visible one takes the wake lock again and asks again
+// for a camera or microphone track the browser ended meanwhile.
 import type { Scalar } from "../../../packages/protocol/types";
 import { unlock, type BitmapLike, type StreamLike, type Win } from "./browser";
 import { camera, type Camera } from "./devices/camera";
+import { imu, type Imu } from "./devices/imu";
+import { torch } from "./devices/torch";
+import { vibrator } from "./devices/vibrator";
 import { display, type Display, type ScreenDraw, type View } from "./devices/display";
 import { microphone, type Microphone } from "./devices/microphone";
 import { speaker } from "./devices/speaker";
 import { touch, type Touch } from "./devices/touch";
 import { createKit, ended, PageError, type DeviceDef, type Kit, type KitOptions } from "./kit";
+import { wakeLock, type WakeState } from "./wake";
+
+/** How long the tap waits for a first motion sample before it joins; a later first sample announces the imu. */
+export const MOTION_WAIT_MS = 1000;
 
 /** The extension API: what `window.spinecord` is. */
 export interface Spinecord {
@@ -30,6 +39,8 @@ export interface PageOptions extends Omit<KitOptions, "now"> {
   workletUrl: string;
   render(view: View, draw: ScreenDraw | null): void;
   onLabels(labels: string[]): void;
+  /** The wake lock changed: held, refused (with why), released. */
+  onWake?(s: WakeState): void;
 }
 
 export interface Page {
@@ -41,17 +52,29 @@ export interface Page {
   lend(join: { name: string; robot?: string }): Promise<void>;
   /** The live streams, for the banner and the preview. */
   live(): { camera: StreamLike | null; mic: StreamLike | null };
-  /** Stop lending: the camera and the microphone leave the manifest and their streams close. */
+  /** Stop lending: the camera, the microphone and the motion sensors leave the manifest; their streams close. */
   stopLending(): void;
+  /** Call on every visibilitychange. */
+  visibilityChanged(): void;
+  wake(): WakeState;
 }
 
 export function createPage(o: PageOptions): Page {
   const now = o.now ?? (() => Date.now());
-  const kit = createKit({ ...o, now });
+  const wake = wakeLock(o.win, (s) => o.onWake?.(s));
+  const kit = createKit({
+    ...o,
+    now,
+    onStatus: (s) => {
+      if (s.state === "closed") wake.release();
+      o.onStatus?.(s);
+    },
+  });
   const screen = display({ kit, render: o.render });
   const buttons = touch({ kit, onLabels: o.onLabels });
   let cam: Camera | null = null;
   let mic: Microphone | null = null;
+  let motion: Imu | null = null;
   const spinecord: Spinecord = {
     device: (def) => kit.device(def),
     push: (id, values) => kit.push(id, values),
@@ -67,6 +90,7 @@ export function createPage(o: PageOptions): Page {
     screen,
     touch: buttons,
     async lend(join) {
+      wake.acquire(); // in the tap, before any await
       const got = await unlock(o.win);
       cam = camera({ kit, win: o.win, got: got.camera, now });
       mic = microphone({
@@ -79,7 +103,11 @@ export function createPage(o: PageOptions): Page {
         lang: o.lang,
         now,
       });
-      await mic.meter().catch(() => false);
+      motion = imu({ kit, win: o.win, permission: got.motion, now });
+      vibrator({ kit, win: o.win });
+      const c = cam;
+      torch({ kit, track: () => c.track(), onTrack: (cb) => c.onTrack(cb) });
+      await Promise.all([mic.meter().catch(() => false), motion.ready(MOTION_WAIT_MS)]);
       speaker({ kit, synth: got.synth, audio: got.audio, lang: o.lang });
       kit.start(join);
     },
@@ -94,6 +122,21 @@ export function createPage(o: PageOptions): Page {
         mic.close();
         kit.withdraw("mic", "the person stopped lending it");
       }
+      if (motion) {
+        motion.close();
+        if (lent.includes("imu")) kit.withdraw("imu", "the person stopped lending it");
+      }
     },
+    visibilityChanged() {
+      const state = kit.status().state;
+      if (state !== "lending" && state !== "paused") return;
+      const visible = o.visible();
+      motion?.visible(visible);
+      if (!visible) return;
+      wake.acquire();
+      void cam?.reacquire();
+      void mic?.reacquire();
+    },
+    wake: () => wake.state(),
   };
 }
