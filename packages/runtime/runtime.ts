@@ -68,6 +68,8 @@ const ROBOT_TOOLS: readonly RobotTool[] = [
   "run_program",
 ];
 
+type HeadingRead = { angle?: number; error?: string };
+
 export function rerr(code: ErrorCode, message: string): RuntimeError {
   return new RuntimeError(code, message, RETRYABLE.includes(code));
 }
@@ -546,13 +548,27 @@ class RuntimeImpl implements LocalRuntime {
 
   // The heading channel the drivetrain names (CONTRACT §3), when its device is attached and has that numeric
   // channel. Nothing else is a heading source: no device is picked by its kind or its role.
-  private heading(dt: Drivetrain): { entry: Entry; channel: string } | undefined {
+  // `error` says why a declared heading cannot be used as the devices stand: describe_robot shows it as
+  // heading_error, and a move that measured with the wheels carries it in measured.heading_error.
+  private heading(dt: Drivetrain): { entry: Entry; channel: string } | { error: string } | undefined {
     const h = dt.heading;
     if (!h) return undefined;
     const e = this.entries.get(h.device) ?? this.entries.get(this.roleMap()[h.device] ?? ""); // id, then role
-    return e?.spec.channels.some((c) => c.name === h.channel && c.type === "number")
-      ? { entry: e, channel: h.channel }
-      : undefined;
+    if (!e)
+      return {
+        error: `the heading device "${h.device}" is not attached (attached: ${[...this.entries.keys()].join(", ") || "none"})`,
+      };
+    const c = e.spec.channels.find((x) => x.name === h.channel);
+    const numeric = e.spec.channels.filter((x) => x.type === "number").map((x) => x.name);
+    if (!c || c.type !== "number")
+      return {
+        error: `the heading device ${e.spec.id} (kind ${e.spec.kind}) has no numeric channel "${h.channel}" (its numeric channels: ${numeric.join(", ") || "none"})`,
+      };
+    if (c.active === false)
+      return {
+        error: `the heading channel ${e.spec.id}.${h.channel} is not active: its sensor is in another mode, and a move never switches a sensor mode (read_device naming the channel switches it)`,
+      };
+    return { entry: e, channel: h.channel };
   }
 
   private speed(a: Args): { asked: number; speed: number; clamps: Clamp[] } {
@@ -710,14 +726,25 @@ class RuntimeImpl implements LocalRuntime {
       );
     return { l: l!.value, r: r!.value };
   }
-  private async headingAngle(h: { entry: Entry; channel: string } | undefined): Promise<number | undefined> {
-    if (!h) return undefined;
+  /** One reading of the heading channel: the angle, or why there is none (the wheels then measure the heading). */
+  /** describe_robot's heading_error: null when the drivetrain names no heading or the named channel is usable. */
+  private headingError(): string | null {
+    const h = this.prof.drivetrain && this.heading(this.prof.drivetrain);
+    return h && "error" in h
+      ? `${h.error}. drive, turn and arc measure the heading from the wheel encoders (measured.source encoders) until this is fixed.`
+      : null;
+  }
+  private async headingAngle(h: { entry: Entry; channel: string } | undefined): Promise<HeadingRead> {
+    if (!h) return {};
+    const where = `${h.entry.spec.id}.${h.channel}`;
     try {
       const [r] = await this.readEntry(h.entry, [h.channel]);
-      return typeof r!.value === "number" ? r!.value : undefined;
-    } catch {
-      return undefined;
-    } // heading then falls back to encoders and says so in `source`
+      return typeof r!.value === "number"
+        ? { angle: r!.value }
+        : { error: `the heading channel ${where} gave no number: ${r!.error ?? "no numeric value"}` };
+    } catch (e) {
+      return { error: `the heading channel ${where} could not be read: ${(e as Error).message}` };
+    }
   }
 
   // Watches a condition for as long as the caller keeps operations running (CONTRACT §4): polls its devices
@@ -1219,18 +1246,19 @@ class RuntimeImpl implements LocalRuntime {
   ): Promise<RuntimeResult> {
     const { dt, pair, cmd } = this.drivetrain(tool);
     const t0 = this.clock.now();
-    const gyro = this.heading(dt);
+    const declared = this.heading(dt);
+    const gyro = declared && "entry" in declared ? declared : undefined;
     const leftLeads = Math.abs(L) >= Math.abs(R);
     const target = leftLeads ? L : R;
     const leadKey = leftLeads ? "left_deg" : "right_deg";
     type Enc = { l: number; r: number };
     // Wheels and heading before the move come from the reading that travels with the first operation, and
     // after it from one reading taken with nothing running: no provider call is made only to measure.
-    let before: Promise<[Enc, number | undefined]> | undefined;
+    let before: Promise<[Enc, HeadingRead]> | undefined;
     let enc0: Enc | undefined;
     let at: Promise<Enc> | undefined; // where the operation in flight started
     let est = 0; // lead wheel degrees done when the latest operation ended
-    let after: { enc: Enc; g: number | undefined } | undefined; // read with nothing running since
+    let after: { enc: Enc; g: HeadingRead } | undefined; // read with nothing running since
     const ahead = (e: Enc) => (leftLeads ? e.l - enc0!.l : e.r - enc0!.r);
     const frac = (deg: number) => (target === 0 ? 1 : deg / target); // signed: negative = the wheels went the wrong way
     const track: Track = {
@@ -1279,8 +1307,19 @@ class RuntimeImpl implements LocalRuntime {
       await track.settle().catch((err) => {
         throw run.failure ? run.failure.error : err; // the wheels cannot be read either: the watch's error stands
       });
-    const [, g0] = await before!;
-    const { enc, g: g1 } = after!;
+    const [, h0] = await before!;
+    const { enc, g: h1 } = after!;
+    const g0 = h0.angle;
+    const g1 = h1.angle;
+    // a declared heading that did not measure this move: `source` says encoders, and this says why
+    const headingError =
+      declared && "error" in declared
+        ? declared.error
+        : h0.error
+          ? `${h0.error} (at the start of the move)`
+          : h1.error
+            ? `${h1.error} (at the end of the move)`
+            : undefined;
     const start = enc0!;
 
     const dl = dt.forward_sign * (enc.l - start.l);
@@ -1298,6 +1337,7 @@ class RuntimeImpl implements LocalRuntime {
     };
     measured.left_deg = round1(enc.l - start.l);
     measured.right_deg = round1(enc.r - start.r);
+    if (source === "encoders" && headingError) measured.heading_error = headingError;
     if (run.failure) throw this.endedMove(run.failure.error, measured, run.chunks);
     return {
       data: {
@@ -1794,6 +1834,7 @@ class RuntimeImpl implements LocalRuntime {
       drivetrain: this.prof.drivetrain ?? null, // null: no drivetrain tools, the motors are devices
       limits: this.prof.limits,
       notes: this.prof.notes,
+      heading_error: this.headingError(),
       scan_error: this.scanFailure
         ? `device scan failed (${this.scanFailure.attempts} in a row): ${this.scanFailure.message}. The device list and each channel's active flag are those of the last scan that succeeded and may be out of date; the scan is tried again by itself.`
         : null,

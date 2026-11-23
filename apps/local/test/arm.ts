@@ -27,6 +27,7 @@ export async function armWorks(tool: Tool, motors: string[]) {
   const d = await tool("describe_robot");
   expect(d.ok).toBe(true);
   expect(d.data.drivetrain).toBeNull();
+  expect(d.data.heading_error).toBeNull();
   expect(d.data.limits).toEqual({ max_speed_pct: 40, max_command_ms: 10000, max_program_ms: 120000 });
   const devices = d.data.devices as Device[];
   expect(devices.filter((x) => x.kind === "motor").map((x) => x.id)).toEqual(motors);

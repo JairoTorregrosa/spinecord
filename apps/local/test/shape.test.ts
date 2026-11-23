@@ -24,6 +24,18 @@ describe("the arm example: no pair, no drivetrain", () => {
     const badHeading = structuredClone(base);
     badHeading.profile.drivetrain.heading = { device: "gyro" };
     expect(() => parseRobotFile(badHeading, "x.json")).toThrow("profile.drivetrain.heading.channel must be");
+    // heading.device: a role of the profile or a device id; a mistyped role is refused, with the roles there are
+    const heading = (device: string) => {
+      const f = structuredClone(base);
+      f.profile.drivetrain.heading = { device, channel: "angle_deg" };
+      return () => parseRobotFile(f, "x.json");
+    };
+    expect(heading("gyr0")).toThrow(
+      'x.json: profile.drivetrain.heading.device must be a role of profile.roles (left_wheel, right_wheel, arm, touch, gyro, color, distance) or a device id like "ev3.S2", got "gyr0"',
+    );
+    expect(heading("ev3 S2")).toThrow("profile.drivetrain.heading.device must be a role");
+    expect(heading("gyro")().profile.drivetrain!.heading!.device).toBe("gyro");
+    expect(heading("ev3.S2")().profile.drivetrain!.heading!.device).toBe("ev3.S2");
   });
 
   test("as a twin (--twin arm.json): drivetrain null, no pair device, drive unsupported, each motor moves", async () => {
@@ -72,6 +84,8 @@ describe("the heading of the base example", () => {
       // it turned left; the precision of a turn is not this test's subject
       expect(turned.data.measured.heading_change_deg).toBeGreaterThan(20);
       expect(turned.data.measured.heading_change_deg).toBeLessThan(90);
+      expect(described.data.heading_error).toBeNull();
+      expect("heading_error" in turned.data.measured).toBe(false);
       return { drivetrain: described.data.drivetrain, source: turned.data.measured.source as string };
     } finally {
       await fleet.shutdown();

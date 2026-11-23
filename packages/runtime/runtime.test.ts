@@ -894,16 +894,12 @@ describe("drivetrain", () => {
       const d = await s.call("turn", { angle_deg: 90 });
       expect(d.measured.source).toBe("gyro");
       expect(d.measured.heading_change_deg).toBeCloseTo(-90, 0); // the channel's own value, not the wheels'
-      expect((await s.call("describe_robot")).drivetrain.heading).toEqual(heading);
+      expect("heading_error" in d.measured).toBe(false);
+      expect(await s.call("describe_robot")).toMatchObject({ drivetrain: { heading }, heading_error: null });
     }
-    // a heading whose device is not attached, or whose channel the device does not have: the wheels measure
-    for (const heading of [
-      { device: "mock.gyro", channel: "angle_deg" },
-      { device: "mock.gyro", channel: "yaw_deg" },
-    ]) {
-      const s = setup({ gyro: heading.channel !== "angle_deg", heading });
-      expect((await s.call("turn", { angle_deg: 90 })).measured.source).toBe("encoders");
-    }
+    // no heading named: the wheels measure, and nothing was skipped
+    expect("heading_error" in u.measured).toBe(false);
+    expect((await unnamed.call("describe_robot")).heading_error).toBeNull();
     const clock = new FakeClock();
     const bad = { ...setup().profile.drivetrain!, heading: { device: "mock.gyro" } as never };
     expect(() =>
@@ -913,6 +909,74 @@ describe("drivetrain", () => {
         clock,
       }),
     ).toThrow(/drivetrain\.heading must be \{device, channel\}/);
+  });
+  test("a declared heading that cannot measure a move is never skipped in silence", async () => {
+    const yaw: DeviceSpec = {
+      id: "mock.yaw",
+      provider: "mock",
+      kind: "gyro",
+      roles: [],
+      description: "A gyro in its rate mode.",
+      channels: [
+        { name: "angle_deg", type: "number", unit: "deg", description: "Angle.", active: false },
+        { name: "label", type: "string", description: "Not a number." },
+      ],
+      commands: [],
+    };
+    // as the devices stand: describe_robot says it, and so does every move
+    for (const [heading, gyro, why] of [
+      [{ device: "mock.gyr0", channel: "angle_deg" }, true, 'the heading device "mock.gyr0" is not attached'],
+      [{ device: "mock.gyro", channel: "angle_deg" }, false, 'the heading device "mock.gyro" is not attached'],
+      [
+        { device: "mock.gyro", channel: "angle" },
+        true,
+        'has no numeric channel "angle" (its numeric channels: angle_deg)',
+      ],
+      [{ device: "mock.yaw", channel: "label" }, true, 'has no numeric channel "label"'],
+      [{ device: "mock.yaw", channel: "angle_deg" }, true, "mock.yaw.angle_deg is not active"],
+    ] as const) {
+      const s = setup({ gyro, heading, extra: [yaw] });
+      const described = await s.call("describe_robot");
+      expect(described.drivetrain.heading).toEqual(heading);
+      expect(described.heading_error).toContain(why);
+      expect(described.heading_error).toContain("wheel encoders");
+      for (const [tool, args] of [
+        ["turn", { angle_deg: 90 }],
+        ["drive", { distance_cm: 5 }],
+        ["arc", { radius_cm: 10, angle_deg: 30 }],
+      ] as const) {
+        const m = (await s.call(tool, args)).measured;
+        expect(m.source).toBe("encoders");
+        expect(m.heading_error).toContain(why);
+      }
+      expect(s.mock.modeSwitches + s.mock.switchReads).toBe(0);
+    }
+    // the channel is there and a read of it fails: the registry has nothing to say, the move does
+    const lost = setup({ gyro: true });
+    lost.mock.readErrors.set("mock.gyro.angle_deg", "sensor timeout");
+    expect((await lost.call("describe_robot")).heading_error).toBeNull();
+    const l = (await lost.call("turn", { angle_deg: 90 })).measured;
+    expect(l.source).toBe("encoders");
+    expect(l.heading_change_deg).toBeCloseTo(90, 0);
+    expect(l.heading_error).toContain("mock.gyro.angle_deg gave no number: sensor timeout (at the start of the move)");
+    const thrown = setup({ gyro: true });
+    thrown.mock.failRead = "mock.gyro";
+    const t = (await thrown.call("turn", { angle_deg: 90 })).measured;
+    expect(t.source).toBe("encoders");
+    expect(t.heading_error).toContain("mock.gyro.angle_deg could not be read");
+    // read at the start, lost at the end
+    const late = setup({ gyro: true });
+    const turning = late.call("turn", { angle_deg: 90 });
+    while (!late.mock.reads.includes("mock.gyro")) await new Promise((r) => setImmediate(r));
+    late.mock.readErrors.set("mock.gyro.angle_deg", "unplugged");
+    const e = (await turning).measured;
+    expect(e.source).toBe("encoders");
+    expect(e.heading_error).toContain("unplugged (at the end of the move)");
+    // and the next move with the channel back measures with it
+    late.mock.readErrors.clear();
+    const back = (await late.call("turn", { angle_deg: 45 })).measured;
+    expect(back.source).toBe("gyro");
+    expect("heading_error" in back).toBe(false);
   });
   test("arc: radius to the center, angle sign = heading change, direction = which way it travels", async () => {
     const run = async (angle_deg: number, direction?: "forward" | "backward") => {

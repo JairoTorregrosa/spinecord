@@ -85,6 +85,12 @@ export function parseRobotFile(json: unknown, where: string): RobotFile {
     };
     if (d.heading !== undefined) {
       const h = obj(d.heading, "profile.drivetrain.heading");
+      // a role of this profile, or a device id `<provider>.<local>`: a mistyped role is caught here
+      if (typeof h.device === "string" && !(h.device in roles) && !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(h.device))
+        fail(
+          "profile.drivetrain.heading.device",
+          `must be a role of profile.roles (${Object.keys(roles).join(", ") || "none"}) or a device id like "ev3.S2", got ${JSON.stringify(h.device)}`,
+        );
       profile.drivetrain.heading = {
         device: text(h.device, "profile.drivetrain.heading.device"),
         channel: text(h.channel, "profile.drivetrain.heading.channel"),
