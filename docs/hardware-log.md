@@ -9,7 +9,9 @@ Runs on real robots. A row counts for the commit it names: a check passes for a 
 | Stock EV3 over USB through the bridge page (`apps/local --ev3`) | not run |
 | Loops on the stock path (`run_loop` through the bridge page, host executor) | not run: the declared `max_rate_hz` of 50 is a conservative figure, not a measurement; the tick round trip over real USB, and whether a refreshed timed command runs smoothly on the firmware, are unmeasured |
 | Sensors from discovery on the stock path: an NXT sensor (type 2 light), a type without an entry, the infrared channel | not run: the firmware's GET_FORMAT, GET_FIGURES, GET_SYMBOL and GET_MODENAME answers are taken from the lms2012 sources and tested against the emulator only |
-| EV3 on ev3dev, bridge version 6 (`apps/local --ev3dev`): version 5 plus NXT sensors, generic sensors from sysfs and `hardware.ir_channel` | not run |
+| EV3 on ev3dev, bridge version 7 (`apps/local --ev3dev`): version 6 plus loops on the brick (`loop_start`, `loop_set`, `loop_probe`), the `power` command, `drives` and the guard's deadman | not run |
+| Loops on ev3dev (`run_loop` on the bridge, device executor) **[hw]** | not run: the declared `max_rate_hz` of 50 is a starting figure; the tick's cost on the brick's Python 3.5 (`loop_probe`), C2 on a floor line, and the guard's deadman under `kill -STOP` are tested against a fake sysfs tree only |
+| EV3 on ev3dev, bridge version 6: version 5 plus NXT sensors, generic sensors from sysfs and `hardware.ir_channel` | not run |
 | EV3 on ev3dev, bridge version 5: version 4 plus a hello that may leave out `pair` | not run |
 | EV3 on ev3dev, bridge version 4 | run on 2026-11-22: stop, `Esc`, the square, `kill -9` of the bridge, the guard (log below); direction by eye, `until`, the watchdog and brick off at start not yet |
 | EV3 on ev3dev, a bridge before version 4 | run on 2026-11-21 (log below) |
@@ -21,7 +23,7 @@ Everything else about these paths is tested without a brick (and without a phone
 
 ## To run
 
-One pass per path (USB through the bridge page; ev3dev with the bridge in this repository, version 6; a tick carries the date it ran and the log names the commit). For each check add a row to the log with the date, the commit (`git rev-parse --short HEAD`), the robot and what was measured. Robot on the floor, a hand near it.
+One pass per path (USB through the bridge page; ev3dev with the bridge in this repository, version 7; a tick carries the date it ran and the log names the commit). For each check add a row to the log with the date, the commit (`git rev-parse --short HEAD`), the robot and what was measured. Robot on the floor, a hand near it.
 
 | Check | How | Passes when | USB | ev3dev |
 | --- | --- | --- | --- | --- |
@@ -37,6 +39,10 @@ One pass per path (USB through the bridge page; ev3dev with the bridge in this r
 | watchdog | during a 100 cm `drive`: take the brick off the network | both motors brake about 1 s after the last message | n/a | ☐ |
 | a robot without a pair | start with `deployments/example/robots/arm.json` on a brick with motors on B and C; `describe_robot`, then `command_device` `run_degrees` on each | two `motor` devices and no `motor_pair`; `drivetrain: null`; `drive` answers `unsupported`; each motor turns by itself | ☐ | ☐ |
 | loop rate | `run_loop` C4 on a free motor at 50 Hz for 10 s; time each tick's round trip | the report's `overruns` is 0 and `period_ms.p95` stays under 20 ms; the declared 50 Hz holds | ☐ | n/a |
+| `loop_probe` **[hw]** | `probeLoop()` on the provider (from code, the robot idle and on blocks), once with its default plan and once with C2's plan; write down `mean_ms`, `p50_ms`, `p99_ms`, `max_ms`, `max_rate_hz` and `python` | it answers; no motor turns; `describe_robot` then shows the probed `max_rate_hz`; the numbers go in the log | n/a | ☐ |
+| C2 on a floor line **[hw]** | a dark line on a light floor, color sensor on S3, touch on S1; `run_loop` C2 as printed (at the probed rate if it is under 50), `supervise_loop` with `wait_ms`, then `params: {speed: 15}` | `runs_on: "device"`; the robot follows the line; `overruns` 0; the bumper guard ends it with `guard`; `stop` ends it with `preempted` and both wheels at 0 | n/a | ☐ |
+| `kill -9` of the bridge mid-loop **[hw]** | during C4 on a free motor (`power`): `ssh robot@<host> "pkill -9 -f ev3dev_bridge.py"` | the guard brakes the motor; the robot is `offline`, then `online` by itself | n/a | ☐ |
+| `kill -STOP` of the bridge mid-loop **[hw]** | during C4: `ssh robot@<host> "pkill -STOP -f ev3dev_bridge.py"`, then `pkill -CONT` within 0.5 s | the motor brakes within 300 ms of the stop; after the `CONT` the loop ends with `overrun` and the motor stays braked | n/a | ☐ |
 | a loop's cable | pull USB during `run_loop` | the motors end within `hold_ms` (60 ms at 50 Hz); `list_robots` shows `offline` | ☐ | n/a |
 | brick off at start | start the server with the brick off, then turn it on | the server starts; the robot is `offline` with its hint, then `online` | n/a | ☐ |
 | an NXT sensor | plug an NXT light sensor (USB) or an NXT ultrasonic sensor (ev3dev); `describe_robot`, then `read_device` on its port | kind `light` (USB) or `ultrasonic` (ev3dev); the reading follows a hand in front of it | ☐ | ☐ |

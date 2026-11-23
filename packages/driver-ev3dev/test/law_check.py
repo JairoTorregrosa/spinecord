@@ -61,3 +61,4 @@ for case in golden["cases"]:
     stats[case["name"]] = bridge.stats_take(window, st)
 
 print(json.dumps({"cases": len(golden["cases"]), "ticks": ticks_run, "failures": failures, "stats": stats}))
+sys.exit(1 if failures else 0)

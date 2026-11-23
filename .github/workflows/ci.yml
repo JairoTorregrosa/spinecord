@@ -46,6 +46,21 @@ jobs:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bun run boundaries
+  # The ev3dev bridge runs on the brick's Python 3.5 (ev3dev stretch): it byte-compiles there, holds no newer
+  # construct, and its port of the loop law passes the golden vectors on 3.5 itself. In docker and not as a job
+  # container: actions/checkout needs a newer glibc than the 3.5 image has.
+  python35:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          docker run --rm -v "$PWD:/w" -w /w -e PYTHONDONTWRITEBYTECODE=1 python:3.5-slim sh -ec '
+          python --version;
+          python packages/driver-ev3dev/test/py35_check.py --self-test;
+          python packages/driver-ev3dev/test/py35_check.py packages/driver-ev3dev/bridge/ev3dev_bridge.py
+          packages/driver-ev3dev/test/law_check.py packages/driver-ev3dev/test/py35_check.py;
+          python packages/driver-ev3dev/test/law_check.py packages/driver-ev3dev/bridge/ev3dev_bridge.py
+          packages/protocol/loop-golden.json'
   secrets:
     runs-on: ubuntu-latest
     # on a pull request the action lists the commits to scan through the API

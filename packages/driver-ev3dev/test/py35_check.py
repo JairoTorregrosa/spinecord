@@ -139,6 +139,9 @@ def self_test():
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--self-test"]:
-        print(json.dumps(self_test(), sort_keys=True))
-    else:
-        print(json.dumps(check_files(sys.argv[1:])))
+        result = self_test()
+        print(json.dumps(result, sort_keys=True))
+        sys.exit(0 if all(result.values()) else 1)
+    result = check_files(sys.argv[1:])
+    print(json.dumps(result))
+    sys.exit(1 if result["problems"] else 0)

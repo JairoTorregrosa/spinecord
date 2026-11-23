@@ -3,7 +3,7 @@
 // runs on the brick's executor (the bridge), so these tests run on real time: 20 Hz, so that a loaded machine
 // cannot end a loop by overrun ahead of the test's own stop. POSIX sh and a local python3, like ev3dev.test.ts.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRobotFile } from "../../../packages/driver-ev3/robot-file";
@@ -39,10 +39,36 @@ const ARM_HOLD = {
   guards: [{ name: "out_of_range", signal: "angle", op: "abs_gt", value: 200 }],
 };
 
+/** C2 of docs/loops.md as printed there, but at 20 Hz. */
+const C2 = {
+  ...(JSON.parse(
+    [
+      ...readFileSync(join(import.meta.dir, "..", "..", "..", "docs", "loops.md"), "utf8").matchAll(
+        /```json\r?\n([\s\S]*?)```/g,
+      ),
+    ][1]![1]!,
+  ) as Record<string, unknown>),
+  rate_hz: 20,
+};
+
 describe("a loop on an ev3dev brick", () => {
   const home = mkdtempSync(join(tmpdir(), "spinecord-local-home-"));
+  // touch on 1 (sensor0) and color on 3 (sensor1), as the example robot names them
   const brick = runs
-    ? new FakeBrick({ motors: [{ port: "B" }, { port: "C" }], sensors: [], battery_uv: 7900000 })
+    ? new FakeBrick({
+        motors: [{ port: "B" }, { port: "C" }],
+        sensors: [
+          { port: 1, driver: "lego-ev3-touch", mode: "TOUCH", modes: ["TOUCH"], values: [0] },
+          {
+            port: 3,
+            driver: "lego-ev3-color",
+            mode: "COL-REFLECT",
+            modes: ["COL-REFLECT", "COL-AMBIENT", "COL-COLOR", "RGB-RAW"],
+            values: [35],
+          },
+        ],
+        battery_uv: 7900000,
+      })
     : null;
   let fleet: Fleet | null = null;
   const logs: Record<string, unknown>[] = [];
@@ -202,6 +228,38 @@ describe("a loop on an ev3dev brick", () => {
       expect(r.data.trace.out0.at(-1)).toBe(0);
       expect(brick!.motorLine(0, "command")).toBe("stop");
       brick!.setMotorInPlace(0, "position", 0);
+    },
+    60_000,
+  );
+
+  test.skipIf(!runs)(
+    "C2 on the brick: both wheels on run_time, steered by the color sensor; the bumper's guard ends it",
+    async () => {
+      await start();
+      const started = await call("run_loop", C2);
+      expect(started).toMatchObject({ ok: true, data: { state: "running", runs_on: "device", rate_hz: 20 } });
+      // on the edge: both wheels at the feed speed, refreshed as timed runs (60 ms of run-timed at 20 Hz: 150 ms)
+      expect(started.data.outputs.map((o: { device: string; last: number }) => [o.device, o.last])).toEqual([
+        ["ev3.B", 20],
+        ["ev3.C", 20],
+      ]);
+      expect([brick!.motorLine(0, "command"), brick!.motor(0, "time_sp")]).toEqual(["run-timed", "150"]);
+      // brighter than the edge: the left wheel speeds up, the right one slows down
+      brick!.setSensorInPlace(1, "value0", 55);
+      const brighter = await call("supervise_loop", { params: { speed: 15 }, wait_ms: 1000 });
+      expect(brighter.data.signals.light.last).toBe(55);
+      expect(brighter.data.outputs[0].last).toBeCloseTo(15 + 0.5 * 20, 1);
+      expect(brighter.data.outputs[1].last).toBeCloseTo(15 - 0.5 * 20, 1);
+      brick!.setSensorInPlace(0, "value0", 1);
+      let r: any = brighter;
+      for (let i = 0; i < 20 && r.data.state !== "ended"; i++) r = await call("supervise_loop", { wait_ms: 1000 });
+      expect(r).toMatchObject({
+        robot: { activity: "idle" },
+        data: { state: "ended", reason: "guard", guard: "bumper" },
+      });
+      expect([brick!.motorLine(0, "command"), brick!.motorLine(1, "command")]).toEqual(["stop", "stop"]);
+      brick!.setSensorInPlace(0, "value0", 0);
+      brick!.setSensorInPlace(1, "value0", 35);
     },
     60_000,
   );

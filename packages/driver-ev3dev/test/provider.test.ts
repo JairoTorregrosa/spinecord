@@ -188,8 +188,9 @@ describe("fake brick", () => {
   brickTest(
     "a bridge held off the processor between the two command writes of run_pair gives the second motor its whole time",
     () => {
-      // Seen on CI (issue #25): the bridge lost 300 ms between writing B's command and C's; B arrived meanwhile, and
-      // a time bound counted from before the writes judged C at its first look: right_deg 0, reason stalled.
+      // Issue #25, as CI saw it: the bridge loses 300 ms between writing B's command and C's, and B arrives meanwhile.
+      // A time bound counted from the start of the operation, ahead of the writes, judges C at its first look:
+      // right_deg 0, reason stalled. Counted from the writes, C gets its whole time.
       const brick = new FakeBrick({ motors: [{ port: "B" }, { port: "C" }], sensors: [] });
       open.push({ brick });
       const r = spawnSync(python!, [join(import.meta.dir, "stall_check.py"), BRIDGE_FILE, brick.root, "300"], {
