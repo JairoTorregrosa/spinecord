@@ -113,7 +113,7 @@ export class PageLink {
   unavailable: PageUnavailable[];
   private socket: PageSocket | null;
   private readonly down = new Map<string, string>(); // local device id → why it is down
-  private readonly values = new Map<string, { value: Scalar; ts: number }>(); // "<device>.<channel>"
+  private readonly values = new Map<string, { value: Scalar | null; ts: number }>(); // "<device>.<channel>"
   private readonly pending = new Map<number, Pending>();
   private readonly busyDevices = new Set<string>();
   private readonly frames = new Map<string, number[]>(); // local device id → when its latest frames were asked
@@ -240,8 +240,9 @@ export class PageLink {
         for (const [channel, value] of Object.entries(msg.values)) {
           const c = d.channels.find((x) => x.name === channel);
           if (!c || c.pushed !== true) return `state: ${msg.device}.${channel} is not a pushed channel`;
-          if (typeof value !== c.type || (typeof value === "number" && !Number.isFinite(value)))
-            return `state: ${msg.device}.${channel} must be a ${c.type}`;
+          // null is an answer only on a channel that may have nothing to report
+          if (value === null ? c.null_when_absent !== true : !fits(c, value))
+            return `state: ${msg.device}.${channel} must be a ${c.type}${c.null_when_absent ? " or null" : ""}`;
           this.values.set(`${msg.device}.${channel}`, { value, ts });
         }
         return null;
@@ -381,6 +382,7 @@ export class PageLink {
         if (stale) out.push({ ...base, value: null, ts: this.hub.now(), error: stale });
         else if (!v)
           out.push({ ...base, value: null, ts: this.hub.now(), error: "the page has not reported this channel yet" });
+        else if (v.value === null) out.push({ ...base, value: null, absent: true, ts: v.ts });
         else out.push({ ...base, value: v.value, ts: v.ts });
       }
     }
@@ -435,10 +437,13 @@ export class PageLink {
         };
       }
       const v = values[channel];
+      const spec = device.channels.find((x) => x.name === channel)!;
+      if (v === null && spec.null_when_absent === true) return { ...base, value: null, absent: true, ts };
       if (v === undefined || v === null)
         return { ...base, value: null, ts, error: "the page returned no value for this channel" };
-      if (!isValue(v)) return { ...base, value: null, ts, error: "the page returned a value of no known type" };
-      return { ...base, value: v, ts };
+      if (!fits(spec, v))
+        return { ...base, value: null, ts, error: `the page returned a value that is not a ${spec.type}` };
+      return { ...base, value: v as Value, ts };
     });
   }
 
@@ -534,12 +539,18 @@ export class PageLink {
   }
 }
 
-const isValue = (v: unknown): v is Value =>
-  typeof v === "string" ||
-  typeof v === "boolean" ||
-  (typeof v === "number" && Number.isFinite(v)) ||
-  (Array.isArray(v) &&
-    (v.every((x) => typeof x === "number" && Number.isFinite(x)) || v.every((x) => typeof x === "string")));
+/** A value of the channel's declared type: a finite number, a boolean, a string, or a vector of its length. */
+function fits(c: PageDevice["channels"][number], v: unknown): boolean {
+  if (c.type === "number") return typeof v === "number" && Number.isFinite(v);
+  if (c.type === "boolean" || c.type === "string") return typeof v === c.type;
+  if (c.type === "vector")
+    return (
+      Array.isArray(v) &&
+      (c.length === undefined || v.length === c.length) &&
+      (v.every((x) => typeof x === "number" && Number.isFinite(x)) || v.every((x) => typeof x === "string"))
+    );
+  return false;
+}
 
 function pageError(what: string, error: unknown): RuntimeError {
   const e = (typeof error === "object" && error !== null ? error : {}) as { code?: unknown; message?: unknown };

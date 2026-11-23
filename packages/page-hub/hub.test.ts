@@ -305,6 +305,46 @@ describe("PageHub", () => {
   });
 });
 
+describe("values the page answers", () => {
+  const beacon: PageDevice = {
+    id: "beacon",
+    kind: "beacon",
+    roles: [],
+    description: "Something that may be out of view.",
+    channels: [
+      { name: "seen", type: "number", pushed: true, null_when_absent: true, description: "Distance, null when none." },
+      { name: "far", type: "number", null_when_absent: true, description: "Read on request, null when none." },
+      { name: "level", type: "number", description: "A number read on request." },
+    ],
+    commands: [],
+  };
+  const make = () => {
+    const sent: ServerToPage[] = [];
+    const hub = new PageHub({ limits: { read_ms: 40 } });
+    const link = hub.join("desk", { send: (m) => void sent.push(m) }, [beacon], []);
+    link.setState("active", null);
+    return { hub, link, last: () => sent.at(-1) as Extract<ServerToPage, { t: "req" }> };
+  };
+  test("null on a null_when_absent channel is an answer (absent: true), pushed or requested", async () => {
+    const r = make();
+    expect(r.link.receive({ t: "state", device: "beacon", values: { seen: null } })).toBeNull();
+    expect((await r.hub.read("desk.beacon", ["seen"]))[0]).toMatchObject({ value: null, absent: true });
+    const read = r.hub.read("desk.beacon", ["far"]);
+    r.link.receive({ t: "res", id: r.last().id, ok: true, readings: { far: null } });
+    expect((await read)[0]).toMatchObject({ value: null, absent: true });
+    expect((await read)[0]!.error).toBeUndefined();
+  });
+  test("a requested value of the wrong type is a failed read; a pushed one breaks the protocol", async () => {
+    const r = make();
+    const read = r.hub.read("desk.beacon", ["level"]);
+    r.link.receive({ t: "res", id: r.last().id, ok: true, readings: { level: "high" } });
+    expect((await read)[0]).toMatchObject({ value: null, error: "the page returned a value that is not a number" });
+    expect(r.link.receive({ t: "state", device: "beacon", values: { seen: "near" } })).toContain(
+      "must be a number or null",
+    );
+  });
+});
+
 describe("imageSize", () => {
   test("reads a JPEG frame header and a PNG IHDR", () => {
     expect(imageSize(jpeg(320, 240), "image/jpeg")).toEqual({ width: 320, height: 240 });

@@ -260,7 +260,7 @@ export type PageToServer =
       image?: { channel: string; mime: ImagePayload["mime"]; bytes: number; age_ms: number };
     }
   | { t: "res"; id: number; ok: false; error: { code: ErrorCode; message: string } }
-  | { t: "state"; device: string; values: Record<string, Scalar>; ts?: number }
+  | { t: "state"; device: string; values: Record<string, Scalar | null>; ts?: number }
   | { t: "pong"; n: number; visible?: boolean }
   | { t: "down"; device: string; why: string }
   | { t: "up"; device: string }
