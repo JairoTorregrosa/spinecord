@@ -4,6 +4,9 @@
 // an audio worklet; a microphone with neither is not lent.
 import type { CommandSpec, Value } from "../../../../packages/protocol/types";
 import {
+  denied,
+  LEND_AGAIN,
+  permissionGone,
   refusal,
   type AudioContextLike,
   type AudioNodeLike,
@@ -130,7 +133,10 @@ export interface Microphone {
   stream(): StreamLike | null;
   /** Starts the level meter; resolves false where the page has no audio worklet. */
   meter(): Promise<boolean>;
-  /** The page is visible again: a track the browser ended while it was hidden is asked for again. */
+  /**
+   * The page is visible again: a track the browser ended while it was hidden is asked for again, never with a
+   * prompt. A permission the browser took back takes the microphone out of the manifest, with why, into unavailable.
+   */
   reacquire(): Promise<void>;
   close(): void;
 }
@@ -252,7 +258,7 @@ export function microphone(o: MicrophoneOptions): Microphone {
   kit.device(def);
   kit.push("mic", { listening: false, last_transcript: "", last_match: "", heard_count: 0 });
 
-  return {
+  const mic: Microphone = {
     def,
     stream: () => stream,
     async meter() {
@@ -276,6 +282,13 @@ export function microphone(o: MicrophoneOptions): Microphone {
       const t = track();
       const md = o.win.navigator.mediaDevices;
       if (!t || t.readyState !== "ended" || !md?.getUserMedia) return;
+      const revoke = (why: string) => {
+        if (stream === null) return;
+        mic.close();
+        kit.withdraw("mic", `the page could not get the microphone back: ${why}; ${LEND_AGAIN}`);
+      };
+      const gone = await permissionGone(o.win, "microphone");
+      if (gone) return revoke(gone);
       try {
         const next = await md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
         if (stream === null) return void next.getTracks().forEach((x) => x.stop()); // the person stopped lending meanwhile
@@ -285,6 +298,7 @@ export function microphone(o: MicrophoneOptions): Microphone {
         connect();
         kit.up("mic");
       } catch (e) {
+        if (denied(e)) return revoke(refusal(e, "microphone"));
         kit.down("mic", `the page could not get the microphone back: ${refusal(e, "microphone")}`);
       }
     },
@@ -297,4 +311,5 @@ export function microphone(o: MicrophoneOptions): Microphone {
       stream = null;
     },
   };
+  return mic;
 }

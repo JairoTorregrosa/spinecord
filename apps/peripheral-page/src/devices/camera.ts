@@ -2,7 +2,16 @@
 // its size and quality. The frame comes from the track itself (ImageCapture.grabFrame), so its age is the time
 // since that grab and never the age of a picture a hidden tab stopped painting.
 import type { CommandSpec, Value } from "../../../../packages/protocol/types";
-import { refusal, type BitmapLike, type StreamLike, type TrackLike, type Win } from "../browser";
+import {
+  denied,
+  LEND_AGAIN,
+  permissionGone,
+  refusal,
+  type BitmapLike,
+  type StreamLike,
+  type TrackLike,
+  type Win,
+} from "../browser";
 import { PageError, type DeviceDef, type Frame, type Kit } from "../kit";
 
 export const CAMERA_DEFAULTS = { max_side_px: 640, quality: 0.7 };
@@ -31,7 +40,10 @@ export interface Camera {
   track(): TrackLike | null;
   /** Called after the track changes: a configure, a re-acquire, stop lending. */
   onTrack(cb: () => void): void;
-  /** The page is visible again: a track the browser ended while it was hidden is asked for again. */
+  /**
+   * The page is visible again: a track the browser ended while it was hidden is asked for again, never with a
+   * prompt. A permission the browser took back takes the camera out of the manifest, with why, into unavailable.
+   */
   reacquire(): Promise<void>;
   /** Closes the stream: the browser's camera indicator goes off. */
   close(): void;
@@ -176,6 +188,13 @@ export function camera(o: CameraOptions): Camera {
       const md = win.navigator.mediaDevices;
       if (!t || t.readyState !== "ended" || !md?.getUserMedia) return;
       const want = lastFacing;
+      const revoke = (why: string) => {
+        if (stream === null) return;
+        swap(null);
+        kit.withdraw("camera", `the page could not get the camera back: ${why}; ${LEND_AGAIN}`);
+      };
+      const gone = await permissionGone(win, "camera");
+      if (gone) return revoke(gone);
       try {
         const next = await md.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, ...(want ? { facingMode: want } : {}) },
@@ -184,6 +203,7 @@ export function camera(o: CameraOptions): Camera {
         swap(next);
         kit.up("camera");
       } catch (e) {
+        if (denied(e)) return revoke(refusal(e, "camera"));
         kit.down("camera", `the page could not get the camera back: ${refusal(e, "camera")}`);
       }
     },

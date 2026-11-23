@@ -424,9 +424,33 @@ describe("pages", () => {
     expect(() =>
       loadConfig([
         "--config",
-        file("pb.json", { pages: { ext: "x" }, robots: [{ source: "ev3", robot: EXAMPLE.robot }] }),
+        file("pb.json", { pages: { extensions: "x" }, robots: [{ source: "ev3", robot: EXAMPLE.robot }] }),
       ]),
     ).toThrow('pages must be {"port"?: n, "lan"?');
+  });
+  test("--page-ext and pages.ext: an absolute folder that is there, relative to the repository or to the file", () => {
+    const ext = join(REPO, "deployments", "example", "page-ext");
+    expect(loadConfig(["--pages", "--page-ext", "deployments/example/page-ext"]).pages).toEqual({
+      port: DEFAULT_PAGE_PORT,
+      ext,
+    });
+    expect(() => loadConfig(["--twin", "--page-ext", ext])).toThrow("--page-ext needs --pages");
+    expect(() => loadConfig(["--pages", "--page-ext", join(tmp, "nowhere")])).toThrow(
+      `--page-ext: cannot read the folder ${join(tmp, "nowhere")}`,
+    );
+    expect(() => loadConfig(["--pages", "--page-ext", EXAMPLE.pages])).toThrow("is not a folder");
+    mkdirSync(join(tmp, "ext"), { recursive: true });
+    const c = loadConfig([
+      "--config",
+      file("pe.json", { pages: { ext: "ext" }, robots: [{ source: "ev3", robot: EXAMPLE.robot }] }),
+    ]);
+    expect(c.pages).toEqual({ port: DEFAULT_PAGE_PORT, ext: join(tmp, "ext") });
+    expect(() =>
+      loadConfig([
+        "--config",
+        file("pf.json", { pages: { ext: 3 }, robots: [{ source: "ev3", robot: EXAMPLE.robot }] }),
+      ]),
+    ).toThrow("pages.ext must be a path");
   });
   test("a robot file of source pages is {profile} alone: hardware, pair and drivetrain are refused", () => {
     const where = "test";

@@ -98,8 +98,12 @@ button.ghost {
   background: var(--live);
   color: var(--live-ink);
 }
-.banner.paused {
+.banner.paused,
+.banner.reconnecting {
   background: #6b6f74;
+}
+.banner.reconnecting .dot {
+  animation: pulse 0.9s ease-in-out infinite;
 }
 .banner .dot {
   width: 14px;
@@ -388,4 +392,14 @@ body.face-mode .banner {
   max-width: 20rem;
   border-radius: 12px;
   background: #000;
+}
+
+/* ---------- a pad an extension adds (deployments/example/page-ext/door.js) ---------- */
+.sc-pad {
+  min-height: 40vh;
+  margin: 1rem;
+  border-radius: 14px;
+  background: var(--pad);
+  border: 2px dashed var(--line);
+  touch-action: none;
 }

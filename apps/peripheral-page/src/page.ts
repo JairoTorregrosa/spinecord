@@ -2,7 +2,9 @@
 // the tap unlocks (camera, microphone, speaker, imu, vibrator, torch), the wake lock, and `spinecord`, the
 // extension API (docs/peripheral-pages.md). main.ts draws it; a test drives it with a fake browser (test/fakes.ts).
 // Hidden and visible again: a hidden page's imu is down; a visible one takes the wake lock again and asks again
-// for a camera or microphone track the browser ended meanwhile.
+// for a camera or microphone track the browser ended meanwhile. A page whose socket closed (a phone locks it, or
+// puts the browser in the background) joins again by itself; each try waits for that taking back while the page is
+// visible, so the hello it sends lends what the page has again.
 import type { Scalar } from "../../../packages/protocol/types";
 import { unlock, type BitmapLike, type StreamLike, type Win } from "./browser";
 import { camera, type Camera } from "./devices/camera";
@@ -65,6 +67,11 @@ export function createPage(o: PageOptions): Page {
   const kit = createKit({
     ...o,
     now,
+    beforeRejoin: async () => {
+      if (!o.visible()) return;
+      wake.acquire();
+      await Promise.all([cam?.reacquire(), mic?.reacquire()]);
+    },
     onStatus: (s) => {
       if (s.state === "closed") wake.release();
       o.onStatus?.(s);
@@ -129,10 +136,12 @@ export function createPage(o: PageOptions): Page {
     },
     visibilityChanged() {
       const state = kit.status().state;
-      if (state !== "lending" && state !== "paused") return;
+      if (state !== "lending" && state !== "paused" && state !== "reconnecting") return;
       const visible = o.visible();
       motion?.visible(visible);
       if (!visible) return;
+      // the try takes the wake lock and the media back before its hello
+      if (state === "reconnecting") return kit.reconnectNow();
       wake.acquire();
       void cam?.reacquire();
       void mic?.reacquire();

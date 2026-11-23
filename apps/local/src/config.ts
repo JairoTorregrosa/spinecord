@@ -74,11 +74,14 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
       --lan-host <name>          the name that certificate is for, when it does not name the address itself
     --page-origin <https url>    the origin of a tunnel you run yourself (cloudflared, pinggy): pages join through
                                  it at a listener on 127.0.0.1, port --page-port + 2
+    --page-ext <folder>          serve the .js files of this folder next to the page, which loads each after its
+                                 kit: devices of your own (deployments/example/page-ext)
   --log-file <path>              also append every JSON log line of stderr to this file; its folder is
                                  created, and a file that cannot be opened ends the start
   --config <file.json>           the robots and the port as a file, for more than one robot of a kind:
                                  {"port"?: n, "pages"?: {"port"?: n, "lan"?: true | {"interface"?: s,
-                                   "cert"?: path, "key"?: path, "host"?: s}, "origin"?: url}, "robots": [
+                                   "cert"?: path, "key"?: path, "host"?: s}, "origin"?: url, "ext"?: path},
+                                   "robots": [
                                    {"source": "twin", "robot": path, "world": path, "seed"?: n, "id"?: s},
                                    {"source": "ev3", "robot": path, "id"?: s},
                                    {"source": "ev3dev", "robot": path, "id"?: s, "install_bridge"?: bool,
@@ -126,6 +129,8 @@ export interface PagesConfig {
   lan?: LanConfig;
   /** `--page-origin`: the origin of the person's tunnel. Absent when off. */
   origin?: string;
+  /** `--page-ext`: the absolute folder whose `.js` files the page loads after its kit. Absent when off. */
+  ext?: string;
 }
 
 const ROBOT_ID = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -229,6 +234,17 @@ function robotFile(where: string, path: string): { file: RobotFile; raw: unknown
   return { file: parseRobotFile(raw, `${where} ${path}`), raw };
 }
 /** A private key ssh is told to use. Checked here: ssh itself goes on with its default keys when the file is missing. */
+/** `--page-ext`: a folder that is there. Its files are listed at each request, so an edit shows on a reload. */
+function extFolder(where: string, path: string): string {
+  let dir: boolean;
+  try {
+    dir = statSync(path).isDirectory();
+  } catch (e) {
+    throw new Error(`${where}: cannot read the folder ${path}: ${(e as Error).message}`, { cause: e });
+  }
+  if (!dir) throw new Error(`${where}: ${path} is not a folder`);
+  return path;
+}
 function keyFile(where: string, path: string): string {
   try {
     if (!statSync(path).isFile()) throw new Error("not a file");
@@ -277,8 +293,8 @@ function fromFile(file: string): LocalConfig {
   if (unknown.length) throw new Error(`${where}: unknown field ${unknown.join(", ")}; allowed: port, pages, robots`);
   let pages: PagesConfig | null = null;
   if (json.pages !== undefined) {
-    const shape = '{"port"?: n, "lan"?: true | {"interface"?, "cert"?, "key"?, "host"?}, "origin"?: url}';
-    if (!isObj(json.pages) || Object.keys(json.pages).some((k) => !["port", "lan", "origin"].includes(k)))
+    const shape = '{"port"?: n, "lan"?: true | {"interface"?, "cert"?, "key"?, "host"?}, "origin"?: url, "ext"?: path}';
+    if (!isObj(json.pages) || Object.keys(json.pages).some((k) => !["port", "lan", "origin", "ext"].includes(k)))
       throw new Error(`${where}: pages must be ${shape}`);
     const jp = json.pages;
     pages = {
@@ -315,6 +331,10 @@ function fromFile(file: string): LocalConfig {
     if (jp.origin !== undefined) {
       if (typeof jp.origin !== "string") throw new Error(`${where}: pages.origin must be a string`);
       pages.origin = parseOrigin(`${where}: pages.origin`, jp.origin);
+    }
+    if (jp.ext !== undefined) {
+      if (typeof jp.ext !== "string" || jp.ext === "") throw new Error(`${where}: pages.ext must be a path`);
+      pages.ext = extFolder(`${where}: pages.ext`, pathFrom(dirname(file), jp.ext));
     }
   }
   if (!Array.isArray(json.robots) || json.robots.length === 0)
@@ -431,6 +451,7 @@ export function loadConfig(argv: string[]): LocalConfig {
       "lan-key": { type: "string" },
       "lan-host": { type: "string" },
       "page-origin": { type: "string" },
+      "page-ext": { type: "string" },
     },
   });
   if (values.help) throw new HelpAsked();
@@ -458,6 +479,7 @@ export function loadConfig(argv: string[]): LocalConfig {
     if (values["page-port"] !== undefined) needs("page-port", "pages", values.pages !== undefined);
     if (values.lan !== undefined) needs("lan", "pages", values.pages !== undefined);
     if (values["page-origin"] !== undefined) needs("page-origin", "pages", values.pages !== undefined);
+    if (values["page-ext"] !== undefined) needs("page-ext", "pages", values.pages !== undefined);
     for (const flag of ["lan-interface", "lan-cert", "lan-key", "lan-host"] as const)
       if (values[flag] !== undefined) needs(flag, "lan", values.lan === true);
     if ((values["lan-cert"] === undefined) !== (values["lan-key"] === undefined))
@@ -541,6 +563,9 @@ export function loadConfig(argv: string[]): LocalConfig {
                 : {}),
               ...(values["page-origin"] !== undefined
                 ? { origin: parseOrigin("--page-origin", values["page-origin"]) }
+                : {}),
+              ...(values["page-ext"] !== undefined
+                ? { ext: extFolder("--page-ext", fromRepo(values["page-ext"])) }
                 : {}),
             },
     };

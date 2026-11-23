@@ -234,6 +234,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         times: o.pageTimes,
         ...(lan ? { lan } : {}),
         ...(config.pages.origin ? { origin: config.pages.origin } : {}),
+        ...(config.pages.ext ? { ext: config.pages.ext } : {}),
         // the runtime scans again when a hub announces a change; a robot offline has no registry to wait for
         scanned: async (id) => void (await byId.get(id)?.runtime()?.ready()),
       })

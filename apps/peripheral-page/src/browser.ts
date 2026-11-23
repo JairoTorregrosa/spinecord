@@ -126,6 +126,8 @@ export interface Win {
       enumerateDevices?(): Promise<{ kind: string }[]>;
     };
     wakeLock?: { request(type: "screen"): Promise<WakeLockSentinelLike> };
+    /** What the browser grants, asked without a prompt. */
+    permissions?: { query(d: { name: string }): Promise<{ state: string }> };
     vibrate?(pattern: number | number[]): boolean;
   };
   matchMedia?(query: string): { matches: boolean };
@@ -164,6 +166,32 @@ export function refusal(e: unknown, what: "camera" | "microphone"): string {
   if (name === "NotReadableError" || name === "AbortError") return `another program holds the ${what}`;
   return `the browser refused it (${e instanceof Error ? e.message : String(e)})`.slice(0, 200);
 }
+
+/** A getUserMedia refusal that means the permission is gone, not that the device is busy or missing. */
+export function denied(e: unknown): boolean {
+  const name = e && typeof e === "object" && "name" in e ? String((e as { name: unknown }).name) : "";
+  return name === "NotAllowedError" || name === "SecurityError";
+}
+
+/**
+ * Why the page may not ask for the camera or the microphone again outside the person's tap: the browser took the
+ * permission back ("denied") or would ask the person again ("prompt"). null when it says granted, or cannot say (no
+ * Permissions API, or one that does not know the name): the page then asks, and a refusal is said the same way.
+ */
+export async function permissionGone(win: Win, what: "camera" | "microphone"): Promise<string | null> {
+  let state: string | undefined;
+  try {
+    state = (await win.navigator.permissions?.query({ name: what }))?.state;
+  } catch {
+    return null;
+  }
+  if (state === "denied") return `the browser took back the permission for the ${what}`;
+  if (state === "prompt")
+    return `the browser would ask the person for the ${what} again, and the page asks only in the tap`;
+  return null;
+}
+/** The end of the reason a device left the manifest for: what the person does to lend it again. */
+export const LEND_AGAIN = "reload the page and tap Lend this device to lend it again";
 
 /** The voices the browser lists; some browsers fill the list only after `voiceschanged`. */
 export function voices(synth: SynthLike, waitMs = 1500): Promise<VoiceLike[]> {
