@@ -294,3 +294,143 @@ export interface Runtime {
   ): Promise<RuntimeResult>;
   stop(): Promise<{ motors_stopped: boolean }>;
 }
+
+// ---------- Loops (§5a) ----------
+// A loop is a control law given as data. validate.ts owns its validation, loop.ts owns the law.
+/** A number, or the name of a param of the loop. */
+export type LoopNumber = number | string;
+/** The part of a signal a term or a guard looks at. */
+export type SignalPart = "value" | "integral" | "derivative";
+export interface LoopSignal {
+  device: string; // device id or role
+  channel: string;
+  index?: number; // the component of a numeric vector channel
+  zero?: "start" | { mean_ms: number };
+  detrend_s?: number;
+  smooth_ms?: number;
+}
+export type Term =
+  // feedback on one part of one signal; `of` defaults to "value", `setpoint` to 0
+  | { signal: string; of?: SignalPart; setpoint?: LoopNumber; gain: LoopNumber; clamp?: number }
+  // feedforward: gain × `feed`; `gain` defaults to 1
+  | { feed: LoopNumber; gain?: LoopNumber };
+export interface LoopOutput {
+  device: string;
+  command: string;
+  args?: Record<string, Value>; // the command's other arguments, the same on every refresh
+  terms: Term[];
+  limit?: [number, number];
+}
+export type GuardOp = "gt" | "lt" | "abs_gt";
+export interface Guard {
+  name: string;
+  signal: string;
+  of?: SignalPart; // default "value"
+  op: GuardOp;
+  value: number;
+  for_ms?: number;
+}
+export interface LoopSpec {
+  rate_hz: number;
+  duration_ms: number;
+  attention_ms?: number; // default 15000
+  signals: Record<string, LoopSignal>;
+  params?: Record<string, number>;
+  outputs: LoopOutput[];
+  guards?: Guard[];
+  trace_hz?: number; // default 10, at most 20
+}
+export type LoopEndReason =
+  | "completed"
+  | "guard"
+  | "preempted"
+  | "unattended"
+  | "overrun"
+  | "input_lost"
+  | "not_still"
+  | "timeout";
+export interface LoopEnd {
+  reason: LoopEndReason;
+  guard?: string; // the guard's name, with reason "guard"
+}
+/** What makes a command a loop output: the numeric argument a loop refreshes, and how long one refresh may last. */
+export interface LoopDrives {
+  arg: string;
+  max_hold_ms: number;
+}
+/**
+ * A loop checked against the robot and ready to run: every default filled in, each output with the argument it
+ * drives, its hold time and its bounds. Devices are named by their ids, whatever the spec called them.
+ * It is plain JSON (finite numbers, arrays in a stated order), so an executor on a device takes it as it is.
+ */
+export interface LoopPlan {
+  rate_hz: number;
+  period_ms: number; // 1000 / rate_hz
+  duration_ms: number; // after the cut to the robot's limit
+  attention_ms: number;
+  trace_hz: number;
+  /** In the order of the spec's `signals`: the order of a tick's inputs. */
+  signals: {
+    name: string;
+    device: string;
+    channel: string;
+    index?: number;
+    zero: "none" | "start" | "mean";
+    mean_ms: number; // 0 unless zero is "mean"
+    noise: number; // the channel's declared noise, 0 for an exact channel
+    detrend_s: number; // 0 = no detrend
+    smooth_ms: number; // 0 = no smoothing
+  }[];
+  params: Record<string, number>;
+  /** In the order of the spec's `outputs`. */
+  outputs: {
+    device: string;
+    command: string;
+    arg: string; // the argument a tick refreshes
+    args: Record<string, Value>;
+    hold_ms: number; // how long the device lets one refresh last
+    min: number; // the output's bounds: `limit` cut to the range of `arg`
+    max: number;
+    terms: Term[];
+  }[];
+  guards: Guard[];
+  /** What planning cut, as for a command (§0.2). */
+  clamps: Clamp[];
+  notes: string[];
+}
+export interface LoopReport {
+  state: "running" | "ended";
+  reason?: LoopEndReason;
+  guard?: string;
+  runs_on: "host" | "device";
+  rate_hz: number;
+  age_ms: number;
+  remaining_ms: number;
+  ticks: number;
+  overruns: number;
+  period_ms: { p50: number; p95: number; max: number };
+  signals: Record<string, LoopSignalStats>;
+  outputs: LoopOutputStats[];
+  params: Record<string, number>;
+  trace: LoopTrace;
+  notes?: string[];
+}
+export interface LoopSignalStats {
+  last: number;
+  min: number;
+  max: number;
+  mean: number;
+  integral: number;
+  derivative: number;
+}
+export interface LoopOutputStats {
+  device: string;
+  command: string;
+  last: number;
+  min: number;
+  max: number;
+  mean_abs: number;
+  saturated_pct: number;
+}
+/** `t_ms`, one array per signal name, and `out<i>` per output; all of the same length, at most 200. */
+export type LoopTrace = { t_ms: number[] } & Record<string, number[]>;
