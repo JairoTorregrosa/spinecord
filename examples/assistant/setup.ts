@@ -277,6 +277,17 @@ export function activeProfile(
   }
 }
 
+/** The tokenSource and apiKeySource values of accountInfo() that paidBy names. */
+const KNOWN_SOURCES = [
+  "none",
+  "claude.ai",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "/login managed key",
+  "apiKeyHelper",
+];
+
 /** What the SDK's accountInfo() says about the login in use (the fields this example reads; none is a secret). */
 export type Account = { apiKeySource?: string; tokenSource?: string; subscriptionType?: string; apiProvider?: string };
 
@@ -303,6 +314,13 @@ export function paidBy(account: Account, env: Env, active: string | null): strin
   const cloud = CLOUD_SWITCHES.find((name) => isOn(env, name));
   if (cloud) throw refuse(`${cloud} is on, but Claude Code uses Anthropic's API.`);
 
+  // every credential source this program can name; another one would get a wrong label, so it stops the start
+  const unknown = [account.tokenSource, account.apiKeySource].find(
+    (source) => source !== undefined && !KNOWN_SOURCES.includes(source),
+  );
+  if (unknown !== undefined)
+    throw refuse(`Claude Code pays with "${unknown}", a credential this program does not know.`);
+
   // 2. no credential at all
   if (account.tokenSource === "none" && account.apiKeySource === undefined)
     throw refuse(
@@ -311,7 +329,13 @@ export function paidBy(account: Account, env: Env, active: string | null): strin
         : "Claude Code has no login on this computer.",
     );
 
-  // 3. a Claude plan: a subscription token, or this computer's claude.ai login
+  // 3. the apiKeyHelper command of Claude Code's settings, which comes before a token and a profile
+  if (account.tokenSource === "apiKeyHelper" || account.apiKeySource === "apiKeyHelper") {
+    if (profile !== null) throw skipped("the apiKeyHelper command of Claude Code's settings");
+    return "paid by: the apiKeyHelper command of Claude Code's settings";
+  }
+
+  // 4. a Claude plan: a subscription token, or this computer's claude.ai login
   if (account.tokenSource === "CLAUDE_CODE_OAUTH_TOKEN") {
     if (profile !== null) throw skipped("a Claude subscription token");
     return "paid by: Claude subscription token";
@@ -323,7 +347,7 @@ export function paidBy(account: Account, env: Env, active: string | null): strin
     return `paid by: this computer's Claude Code login (${account.subscriptionType} plan)`;
   }
 
-  // 4. Console billing
+  // 5. Console billing
   if (account.apiKeySource === "ANTHROPIC_API_KEY") return "paid by: API key";
   if (isSet(env, "ANTHROPIC_API_KEY")) throw refuse("ANTHROPIC_API_KEY is set, but Claude Code does not use it.");
   if (account.tokenSource === "ANTHROPIC_AUTH_TOKEN") return "paid by: the bearer token in ANTHROPIC_AUTH_TOKEN";
@@ -333,6 +357,8 @@ export function paidBy(account: Account, env: Env, active: string | null): strin
     return "paid by: a Console API key saved by this computer's Claude Code (/login)";
   }
   if (profile !== null) return `paid by: Console login, ant profile ${profile}`;
+  if (isSet(env, "ANTHROPIC_FEDERATION_RULE_ID") && isSet(env, "ANTHROPIC_ORGANIZATION_ID"))
+    return "paid by: workload identity federation";
   if (active !== null) return `paid by: Console login, ant profile ${active} (active profile)`;
   return "paid by: a Console credential this program cannot name";
 }

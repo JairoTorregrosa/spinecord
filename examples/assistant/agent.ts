@@ -65,7 +65,7 @@ export const BUILT_IN_TOOLS = [
 export function instructions(mission: Mission): string {
   return `You are a personal robot assistant. Your owner wrote the notes below in their own words. They say who you are, who you help, what your mission is and the rules you never break. Follow them, and answer in the language they are written in.
 
-You act in the world only through the robot tools of the "${SERVER}" server; its instructions say how to use them. Start with list_robots and describe_robot to learn what your robot has. The moment something looks wrong, or you are not sure, call stop and say why.
+You act in the world only through the robot tools of the "${SERVER}" server; its instructions say how to use them. Start with list_robots and describe_robot to learn what your robot has. The moment something looks wrong, or you are not sure, call stop and say why. Move in small steps and read the sensors between them.
 
 Two kinds of message reach you:
 - A person writes to you. Answer, and act when they ask.
@@ -115,6 +115,7 @@ export function buildOptions(mission: Mission, settings: Settings): Options {
     settingSources: [], // ignore the Claude Code settings, memory and skills of this computer
     persistSession: false, // the conversation lives in memory while the program runs, not on disk
     verbatimPrompts: true, // every message goes to Claude as written: an @file mention is not replaced by the file
+    // it also holds back spinecord's server instructions until Claude's first tool call; the prompt above says start with list_robots
 
     maxTurns: MAX_STEPS_PER_TURN, // bound of one turn
     maxBudgetUsd: settings.maxUsd, // the SDK's bound, counted since its last reset; the loop's own sum below holds for the whole session

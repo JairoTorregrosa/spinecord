@@ -449,6 +449,38 @@ describe("who pays", () => {
     expect(paidBy(CONSOLE, {}, null)).toBe("paid by: a Console credential this program cannot name");
   });
 
+  test("the apiKeyHelper of Claude Code's settings is named, and a profile under it stops the start", () => {
+    expect(paidBy({ apiKeySource: "apiKeyHelper", apiProvider: "firstParty" }, {}, "work")).toBe(
+      "paid by: the apiKeyHelper command of Claude Code's settings",
+    );
+    expect(paidBy({ tokenSource: "apiKeyHelper" }, {}, null)).toBe(
+      "paid by: the apiKeyHelper command of Claude Code's settings",
+    );
+    expect(() => paidBy({ apiKeySource: "apiKeyHelper" }, { ANTHROPIC_PROFILE: "work" }, null)).toThrow(
+      "skipped that profile and uses the apiKeyHelper command",
+    );
+  });
+
+  test("a credential source this program does not know stops the start, by name, before any profile label", () => {
+    for (const source of ["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CCR_OAUTH_TOKEN_FILE"]) {
+      expect(() => paidBy({ tokenSource: source, apiProvider: "firstParty" }, {}, "work")).toThrow(
+        `Claude Code pays with "${source}", a credential this program does not know`,
+      );
+      expect(() => paidBy({ apiKeySource: source }, { ANTHROPIC_PROFILE: "work" }, null)).toThrow(source);
+    }
+  });
+
+  test("workload identity federation is named when both of its variables are set and no profile is", () => {
+    const federation = { ANTHROPIC_FEDERATION_RULE_ID: "rule", ANTHROPIC_ORGANIZATION_ID: "org" };
+    expect(paidBy(CONSOLE, federation, "work")).toBe("paid by: workload identity federation");
+    expect(paidBy(CONSOLE, { ANTHROPIC_FEDERATION_RULE_ID: "rule" }, "work")).toBe(
+      "paid by: Console login, ant profile work (active profile)",
+    );
+    expect(paidBy(CONSOLE, { ...federation, ANTHROPIC_PROFILE: "work" }, null)).toBe(
+      "paid by: Console login, ant profile work",
+    );
+  });
+
   test("no line carries a secret", () => {
     const env = { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-secret" };
     expect(paidBy(TOKEN, env, null)).not.toContain("secret");
