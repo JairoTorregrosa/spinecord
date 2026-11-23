@@ -1749,13 +1749,16 @@ export class Ev3Provider implements Provider {
       const i = outputIndex(r.channel === "left_deg" ? pair.left : pair.right);
       return { size: 4, bc: (b) => outputGetCount(i, b), value: (g) => readI32(g, 0) };
     }
-    if (spec.kind === "battery" && r.channel === "voltage_v") {
+    if (spec.kind === "battery" && (r.channel === "voltage_v" || r.channel === "low")) {
+      // the decoding of read(): low is 1 under low_battery_v
+      const low = r.channel === "low";
       return {
         size: 4,
         bc: uiBatteryVolts,
         value: (g) => {
           const v = readF32(g, 0);
-          return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
+          if (!Number.isFinite(v)) return null;
+          return low ? (v < this.o.hw.low_battery_v ? 1 : 0) : Math.round(v * 100) / 100;
         },
       };
     }

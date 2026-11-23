@@ -188,6 +188,37 @@ describe("Ev3Provider.loop: one packet per tick", () => {
     await loop.end([]);
   });
 
+  test("the battery's voltage_v and low read in a tick as read() decodes them", async () => {
+    const { fake, ev3, loop } = rig();
+    await ev3.devices();
+    const reads = [
+      { device: "ev3.battery", channel: "voltage_v" },
+      { device: "ev3.battery", channel: "low" },
+    ];
+    fake.batteryV = 7.9;
+    expect(await loop.tick([], reads, 60)).toEqual([7.9, 0]);
+    fake.batteryV = 6.2;
+    expect(await loop.tick([], reads, 60)).toEqual([6.2, 1]);
+    expect((await ev3.read("ev3.battery", ["low"]))[0]!.value).toBe(true);
+  });
+
+  test("a tick still planning its reads when loop.end and stop() race it sends no refresh after them", async () => {
+    const { fake, ev3, loop } = rig();
+    await ev3.devices();
+    await loop.tick([wheel(30)], [encoder], 60);
+    const sent0 = fake.sent.length;
+    const late = loop.tick(
+      [wheel(50)],
+      Array.from({ length: 8 }, () => encoder),
+      60,
+    );
+    const [, stopped] = await Promise.all([loop.end(["ev3.B"]), ev3.stop()]);
+    await late.catch(() => {});
+    expect(stopped).toEqual({ motors_stopped: true });
+    expect(fake.busy()).toBe(false);
+    expect(fake.sent.slice(sent0).filter((p) => p.opcodes.includes(E.OP.OUTPUT_TIME_SPEED))).toHaveLength(0);
+  });
+
   test("a sensor in another mode than planned reads no value, and the scan learns of it", async () => {
     const { fake, ev3, loop } = rig();
     await ev3.devices();
