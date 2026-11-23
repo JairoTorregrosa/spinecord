@@ -574,11 +574,12 @@ export class LocalRobot {
     const params = (args.params ?? {}) as Record<string, number>;
     const ramp = typeof args.ramp_ms === "number" ? args.ramp_ms : 0;
     const wait = typeof args.wait_ms === "number" ? args.wait_ms : 0;
-    if (Object.keys(params).length && l.loop.running) await l.loop.set(params, ramp);
+    // supervision is pending from here: a set that crosses a link to the device runs with the window disarmed
     l.pending++;
     l.attention?.abort();
     l.attention = null;
     try {
+      if (Object.keys(params).length && l.loop.running) await l.loop.set(params, ramp);
       if (wait > 0 && l.loop.running) {
         const done = new AbortController();
         const first = await Promise.race([
