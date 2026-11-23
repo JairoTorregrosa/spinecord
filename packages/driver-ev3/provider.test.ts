@@ -690,6 +690,13 @@ describe("sensors from discovery (G7, G8, G9)", () => {
     // one value of a generic vector is a loop input, read in the tick's packet
     expect(await hostTick(ev3, [{ device: "ev3.S2", channel: "values", index: 4 }], 60)).toEqual([40]);
     expect(await code(ev3.command("ev3.S2", "set_mode", { mode: "ES-NOPE" }, never()))).toBe("invalid_argument");
+    // a mode switched behind the provider's back: the read carries the new mode's values and unit
+    fake.setSensor(2, 99, 0.25, 1);
+    fake.sensors[1]!.mode = 1;
+    expect((await ev3.read("ev3.S2")).map((x) => [x.value, x.unit])).toEqual([
+      [[0.25], "a"],
+      ["ES-IN-AMP", undefined],
+    ]);
     expect(fake.errors).toEqual([]);
   });
 

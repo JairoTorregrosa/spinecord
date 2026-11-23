@@ -1138,6 +1138,14 @@ describe("sensors from discovery (G7, G8, G9)", () => {
     expect(values.length).toBe(6);
     expect((await provider.read("ev3.S3")).map((x) => x.value)).toEqual([[3, -12, 40, 1, 2, 3], "ALL"]);
     expect(await code(provider.command("ev3.S3", "set_mode", { mode: "NOPE" }, never))).toBe("invalid_argument");
+    // a mode switched behind the provider's back: the read carries the new mode's unit, not the manifest's old one
+    brick.setSensor(2, "units", "g");
+    brick.setSensor(2, "num_values", 1);
+    brick.setSensor(2, "mode", "ACCEL");
+    expect((await provider.read("ev3.S3")).map((x) => [x.value, x.unit])).toEqual([
+      [[3], "g"],
+      ["ACCEL", undefined],
+    ]);
   });
 
   brickTest("the infrared remote and beacon are read on the robot file's channel", async () => {

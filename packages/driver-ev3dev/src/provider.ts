@@ -1373,16 +1373,19 @@ export class Ev3devProvider implements Provider {
     const got = res.readings;
     if (!Array.isArray(got)) throw err("internal", `ev3dev: read of ${spec.id} returned no readings`);
     const ts = Date.now();
+    // the mode the bridge read in may differ from the manifest's (a generic sensor's unit follows its mode):
+    // the readings carry the units of the manifest as this reply leaves it
+    this.noteMode(local, res);
+    const current = this.specs?.get(spec.id) ?? spec;
     const out = names.map((n): Reading => {
       const r = got.find((x) => x.channel === n);
       const reading: Reading = { device: spec.id, channel: n, value: r?.value ?? null, ts };
-      const unit = spec.channels.find((c) => c.name === n)!.unit;
+      const unit = (current.channels.find((c) => c.name === n) ?? spec.channels.find((c) => c.name === n)!).unit;
       if (unit) reading.unit = unit;
       if (reading.value === null) reading.error = r?.error ?? "the bridge returned no value for this channel";
       if (reading.value === null && r?.absent === true) reading.absent = true;
       return reading;
     });
-    this.noteMode(local, res);
     return out;
   }
 

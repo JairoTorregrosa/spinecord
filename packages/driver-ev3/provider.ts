@@ -1265,7 +1265,10 @@ export class Ev3Provider implements Provider {
     if (!names.length) return [];
     const reading = (channel: string, r: Got): Reading => {
       const out: Reading = { device: spec.id, channel, value: r.value, ts: Date.now() };
-      const u = spec.channels.find((c) => c.name === channel)!.unit;
+      // a mode change seen during the read reshapes the manifest first: the unit is the one it states after the read
+      const current = this.specs?.get(spec.id) ?? spec;
+      const u = (current.channels.find((c) => c.name === channel) ?? spec.channels.find((c) => c.name === channel)!)
+        .unit;
       if (u) out.unit = u;
       if (r.value === null) out.error = r.error ?? "no value";
       if (r.value === null && r.absent) out.absent = true;
