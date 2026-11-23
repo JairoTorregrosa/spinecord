@@ -207,6 +207,9 @@ export function readChatLine(line: string): ChatLine {
 /** The environment, as process.env gives it. A variable set to "" counts as not set. */
 export type Env = Record<string, string | undefined>;
 const isSet = (env: Env, name: string) => (env[name] ?? "") !== "";
+/** A switch such as CLAUDE_CODE_USE_BEDROCK: on unless it is empty, 0, false, no or off, as Claude Code reads it. */
+const isOn = (env: Env, name: string) =>
+  isSet(env, name) && !["0", "false", "no", "off"].includes(env[name]!.trim().toLowerCase());
 
 /** Where the ant CLI keeps its profiles: ANTHROPIC_CONFIG_DIR, else %APPDATA%\Anthropic on Windows, else ~/.config/anthropic. */
 export function antConfigDir(env: Env, platform: string = process.platform, home: string = homedir()): string {
@@ -244,7 +247,7 @@ const ABOVE_PROFILE = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE
  * So a named profile must have its file and its login in the ant folder, and nothing above it may be set too.
  */
 export function payerFromEnv(env: Env, configDir: string, exists: (path: string) => boolean = existsSync): Payer {
-  const cloud = CLOUDS.find(([variable]) => isSet(env, variable));
+  const cloud = CLOUDS.find(([variable]) => isOn(env, variable));
   const above: Payer | null = cloud
     ? { kind: "cloud", provider: cloud[1] }
     : isSet(env, "ANTHROPIC_AUTH_TOKEN")
@@ -258,7 +261,9 @@ export function payerFromEnv(env: Env, configDir: string, exists: (path: string)
 
   const profile = env.ANTHROPIC_PROFILE!;
   if (above) {
-    const first = [...CLOUDS.map(([variable]) => variable), ...ABOVE_PROFILE].find((name) => isSet(env, name))!;
+    const first =
+      CLOUDS.map(([variable]) => variable).find((name) => isOn(env, name)) ??
+      ABOVE_PROFILE.find((name) => isSet(env, name))!;
     throw new Error(
       `ANTHROPIC_PROFILE=${profile} is set, but ${first} is set too and would pay first. Unset one of the two (README, step 2).`,
     );

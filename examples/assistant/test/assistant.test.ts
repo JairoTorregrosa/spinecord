@@ -377,6 +377,11 @@ describe("who pays", () => {
       provider: "Amazon Bedrock",
     });
     expect(payerFromEnv({ ANTHROPIC_API_KEY: "" }, dir, none)).toEqual({ kind: "computer-login" });
+    // a cloud switch set to 0, false, no or off is off, as Claude Code reads it
+    for (const off of ["0", "false", "No", "off"])
+      expect(payerFromEnv({ CLAUDE_CODE_USE_BEDROCK: off, ANTHROPIC_API_KEY: "k" }, dir, none)).toEqual({
+        kind: "api-key",
+      });
     expect(payerFromEnv({ ANTHROPIC_PROFILE: "work" }, dir, loggedIn)).toEqual({
       kind: "ant-profile",
       profile: "work",
