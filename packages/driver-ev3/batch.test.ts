@@ -1,7 +1,7 @@
 // Round trips: reads that travel together, and how often a running operation is asked about.
 import { describe, expect, test } from "bun:test";
 import * as E from "./encode";
-import { FakeEV3 } from "./fake";
+import { EmulatedClock, FakeEV3 } from "./fake";
 import { Ev3Link, type Ev3Error } from "./link";
 import { EXAMPLE_EV3_HARDWARE, Ev3Provider, type Ev3ProviderOptions } from "./provider";
 import {
@@ -347,20 +347,36 @@ describe("how often a running operation is asked about", () => {
   });
 
   test("an abort after the start is on the wire takes the brake path", async () => {
-    const fake = new FakeEV3({ degPerSecAt100: RATE });
-    const ev3 = new Ev3Provider(fake, CONFIG);
+    // On emulated time, with the start's reply held by the test: the abort lands while that reply is on its way,
+    // and the travel is what the provider allowed, whatever the load on this machine.
+    const clock = new EmulatedClock();
+    const fake = new FakeEV3({ degPerSecAt100: RATE, now: clock.now });
+    const ev3 = new Ev3Provider(fake, { ...CONFIG, now: clock.now, sleep: clock.sleep });
     await ev3.devices();
-    fake.replyDelayMs = 20;
     const from = fake.sent.length;
+    const send = fake.send.bind(fake);
+    let arrived: () => void = () => {};
+    const startArrived = new Promise<void>((r) => (arrived = r));
+    let release: () => void = () => {};
+    const released = new Promise<void>((r) => (release = r));
+    fake.send = (bytes) => {
+      const reply = send(bytes);
+      if (!fake.sent.at(-1)!.opcodes.includes(E.OP.OUTPUT_TIME_SPEED)) return reply;
+      arrived();
+      return released.then(() => reply);
+    };
     const ac = new AbortController();
     const run = ev3.command("ev3.B", "run_time", { ms: 250, speed_pct: 40 }, ac.signal);
-    await new Promise((r) => setTimeout(r, 5));
+    await startArrived;
     expect(packets(fake, from)).toEqual([[B3, E.OP.OUTPUT_TIME_SPEED]]); // already sent, reply still on its way
+    clock.advance(20); // the reply's flight: 8 degrees at 400 deg/s
     ac.abort();
+    release();
     const r = await run;
     expect(r.reason).toBe("preempted");
     expect(packets(fake, from).some((p) => p[0] === E.OP.OUTPUT_STOP)).toBe(true);
     expect(fake.busy()).toBe(false);
+    expect(r.measured.degrees as number).toBeGreaterThanOrEqual(8); // it did move: the start ran
     expect(r.measured.degrees as number).toBeLessThan(40); // 250 ms unwatched would be 100 degrees
   });
 

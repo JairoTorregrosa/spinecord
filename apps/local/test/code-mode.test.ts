@@ -1,9 +1,10 @@
 // The example scripts of docs/code-mode.md, run as written: each fenced block is cut out of the document and its
 // calls go through an MCP client to a spawned server with a twin. What the scripts read is what the server sends.
+// The twin runs on a virtual clock: the angles and distances it reports are the robot's, not the machine's load.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { startServer, type TestServer } from "./client";
+import { VIRTUAL_TIME_MAIN, startServer, type TestServer } from "./client";
 
 const DOC = join(import.meta.dir, "..", "..", "..", "docs", "code-mode.md");
 const R = "r1-sim";
@@ -55,7 +56,7 @@ const helper = (t: ReturnType<typeof tools>) => new Function("tools", `${example
 const square = () => new Function(`${example("square")}\nreturn square;`)() as Square;
 
 beforeAll(async () => {
-  s = await startServer();
+  s = await startServer([], VIRTUAL_TIME_MAIN);
 });
 afterAll(async () => {
   expect(await s.closeStdin()).toBe(0);

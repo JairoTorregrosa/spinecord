@@ -29,6 +29,16 @@ const BINDINGS: DeviceBindings = {
 };
 const world = () => new World(config(), 1, DRIVE);
 const spec = (over: Record<string, unknown> = {}): TrainingSpec => parseTrainingSpec({ ...LINE, ...over });
+/**
+ * CPU time a synchronous call takes, ms. Training runs on this thread and does no I/O, so its cost is the CPU it
+ * uses: wall time on a loaded machine adds the time other processes held the cores.
+ */
+function cpuMs<T>(fn: () => T): { value: T; ms: number } {
+  const before = process.cpuUsage();
+  const value = fn();
+  const used = process.cpuUsage(before);
+  return { value, ms: (used.user + used.system) / 1000 };
+}
 const moved = { device: "sim.world", channel: "odometer_cm", op: "changed" };
 
 describe("training spec (data, no code)", () => {
@@ -312,43 +322,51 @@ describe('start.kind "here" means the pose the run began at, for every episode',
   });
 });
 
+// Training is CPU-bound and sized in work (episodes, steps), not time. The test timeout is only a hang guard, set
+// for a machine whose cores are shared many times over: there each run takes many times its idle 1-2 s.
+const TRAINING_HANG_GUARD_MS = 120_000;
+
 describe("Q-learning from the example specs beats random by a clear margin", () => {
-  test("follow the line (line-oval.follow-line.training.json)", () => {
-    const w = world(),
-      s = parseTrainingSpec(LINE);
-    const t0 = performance.now();
-    const r = train(w, s, BINDINGS, 1000, 1);
-    const ms = performance.now() - t0;
-    const learned = evaluate(r.policy, w, BINDINGS, 100, 2024),
-      random = evaluate(randomPolicy(s), w, BINDINGS, 100, 2024);
-    console.log(
-      `follow-line: learned ${learned.success_rate} vs random ${random.success_rate} (train ${ms.toFixed(0)} ms, ${r.steps} steps) ${JSON.stringify(learned.outcomes)}`,
-    );
-    expect(ms).toBeLessThan(8000);
-    expect(learned.success_rate).toBeGreaterThanOrEqual(0.8);
-    expect(random.success_rate).toBeLessThanOrEqual(0.05);
-    expect(r.curve.length).toBe(1000);
-    const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
-    expect(mean(r.curve.slice(-100))).toBeGreaterThan(mean(r.curve.slice(0, 100)) + 20);
-    expect(r.policy.q!.length).toBe(3);
-    expect(w.pose).toEqual({ x: 43, y: 25, th: 0 }); // training works on a copy
-  }, 30000);
-  test("reach a named point without touching walls (line-oval.reach-D.training.json)", () => {
-    const w = world(),
-      s = parseTrainingSpec(REACH);
-    const t0 = performance.now();
-    const r = train(w, s, BINDINGS, 3000, 1);
-    const ms = performance.now() - t0;
-    const learned = evaluate(r.policy, w, BINDINGS, 100, 2024),
-      random = evaluate(randomPolicy(s), w, BINDINGS, 100, 2024);
-    console.log(
-      `reach-D: learned ${learned.success_rate} vs random ${random.success_rate} (train ${ms.toFixed(0)} ms, ${r.steps} steps) ${JSON.stringify(learned.outcomes)}`,
-    );
-    expect(ms).toBeLessThan(10000);
-    expect(learned.success_rate).toBeGreaterThanOrEqual(0.5);
-    expect(random.success_rate).toBeLessThanOrEqual(0.1);
-    expect(learned.success_rate - random.success_rate).toBeGreaterThanOrEqual(0.45);
-  }, 30000);
+  test(
+    "follow the line (line-oval.follow-line.training.json)",
+    () => {
+      const w = world(),
+        s = parseTrainingSpec(LINE);
+      const { value: r, ms } = cpuMs(() => train(w, s, BINDINGS, 1000, 1));
+      const learned = evaluate(r.policy, w, BINDINGS, 100, 2024),
+        random = evaluate(randomPolicy(s), w, BINDINGS, 100, 2024);
+      console.log(
+        `follow-line: learned ${learned.success_rate} vs random ${random.success_rate} (train ${ms.toFixed(0)} ms of CPU, ${r.steps} steps) ${JSON.stringify(learned.outcomes)}`,
+      );
+      expect(ms).toBeLessThan(8000);
+      expect(learned.success_rate).toBeGreaterThanOrEqual(0.8);
+      expect(random.success_rate).toBeLessThanOrEqual(0.05);
+      expect(r.curve.length).toBe(1000);
+      const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
+      expect(mean(r.curve.slice(-100))).toBeGreaterThan(mean(r.curve.slice(0, 100)) + 20);
+      expect(r.policy.q!.length).toBe(3);
+      expect(w.pose).toEqual({ x: 43, y: 25, th: 0 }); // training works on a copy
+    },
+    TRAINING_HANG_GUARD_MS,
+  );
+  test(
+    "reach a named point without touching walls (line-oval.reach-D.training.json)",
+    () => {
+      const w = world(),
+        s = parseTrainingSpec(REACH);
+      const { value: r, ms } = cpuMs(() => train(w, s, BINDINGS, 3000, 1));
+      const learned = evaluate(r.policy, w, BINDINGS, 100, 2024),
+        random = evaluate(randomPolicy(s), w, BINDINGS, 100, 2024);
+      console.log(
+        `reach-D: learned ${learned.success_rate} vs random ${random.success_rate} (train ${ms.toFixed(0)} ms of CPU, ${r.steps} steps) ${JSON.stringify(learned.outcomes)}`,
+      );
+      expect(ms).toBeLessThan(10000);
+      expect(learned.success_rate).toBeGreaterThanOrEqual(0.5);
+      expect(random.success_rate).toBeLessThanOrEqual(0.1);
+      expect(learned.success_rate - random.success_rate).toBeGreaterThanOrEqual(0.45);
+    },
+    TRAINING_HANG_GUARD_MS,
+  );
   test("same world, spec, bindings and seed give the same policy; the policy is plain JSON", () => {
     const s = spec();
     const a = train(world(), s, BINDINGS, 60, 9),
@@ -362,17 +380,21 @@ describe("Q-learning from the example specs beats random by a clear margin", () 
     expect(greedyAction({ spec: s, q: [[0, 2, 1]] }, 0, new Rng(1))).toBe(1);
     expect(() => evaluate(a.policy, world(), BINDINGS, 0)).toThrow(/trials/);
   });
-  test("the reward terms decide what is learned: paying for spinning gives a robot that does not follow the line", () => {
-    const w = world();
-    const base = LINE.reward as { terms: { terminal?: string }[] };
-    const spin = spec({
-      reward: {
-        per_step: 1,
-        max_steps: 250,
-        terms: [...base.terms.filter((t) => t.terminal), { when: moved, reward: -2 }],
-      },
-    });
-    const r = train(w, spin, BINDINGS, 300, 1);
-    expect(evaluate(r.policy, w, BINDINGS, 30, 7).success_rate).toBe(0);
-  });
+  test(
+    "the reward terms decide what is learned: paying for spinning gives a robot that does not follow the line",
+    () => {
+      const w = world();
+      const base = LINE.reward as { terms: { terminal?: string }[] };
+      const spin = spec({
+        reward: {
+          per_step: 1,
+          max_steps: 250,
+          terms: [...base.terms.filter((t) => t.terminal), { when: moved, reward: -2 }],
+        },
+      });
+      const r = train(w, spin, BINDINGS, 300, 1);
+      expect(evaluate(r.policy, w, BINDINGS, 30, 7).success_rate).toBe(0);
+    },
+    TRAINING_HANG_GUARD_MS,
+  );
 });

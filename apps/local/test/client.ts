@@ -33,8 +33,11 @@ async function lines(stream: ReadableStream<Uint8Array>, each: (line: string) =>
   if (rest) each(rest);
 }
 
-export async function startServer(args: string[] = []) {
-  const child = Bun.spawn([process.execPath, MAIN, ...args], {
+/** main.ts with its twins on a virtual clock (virtual-time-main.ts). */
+export const VIRTUAL_TIME_MAIN = join(import.meta.dir, "virtual-time-main.ts");
+
+export async function startServer(args: string[] = [], main = MAIN) {
+  const child = Bun.spawn([process.execPath, main, ...args], {
     // not the repo: the server finds its files by itself
     cwd: import.meta.dir,
     stdin: "pipe",

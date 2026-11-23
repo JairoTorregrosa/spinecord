@@ -726,7 +726,6 @@ class RuntimeImpl implements LocalRuntime {
       );
     return { l: l!.value, r: r!.value };
   }
-  /** One reading of the heading channel: the angle, or why there is none (the wheels then measure the heading). */
   /** describe_robot's heading_error: null when the drivetrain names no heading or the named channel is usable. */
   private headingError(): string | null {
     const h = this.prof.drivetrain && this.heading(this.prof.drivetrain);
@@ -734,6 +733,7 @@ class RuntimeImpl implements LocalRuntime {
       ? `${h.error}. drive, turn and arc measure the heading from the wheel encoders (measured.source encoders) until this is fixed.`
       : null;
   }
+  /** One reading of the heading channel: the angle, or why there is none (the wheels then measure the heading). */
   private async headingAngle(h: { entry: Entry; channel: string } | undefined): Promise<HeadingRead> {
     if (!h) return {};
     const where = `${h.entry.spec.id}.${h.channel}`;
