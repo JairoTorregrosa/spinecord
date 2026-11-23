@@ -115,6 +115,23 @@ describe("Ev3Provider.loop: one packet per tick", () => {
     expect(fake.busy((1 << B) | (1 << C))).toBe(false);
   });
 
+  test("loop.end with a device the scan no longer has still brakes every refreshed port and releases them", async () => {
+    const { fake, ev3, loop } = rig();
+    await ev3.devices();
+    await loop.tick([wheel(30)], [encoder], 250);
+    await loop.end(["ev3.B", "ev3.D9"]);
+    expect(fake.busy(1 << B)).toBe(false);
+    const free = await ev3.command(
+      "ev3.B",
+      "run_degrees",
+      { degrees: 10, speed_pct: 20 },
+      new AbortController().signal,
+    );
+    expect(free.reason).toBe("completed");
+    expect(await loop.tick([wheel(10)], [encoder], 60)).toHaveLength(1);
+    await loop.end([]);
+  });
+
   test("a driven port is claimed until the loop ends: a command on it answers busy", async () => {
     const { ev3, loop } = rig();
     await ev3.devices();

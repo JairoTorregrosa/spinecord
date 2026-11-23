@@ -1793,11 +1793,12 @@ export class Ev3Provider implements Provider {
     this.link.dropQueued();
     return this.guard(async () => {
       const ports = new Set(this.looped);
-      for (const d of devices) {
-        const { spec, local } = await this.lookup(d);
-        if (spec.kind === "motor") ports.add(outputIndex(local as OutputPort));
-      }
       try {
+        // a named device the scan no longer has is skipped: every port the loop refreshed is in `looped`
+        for (const d of devices) {
+          const found = await this.lookup(d).catch(() => null);
+          if (found?.spec.kind === "motor") ports.add(outputIndex(found.local as OutputPort));
+        }
         const mask = [...ports].reduce((m, i) => m | (1 << i), 0);
         if (mask) await this.link.command(outputStop(mask, true), 0, { urgent: true });
       } catch (e) {
