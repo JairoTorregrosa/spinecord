@@ -110,7 +110,7 @@ EXIT_USAGE = 2           # bad arguments, or not an ev3dev brick
 EXIT_GUARD_LOST = 3      # the guard process ended: every motor was braked and the bridge ended itself
 VERSION = "7"            # sent in hello as "bridge"; the provider refuses a bridge older than the one it needs
 # The guard's deadman: while it is armed, this long without a byte from the bridge brakes every motor.
-GUARD_DEADMAN_MS = 250
+GUARD_DEADMAN_MS = 200
 # The guard process (see the safety rules above). It reads only its stdin, a pipe from the bridge: "a" arms the
 # deadman (and every later "a" feeds it), "d" disarms it. Armed and GUARD_DEADMAN_MS without a byte: it brakes
 # every motor and disarms. The pipe closing (the bridge ended, however it ended): it brakes every motor and ends.

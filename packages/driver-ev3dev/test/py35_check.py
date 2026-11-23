@@ -108,7 +108,7 @@ def check_files(paths):
         tree = ast.parse(source, path)
         for node in ast.walk(tree):
             if type(node).__name__ == "Assign" and any(getattr(t, "id", None) == "GUARD_SOURCE" for t in node.targets):
-                guard = eval(compile(ast.Expression(node.value), path, "eval"), {"GUARD_DEADMAN_MS": 250, "repr": repr})
+                guard = eval(compile(ast.Expression(node.value), path, "eval"), {"GUARD_DEADMAN_MS": 200, "repr": repr})
                 checked.append(path + ":GUARD_SOURCE")
                 problems.extend(problems_of(guard, path + ":GUARD_SOURCE"))
     shutil.rmtree(scratch, ignore_errors=True)

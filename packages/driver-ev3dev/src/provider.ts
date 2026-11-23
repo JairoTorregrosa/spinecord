@@ -56,7 +56,7 @@ export const MIN_LOOP_BRIDGE_VERSION = 7;
  */
 export const EV3DEV_LOOP_RATE_HZ = 50;
 /** While run-direct is live, the guard brakes every motor after this long without a byte from the bridge. */
-export const GUARD_DEADMAN_MS = 250;
+export const GUARD_DEADMAN_MS = 200;
 /** How long the bridge waits for every motor to read speed 0 after a stop. */
 export const BRIDGE_STOP_VERIFY_MS = 800;
 export const MODE_SWITCH_REQUIRED = "mode_switch_required";

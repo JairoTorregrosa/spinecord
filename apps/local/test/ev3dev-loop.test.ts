@@ -1,6 +1,6 @@
 // A loop on an ev3dev brick end to end, with no brick: run_loop → supervise_loop → the report, stop and Esc, through
 // the real tools, runtime, provider, ssh code path (bench/fake-ssh.ts) and bridge, on a fake sysfs tree. The loop
-// runs on the brick's executor (the bridge), so these tests run on real time: 20 Hz, so that a loaded machine
+// runs on the brick's executor (the bridge), so these tests run on real time: 10 Hz, so that a loaded machine
 // cannot end a loop by overrun ahead of the test's own stop. POSIX sh and a local python3, like ev3dev.test.ts.
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -18,9 +18,9 @@ const python3 = Bun.which("python3");
 const runs = process.platform !== "win32" && python3 !== null;
 if (!runs) console.warn("SKIPPED: the ev3dev loop test needs a POSIX sh and python3 on PATH");
 
-/** C4 of docs/loops.md on motor B, at 20 Hz: B's angle steers B's power. */
+/** C4 of docs/loops.md on motor B, at 10 Hz: B's angle steers B's power. */
 const ARM_HOLD = {
-  rate_hz: 20,
+  rate_hz: 10,
   duration_ms: 30_000,
   signals: { angle: { device: "ev3.B", channel: "position_deg" } },
   params: { target: 45 },
@@ -39,7 +39,7 @@ const ARM_HOLD = {
   guards: [{ name: "out_of_range", signal: "angle", op: "abs_gt", value: 200 }],
 };
 
-/** C2 of docs/loops.md as printed there, but at 20 Hz. */
+/** C2 of docs/loops.md as printed there, but at 10 Hz. */
 const C2 = {
   ...(JSON.parse(
     [
@@ -48,7 +48,7 @@ const C2 = {
       ),
     ][1]![1]!,
   ) as Record<string, unknown>),
-  rate_hz: 20,
+  rate_hz: 10,
 };
 
 describe("a loop on an ev3dev brick", () => {
@@ -131,7 +131,7 @@ describe("a loop on an ev3dev brick", () => {
       const b = (await call("describe_device", { device: "ev3.B" })).data;
       expect(b.commands.find((c: { name: string }) => c.name === "power").drives).toEqual({
         arg: "power_pct",
-        max_hold_ms: 250,
+        max_hold_ms: 200,
       });
       // a rate over the brick's maximum is refused, and nothing is sent
       const fast = await call("run_loop", { ...ARM_HOLD, rate_hz: 100 });
@@ -143,7 +143,7 @@ describe("a loop on an ev3dev brick", () => {
       expect(started).toMatchObject({
         ok: true,
         robot: { activity: "looping" },
-        data: { state: "running", runs_on: "device", rate_hz: 20, params: { target: 45 } },
+        data: { state: "running", runs_on: "device", rate_hz: 10, params: { target: 45 } },
       });
       expect(started.data.ticks).toBeGreaterThanOrEqual(20);
       expect(brick!.motorLine(0, "command")).toBe("run-direct");
@@ -158,12 +158,12 @@ describe("a loop on an ev3dev brick", () => {
       expect(busy.next.slice(0, 2)).toEqual(["supervise_loop", "stop"]);
       // the arm moves to 40 under the loop: the brick's held descriptor sees it on the next tick
       brick!.setMotorInPlace(0, "position", 40);
-      const steered = await call("supervise_loop", { params: { target: 40 }, wait_ms: 1500 });
+      const steered = await call("supervise_loop", { params: { target: 40 }, wait_ms: 2500 });
       expect(steered).toMatchObject({ ok: true, data: { state: "running", params: { target: 40 } } });
       expect(steered.data.signals.angle.last).toBe(40);
       expect(steered.data.ticks).toBeGreaterThan(started.data.ticks);
-      expect(steered.data.period_ms.p50).toBeGreaterThan(40);
-      expect(steered.data.period_ms.p50).toBeLessThan(60);
+      expect(steered.data.period_ms.p50).toBeGreaterThan(90);
+      expect(steered.data.period_ms.p50).toBeLessThan(110);
       // at the target the value term is 0; the integral holds what it gathered, within its clamp
       expect(Math.abs(steered.data.outputs[0].last)).toBeLessThanOrEqual(60);
 
@@ -237,13 +237,13 @@ describe("a loop on an ev3dev brick", () => {
     async () => {
       await start();
       const started = await call("run_loop", C2);
-      expect(started).toMatchObject({ ok: true, data: { state: "running", runs_on: "device", rate_hz: 20 } });
-      // on the edge: both wheels at the feed speed, refreshed as timed runs (60 ms of run-timed at 20 Hz: 150 ms)
+      expect(started).toMatchObject({ ok: true, data: { state: "running", runs_on: "device", rate_hz: 10 } });
+      // on the edge: both wheels at the feed speed, refreshed as timed runs (hold_ms: 3 periods, 300 ms at 10 Hz)
       expect(started.data.outputs.map((o: { device: string; last: number }) => [o.device, o.last])).toEqual([
         ["ev3.B", 20],
         ["ev3.C", 20],
       ]);
-      expect([brick!.motorLine(0, "command"), brick!.motor(0, "time_sp")]).toEqual(["run-timed", "150"]);
+      expect([brick!.motorLine(0, "command"), brick!.motor(0, "time_sp")]).toEqual(["run-timed", "300"]);
       // brighter than the edge: the left wheel speeds up, the right one slows down
       brick!.setSensorInPlace(1, "value0", 55);
       const brighter = await call("supervise_loop", { params: { speed: 15 }, wait_ms: 1000 });
