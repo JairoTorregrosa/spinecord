@@ -139,8 +139,15 @@ export async function autonomous(clock: Clock): Promise<void> {
   const why = `the ${forMinutes} min of --for are over`;
   const end = forMinutes === null ? Infinity : Date.now() + forMinutes * 60_000;
   console.log(`${name} wakes up every ${everySeconds} s${forMinutes === null ? "" : ` for ${forMinutes} min`}.`);
-  // the deadline has its own timer: a turn that is running when the time is up is interrupted by the end, like Ctrl+C
-  const deadline = forMinutes === null ? null : setTimeout(() => stop(why), end - Date.now());
+  // the deadline has its own timer: a turn that is running when the time is up is interrupted by the end, like Ctrl+C.
+  // A timer waits at most 2^31 - 1 ms (about 24 days), so a longer --for sets it again until the time is up.
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const armDeadline = () => {
+    const left = end - Date.now();
+    if (left <= 0) stop(why);
+    else deadline = setTimeout(armDeadline, Math.min(left, 2 ** 31 - 1));
+  };
+  if (forMinutes !== null) armDeadline();
   try {
     // wake-ups are on a fixed beat: when a turn takes longer than the beat, the next one starts right after it
     for (let next = Date.now(); !isStopped() && next < end; next = Math.max(next + everySeconds * 1000, Date.now())) {
@@ -150,9 +157,10 @@ export async function autonomous(clock: Clock): Promise<void> {
       console.log(`tick ${localTime(now)}`);
       await takeTurn(tickMessage(now));
     }
-    stop(why);
+    // no wake-up is left before the deadline: the robot stays on until the deadline or another way out
+    await untilStopped;
   } finally {
-    if (deadline) clearTimeout(deadline);
+    clearTimeout(deadline);
   }
 }
 

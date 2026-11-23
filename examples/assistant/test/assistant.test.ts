@@ -250,6 +250,24 @@ describe("the clock", () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
+  test("--for lasts its full time when the last wake-up comes early", async () => {
+    const p = program();
+    let turns = 0;
+    const started = Date.now();
+    await autonomous({
+      name: "Test",
+      everySeconds: 10, // the second wake-up would be after the deadline
+      forMinutes: 0.005, // 300 ms
+      takeTurn: async () => {
+        turns += 1;
+      },
+      ...p,
+    });
+    expect(turns).toBe(1);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(280);
+    expect(p.reasons).toEqual(["the 0.005 min of --for are over"]);
+  });
+
   test("a stop while the clock waits starts no more turns", async () => {
     const p = program();
     let turns = 0;
