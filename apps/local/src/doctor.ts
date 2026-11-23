@@ -287,7 +287,7 @@ async function checkAssistant(p: Probes): Promise<Line[]> {
     out.push({
       status: "fail",
       check: "assistant",
-      reason: `${names}. ${first} is set too and pays before the profile ${profile}`,
+      reason: `${names}. ${first} is set too and pays ahead of the profile ${profile}`,
       next: unset(p.platform, first),
     });
   else if (profile === null && first === null)
@@ -384,7 +384,7 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
     ? { ev3: config.robots.some((r) => r.source === "ev3"), pages: !!config.pages }
     : { ev3: o.robotArgs.some((a) => a.startsWith("--ev3")), pages: o.robotArgs.some((a) => a.startsWith("--pages")) };
   add(checkBrowser(p, needs));
-  // before `claude mcp get`, which starts the registered server and so binds its ports for a moment
+  // ahead of `claude mcp get`, which starts the registered server and so binds its ports for a moment
   if (config) {
     const c = config;
     add(await bounded("ports", ms * 2, () => checkPorts(p, c)));

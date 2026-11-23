@@ -14,7 +14,7 @@ protocol ← page-hub
 protocol, runtime, driver-ev3, driver-ev3dev, sim-ev3, sim-world, page-hub ← apps/local   (it also builds and serves apps/robot-page's bridge page and apps/peripheral-page)
 driver-ev3 ← apps/robot-page
 protocol ← apps/peripheral-page   (types; its tests also use protocol's validators)
-examples/assistant/setup.ts ← apps/local   (only `--doctor --assistant`: which credential pays before an ant profile)
+examples/assistant/setup.ts ← apps/local   (only `--doctor --assistant`: which credential pays ahead of an ant profile)
 ```
 
 `protocol` imports nothing. Apps import packages; no package imports an app. `scripts/check-boundaries.ts` enforces this graph.

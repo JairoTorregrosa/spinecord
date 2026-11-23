@@ -156,7 +156,7 @@ describe("--doctor", () => {
     expect((await lines(win)).status).toBe("ok");
   });
 
-  test("ports: free, held, none; the one of --lan and --page-origin; probed before claude starts the server", async () => {
+  test("ports: free, held, none; the one of --lan and --page-origin; probed ahead of the server claude starts", async () => {
     const p = probes({ portFree: async (port) => port !== 8768 });
     const { lines } = await run(["--ev3", "--pages", "--lan", "--page-origin", "https://name.example"], p);
     const ports = lines.filter((l) => l.check === "port");
@@ -223,7 +223,7 @@ describe("--doctor", () => {
     expect(line((await run(["--pages"], probes())).lines, "lan")).toBeUndefined();
   });
 
-  test("--assistant: names, never values; a profile that pays, one a key comes before, one with no login", async () => {
+  test("--assistant: names, never values; a profile that pays, one a key comes ahead of, one with no login", async () => {
     const env = { ANTHROPIC_PROFILE: "work" };
     const good = await run([], probes({ env }), true);
     expect(line(good.lines, "assistant")).toMatchObject({ status: "ok" });
