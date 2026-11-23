@@ -136,33 +136,7 @@ The server then listens for pages on `http://127.0.0.1:8768/` (`--page-port <n>`
 
 ### Peripheral pages on a phone
 
-A phone lends its camera, microphone and voice only to a page it opened over HTTPS: a browser offers them to a secure context alone. `--lan` gives the page one. The server listens, besides `127.0.0.1`, on the computer's address on its network, over HTTPS, port 8769 (`--page-port` + 1), under the name `a-b-c-d.local-ip.sh` for the address a.b.c.d. [local-ip.sh](https://local-ip.sh) is a public DNS service that answers that name with that address and publishes a Let's Encrypt certificate for `*.local-ip.sh`, with its key; the server fetches both at start and keeps them in the computer's cache folder (`spinecord/lan-cert.json`) until the certificate expires. Nothing goes to the phone but the page: no app, no certificate to install.
-
-```sh
-bun apps/local/main.ts --print-add --twin --pages --lan
-```
-
-Pairing a phone, iPhone or Android, in under 5 minutes, on a network of your own: the phone's hotspot.
-
-1. On the phone, turn on its hotspot. iPhone: Settings > Personal Hotspot > Allow Others to Join (turn on Maximize Compatibility if the computer does not see it). Android: Settings > Network & internet > Hotspot & tethering > Wi-Fi hotspot (the menu names vary by maker).
-2. Join that Wi-Fi from the computer. Then start Claude Code: the server starts with it and listens on the hotspot address. With more than one network on the computer (Wi-Fi and a cable), it takes the one of the default route; `--lan-interface <name|address>` picks another.
-3. On the computer open `http://127.0.0.1:8768/console`. It shows one QR code per robot, and whether this computer resolves the name. The same codes are on the server's stderr.
-4. Point the phone's camera at a code and open the link in Safari (iPhone) or Chrome (Android), not in an app's own browser view. The link carries the pairing token of this start in its `#` part, which the browser never sends to a server; whoever has the link can lend the robot their devices, so share it only with your own phones.
-5. On the page, tap **Lend this device**, allow the camera and the microphone, and keep the screen on.
-
-The token changes at every start, and so does the link when the computer changes network: scan again. Five wrong tokens from one address within a minute and that address is refused for a minute. Through a tunnel every page reaches the server from `127.0.0.1`, so there the refusal holds for every page of the tunnel.
-
-What fails, and the exits:
-
-- **The name does not resolve.** Some routers and DNS resolvers drop answers that point a public name at a private address (DNS rebinding protection). The server's stderr and the console say so when this computer's resolver does it; the phone then reports that it cannot find the server. On a phone's own hotspot the name goes to the carrier's DNS; whether each carrier passes it is not verified yet ([`docs/hardware-log.md`](docs/hardware-log.md)). Exits: another network, a certificate of your own, or a tunnel (below).
-- **The network isolates its clients** (many guest, office and event networks): the phone cannot reach the computer at all, whatever the certificate. Exits: the phone's hotspot with the computer joined to it, or a tunnel.
-- **No certificate at start** (no internet, the service down): the start ends with exit code 1 and a message naming `--lan-cert`. Anyone can have that public certificate revoked, since its key is public: if phones refuse it, delete `lan-cert.json` from the cache folder to fetch the service's newer one, or use your own.
-- **A certificate of your own:** [mkcert](https://github.com/FiloSottile/mkcert) makes one for the computer's address (`mkcert -install`, then `mkcert <address>`), and `--lan-cert <address>.pem <address>-key.pem` serves it at `https://<address>:8769/`, with no DNS at all. The phone must trust mkcert's root: send it `rootCA.pem` (`mkcert -CAROOT` says where it is); on an iPhone install the profile, then turn on full trust in Settings > General > About > Certificate Trust Settings; on Android install it under Settings > Security > Encryption & credentials > Install a certificate > CA certificate. That root can sign for any site on that phone: keep its key on the computer. For a certificate of a name, add `--lan-host <name>`.
-- **A tunnel you run** works on any network, the phone anywhere: `cloudflared tunnel --url http://127.0.0.1:8770` (or pinggy) gives an `https://` address; start the server with `--page-origin <that address>`, and pages join through it at the listener on `127.0.0.1:8770` (`--page-port` + 2). Every frame and transcript then crosses the tunnel's operator and the internet. A quick tunnel's address changes at each start, so register the server again with the new one.
-- **macOS's firewall**, when it is on, asks whether bun may accept incoming connections: allow it (System Settings > Network > Firewall > Options). With "Block all incoming connections" set, no phone can connect.
-- **Windows asks about the firewall** the first time the server listens beyond `127.0.0.1`: allow bun on private networks. A hotspot may be classified as public: set it to private (Settings > Network & internet > Wi-Fi > the network > Network profile type) or the phone cannot connect. A computer without administrator rights may not be able to allow it; the tunnel needs no inbound rule.
-
-TLS here gives the phone a secure context, not secrecy: the key of the local-ip.sh certificate is public, so someone on the same network who can place themselves between the phone and the computer can read the traffic. The token keeps strangers from joining. On a shared network, do not lend a camera. Whether all of this works on real phones is not verified yet: [`docs/hardware-log.md`](docs/hardware-log.md).
+`--lan` lets a phone on the same network join over HTTPS, with its join link as a QR code: how to pair an iPhone or an Android phone in under 5 minutes, what fails and the exits, in [`docs/peripheral-pages.md`](docs/peripheral-pages.md#pairing-a-phone---lan).
 
 ### An EV3 on ev3dev: the ssh key first
 

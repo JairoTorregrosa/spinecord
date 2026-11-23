@@ -570,8 +570,12 @@ export function servePages(hubs: Map<string, PageHub>, port: number, o: PagesOpt
 function pageHtml(template: string, token: string | null, robots: string[]): string {
   return template.replace(
     META_PLACEHOLDER,
-    `${token === null ? "" : `<meta name="spinecord-token" content="${token}">
-    `}<meta name="spinecord-robots" content="${robots.join(" ")}">`,
+    `${
+      token === null
+        ? ""
+        : `<meta name="spinecord-token" content="${token}">
+    `
+    }<meta name="spinecord-robots" content="${robots.join(" ")}">`,
   );
 }
 

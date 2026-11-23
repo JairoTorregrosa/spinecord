@@ -82,7 +82,7 @@ export async function checkName(
   } catch (e) {
     return {
       ok: false,
-      text: `this computer cannot resolve ${host} (${(e as Error).message}): its DNS may strip private addresses (rebinding protection); a phone on the same DNS will fail the same way. See README, Peripheral pages on a phone`,
+      text: `this computer cannot resolve ${host} (${(e as Error).message}): its DNS may strip private addresses (rebinding protection); a phone on the same DNS will fail the same way. See docs/peripheral-pages.md, Pairing a phone`,
     };
   } finally {
     clearTimeout(timer);
@@ -91,7 +91,7 @@ export async function checkName(
     ? { ok: true, text: `${host} resolves to ${address} on this computer` }
     : {
         ok: false,
-        text: `${host} resolves to ${got} on this computer, not to ${address}: a phone may not reach this listener. See README, Peripheral pages on a phone`,
+        text: `${host} resolves to ${got} on this computer, not to ${address}: a phone may not reach this listener. See docs/peripheral-pages.md, Pairing a phone`,
       };
 }
 
@@ -204,7 +204,7 @@ export function checkCert(cert: string, key: string, now: Date, where: string): 
 }
 
 const OWN_CERT_HINT =
-  "give a certificate of your own with --lan-cert <cert.pem> <key.pem> (mkcert makes one; see README, Peripheral pages on a phone), or start without --lan";
+  "give a certificate of your own with --lan-cert <cert.pem> <key.pem> (mkcert makes one; see docs/peripheral-pages.md, Pairing a phone), or start without --lan";
 
 async function defaultFetchText(url: string): Promise<string> {
   const res = await fetch(url, { signal: AbortSignal.timeout(LAN_FETCH_MS) });
