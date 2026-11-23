@@ -15,7 +15,7 @@ import { callLine } from "../src/mcp";
 import { buildFleet, twinRuntime } from "../src/sources";
 import { PageHub } from "../../../packages/page-hub/hub";
 import type { ServerToPage } from "../../../packages/protocol/types";
-import { FAKE_IMU } from "./pages";
+import { FAKE_DEVICES, FAKE_IMU } from "./pages";
 import { TOOL, callTool } from "../src/tools";
 import { ARM } from "./arm";
 
@@ -634,11 +634,13 @@ async function tiltRig(extra: Provider[] = []) {
       if (m.t === "req" && m.op === "stop") queueMicrotask(() => link.receive({ t: "res", id: m.id, ok: true }));
     },
   };
-  const link = hub.join("phone", socket, [structuredClone(FAKE_IMU)], []);
+  const touch = FAKE_DEVICES.find((d) => d.id === "touch")!;
+  const link = hub.join("phone", socket, [structuredClone(FAKE_IMU), structuredClone(touch)], []);
   link.setState("active", null);
-  const push = (values: Record<string, number | boolean>) =>
-    expect(link.receive({ t: "state", device: "imu", values, ts: 0 })).toBeNull();
-  push({ pitch_deg: 0, roll_deg: 0, shaken: false });
+  const push = (values: Record<string, number | boolean | null>, device = "imu") =>
+    expect(link.receive({ t: "state", device, values, ts: 0 })).toBeNull();
+  push({ pitch_deg: 0, roll_deg: 0, heading_deg: null });
+  push({ b1: false, b1_presses: 0 }, "touch");
   await robot.attach(runtime);
   const tool = async (name: string, args: Record<string, unknown> = {}) => {
     const out = await callTool([robot], name, { robot_id: "r1-sim", ...args });
@@ -700,6 +702,22 @@ describe("C5 on virtual time: a page's tilt steers the twin", () => {
     // the loop's end released the page: it is pinged at the slow rate again
     await t.clock.sleep(600);
     expect(t.link.watched()).toBe(false);
+  }, 30_000);
+
+  test("the top edge down drives both wheels forward, and button 1 of the page's touch panel ends C5", async () => {
+    const t = await tiltRig();
+    expect(await t.tool("run_loop", { ...C5 })).toMatchObject({ ok: true, data: { state: "running" } });
+    // pitch is positive with the top edge raised: 20° down is -20, and k_drive -1 makes it +20 % on both wheels
+    t.push({ pitch_deg: -20 });
+    const r = (await t.tool("supervise_loop", { wait_ms: 500 })).data;
+    expect(r.outputs.map((o: { last: number }) => o.last)).toEqual([20, 20]);
+    t.push({ b1: true, b1_presses: 1 }, "touch");
+    const end = await t.tool("supervise_loop", { wait_ms: 5000 });
+    expect(end).toMatchObject({
+      robot: { activity: "idle" },
+      data: { state: "ended", reason: "guard", guard: "stop_button" },
+    });
+    expect(end.data.outputs.map((o: { last: number }) => o.last)).toEqual([0, 0]);
   }, 30_000);
 
   test("C5 at 50 Hz: the plan notes that the imu holds its value between its 20 Hz pushes", async () => {

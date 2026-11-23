@@ -142,18 +142,41 @@ export const FAKE_SCREEN: PageDevice = {
 };
 
 /**
- * A motion sensor for a fake that tilts: add it to `devices`. It pushes pitch and roll 0 on joining, then what
- * `push` gives it, and declares the 20 Hz a phone's motion events are pushed at.
+ * A motion sensor for a fake that tilts: add it to `devices`. It is the imu of apps/peripheral-page on a phone
+ * whose browser has sent orientation samples only: the tilt channels, as that page declares them (no roles, 20 Hz,
+ * no compass). It pushes a flat phone on joining, then what `push` gives it.
  */
 export const FAKE_IMU: PageDevice = {
   id: "imu",
   kind: "imu",
-  roles: ["tilt"],
-  description: "The motion sensor of this test page; it tilts when the test says so.",
+  roles: [],
+  description: "The motion sensors of this test page; it tilts when the test says so.",
   channels: [
-    { name: "pitch_deg", type: "number", pushed: true, unit: "deg", max_rate_hz: 20, description: "Tilt forward." },
-    { name: "roll_deg", type: "number", pushed: true, unit: "deg", max_rate_hz: 20, description: "Tilt sideways." },
-    { name: "shaken", type: "boolean", pushed: true, max_rate_hz: 20, description: "The page was shaken." },
+    {
+      name: "pitch_deg",
+      type: "number",
+      unit: "deg",
+      pushed: true,
+      max_rate_hz: 20,
+      description: "Front-to-back tilt: 0 lying flat, positive with the top edge raised, 90 upright.",
+    },
+    {
+      name: "roll_deg",
+      type: "number",
+      unit: "deg",
+      pushed: true,
+      max_rate_hz: 20,
+      description: "Left-to-right tilt: 0 lying flat, positive with the right edge lowered.",
+    },
+    {
+      name: "heading_deg",
+      type: "number",
+      unit: "deg",
+      pushed: true,
+      max_rate_hz: 20,
+      null_when_absent: true,
+      description: "Compass heading of the top edge; absent where the browser gives no compass.",
+    },
   ],
   commands: [],
 };
@@ -260,7 +283,7 @@ export async function fakePage(o: FakePageOptions): Promise<FakePage> {
       send({ t: "state", device: "touch", values: { b1: false, b1_presses: 0 } });
       send({ t: "state", device: "speaker", values: { spoken_count: 0 } });
       if (devices.some((d) => d.id === "imu"))
-        send({ t: "state", device: "imu", values: { pitch_deg: 0, roll_deg: 0, shaken: false } });
+        send({ t: "state", device: "imu", values: { pitch_deg: 0, roll_deg: 0, heading_deg: null } });
       return onWelcome(m);
     }
     if (silent) return;
