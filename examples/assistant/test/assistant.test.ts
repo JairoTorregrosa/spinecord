@@ -397,10 +397,10 @@ describe("who pays", () => {
 
   test("a profile under a key or a token stops the start: the key or the token would pay", () => {
     expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "work", ANTHROPIC_API_KEY: "k" }, dir, loggedIn)).toThrow(
-      "ANTHROPIC_PROFILE=work is set, but API key would pay first",
+      "ANTHROPIC_PROFILE=work is set, but ANTHROPIC_API_KEY is set too and would pay first",
     );
     expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "work", CLAUDE_CODE_OAUTH_TOKEN: "t" }, dir, loggedIn)).toThrow(
-      "Claude subscription token would pay first",
+      "CLAUDE_CODE_OAUTH_TOKEN is set too",
     );
   });
 

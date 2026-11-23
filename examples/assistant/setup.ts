@@ -232,6 +232,9 @@ const CLOUDS: [variable: string, provider: string][] = [
   ["CLAUDE_CODE_USE_FOUNDRY", "Microsoft Foundry"],
 ];
 
+/** The variables that pay before a profile, after the cloud providers, in Claude Code's order. */
+const ABOVE_PROFILE = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
+
 /**
  * Reads who pays from the environment, in the order Claude Code picks a credential: a cloud provider,
  * ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, the ant profile named in ANTHROPIC_PROFILE,
@@ -254,10 +257,12 @@ export function payerFromEnv(env: Env, configDir: string, exists: (path: string)
   if (!isSet(env, "ANTHROPIC_PROFILE")) return above ?? { kind: "computer-login" };
 
   const profile = env.ANTHROPIC_PROFILE!;
-  if (above)
+  if (above) {
+    const first = [...CLOUDS.map(([variable]) => variable), ...ABOVE_PROFILE].find((name) => isSet(env, name))!;
     throw new Error(
-      `ANTHROPIC_PROFILE=${profile} is set, but ${paidByText(above)} would pay first. Unset one of the two (README, step 2).`,
+      `ANTHROPIC_PROFILE=${profile} is set, but ${first} is set too and would pay first. Unset one of the two (README, step 2).`,
     );
+  }
   if (!exists(join(configDir, "configs", `${profile}.json`)))
     throw new Error(
       `ANTHROPIC_PROFILE=${profile}: there is no ant profile "${profile}" in ${configDir}, and Claude Code would ` +
