@@ -287,6 +287,10 @@ describe("joining again after the socket closed", () => {
     const after = r.sock().json();
     expect(after.some((m) => m.t === "down" && m.device === "imu")).toBe(false);
     expect(after.some((m) => m.t === "down" && m.device === "camera")).toBe(false);
+    // the hello went out hidden, without the torch; the camera taken back brings it, announced after the welcome
+    expect(r.hello().devices.map((d) => d.id)).not.toContain("torch");
+    expect(r.page.kit.status().devices).toContain("torch");
+    expect(after).toContainEqual({ t: "state", device: "torch", values: { on: false } });
   });
 
   test("a camera that comes back after the hello is announced after the welcome, with its torch", async () => {
@@ -309,6 +313,11 @@ describe("joining again after the socket closed", () => {
       .filter((m) => m.t === "devices")
       .at(-1)!;
     expect(last.devices.map((d: PageDevice) => d.id)).toEqual(expect.arrayContaining(["camera", "torch"]));
+    // its pushed value follows, so a read of torch.on has an answer
+    const after = r.sock().json();
+    const at = after.lastIndexOf(last);
+    expect(after.slice(at)).toContainEqual({ t: "state", device: "torch", values: { on: false } });
+    expect(r.page.kit.status().devices).toContain("torch");
   });
 
   test("the wake lock is kept while the page waits to join again", async () => {

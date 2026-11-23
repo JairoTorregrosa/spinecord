@@ -1015,7 +1015,7 @@ describe("sleep and waking up", () => {
     browser.refuseAgain("NotReadableError");
     setVisible(true);
     await tick(5);
-    expect(sock.json().at(-1)).toEqual({
+    expect(sock.json()).toContainEqual({
       t: "down",
       device: "camera",
       why: "the page could not get the camera back: another program holds the camera",

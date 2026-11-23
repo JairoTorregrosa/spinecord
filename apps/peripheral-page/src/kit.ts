@@ -182,6 +182,8 @@ export interface Kit {
   manifest(): { devices: PageDevice[]; unavailable: PageUnavailable[] };
   /** Sends the manifest again (a device was added, changed or withdrawn). */
   announce(): void;
+  /** Sends the manifest again if it differs from the one the process has (a track came back). No-op until welcomed. */
+  reconcile(): void;
   /** The person stopped lending this device: it leaves the manifest, with why in `unavailable`. */
   withdraw(id: string, why: string): void;
   /** A device cannot work for the moment (its track was muted), and works again. Said again after each welcome. */
@@ -222,8 +224,6 @@ export function createKit(o: KitOptions): Kit {
   let retry: ReturnType<typeof setTimeout> | null = null;
   let trying = false;
   let closing = false;
-  /** A beforeRejoin that outlasted prepare_ms settled after the hello: the manifest is sent again once welcomed. */
-  let lateManifest = false;
 
   const status = (): KitStatus => ({
     state,
@@ -375,14 +375,12 @@ export function createKit(o: KitOptions): Kit {
       if (retry) clearTimeout(retry);
       retry = null;
       to("lending");
-      if (lateManifest) {
-        lateManifest = false;
-        kit.announce();
-      }
       // every pushed channel has a value from the start: a read before the first push is an error otherwise
       for (const [device, values] of latest) if (announced.has(device)) sendState(device, values);
       // a page that joined again starts afresh on the process: what is down and the person's pause are said again
       for (const [device, why] of downs) if (announced.has(device)) send({ t: "down", device, why });
+      // what changed between the hello and the welcome (a camera taken back meanwhile brings its torch)
+      kit.reconcile();
       if (held) {
         send({ t: "paused", ...(held.why ? { why: held.why } : {}) });
         to("paused");
@@ -489,12 +487,8 @@ export function createKit(o: KitOptions): Kit {
       let settled = false;
       const prepared = (o.beforeRejoin?.() ?? Promise.resolve()).catch(() => {}).then(() => void (settled = true));
       await Promise.race([prepared, new Promise((r) => (cap = setTimeout(r, Math.max(0, Math.min(prepareMs, left)))))]);
-      // what it took back after the hello went out is announced then, or after the welcome
-      if (!settled)
-        void prepared.then(() => {
-          if (joined()) kit.announce();
-          else lateManifest = true;
-        });
+      // what it took back after the hello went out is announced then, or at the welcome
+      if (!settled) void prepared.then(() => kit.reconcile());
     } finally {
       clearTimeout(cap);
       trying = false;
@@ -532,10 +526,29 @@ export function createKit(o: KitOptions): Kit {
     },
     manifest,
     announce() {
+      const before = new Set(announced.keys());
       const m = manifest();
       take(m);
-      if (joined()) send({ t: "devices", devices: m.devices, unavailable: m.unavailable });
+      if (joined()) {
+        send({ t: "devices", devices: m.devices, unavailable: m.unavailable });
+        // a device the process did not have: its pushed values and whether it is down, as after a welcome
+        for (const id of announced.keys()) {
+          if (before.has(id)) continue;
+          const values = latest.get(id);
+          if (values) sendState(id, values);
+          const why = downs.get(id);
+          if (why) send({ t: "down", device: id, why });
+        }
+      }
       o.onStatus?.(status());
+    },
+    reconcile() {
+      if (!joined()) return;
+      const m = manifest();
+      const same =
+        JSON.stringify(m.devices) === JSON.stringify([...announced.values()]) &&
+        JSON.stringify(m.unavailable) === JSON.stringify(unavailable);
+      if (!same) kit.announce();
     },
     withdraw(id, why) {
       const def = defs.get(id);

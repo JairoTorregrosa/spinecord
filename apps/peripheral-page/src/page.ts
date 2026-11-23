@@ -148,8 +148,8 @@ export function createPage(o: PageOptions): Page {
       // the try takes the wake lock and the media back before its hello
       if (state === "reconnecting") return kit.reconnectNow();
       wake.acquire();
-      void cam?.reacquire();
-      void mic?.reacquire();
+      // a track taken back can bring a device of its own (the torch): the manifest follows once both settled
+      void Promise.all([cam?.reacquire(), mic?.reacquire()]).then(() => kit.reconcile());
     },
     wake: () => wake.state(),
     needsTap: () => [...(cam?.needsTap() ? ["camera" as const] : []), ...(mic?.needsTap() ? ["mic" as const] : [])],
@@ -160,6 +160,7 @@ export function createPage(o: PageOptions): Page {
         cam?.needsTap() ? cam.reacquire({ tap: true }) : undefined,
         mic?.needsTap() ? mic.reacquire({ tap: true }) : undefined,
       ]);
+      kit.reconcile();
       o.onStatus?.(kit.status());
     },
   };
