@@ -167,7 +167,9 @@ export type ProviderLoop =
         ended: Promise<LoopEnd>;
       }>;
     };
-export type BackendKind = "ev3" | "sim" | "page";
+/** The kind of robot behind an id: an open string the robot's first provider declares, e.g. "ev3-stock", "ev3dev",
+ * "sim" (a twin), "page" (a robot with no body). */
+export type BackendKind = string;
 
 // ---------- Robot profile (§3) ----------
 export interface Drivetrain {

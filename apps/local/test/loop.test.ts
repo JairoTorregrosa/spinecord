@@ -245,7 +245,7 @@ describe("the looping activity", () => {
     }
   }, 60_000);
 
-  test("power runs as a command too: one operation, or chunks for a longer ms; over max_speed_pct it is refused", async () => {
+  test("power runs as a command too: one operation, or chunks for a longer ms; over max_speed_pct it is cut", async () => {
     const t = await arm();
     try {
       const one = await t.tool("command_device", {
@@ -263,14 +263,21 @@ describe("the looping activity", () => {
       expect(long).toMatchObject({ ok: true, data: { reason: "completed", chunks: 3 } });
       expect(long.data.measured.degrees).toBeLessThan(0);
       expect(t.brick.busy()).toBe(false);
-      // the arm's max_speed_pct is 40: the schema's range, checked before anything is sent
+      // the arm's max_speed_pct is 40, the maximum of power_pct in the schema: the runtime cuts to it and says so
       const over = await t.tool("command_device", {
         device: "ev3.A",
         command: "power",
         args: { power_pct: 80, ms: 100 },
       });
-      expect(over).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
-      expect(over.error.message).toContain("must be <= 40");
+      expect(over).toMatchObject({
+        ok: true,
+        data: {
+          reason: "completed",
+          applied: { power_pct: 40, ms: 100 },
+          clamped: true,
+          clamps: [{ arg: "power_pct", requested: 80, applied: 40, target: false }],
+        },
+      });
     } finally {
       await t.fleet.shutdown();
     }

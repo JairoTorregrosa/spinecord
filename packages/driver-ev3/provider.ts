@@ -387,7 +387,7 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
             max_rate_hz: 20,
             approx: "About +-3 deg per 90 deg turn; drifts over time.",
             description:
-              "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the provider negates the sensor's native clockwise-positive value.",
+              "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the provider negates the sensor's native clockwise-positive value. A condition compares it as it reads, not relative to the start of a call: send reset first, or compare against a value read just before. turn measures the change of heading itself.",
           },
           ccw,
         ),
@@ -589,7 +589,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export class Ev3Provider implements Provider {
   readonly id: string;
-  readonly backend = "ev3" as const;
+  readonly backend = "ev3-stock";
   readonly link: Ev3Link;
   /**
    * Upper bound for stop() to resolve: one command already in flight (worst case a sensor mode

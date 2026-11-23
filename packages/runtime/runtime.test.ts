@@ -40,6 +40,7 @@ function setup(
   const clock = new FakeClock();
   const mock = new MockProvider({
     clock,
+    max_speed_pct: o.limits?.max_speed_pct ?? LIMITS.max_speed_pct,
     extra: o.extra,
     latency_ms: o.latency_ms,
     op_ms: o.op_ms,
@@ -1935,6 +1936,63 @@ describe("what a result says about clamping", () => {
       reason: "completed",
       measured: { degrees: 90 },
     });
+  });
+  test("a speed argument of any name is cut to its schema's bounds, and only a bound that limits a magnitude cuts", async () => {
+    // the runtime knows no argument by name: the provider wrote the robot's limit into the schema
+    const fan: DeviceSpec = {
+      id: "mock.fan",
+      provider: "mock",
+      kind: "dc_motor",
+      roles: [],
+      description: "A motor driven by duty cycle.",
+      channels: [],
+      commands: [
+        {
+          name: "spin",
+          description: "Applies a duty cycle.",
+          moves: true,
+          bound: { kind: "instant", max: 0 },
+          params: {
+            type: "object",
+            properties: {
+              duty: { type: "number", minimum: -60, maximum: 60 },
+              hz: { type: "number", minimum: 50, maximum: 500 },
+            },
+            required: ["duty"],
+            additionalProperties: false,
+          },
+        },
+      ],
+    };
+    const s = setup({ extra: [fan] });
+    const sent: Record<string, unknown>[] = [];
+    s.mock.command = async (_device, _command, args) => {
+      sent.push(args);
+      return { requested: args, measured: {}, clamped: false, reason: "completed", ms: 1 };
+    };
+    for (const [duty, applied] of [
+      [100, 60],
+      [-100, -60],
+    ]) {
+      const d = await s.call("command_device", { device: "mock.fan", command: "spin", args: { duty } });
+      expect(d).toMatchObject({
+        applied: { duty: applied },
+        clamped: true,
+        clamps: [{ arg: "duty", requested: duty, applied, target: false }],
+        reason: "completed",
+      });
+      expect(sent.at(-1)).toEqual({ duty: applied });
+    }
+    expect(
+      (await s.call("command_device", { device: "mock.fan", command: "spin", args: { duty: 10, hz: 900 } })).clamps,
+    ).toEqual([{ arg: "hz", requested: 900, applied: 500, target: false }]);
+    // a value between 0 and a bound that excludes it is no cut: the schema refuses it and nothing is sent
+    const e = await fails(
+      s.call("command_device", { device: "mock.fan", command: "spin", args: { duty: 10, hz: 5 } }),
+      "invalid_argument",
+    );
+    expect(e.message).toContain("args.hz must be >= 50 (minimum), got 5");
+    expect(sent).toHaveLength(3);
   });
   test("a cut target that was reached ends with reason clamped, and clamps marks it as the target", async () => {
     const s = setup();

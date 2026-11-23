@@ -59,8 +59,7 @@ describe("catalog", () => {
       collect(s.items);
     };
     for (const t of TOOLS) collect(t.output);
-    // an error code is a word of the surface too; beacon_heading is a channel the sign rule names, last_match the
-    // microphone channel a condition tests after listen
+    // an error code is a word of the surface too; last_match is the microphone channel a condition tests after listen
     const codes = (TOOLS[0]!.output.properties.error as { properties: { code: { enum: string[] } } }).properties.code
       .enum;
     for (const word of SERVER_INSTRUCTIONS.matchAll(/\b[a-z]+(_[a-z]+)+\b/g))
@@ -124,11 +123,32 @@ describe("catalog", () => {
     const codes = (TOOLS[0]!.output.properties.error as { properties: { code: { enum: string[] } } }).properties.code
       .enum;
     expect(codes).toContain("device_offline");
-    const backend = (TOOLS[1]!.output.properties.robot as { properties: { backend: { enum: unknown[] } } }).properties
-      .backend.enum;
-    expect(backend).toEqual(["ev3", "sim", "page", null]);
     expect(SERVER_INSTRUCTIONS).toContain("device_offline");
     expect(SERVER_INSTRUCTIONS).toContain("join");
+  });
+  test("backend is an open string the provider declares, not an enum", () => {
+    const data = (name: string) =>
+      TOOLS.find((t) => t.name === name)!.output.properties.data as { properties: Record<string, any> };
+    const backends = [
+      ...TOOLS.map((t) => (t.output.properties.robot as { properties: { backend: object } }).properties.backend),
+      data("list_robots").properties.robots.items.properties.backend,
+      data("describe_robot").properties.backend,
+    ];
+    for (const b of backends) {
+      expect(b).not.toHaveProperty("enum");
+      expect(JSON.stringify(b)).toContain("string");
+    }
+    expect(backends[0]).toMatchObject({ type: ["string", "null"] });
+  });
+  test("the texts a model reads name no device of one brick", () => {
+    // device ids of one provider (ev3.S3, sim.world), one brick's name, commands no shipped provider has
+    const brick = /\b(ev3|sim)\.[a-z]\w*|\bEV3\b|\bLEGO\b|\bservo|set_angle|floor_color/;
+    expect(SERVER_INSTRUCTIONS).not.toMatch(brick);
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/\bev3\w*|\bgyro/i);
+    for (const t of TOOLS) {
+      expect(`${t.name}: ${t.description}`).not.toMatch(brick);
+      expect(`${t.name}: ${JSON.stringify(t.input)}`).not.toMatch(brick);
+    }
   });
   test("run_program takes the program inline", () => {
     const run = TOOLS.find((t) => t.name === "run_program")!;

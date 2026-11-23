@@ -404,7 +404,7 @@ function sensorEntries(ir: IrChannel): Record<string, SensorEntry> {
           max_rate_hz: 20,
           approx: `About +-3 deg per 90 deg turn; drifts over time. ${MODE_NOTE}`,
           description:
-            "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the driver negates the sensor's native clockwise-positive value.",
+            "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the driver negates the sensor's native clockwise-positive value. A condition compares it as it reads, not relative to the start of a call: send reset first, or compare against a value read just before. turn measures the change of heading itself.",
         },
         {
           name: "rate_deg_s",
@@ -522,8 +522,7 @@ interface QueuedRead {
 
 export class Ev3devProvider implements Provider {
   readonly id: string;
-  /** The contract has no ev3dev backend value; this is an EV3 brick, so it reports "ev3". */
-  readonly backend = "ev3" as const;
+  readonly backend = "ev3dev";
   /** Upper bound for stop() to resolve: the bridge's verification window plus a link round trip. */
   readonly stop_worst_ms: number;
   private readonly o: {

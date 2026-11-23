@@ -1407,7 +1407,20 @@ class RuntimeImpl implements LocalRuntime {
             : cmd.bound.max,
         true,
       );
-    if (!(cmd.bound.params ?? []).includes("speed_pct")) cap("speed_pct", lim.max_speed_pct, false);
+    // Every other numeric argument is cut to its schema's maximum or minimum where that bound limits a magnitude
+    // (a maximum above 0, a minimum below 0): the provider writes max_speed_pct there. A value between 0 and a bound
+    // that excludes it (a frequency under its minimum) is left for the schema check below.
+    for (const [key, s] of Object.entries(cmd.params.properties)) {
+      if ((cmd.bound.params ?? []).includes(key)) continue;
+      const { minimum: lo, maximum: hi } = s as { minimum?: unknown; maximum?: unknown };
+      const v = applied[key];
+      if (typeof v !== "number") continue;
+      const to = typeof hi === "number" && hi > 0 && v > hi ? hi : typeof lo === "number" && lo < 0 && v < lo ? lo : v;
+      if (to !== v) {
+        applied[key] = to;
+        clamps.push({ arg: key, requested: v, applied: to, target: false });
+      }
+    }
     const chunkKeys =
       cmd.moves && cmd.bound.kind !== "instant"
         ? (cmd.bound.params ?? []).filter((k) => typeof applied[k] === "number" && applied[k] !== 0)

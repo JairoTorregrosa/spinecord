@@ -174,12 +174,9 @@ describe("changed on a sensor with noise", () => {
 });
 
 describe("the instructions about a twin", () => {
-  test("they name the devices only a twin has, and say a stock brick has no camera and no speak", async () => {
+  test("they say that a sim. device exists only on a twin, and this twin's sim. devices are all twin-only", async () => {
     const text = s.init.instructions as string;
-    for (const word of ["sim.world", "sim.camera", "sim.speaker", "no camera", "no speak", "world file"])
-      expect(text).toContain(word);
-    expect(text).not.toContain("the same devices as the hardware robot");
-    // and they match what this twin really has
+    for (const word of ["backend sim", "starts with sim.", "world file"]) expect(text).toContain(word);
     const robot = await call("describe_robot");
     const devices: { id: string; commands: string[] }[] = robot.ok ? robot.data.devices : [];
     expect(
@@ -191,11 +188,14 @@ describe("the instructions about a twin", () => {
     expect(devices.find((d) => d.id === "sim.speaker")!.commands).toContain("speak");
     expect(devices.find((d) => d.id === "ev3.speaker")!.commands).not.toContain("speak");
   });
-  test("they say that a gyro's angle is cumulative, and turn says what to use", () => {
-    expect(s.init.instructions).toContain("cumulative since its last reset");
+  test("a gyro's angle says it is cumulative, and turn says what to use", async () => {
+    const gyro = await call("describe_device", { device: "ev3.S2" });
+    const angle = (gyro.ok ? gyro.data.channels : []).find((c: { name: string }) => c.name === "angle_deg");
+    expect(angle.description).toContain("since the last reset");
+    expect(angle.description).toContain("send reset first");
     const turn = (s.listed as unknown as { name: string; description: string }[]).find((t) => t.name === "turn")!;
-    expect(turn.description).toContain("cumulative angle since the gyro's last reset");
-    expect(turn.description).toContain("reset command first");
+    expect(turn.description).toContain("reads since its last reset");
+    expect(turn.description).toContain("measures the change of heading itself");
   });
 });
 
