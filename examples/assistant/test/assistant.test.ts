@@ -16,10 +16,13 @@ import {
   tickMessage,
 } from "../agent.ts";
 import {
+  antConfigDir,
   costLine,
   localTime,
+  paidBy,
   parseArgs,
   parseMission,
+  payerFromEnv,
   readChatLine,
   readMission,
   SECTIONS,
@@ -328,6 +331,109 @@ describe("the budget", () => {
     expect(readChatLine("what is 1/2 of 40 cm?")).toEqual({ kind: "message", text: "what is 1/2 of 40 cm?" });
     expect(readChatLine("BYE")).toEqual({ kind: "bye" });
     expect(readChatLine("   ")).toEqual({ kind: "empty" });
+  });
+});
+
+describe("files of this computer", () => {
+  test("a word that starts with @ never reaches Claude: Claude Code would paste that file in", () => {
+    for (const line of ["@x", "see @README.md", "\t@x", "what is in @/home/me/notes.txt?", "a\n@x"])
+      expect(readChatLine(line)).toEqual({ kind: "file-mention" });
+  });
+
+  test("an @ inside a word is not a mention", () => {
+    expect(readChatLine("mail me at a@b.com")).toEqual({ kind: "message", text: "mail me at a@b.com" });
+    expect(readChatLine("5 cm@speed 20")).toEqual({ kind: "message", text: "5 cm@speed 20" });
+  });
+});
+
+describe("who pays", () => {
+  const dir = join("ant-config");
+  /** An ant folder with these files in it, without touching the disk. */
+  const antFolder =
+    (...files: string[]) =>
+    (path: string) =>
+      files.map((file) => join(dir, file)).includes(path);
+  const loggedIn = antFolder(join("configs", "work.json"), join("credentials", "work.json"));
+
+  test("the ant folder: ANTHROPIC_CONFIG_DIR, else APPDATA on Windows, else ~/.config", () => {
+    expect(antConfigDir({ ANTHROPIC_CONFIG_DIR: join("x", "ant") }, "darwin", "home")).toBe(join("x", "ant"));
+    expect(antConfigDir({ APPDATA: join("C", "AppData") }, "win32", "home")).toBe(join("C", "AppData", "Anthropic"));
+    expect(antConfigDir({}, "linux", "home")).toBe(join("home", ".config", "anthropic"));
+    expect(antConfigDir({ ANTHROPIC_CONFIG_DIR: "" }, "darwin", "home")).toBe(join("home", ".config", "anthropic"));
+  });
+
+  test("the environment picks the payer in Claude Code's order", () => {
+    const none = antFolder();
+    expect(payerFromEnv({}, dir, none)).toEqual({ kind: "computer-login" });
+    expect(payerFromEnv({ CLAUDE_CODE_OAUTH_TOKEN: "t" }, dir, none)).toEqual({ kind: "subscription-token" });
+    expect(payerFromEnv({ ANTHROPIC_API_KEY: "k", CLAUDE_CODE_OAUTH_TOKEN: "t" }, dir, none)).toEqual({
+      kind: "api-key",
+    });
+    expect(payerFromEnv({ ANTHROPIC_AUTH_TOKEN: "b", ANTHROPIC_API_KEY: "k" }, dir, none)).toEqual({
+      kind: "bearer-token",
+    });
+    expect(payerFromEnv({ CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_API_KEY: "k" }, dir, none)).toEqual({
+      kind: "cloud",
+      provider: "Amazon Bedrock",
+    });
+    expect(payerFromEnv({ ANTHROPIC_API_KEY: "" }, dir, none)).toEqual({ kind: "computer-login" });
+    expect(payerFromEnv({ ANTHROPIC_PROFILE: "work" }, dir, loggedIn)).toEqual({
+      kind: "ant-profile",
+      profile: "work",
+    });
+  });
+
+  test("a profile that is not in the ant folder stops the start, with its name and the folder", () => {
+    expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "nonexistent" }, dir, loggedIn)).toThrow(
+      `ANTHROPIC_PROFILE=nonexistent: there is no ant profile "nonexistent" in ${dir}`,
+    );
+  });
+
+  test("a profile that is not logged in stops the start: Claude Code would skip it too", () => {
+    expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "work" }, dir, antFolder(join("configs", "work.json")))).toThrow(
+      `the ant profile "work" in ${dir} is not logged in`,
+    );
+  });
+
+  test("a profile under a key or a token stops the start: the key or the token would pay", () => {
+    expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "work", ANTHROPIC_API_KEY: "k" }, dir, loggedIn)).toThrow(
+      "ANTHROPIC_PROFILE=work is set, but API key would pay first",
+    );
+    expect(() => payerFromEnv({ ANTHROPIC_PROFILE: "work", CLAUDE_CODE_OAUTH_TOKEN: "t" }, dir, loggedIn)).toThrow(
+      "Claude subscription token would pay first",
+    );
+  });
+
+  test("the line names the payer that Claude Code confirms, and no secret", () => {
+    const line = (env: Record<string, string>, account: object) => paidBy(payerFromEnv(env, dir, loggedIn), account);
+    // the accountInfo() answers below are the shapes Claude Code gave for each login on 2026-11-22
+    expect(
+      line({ ANTHROPIC_API_KEY: "sk-ant-secret" }, { apiKeySource: "ANTHROPIC_API_KEY", tokenSource: "claude.ai" }),
+    ).toBe("paid by: API key");
+    expect(line({ CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-secret" }, { tokenSource: "CLAUDE_CODE_OAUTH_TOKEN" })).toBe(
+      "paid by: Claude subscription token",
+    );
+    expect(line({ ANTHROPIC_PROFILE: "work" }, { apiProvider: "firstParty" })).toBe(
+      "paid by: Console login, ant profile work",
+    );
+    expect(line({}, { subscriptionType: "Claude Max", apiProvider: "firstParty" })).toBe(
+      "paid by: this computer's Claude Code login (Claude Max plan)",
+    );
+    expect(line({}, { apiKeySource: "/login managed key" })).toBe(
+      "paid by: a Console API key saved by this computer's Claude Code (/login)",
+    );
+  });
+
+  test("when Claude Code uses another payer than the environment chose, the start stops", () => {
+    const payer = payerFromEnv({ ANTHROPIC_PROFILE: "work" }, dir, loggedIn);
+    expect(() => paidBy(payer, { subscriptionType: "Claude Max" })).toThrow(
+      "uses this computer's Claude Code login (Claude Max plan)",
+    );
+    expect(() => paidBy({ kind: "api-key" }, { tokenSource: "claude.ai" })).toThrow("Nothing was sent");
+    expect(() => paidBy({ kind: "subscription-token" }, { subscriptionType: "Claude Max" })).toThrow(
+      "another credential than CLAUDE_CODE_OAUTH_TOKEN",
+    );
+    expect(() => paidBy({ kind: "api-key" }, { apiKeySource: "/login managed key" })).toThrow("/login");
   });
 });
 

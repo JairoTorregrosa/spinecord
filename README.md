@@ -103,7 +103,7 @@ Without arguments the server runs a simulated twin of the example robot (`r1-sim
 |---|---|
 | the twin of the example robot | none, or `--twin` (`--world <world.json>` for another room) |
 | a LEGO EV3 on stock firmware, USB | `--ev3`, then open `http://127.0.0.1:8767/` in Chrome or Edge and press "Connect EV3". Keep that tab open; it may be covered or in the background |
-| a LEGO EV3 on ev3dev | `--ev3dev --ssh robot@<host> --install-bridge`, after the ssh key below |
+| a LEGO EV3 on ev3dev | `--ev3dev --ssh robot@HOST --install-bridge`, after the ssh key below |
 | an EV3 and its twin | `--ev3 --twin` |
 | the twin of the example arm: two free motors and a touch sensor, no wheels | `--twin deployments/example/robots/arm.json` |
 | a robot file of your own | `--ev3 <robot.json>`, `--twin <robot.json>`, `--ev3dev <robot.json>` |
@@ -122,25 +122,25 @@ and run the line it prints.
 
 ### An EV3 on ev3dev: the ssh key first
 
-The server runs `ssh` without a keyboard: it cannot type a password and cannot answer the question about a new host key. Set both up once per computer and brick. `<host>` is the brick's name or address on your network (the brick shows its address at the top of its screen); `robot` is ev3dev's user, and its password is `maker` unless you changed it.
+The server runs `ssh` without a keyboard: it cannot type a password and cannot answer the question about a new host key. Set both up once per computer and brick. `HOST` is the brick's name or address on your network (the brick shows its address at the top of its screen); `robot` is ev3dev's user, and its password is `maker` unless you changed it.
 
 macOS, Linux:
 
 ```sh
 ssh-keygen -t ed25519      # only when you have no key yet; press Enter at each question
-ssh-copy-id robot@<host>   # answer "yes" to the host key, then type the brick's password
-ssh robot@<host> exit      # passes when it ends without asking anything
+ssh-copy-id robot@HOST   # answer "yes" to the host key, then type the brick's password
+ssh robot@HOST exit      # passes when it ends without asking anything
 ```
 
 Windows PowerShell (no `ssh-copy-id` there):
 
 ```powershell
 ssh-keygen -t ed25519
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh robot@<host> "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
-ssh robot@<host> exit
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh robot@HOST "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+ssh robot@HOST exit
 ```
 
-Then register with `--ev3dev --ssh robot@<host> --install-bridge`: `--install-bridge` copies the bridge (one Python file) to the brick. A brick that is off or out of reach does not stop the server: `list_robots` shows it `offline` with what to check, the server keeps trying, and the robot is `online` when the brick answers.
+Then register with `--ev3dev --ssh robot@HOST --install-bridge`: `--install-bridge` copies the bridge (one Python file) to the brick. A brick that is off or out of reach does not stop the server: `list_robots` shows it `offline` with what to check, the server keeps trying, and the robot is `online` when the brick answers.
 
 ### Check the direction before the first run
 

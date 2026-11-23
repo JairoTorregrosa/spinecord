@@ -1,7 +1,8 @@
 // A personal robot assistant in one file. Read it from top to bottom:
 //
 //   1. WHO it is            assistant.md, in your own words, becomes Claude's instructions.
-//   2. WHAT it may touch    one MCP server, spinecord: the robot. No files, no shell, no web.
+//   2. WHAT it may touch    one MCP server, spinecord: the robot. No file tools, no shell, no web; a chat line
+//                           with an @file mention never reaches Claude.
 //   3. HOW it gets a turn   chat (you write) or autonomous (a clock wakes it up).
 //   4. THE LOOP             send a message, print what Claude says and does, print what it cost.
 //   5. THE END              every way out stops the robot first.
@@ -16,10 +17,13 @@ import { type Options, query, type SDKUserMessage } from "@anthropic-ai/claude-a
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
+  antConfigDir,
   costLine,
   localTime,
   type Mission,
+  paidBy,
   parseArgs,
+  payerFromEnv,
   readChatLine,
   readMission,
   type Settings,
@@ -34,6 +38,9 @@ export const MODEL = "claude-opus-5-5";
 /** Bound of one turn: how many times Claude may go "think, then use tools" before the turn is cut. */
 export const MAX_STEPS_PER_TURN = 15;
 
+/** How long the start may wait for Claude Code to say which login it uses, in ms. */
+const ACCOUNT_WAIT_MS = 30_000;
+
 /** How long the end may wait for Claude to let go of a turn, in ms. */
 const PATIENCE_MS = 5000;
 
@@ -45,7 +52,7 @@ export const SPINECORD_MAIN = resolve(HERE, "..", "..", "apps", "local", "main.t
 export const SERVER = "spinecord";
 const TOOL_PREFIX = `mcp__${SERVER}__`;
 
-/** Claude Code's own tools. This assistant drives a robot: it reads no files and runs no commands. */
+/** Claude Code's own tools. This assistant drives a robot: it has no tool to read files or run commands. */
 export const BUILT_IN_TOOLS = [
   ...["Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"],
   ...["WebFetch", "WebSearch", "Agent", "Task", "Skill", "TodoWrite", "ToolSearch", "AskUserQuestion"],
@@ -204,6 +211,8 @@ async function main(): Promise<number> {
   }
   const mission = readMission(settings.missionFile ?? DEFAULT_MISSION_FILE);
   checkRobotFlags(settings.robotFlags);
+  // who pays, from the environment: a profile that Claude Code would skip stops the start here
+  const payer = payerFromEnv(process.env, antConfigDir(process.env));
   console.log(
     `${mission.name} is waking up (model ${MODEL}, budget $${settings.maxUsd.toFixed(2)}). Ctrl+C stops the robot and ends.`,
   );
@@ -239,6 +248,7 @@ async function main(): Promise<number> {
 
   // ---- messages out. 4. THE LOOP: everything Claude says and does arrives here, in order.
   let turn = 0;
+  let startSource: string | undefined; // what accountInfo() said at the start
   const spend = new Spend();
   let turnRunning = false;
   let turnDone = () => {};
@@ -253,12 +263,16 @@ async function main(): Promise<number> {
             `the ${SERVER} server did not start (${server?.status ?? "missing"}). Try: bun ${SPINECORD_MAIN} --help`,
             true,
           );
+        // the credential of the requests: "ANTHROPIC_API_KEY", "/login managed key", or "none" for every login
+        // and token. It must be the one accountInfo() gave at the start.
+        if (message.apiKeySource !== (startSource ?? "none"))
+          return stop(`Claude Code changed its credential to ${message.apiKeySource} after the start`, true);
         const foreign = message.tools.filter((tool) => !tool.startsWith(TOOL_PREFIX));
         if (foreign.length > 0)
           return stop(`the agent has tools that are not the robot's: ${foreign.join(", ")}`, true);
       } else if (message.type === "assistant") {
         if (message.error === "authentication_failed")
-          return stop("Claude did not accept the login. Set ANTHROPIC_API_KEY (README, step 2).", true);
+          return stop('Claude did not accept the login of the line "paid by" (README, step 2).', true);
         if (message.error) console.log(`  (Claude answered with an error: ${message.error})`);
         for (const block of message.message.content) {
           if (block.type === "text" && block.text.trim()) console.log(`${mission.name}> ${block.text.trim()}`);
@@ -283,6 +297,21 @@ async function main(): Promise<number> {
       }
     }
   })();
+  // ---- who pays, from Claude Code itself, before anything is sent. The init message only says "none" for every
+  // login and token; accountInfo() names the token or the claude.ai plan in use.
+  try {
+    const account = await Promise.race([
+      session.accountInfo(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`no answer in ${ACCOUNT_WAIT_MS / 1000} s`)), ACCOUNT_WAIT_MS),
+      ),
+    ]);
+    startSource = account.apiKeySource;
+    console.log(paidBy(payer, account));
+  } catch (error) {
+    stop(`Claude Code did not say who pays: ${error instanceof Error ? error.message : String(error)}`, true);
+  }
+
   // the SDK throws when Claude Code cannot start or dies; the session ending by itself is also a way out
   reading.then(
     () => stop("the session ended"),
@@ -313,6 +342,8 @@ async function main(): Promise<number> {
       const line = readChatLine(typed);
       if (line.kind === "bye") break;
       if (line.kind === "command") console.log("Commands that start with / are not passed on: write in plain words.");
+      if (line.kind === "file-mention")
+        console.log("Not passed on: a word that starts with @ would make Claude read that file of this computer.");
       if (line.kind === "message") await takeTurn(line.text);
       if (stopped) return;
       keyboard!.prompt();
@@ -321,17 +352,19 @@ async function main(): Promise<number> {
   };
 
   void (
-    settings.mode.kind === "chat"
-      ? chat()
-      : autonomous({
-          name: mission.name,
-          everySeconds: settings.mode.everySeconds,
-          forMinutes: settings.mode.forMinutes,
-          takeTurn,
-          stop,
-          untilStopped,
-          isStopped: () => stopped !== null,
-        })
+    stopped
+      ? Promise.resolve()
+      : settings.mode.kind === "chat"
+        ? chat()
+        : autonomous({
+            name: mission.name,
+            everySeconds: settings.mode.everySeconds,
+            forMinutes: settings.mode.forMinutes,
+            takeTurn,
+            stop,
+            untilStopped,
+            isStopped: () => stopped !== null,
+          })
   ).catch((error) => stop(`the program failed: ${error instanceof Error ? error.message : String(error)}`, true));
 
   // ---- 5. THE END. One path for Ctrl+C, the budget, --for, "bye" and every error.
