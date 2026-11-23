@@ -375,12 +375,13 @@ export function createKit(o: KitOptions): Kit {
       if (retry) clearTimeout(retry);
       retry = null;
       to("lending");
+      // what changed between the hello and the welcome (a camera taken back meanwhile brings its torch, a permission
+      // taken back withdraws it), before any value of a device the process may not have
+      kit.reconcile();
       // every pushed channel has a value from the start: a read before the first push is an error otherwise
       for (const [device, values] of latest) if (announced.has(device)) sendState(device, values);
       // a page that joined again starts afresh on the process: what is down and the person's pause are said again
       for (const [device, why] of downs) if (announced.has(device)) send({ t: "down", device, why });
-      // what changed between the hello and the welcome (a camera taken back meanwhile brings its torch)
-      kit.reconcile();
       if (held) {
         send({ t: "paused", ...(held.why ? { why: held.why } : {}) });
         to("paused");
@@ -526,6 +527,8 @@ export function createKit(o: KitOptions): Kit {
     },
     manifest,
     announce() {
+      // between a hello and its welcome, `announced` stays what that hello carried: the welcome reconciles the rest
+      if (state === "joining" || state === "reconnecting") return void o.onStatus?.(status());
       const before = new Set(announced.keys());
       const m = manifest();
       take(m);

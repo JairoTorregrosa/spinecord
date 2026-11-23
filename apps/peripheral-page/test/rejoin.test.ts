@@ -291,6 +291,38 @@ describe("joining again after the socket closed", () => {
     expect(r.hello().devices.map((d) => d.id)).not.toContain("torch");
     expect(r.page.kit.status().devices).toContain("torch");
     expect(after).toContainEqual({ t: "state", device: "torch", values: { on: false } });
+    // the process hears of the torch before any value of it
+    const announcedAt = after.findIndex(
+      (m) => m.t === "devices" && m.devices.some((d: PageDevice) => d.id === "torch"),
+    );
+    const valueAt = after.findIndex((m) => m.t === "state" && m.device === "torch");
+    expect(announcedAt).toBeGreaterThanOrEqual(0);
+    expect(announcedAt).toBeLessThan(valueAt);
+  });
+
+  test("a permission taken back while a try waits for its welcome: the welcome tells the process, with why", async () => {
+    const r = rig({ ...PHONE, permissions: true }, { delays_ms: [20], window_ms: 30_000 });
+    await r.join("phone");
+    r.setVisible(false);
+    r.browser.video.end();
+    r.sock().closeFromServer(1006, "");
+    await r.opened(2); // the timer's try, while hidden: its hello still lends the camera
+    r.sock().open();
+    expect(r.hello().devices.map((d) => d.id)).toContain("camera");
+    r.browser.permission("camera", "denied");
+    r.setVisible(true);
+    await tick(5);
+    r.welcome("phone");
+    const last = r
+      .sock()
+      .json()
+      .filter((m) => m.t === "devices")
+      .at(-1)!;
+    expect(last.devices.map((d: PageDevice) => d.id)).not.toContain("camera");
+    expect(last.unavailable).toContainEqual({
+      kind: "camera",
+      why: "camera: the page could not get the camera back: the browser took back the permission for the camera; reload the page and tap Lend this device to lend it again",
+    });
   });
 
   test("a camera that comes back after the hello is announced after the welcome, with its torch", async () => {
