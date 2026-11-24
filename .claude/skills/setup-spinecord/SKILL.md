@@ -21,7 +21,7 @@ Talk to the person in the language that the person uses. Keep commands and file 
 |---|---|
 | the person | the human at this computer |
 | Console organization | the organization on platform.claude.com that holds the credits |
-| profile | an `ant` login, stored by name. This skill uses the name `spinecord` |
+| profile | an `ant` login, stored by name. This skill uses the name `credits` |
 | the clone | the folder `spinecord` that `git clone` makes, in the home folder of the person |
 | workshop folder | the folder `mi-robot` in the home folder of the person, outside the clone |
 | launch line | the command that starts Claude Code in the workshop folder with the profile |
@@ -89,12 +89,13 @@ If the same step fails 2 times, stop. Show the error and the row of the fix tabl
 ### 2 INSTALL
 
 1. Make a list of the tools that state 1 did not find, and of a bun older than 1.3.14.
-2. If the list is empty, go to state 3.
-3. Show the list and the commands to the person. Ask for approval, then install.
-4. Install one tool at a time. Run `<tool> --version` after each install.
-5. On Windows, after each install, tell the person to close the terminal and open a new one.
-6. On Windows, after a new terminal opens, run `<tool> --version` again.
-7. If a new terminal does not find a tool, use the row "PATH after an install" of the fix table.
+2. If `ant` or `claude` prints a version, keep that version. Do not upgrade it.
+3. If the list is empty, go to state 3.
+4. Show the list and the commands to the person. Ask for approval, then install.
+5. Install one tool at a time. Run `<tool> --version` after each install.
+6. On Windows, after each install, tell the person to close the terminal and open a new one.
+7. On Windows, after a new terminal opens, run `<tool> --version` again.
+8. If a new terminal does not find a tool, use the row "PATH after an install" of the fix table.
 
 git:
 
@@ -139,15 +140,28 @@ Claude Code:
    - "If the page asks for an organization, click the organization with the credits."
    - "If the page asks for a workspace, click the default workspace."
    - "Click Authorize, then come back to this terminal."
-2. Run `ant auth login --profile spinecord`.
-3. If the computer has no browser, run `ant auth login --profile spinecord --no-browser`.
+2. Run `ant auth login --profile credits`.
+3. If the computer has no browser, run `ant auth login --profile credits --no-browser`.
 4. With `--no-browser`, give the person the URL. Tell the person to paste the code into the terminal.
-5. Run `ant --profile spinecord auth status`. Read only the line that starts with `Logged in to`.
-6. Take the organization name from that line. It is the text between `Logged in to` and the last ` as `.
-7. Show the person the organization name only. Do not show the email, the token or other lines.
+5. Run the command that fits the shell. It prints only the organization name.
+
+macOS or Linux:
+
+```sh
+ant --profile credits auth status | grep 'Logged in to' | sed -e 's/^ *Logged in to //' -e 's/ as [^ ]*$//'
+```
+
+Windows PowerShell:
+
+```powershell
+(ant --profile credits auth status | Select-String 'Logged in to').Line -replace '^\s*Logged in to ', '' -replace ' as \S+$', ''
+```
+
+6. If the command prints nothing, the profile has no login. Run step 2 again.
+7. Show the person the organization name only. Never show the full output of `ant auth status`.
 8. Ask the person: "Is this the organization with the credits?"
 9. If the person says no, use the row "Wrong Console organization" of the fix table.
-10. Run `ant --profile spinecord models list`. Do not show its output. Read only the exit code.
+10. Run `ant --profile credits models list`. Do not show its output. Read only the exit code.
 11. If the exit code is not 0, run step 2 again.
 
 Exit check: the person confirmed the organization name, and `models list` exited 0.
@@ -160,22 +174,35 @@ A settings file does not do it. Do not put `ANTHROPIC_PROFILE` in a settings fil
 1. Check which of these variables have a value: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`.
 2. Also check `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` and `CLAUDE_CODE_USE_ANTHROPIC_AWS`.
 3. Show the names of the variables that have a value. Never show a value.
+
+macOS or Linux:
+
+```sh
+for v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_ANTHROPIC_AWS; do printenv "$v" > /dev/null && echo "$v"; done
+```
+
+Windows PowerShell:
+
+```powershell
+'ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_USE_ANTHROPIC_AWS' | Where-Object { Test-Path "Env:$_" }
+```
+
 4. If a variable in that list has a value, use the row "Another credential pays" of the fix table.
 5. Run the check that fits the shell, and show only the lines it keeps.
 
 macOS or Linux:
 
 ```sh
-ANTHROPIC_PROFILE=spinecord claude auth status --text | grep -E '^(Profile|Organization|Login method):'
+ANTHROPIC_PROFILE=credits claude auth status --text | grep -E '^(Profile|Organization|Login method):'
 ```
 
 Windows PowerShell:
 
 ```powershell
-$env:ANTHROPIC_PROFILE = "spinecord"; claude auth status --text | Select-String '^(Profile|Organization|Login method):'
+$env:ANTHROPIC_PROFILE = "credits"; claude auth status --text | Select-String '^(Profile|Organization|Login method):'
 ```
 
-6. If the output has a line `Profile:` that ends with `profile spinecord`, compare the organization.
+6. If the output has a line `Profile:` that ends with `profile credits`, compare the organization.
 7. Take the text between `Organization:` and ` · `. It must be the organization of state 3.
 8. If the output has a line `Login method:`, a claude.ai login pays. Stop, and use the row "Another credential pays".
 9. If the output has no `Profile:` line on Windows, use the row "Windows profile folder" of the fix table.
@@ -184,13 +211,14 @@ The launch line for the person:
 
 | Shell | Launch line |
 |---|---|
-| macOS or Linux | `cd ~/mi-robot && ANTHROPIC_PROFILE=spinecord claude` |
-| Windows PowerShell | `cd $HOME\mi-robot; $env:ANTHROPIC_PROFILE = "spinecord"; claude` |
+| macOS or Linux | `cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude` |
+| Windows PowerShell | `cd $HOME\mi-robot; $env:ANTHROPIC_PROFILE = "credits"; claude` |
 
 10. Tell the person to start Claude Code with the launch line in each new terminal.
-11. If the person wants the variable in each terminal, ask for approval of a change to the shell profile.
+11. Tell the person: "At the first start, Claude Code asks if you trust this folder. Choose Yes."
+12. If the person wants the variable in each terminal, ask for approval of a change to the shell profile.
 
-Exit check: `Profile:` names `spinecord`, and the organization is the one that the person confirmed.
+Exit check: `Profile:` names `credits`, and the organization is the one that the person confirmed.
 
 ### 5 SPINECORD
 
@@ -206,8 +234,10 @@ Exit check: `Profile:` names `spinecord`, and the organization is the one that t
 ```
 
 7. In `mi-robot`, run `bun <clone>/apps/local/main.ts --print-add --twin`. Write the full path of the clone for `<clone>`.
-8. Take the first line that it prints. Change `-s user` to `-s local`. Do not change other text.
-9. Run that line in `mi-robot`.
+8. Take the first line that it prints. Ignore the second line. Change `-s user` to `-s local`.
+9. Do not change other text of the line.
+10. If `claude mcp get spinecord` in `mi-robot` finds a registration, run `claude mcp remove -s local spinecord` first.
+11. Run the line in `mi-robot`.
 
 Use local scope for these reasons:
 
@@ -216,19 +246,20 @@ Use local scope for these reasons:
 - With `--ev3`, a second session cannot hold port 8767.
 - With an EV3 on ev3dev, a second link can stop the motors during a move of the first session.
 
-Exit check: in `mi-robot`, `claude mcp get spinecord` shows `Scope:` with the word `Local`.
+Exit check: in `mi-robot`, `claude mcp get spinecord` shows a `Scope:` line that starts with `Local`.
 
 ### 6 DOCTOR
 
 1. In `mi-robot`, run `bun <clone>/apps/local/main.ts --doctor --twin`.
 2. Add `--ev3` if the person has an EV3 with stock firmware on USB.
 3. Add `--pages` if the person lends a camera, a microphone or a screen through a browser page.
-4. Add `--assistant` if the person uses the assistant example. Then set `ANTHROPIC_PROFILE=spinecord` in the same command.
+4. Add `--assistant` if the person uses the assistant example. Then set `ANTHROPIC_PROFILE=credits` in the same command.
 5. Read each line. A line is `ok`, `warn` or `fail`, the reason, and after `->` the fix.
 6. For each `fail` line, show the line to the person. Ask for approval, then run the fix.
-7. If a fix names `bun apps/local/main.ts`, write the full path of the clone, and run it in `mi-robot`.
-8. If a fix names `-s user`, write `-s local`.
-9. Run the doctor again. Repeat until the last line is `doctor: ok`.
+7. A `warn` line does not stop this state. Show it to the person. Run its fix only after a yes.
+8. If a fix names `bun apps/local/main.ts`, write the full path of the clone, and run it in `mi-robot`.
+9. If a fix names `-s user`, write `-s local`.
+10. Run the doctor again. Repeat until the last line is `doctor: ok`.
 
 Exit check: the last line is `doctor: ok`.
 
@@ -239,18 +270,19 @@ Exit check: the last line is `doctor: ok`.
 macOS or Linux:
 
 ```sh
-ANTHROPIC_PROFILE=spinecord claude -p "List the robots. Then drive r1-sim forward 5 cm. Answer in one line." --max-budget-usd 0.50 --output-format json
+ANTHROPIC_PROFILE=credits claude -p "List the robots. Then drive r1-sim forward 5 cm. Answer in one line." --allowedTools mcp__spinecord --max-budget-usd 0.50 --output-format json
 ```
 
 Windows PowerShell:
 
 ```powershell
-$env:ANTHROPIC_PROFILE = "spinecord"; claude -p "List the robots. Then drive r1-sim forward 5 cm. Answer in one line." --max-budget-usd 0.50 --output-format json
+$env:ANTHROPIC_PROFILE = "credits"; claude -p "List the robots. Then drive r1-sim forward 5 cm. Answer in one line." --allowedTools mcp__spinecord --max-budget-usd 0.50 --output-format json
 ```
 
 2. Read `result`, `is_error` and `total_cost_usd` from the JSON. Do not show other fields.
-3. If `is_error` is true, find the error text in the fix table.
-4. Show the person the answer and the cost in USD.
+3. Claude Code can say that it does not trust the workspace. That message is normal here. `--allowedTools` gives the spinecord tools.
+4. If `is_error` is true, find the error text in the fix table.
+5. Show the person the answer and the cost in USD.
 
 Exit check: the answer names `r1-sim` and a move of 5 cm, and you know the cost.
 
@@ -286,7 +318,7 @@ Give the person this report:
 
 ```text
 Installed: git <v>, bun <v>, ant <v>, Claude Code <v>, browser <name or none>
-Who pays: Console organization "<organization name>", profile spinecord
+Who pays: Console organization "<organization name>", profile credits
 spinecord: <clone path>, registered with local scope in <mi-robot path>, robots <flags>
 Doctor: doctor: ok
 Smoke test: <answer>, cost USD <total_cost_usd>
@@ -299,10 +331,10 @@ Start Claude Code with: <launch line>
 
 | Problem | Cause | Fix |
 |---|---|---|
-| `Credit balance is too low` | The profile logged in to an organization with no credits | Run `ant auth login --profile spinecord2` and click the Console organization with the credits. Then use `spinecord2` in all commands |
+| `Credit balance is too low` | The profile logged in to an organization with no credits | Run `ant auth login --profile credits2` and click the Console organization with the credits. Then use `credits2` in all commands |
 | Wrong Console organization | The profile keeps its first organization | Same fix as `Credit balance is too low` |
 | Another credential pays | A variable from state 4, or a claude.ai login, pays ahead of the profile | Tell the person the name of the variable. Unset it in this terminal (`unset NAME` or `Remove-Item Env:NAME`). Start Claude Code with the launch line |
-| `Login method:` with the profile set | The profile name does not exist, or it has no login | Run `ant --profile spinecord auth status`. If there is no `Logged in to` line, do state 3 again |
+| `Login method:` with the profile set | The profile name does not exist, or it has no login | Run `ant --profile credits auth status`. If there is no `Logged in to` line, do state 3 again |
 | Windows profile folder | Claude Code does not find the profile that `ant` wrote | Set `$env:ANTHROPIC_CONFIG_DIR` to the `Config dir:` path from `ant auth status`. Run the state 4 check again |
 | Port 8767 held | Another Claude Code session runs spinecord with `--ev3` | Close the other Claude Code session. Run the doctor again |
 | EV3 not listed | The USB cable, the EV3 is off, or the browser is not Chrome or Edge | Connect the cable. Turn on the EV3. Open the page in Chrome or Edge, and click Connect EV3 again |
