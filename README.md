@@ -43,6 +43,20 @@ flowchart LR
 
 One process on your laptop: the MCP server, the runtime and the robots. No account, no network service. Needs [bun](https://bun.sh) ≥ 1.3.14, git and Claude Code.
 
+### Set up with your coding agent
+
+A coding agent (Claude Code, Codex, or another one) can do the whole setup on macOS, Windows or Linux: it installs git, bun, the [`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart) and Claude Code, logs in to the Console organization that holds your API credits with `ant auth login` (no API key is made or copied), registers spinecord in a folder of your own, runs the doctor and drives the twin. Give it this prompt:
+
+```text
+Read https://raw.githubusercontent.com/JairoTorregrosa/spinecord/main/.claude/skills/setup-spinecord/SKILL.md and follow it.
+```
+
+It asks before each install and tells you what to click when the browser opens. The steps are in [`.claude/skills/setup-spinecord/SKILL.md`](.claude/skills/setup-spinecord/SKILL.md).
+
+No coding agent yet? Install Claude Code ([setup](https://code.claude.com/docs/en/setup)), run `claude`, choose the Console account at the login, then "Sign in with your Console account", and pick the organization with the credits. That sign-in makes no API key ([authentication](https://code.claude.com/docs/en/authentication#sign-in-without-an-api-key)).
+
+The steps below set spinecord up by hand.
+
 ### 1. Install
 
 macOS or Linux (Terminal), Windows (PowerShell): the same three commands.
