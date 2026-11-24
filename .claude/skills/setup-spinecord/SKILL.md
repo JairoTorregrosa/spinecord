@@ -204,8 +204,9 @@ $env:ANTHROPIC_PROFILE = "credits"; claude auth status --text | Select-String '^
 
 6. If the output has a line `Profile:` that ends with `profile credits`, compare the organization.
 7. Take the text between `Organization:` and ` · `. It must be the organization of state 3.
-8. If the output has a line `Login method:`, a claude.ai login pays. Stop, and use the row "Another credential pays".
-9. If the output has no `Profile:` line on Windows, use the row "Windows profile folder" of the fix table.
+8. Do not show the ID after ` · `.
+9. If the output has a line `Login method:`, a claude.ai login pays. Stop, and use the row "Another credential pays".
+10. If the output has no `Profile:` line on Windows, use the row "Windows profile folder" of the fix table.
 
 The launch line for the person:
 
@@ -214,9 +215,9 @@ The launch line for the person:
 | macOS or Linux | `cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude` |
 | Windows PowerShell | `cd $HOME\mi-robot; $env:ANTHROPIC_PROFILE = "credits"; claude` |
 
-10. Tell the person to start Claude Code with the launch line in each new terminal.
-11. Tell the person: "At the first start, Claude Code asks if you trust this folder. Choose Yes."
-12. If the person wants the variable in each terminal, ask for approval of a change to the shell profile.
+11. Tell the person to start Claude Code with the launch line in each new terminal.
+12. Tell the person: "At the first start, Claude Code asks if you trust this folder. Choose Yes."
+13. If the person wants the variable in each terminal, ask for approval of a change to the shell profile.
 
 Exit check: `Profile:` names `credits`, and the organization is the one that the person confirmed.
 
@@ -236,8 +237,10 @@ Exit check: `Profile:` names `credits`, and the organization is the one that the
 7. In `mi-robot`, run `bun <clone>/apps/local/main.ts --print-add --twin`. Write the full path of the clone for `<clone>`.
 8. Take the first line that it prints. Ignore the second line. Change `-s user` to `-s local`.
 9. Do not change other text of the line.
-10. If `claude mcp get spinecord` in `mi-robot` finds a registration, run `claude mcp remove -s local spinecord` first.
-11. Run the line in `mi-robot`.
+10. Run `claude mcp get spinecord` in `mi-robot`. A result of "not found" is normal.
+11. If it finds a registration, run `claude mcp remove -s local spinecord` first.
+12. Run the line in `mi-robot`.
+13. The allow rule applies when the person trusts `mi-robot` at the first start of Claude Code.
 
 Use local scope for these reasons:
 
@@ -279,10 +282,11 @@ Windows PowerShell:
 $env:ANTHROPIC_PROFILE = "credits"; claude -p "List the robots. Then drive r1-sim forward 5 cm. Answer in one line." --allowedTools mcp__spinecord --max-budget-usd 0.50 --output-format json
 ```
 
-2. Read `result`, `is_error` and `total_cost_usd` from the JSON. Do not show other fields.
-3. Claude Code can say that it does not trust the workspace. That message is normal here. `--allowedTools` gives the spinecord tools.
-4. If `is_error` is true, find the error text in the fix table.
-5. Show the person the answer and the cost in USD.
+2. Read the JSON from standard output only. Do not merge standard error into it.
+3. Read `result`, `is_error` and `total_cost_usd`. Do not show other fields.
+4. Claude Code can say that it does not trust the workspace. That message is normal here. `--allowedTools` gives the spinecord tools.
+5. If `is_error` is true, find the error text in the fix table.
+6. Show the person the answer and the cost in USD.
 
 Exit check: the answer names `r1-sim` and a move of 5 cm, and you know the cost.
 
