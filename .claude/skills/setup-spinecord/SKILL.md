@@ -310,9 +310,14 @@ Skip this state if the person has no EV3 with stock firmware.
    - "Put the robot on the floor with free space in front of it."
    - "In Claude Code, type: drive forward 5 cm."
    - "Look at the robot. Tell me if it moved forward or backward."
-8. If the robot moved backward, open `<clone>/deployments/example/robots/r1.json`.
-9. Under `profile.drivetrain`, change `"forward_sign": 1` to `"forward_sign": -1`. Save the file.
-10. Tell the person to close Claude Code and start it again with the launch line.
+8. If the robot moved backward, do not change files in the clone. A change there blocks a later `git pull`.
+9. Copy `<clone>/deployments/example/robots/r1.json` to `mi-robot/robots/ev3.json`.
+10. In the copy, under `profile.drivetrain`, change `"forward_sign": 1` to `"forward_sign": -1`. Save the file.
+11. In `mi-robot`, run `claude mcp remove -s local spinecord`.
+12. Run `bun <clone>/apps/local/main.ts --print-add --ev3 <mi-robot>/robots/ev3.json --twin`. Write full paths.
+13. Change `-s user` to `-s local` in the first line, then run the line in `mi-robot`.
+14. Tell the person to close Claude Code and start it again with the launch line.
+15. Ask the person to do the direction check again.
 
 Exit check: the EV3 is `online`, and "drive forward 5 cm" moves it forward.
 
