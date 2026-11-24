@@ -1,6 +1,8 @@
 export { createRuntime, rerr, STALE_IMAGE_MS, MAX_CHUNK_MS, MAX_SAMPLE_HZ } from "./runtime";
 export type { LocalRuntime, PlannedLoop, RuntimeOptions, ProgramResult, ProgramStep } from "./runtime";
 export { HostLoop, LOOP_START_TICKS } from "./host-loop";
+export { DeviceLoop } from "./device-loop";
+export type { RuntimeLoop } from "./device-loop";
 export { compileCondition, makeEvaluator } from "./conditions";
 export { validateSchema } from "../protocol/schema";
 export { realClock, FakeClock } from "./clock";

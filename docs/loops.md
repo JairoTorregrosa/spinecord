@@ -168,3 +168,9 @@ supervise_loop   {robot_id: "r1"}                              → {state: "ende
 ```
 
 The same calls run on the twin, `--twin` with `--world packages/sim-world/examples/line-oval.json`: C2 as printed goes once around the oval in about 16 s of simulated time, with the axle within 2.7 cm of the line's centre, and the stock code path carries every tick (`apps/local/test/loop.test.ts`). The 50 Hz of the stock path has not been measured on a real brick (`docs/hardware-log.md`).
+
+## C2 on an ev3dev brick
+
+With bridge version 7 a loop runs on the brick itself (CONTRACT §5a): `describe_robot` shows `loop: {runs_on: "device", max_rate_hz: 50}`, and the calls above are the same. The bridge runs the loop as one task beside its other work: it holds the sysfs attributes of the loop open, reads them, runs the law (a Python port that passes `packages/protocol/loop-golden.json`), refreshes each wheel's `run_time` for `hold_ms`, and pushes the report's statistics to the computer every 0.5 s. `supervise_loop`'s `params` reach the brick on the next tick. The ends are the stock ones, plus two of the brick's: 1 s without a line from the computer ends the loop with `timeout` (the bridge's watchdog), and a bridge held off the processor ends it with `overrun` once it runs again. If the bridge is killed, or stops while a motor runs on `power`, the guard brakes every motor within 300 ms (its deadman is 200 ms).
+
+The 50 Hz is a starting figure, not a measurement: `probeLoop()` on the provider measures what a tick costs on the brick and sets the link's `max_rate_hz` (`docs/hardware-log.md` has the run to make). A bridge older than version 7 refuses every loop with `misconfigured`, naming `--install-bridge`; everything else keeps working on it.

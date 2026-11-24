@@ -19,7 +19,7 @@ import {
 } from "../../../packages/protocol/types";
 import type { LoopEnd, LoopReport } from "../../../packages/protocol/types";
 import { type Clock, realClock } from "../../../packages/runtime/clock";
-import type { HostLoop } from "../../../packages/runtime/host-loop";
+import type { RuntimeLoop } from "../../../packages/runtime/device-loop";
 import { LOOP_START_TICKS } from "../../../packages/runtime/host-loop";
 import type { LocalRuntime } from "../../../packages/runtime/runtime";
 
@@ -75,7 +75,7 @@ export interface LoopEndLine {
  * attention window (a timer armed while no supervise_loop is pending) and the backstop (one timer from the start).
  */
 interface LoopRecord {
-  loop: HostLoop;
+  loop: RuntimeLoop;
   /** supervise_loop calls in flight: while one is, the attention window is not counting. */
   pending: number;
   attention: AbortController | null;
@@ -471,7 +471,7 @@ export class LocalRobot {
     if (this.activity !== "idle") throw this.busy();
     const planned = rt.planLoop(args);
     this.toActivity("looping", "run_loop");
-    let loop: HostLoop;
+    let loop: RuntimeLoop;
     try {
       loop = rt.startLoop(planned);
     } catch (e) {
@@ -489,6 +489,27 @@ export class LocalRobot {
     });
     void loop.ended.then((end) => this.loopEnded(l, rt, end));
     try {
+      // a device that refuses the loop at its start: the loop has ended, the robot takes the path of stop, and the
+      // call answers the device's error, with no loop to supervise. A cancel while the device is taking the loop
+      // stops the robot at once; the loop's end reaches the device once it has the loop.
+      const taken = await Promise.race([
+        loop.accepted.then(
+          () => ({ t: "accepted" as const }),
+          (e: unknown) => ({ t: "refused" as const, e }),
+        ),
+        this.cancelled(cancel).then(() => ({ t: "cancelled" as const })),
+      ]);
+      if (taken.t === "refused") {
+        await l.settled;
+        if (this.loop === l) this.loop = null;
+        throw taken.e;
+      }
+      if (taken.t === "cancelled") {
+        this.o.onCancel?.("run_loop", true);
+        if (this.loop === l && (this.activity as RobotActivity) === "looping") await this.stop().catch(() => {});
+        if (!loop.running) await l.settled;
+        return { data: loop.report(), moved: true };
+      }
       // the start window: the first ticks, or the loop's end; behind it the backstop of every call
       const window = LOOP_START_TICKS * loop.plan.period_ms + margin + rt.stop_worst_ms;
       const late = new AbortController();
@@ -532,7 +553,7 @@ export class LocalRobot {
       robot_id: this.id,
       reason: end.reason,
       guard: end.guard ?? null,
-      runs_on: "host",
+      runs_on: l.loop.runs_on,
       ...l.loop.counts(),
     });
     // every end takes the verified stop (its own, or the stop that ended the loop); a loop whose own brake failed
@@ -565,11 +586,28 @@ export class LocalRobot {
     const params = (args.params ?? {}) as Record<string, number>;
     const ramp = typeof args.ramp_ms === "number" ? args.ramp_ms : 0;
     const wait = typeof args.wait_ms === "number" ? args.wait_ms : 0;
-    if (Object.keys(params).length && l.loop.running) l.loop.set(params, ramp);
+    // supervision is pending from here: a set that crosses a link to the device runs with the window disarmed
     l.pending++;
     l.attention?.abort();
     l.attention = null;
     try {
+      if (Object.keys(params).length && l.loop.running) {
+        // a cancel while the params cross the link ends the loop at once, whether the set lands or fails
+        const setting = Promise.resolve(l.loop.set(params, ramp));
+        const first = await Promise.race([setting.then(() => "set" as const), this.cancelled(cancel)]).catch(
+          (e: unknown) => {
+            if (!cancel?.aborted) throw e;
+            return "cancelled" as const;
+          },
+        );
+        if (first === "cancelled") {
+          setting.catch(() => {});
+          this.o.onCancel?.("supervise_loop", true);
+          if (this.loop === l && this.activity === "looping") await this.stop().catch(() => {});
+          if (!l.loop.running) await l.settled;
+          return { data: l.loop.report() };
+        }
+      }
       if (wait > 0 && l.loop.running) {
         const done = new AbortController();
         const first = await Promise.race([

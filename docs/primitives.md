@@ -37,7 +37,7 @@ Legend: ✅ shipped · 🟡 partial · ⬜ missing. **Where** = the package that
 | Primitive | How the model reaches it | State | Where |
 |---|---|---|---|
 | Programs as data, run next to the hardware | `run_program{body, success?}` | ✅ | runtime |
-| A control law at a fixed rate next to the hardware (hold an angle, follow a line), supervised by the model | `run_loop` `supervise_loop` ([`loops.md`](loops.md)) | 🟡 stock EV3 and twin (host executor; not run on a real brick); ev3dev ⬜ | runtime · apps/local · drivers |
+| A control law at a fixed rate next to the hardware (hold an angle, follow a line), supervised by the model | `run_loop` `supervise_loop` ([`loops.md`](loops.md)) | 🟡 stock EV3 and twin (host executor), ev3dev (device executor: the bridge on the brick, version 7); not run on a real brick | runtime · apps/local · drivers |
 | Program parameters (`drive {distance_cm: $d}`) | `params` in program + `run_program{args}` | ⬜ | protocol · runtime |
 | Train a behavior from a declarative reward | training spec on the twin | 🟡 sim only, no tool | sim-world |
 
@@ -56,7 +56,7 @@ What has run on a real brick, with dates and commits, and the checklist of what 
 |---|---|---|
 | EV3 stock firmware over USB (WebHID bridge page) | 🟡 tested against the byte-level emulator; not run on a real brick | driver-ev3 · apps/robot-page · apps/local |
 | EV3 over Bluetooth (Web Serial) | ⬜ | driver-ev3 |
-| EV3 on ev3dev over SSH | 🟡 bridge version 4 ran on a real brick on 2026-11-22 (stop, `Esc`, the square, `kill -9`, the guard); version 5 (a hello that may leave out `pair`) and version 6 (NXT and generic sensors, an infrared channel other than 1) have not; `until`, the watchdog and brick off at start tested against a fake sysfs tree only | driver-ev3dev |
+| EV3 on ev3dev over SSH | 🟡 bridge version 4 ran on a real brick on 2026-11-22 (stop, `Esc`, the square, `kill -9`, the guard); version 5 (a hello that may leave out `pair`) and version 6 (NXT and generic sensors, an infrared channel other than 1) and version 7 (loops on the brick, `power`, the guard's deadman) have not; `until`, the watchdog and brick off at start tested against a fake sysfs tree only | driver-ev3dev |
 | Twin in the server's process | ✅ | apps/local · sim-ev3 |
 | Phone or microcontroller as extra devices | ⬜ | a new provider |
 | Model docs as MCP resources (robot notes, device specs) | ⬜ | apps/local |

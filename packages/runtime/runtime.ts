@@ -32,6 +32,7 @@ import { validateLoop, validateProgram } from "../protocol/validate";
 import { planLoop, type LoopContext } from "../protocol/loop";
 import type { LoopPlan, LoopSpec } from "../protocol/types";
 import { HostLoop, type HostLoopPart, type HostProviderLoop } from "./host-loop";
+import { DeviceLoop, type DeviceProviderLoop, type RuntimeLoop } from "./device-loop";
 import { validateSchema } from "../protocol/schema";
 
 export const STALE_IMAGE_MS = 1500; // CONTRACT §7 stale_image
@@ -101,13 +102,14 @@ export interface LocalRuntime extends Runtime {
    * is thrown here, and nothing has been sent.
    */
   planLoop(spec: unknown): PlannedLoop;
-  /** Starts a planned loop on the host executor. One loop at a time; `stop()` ends it with reason preempted. */
-  startLoop(planned: PlannedLoop): HostLoop;
+  /** Starts a planned loop on its executor. One loop at a time; `stop()` ends it with reason preempted. */
+  startLoop(planned: PlannedLoop): RuntimeLoop;
 }
-/** A loop checked against the robot, with each provider's share of a tick. */
+/** A loop checked against the robot: each provider's share of a host tick, or the one provider that runs it on its device. */
 export interface PlannedLoop {
   plan: LoopPlan;
   parts: HostLoopPart[];
+  device?: Provider & { loop: DeviceProviderLoop };
 }
 export interface ProgramStep {
   path: string;
@@ -1608,7 +1610,7 @@ class RuntimeImpl implements LocalRuntime {
   }
 
   // ---------- loops ----------
-  private loopRun: HostLoop | null = null;
+  private loopRun: RuntimeLoop | null = null;
   loopInfo(): { runs_on: "host" | "device"; max_rate_hz: number } | null {
     // a provider of inputs only (a page's hub) drives nothing, so it never says where a loop runs
     const loops = this.local
@@ -1717,26 +1719,48 @@ class RuntimeImpl implements LocalRuntime {
         "unsupported",
         `provider ${onDevice[0].id} runs loops on its device, and the loop also reads ${inputsOnly.map(([p]) => p.id).join(", ")}, whose values reach this computer and never that device. Nothing was sent.`,
       );
-    const parts: HostLoopPart[] = [];
-    for (const [p, u] of used) {
-      const l = p.loop;
-      if (!l)
+    const named = (u: { signals: number[]; outputs: number[] }) =>
+      [
+        ...u.signals.map((i) => Object.values(loop.signals)[i]!.device),
+        ...u.outputs.map((i) => loop.outputs[i]!.device),
+      ].join(", ");
+    for (const [p, u] of used)
+      if (!p.loop)
         throw rerr(
           "unsupported",
-          `provider ${p.id} runs no loops, and the loop names its devices (${[...u.signals.map((i) => Object.values(loop.signals)[i]!.device), ...u.outputs.map((i) => loop.outputs[i]!.device)].join(", ")}). describe_robot gives where a loop runs.`,
+          `provider ${p.id} runs no loops, and the loop names its devices (${named(u)}). describe_robot gives where a loop runs.`,
         );
-      if (l.runs_on !== "host")
+    // a loop on a device: every device it names is of that provider, which runs the whole loop by itself
+    if (onDevice) {
+      const [p] = onDevice;
+      const other = [...used].find(([q]) => q !== p);
+      if (other)
         throw rerr(
           "unsupported",
-          `provider ${p.id} runs loops on its device, and this runtime has no executor that hands a loop to a device`,
+          `provider ${p.id} runs loops on its device, and the loop also names devices of provider ${other[0].id} (${named(other[1])}): one executor runs a loop, so its devices are all of one provider there. Nothing was sent.`,
         );
-      parts.push({ provider: p as Provider & { loop: HostProviderLoop }, ...u });
+      const device = p as Provider & { loop: DeviceProviderLoop };
+      ctx.max_rate_hz = device.loop.max_rate_hz;
+      const plan = planLoop(spec, ctx);
+      device.loop.check?.(plan);
+      return { plan, parts: [], device };
     }
+    const parts: HostLoopPart[] = [];
+    for (const [p, u] of used) parts.push({ provider: p as Provider & { loop: HostProviderLoop }, ...u });
     ctx.max_rate_hz = Math.min(...parts.map((x) => x.provider.loop.max_rate_hz));
     return { plan: planLoop(spec, ctx), parts };
   }
-  startLoop(planned: PlannedLoop): HostLoop {
+  startLoop(planned: PlannedLoop): RuntimeLoop {
     if (this.loopRun?.running) throw rerr("busy", "a loop already runs on this robot: one loop at a time");
+    if (planned.device) {
+      this.loopRun = new DeviceLoop({
+        plan: planned.plan,
+        provider: planned.device,
+        clock: this.clock,
+        endWithinMs: this.stop_worst_ms,
+      });
+      return this.loopRun;
+    }
     this.loopRun = new HostLoop({
       plan: planned.plan,
       parts: planned.parts,

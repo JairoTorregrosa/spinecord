@@ -27,6 +27,7 @@ import type {
   Value,
 } from "../protocol/types";
 import type { Clock } from "./clock";
+import type { RuntimeLoop } from "./device-loop";
 
 /** Ticks after which run_loop answers (CONTRACT §5a, Supervision). */
 export const LOOP_START_TICKS = 20;
@@ -56,8 +57,11 @@ const quantile = (sorted: number[], q: number): number =>
   sorted.length ? sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))]! : 0;
 const round2 = (x: number): number => Math.round(x * 100) / 100;
 
-export class HostLoop {
+export class HostLoop implements RuntimeLoop {
   readonly plan: LoopPlan;
+  readonly runs_on = "host" as const;
+  /** The host executor takes every planned loop. */
+  readonly accepted: Promise<void> = Promise.resolve();
   /** Resolves when the first LOOP_START_TICKS ticks have run or the loop has ended, whichever is first. */
   readonly started: Promise<void>;
   /** Resolves with why the loop ended, once every driven device was braked. */
