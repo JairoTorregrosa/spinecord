@@ -8,6 +8,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.4.0"
+    "@modelcontextprotocol/server": "2.4.0",
+    "@spinecord/twin-view": "workspace:*"
   }
 }

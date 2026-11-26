@@ -89,6 +89,18 @@ export class SimWorldProvider implements Provider {
     };
   }
 
+  private readonly spoken = new Set<(text: string) => void>();
+  /**
+   * Fires each time sim.speaker completes a speak, with the text (a viewer says it aloud). A listener that throws
+   * changes nothing of the command. Returns the unsubscribe function.
+   */
+  onSpoken(cb: (text: string) => void): () => void {
+    this.spoken.add(cb);
+    return () => {
+      this.spoken.delete(cb);
+    };
+  }
+
   async devices(): Promise<DeviceSpec[]> {
     const names = Object.keys(this.worlds);
     const c = this.world.cfg;
@@ -224,6 +236,13 @@ export class SimWorldProvider implements Provider {
       return { requested: { ...args }, measured: { ...measured, spoken: false }, clamped, reason: "preempted", ms: 0 };
     this.lastSpoken = text;
     this.spokenCount++;
+    for (const cb of this.spoken) {
+      try {
+        cb(text);
+      } catch {
+        // a listener is a display: what it does never changes the command
+      }
+    }
     // espeak counts a word as 5 characters at its -s rate; good enough to tell a model how long a phrase is.
     const estimated_ms = Math.min(SIM_SPEAK.max_ms, Math.round((text.length / 5 / rate) * 60000));
     return {

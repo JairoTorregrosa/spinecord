@@ -1,0 +1,128 @@
+// The messages between apps/local's view listener (src/view.ts) and this page: one JSON object per WebSocket
+// text frame. Units as in sim-world: cm and ms, degrees at the edges; x to the right, y up, headings
+// counter-clockwise from +x seen from above.
+
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** How a body looks: the `extensions.view` section of a world file, read by the page (src/look.ts). */
+export type LookSection = Record<string, unknown> | null;
+
+export interface WorldShape {
+  name: string;
+  width: number;
+  height: number;
+  boxes: Box[];
+  /** Coloured floor zones; `color` is the colour id of contract §2.2 (1 black … 7 brown). */
+  zones: (Box & { color: number; label?: string })[];
+  lines: { points: [number, number][]; width: number; closed: boolean }[];
+  points: { label: string; x: number; y: number; radius: number }[];
+  /** The footprint and where the sensors sit, measured from the centre of the wheel axle. */
+  body: {
+    front_cm: number;
+    back_cm: number;
+    half_width_cm: number;
+    color_sensor_x_cm: number;
+    color_spot_radius_cm: number;
+    distance_sensor_x_cm: number;
+  };
+  start: { x: number; y: number; heading_deg: number };
+  look: LookSection;
+}
+
+export interface RobotMeta {
+  id: string;
+  drivetrain: {
+    left: string;
+    right: string;
+    wheel_diameter_cm: number;
+    axle_track_cm: number;
+    forward_sign: 1 | -1;
+  } | null;
+  ports: {
+    motors: Partial<Record<"A" | "B" | "C" | "D", "large" | "medium">>;
+    sensors: Partial<Record<"1" | "2" | "3" | "4", "touch" | "color" | "ultrasonic" | "gyro" | "ir">>;
+  };
+  world: WorldShape;
+}
+
+export interface MotorState {
+  port: "A" | "B" | "C" | "D";
+  type: "large" | "medium" | null;
+  tacho_deg: number;
+  speed_pct: number;
+  blocked: boolean;
+  coasting: boolean;
+}
+export interface SensorState {
+  port: "1" | "2" | "3" | "4";
+  kind: "touch" | "color" | "ultrasonic" | "gyro" | "ir" | null;
+  mode: number;
+  /** SI values of the current mode without noise; [] for an empty or silent port. */
+  values: number[];
+}
+export interface RobotState {
+  id: string;
+  pose: { x: number; y: number; heading_deg: number };
+  /** The last physics step was blocked by a wall or obstacle. */
+  stalled: boolean;
+  link: string;
+  activity: string;
+  motors: MotorState[];
+  sensors: SensorState[];
+  led: number;
+  lcd: string[];
+  battery_v: number;
+  battery_pct: number;
+  buttons: number[];
+  /** True length of the three rays of the distance sensor's cone (right, centre, left), cm, not clamped. */
+  rays_cm: [number, number, number];
+  /** Simulated time of the world, ms. */
+  t_ms: number;
+}
+
+export interface CallStart {
+  t: "call_start";
+  n: number;
+  tool: string;
+  robot_id: string | null;
+  /** The call's arguments as JSON, cut. */
+  args: string;
+}
+export interface CallEnd {
+  t: "call_end";
+  n: number;
+  tool: string;
+  robot_id: string | null;
+  ok: boolean;
+  code: string | null;
+  summary: string;
+  ms: number;
+}
+
+export type ServerMessage =
+  | { t: "hello"; robots: RobotMeta[]; rate_hz: number; calls: (CallStart | CallEnd)[] }
+  /** The world of a twin was replaced (sim.world load_world): rebuild everything of that robot. */
+  | { t: "robot"; robot: RobotMeta }
+  /** Only the obstacles changed. */
+  | { t: "boxes"; id: string; boxes: Box[] }
+  | { t: "state"; robots: RobotState[] }
+  | { t: "tone"; id: string; hz: number; ms: number; volume: number }
+  | { t: "speak"; id: string; text: string }
+  | CallStart
+  | CallEnd
+  | { t: "reply"; req: number; ok: boolean; error?: string };
+
+export type PageMessage =
+  /** A person picks the robot up and sets it down (the gyro feels the turn). */
+  | { t: "carry"; req: number; id: string; x: number; y: number; heading_deg: number }
+  | { t: "box_add"; req: number; id: string; x: number; y: number; w: number; h: number }
+  | { t: "box_remove"; req: number; id: string; index: number }
+  /** The world's own obstacles back, and the robot at its start pose. */
+  | { t: "restore"; req: number; id: string }
+  /** A brick button (1 up, 2 enter, 3 down, 4 right, 5 left, 6 back) goes down or up. */
+  | { t: "button"; req: number; id: string; button: number; down: boolean };

@@ -29,8 +29,10 @@ import { LocalRobot, type LoopEndLine } from "./robot";
 export type Log = (ev: string, fields?: Record<string, unknown>) => void;
 export interface Fleet {
   robots: LocalRobot[];
-  /** Simulated bricks by robot id (tests read their motors). */
+  /** Simulated bricks by robot id (tests read their motors, the 3D view shows them). */
   bricks: Map<string, SimBrick>;
+  /** The world provider of each twin, by robot id (the 3D view hears its speaker). */
+  sims: Map<string, SimWorldProvider>;
   bridge: BridgeServer | null;
   /** The page listener; null when pages are off. */
   pages: PagesServer | null;
@@ -55,7 +57,7 @@ export function twinRuntime(
   s: Source<"twin">,
   clock?: Clock,
   hub?: PageHub,
-): { runtime: LocalRuntime; brick: SimBrick } {
+): { runtime: LocalRuntime; brick: SimBrick; sim: SimWorldProvider } {
   const { pair, hardware } = s.robot;
   const profile = { ...s.robot.profile, id: s.id };
   const config = parseWorld(s.world);
@@ -65,16 +67,17 @@ export function twinRuntime(
     drivetrain: drivetrainFromProfile(profile, pair),
     ...(time && { now: time.now }),
   });
+  const sim = new SimWorldProvider({
+    host: brick,
+    worlds: { [config.name]: s.world },
+    seed: s.seed,
+    ...(time && { now: time.now }),
+  });
   const runtime = createRuntime({
     profile,
     providers: [
       // first, so the runtime's backend is "sim"
-      new SimWorldProvider({
-        host: brick,
-        worlds: { [config.name]: s.world },
-        seed: s.seed,
-        ...(time && { now: time.now }),
-      }),
+      sim,
       (limits) =>
         new Ev3Provider(brick, {
           limits,
@@ -89,7 +92,7 @@ export function twinRuntime(
     ],
     ...(clock && { clock }),
   });
-  return { runtime, brick };
+  return { runtime, brick, sim };
 }
 
 /** The runtime of a stock-firmware EV3 reached through `transport` (the bridge page's socket, or a fake brick). */
@@ -217,6 +220,7 @@ export function keepAttached(
 export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<Fleet> {
   const robots: LocalRobot[] = [];
   const bricks = new Map<string, SimBrick>();
+  const sims = new Map<string, SimWorldProvider>();
   const closers: (() => Promise<void> | void)[] = [];
   // run before anything else at shutdown: a source stops bringing its robot back
   const enders: (() => void)[] = [];
@@ -268,9 +272,10 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
         pages: pageHooks(s.id),
         ...(o.clock && { clock: o.clock }),
       });
-      const { runtime, brick } = twinRuntime(s, o.clock, hubs.get(s.id));
+      const { runtime, brick, sim } = twinRuntime(s, o.clock, hubs.get(s.id));
       await robot.attach(runtime);
       bricks.set(s.id, brick);
+      sims.set(s.id, sim);
       robots.push(robot);
     } else if (s.source === "ev3dev") {
       const robot = new LocalRobot({
@@ -356,6 +361,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
   return {
     robots,
     bricks,
+    sims,
     bridge,
     pages,
     lan: lan ?? null,

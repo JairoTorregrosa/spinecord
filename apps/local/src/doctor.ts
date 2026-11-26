@@ -96,6 +96,7 @@ export function portsOf(c: LocalConfig): { port: number; what: string }[] {
     if (c.pages.lan) out.push({ port: c.pages.port + 1, what: "the --lan listener, probed on 127.0.0.1 only" });
     if (c.pages.origin) out.push({ port: c.pages.port + 2, what: "the --page-origin listener" });
   }
+  if (c.view && c.view.port !== 0) out.push({ port: c.view.port, what: "the 3D view of the twins, --view-port" });
   return out;
 }
 

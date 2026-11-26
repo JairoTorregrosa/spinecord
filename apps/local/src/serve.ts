@@ -7,6 +7,8 @@ import type { LocalConfig } from "./config";
 import { LISTED_TOOLS, buildServer } from "./mcp";
 import { linksText } from "./pages";
 import { buildFleet, type Fleet, type FleetOptions } from "./sources";
+import { buildViewPage } from "../../twin-view/view-build";
+import { serveView, type ViewServer } from "./view";
 
 /** `fleetOptions`: what buildFleet takes besides `log`. main.ts passes none. */
 export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions, "log"> = {}): Promise<void> {
@@ -18,7 +20,26 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
     process.stderr.write(`spinecord: ${(e as Error).message}\n`);
     process.exit(1);
   }
+  let view: ViewServer | null = null;
+  if (config.view) {
+    try {
+      const twins = fleet.robots
+        .filter((r) => fleet.bricks.has(r.id))
+        .map((r) => ({ id: r.id, brick: fleet.bricks.get(r.id)!, sim: fleet.sims.get(r.id)!, robot: r }));
+      view = serveView(twins, config.view.port, { page: await buildViewPage(), log });
+    } catch (e) {
+      await fleet.shutdown();
+      process.stderr.write(`spinecord: ${(e as Error).message}
+`);
+      process.exit(1);
+    }
+  }
   for (const r of fleet.robots) log("robot", r.listing());
+  if (view) {
+    process.stderr.write(`spinecord: the 3D view of the twins is on ${view.url}: open it in a browser
+`);
+    log("view", { url: view.url });
+  }
   if (fleet.bridge)
     process.stderr.write(
       `spinecord: to lend the EV3, open ${fleet.bridge.url} in Chrome or Edge and press "Connect EV3"\n`,
@@ -56,6 +77,7 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
     ending ??= (async () => {
       log("ending", { why });
       const stopped = await fleet.shutdown();
+      view?.stop();
       for (const s of stopped) log("stopped", s);
       log("exit", { code, why });
       process.exit(code);
@@ -63,7 +85,7 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
     return ending;
   }
 
-  const server = buildServer(fleet.robots);
+  const server = buildServer(fleet.robots, view ?? undefined);
   const transport = new StdioServerTransport();
   transport.onerror = (e) => log("transport_error", { error: e.message });
   await server.connect(transport);
