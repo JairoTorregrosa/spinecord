@@ -55,7 +55,7 @@
         "C": "large"
       },
       "sensors": {
-        "4": "ultrasonic"
+        "4": "ir"
       }
     },
     "view": {
