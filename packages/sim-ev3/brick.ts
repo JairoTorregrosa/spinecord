@@ -318,6 +318,9 @@ export class SimBrick implements Transport, WorldHost {
   private tractionN: number | null = null;
   /** Torque (N·cm) the last physics step put on each drive motor: a box it slides, or a tread slipping at a wall. */
   private loadNcm = 0;
+  /** What the drive wheels do, for the world's event log: they turn freely, are held by a wall, or slip against one. */
+  private driveState: "free" | "stalled" | "slipping" = "free";
+  private slipNow = false;
   private touchWas = false;
   private hasTouch = false;
 
@@ -421,6 +424,9 @@ export class SimBrick implements Transport, WorldHost {
       return kind ? { kind, type: SENSOR_TYPE[kind], mode: 0 } : null;
     });
     this.hasTouch = this.sensors.some((s) => s?.kind === "touch");
+    this.world.watch_echo = this.sensors.some((s) => s?.kind === "ultrasonic");
+    this.driveState = "free";
+    this.slipNow = false;
     this.bumps = 0;
     this.touchWas = this.hasTouch && this.world.senseTouch() === 1;
     this.world.resetGyro();
@@ -439,6 +445,7 @@ export class SimBrick implements Transport, WorldHost {
     this.tick();
     this.sensors[port - 1] = null;
     this.hasTouch = this.sensors.some((s) => s?.kind === "touch");
+    this.world.watch_echo = this.sensors.some((s) => s?.kind === "ultrasonic");
   }
 
   // ------------------------------------------------------------- inspection (tests, viewer)
@@ -598,6 +605,10 @@ export class SimBrick implements Transport, WorldHost {
       // A time bound ends on time even against a wall; a step ends on its count (never, while blocked).
       if (ends[i] && !(held && m.target !== null)) this.halt(m, m.holdBrake);
     });
+    // slipping while the wheels still turn after this step (a command that ended here has stopped them)
+    const turns = (i: number) => this.motors[i]!.speedPct !== 0 || this.motors[i]!.vel !== 0;
+    this.slipNow = slipping && (turns(li) || turns(ri));
+    this.noteDrive();
     if (this.hasTouch) {
       const pressed = this.world.senseTouch() === 1;
       if (pressed && !this.touchWas) this.bumps++;
@@ -675,8 +686,24 @@ export class SimBrick implements Transport, WorldHost {
     m.braking = brake;
     // Both drive wheels held: the body stops turning now, so a gyro reset at this instant sees a still robot.
     const d = this.drivetrain;
-    if (d && this.motors["ABCD".indexOf(d.left)]!.vel === 0 && this.motors["ABCD".indexOf(d.right)]!.vel === 0)
+    if (d && this.motors["ABCD".indexOf(d.left)]!.vel === 0 && this.motors["ABCD".indexOf(d.right)]!.vel === 0) {
       this.world.rate_deg_s = 0;
+      this.slipNow = false;
+    }
+    this.noteDrive();
+  }
+  /** Tells the world's event log when the drive wheels begin or end being held (stalled) or slipping. */
+  private noteDrive(): void {
+    const d = this.drivetrain;
+    if (!d) return;
+    const held = this.motors["ABCD".indexOf(d.left)]!.blocked || this.motors["ABCD".indexOf(d.right)]!.blocked;
+    const now = held ? "stalled" : this.slipNow ? "slipping" : "free";
+    if (now === this.driveState) return;
+    if (this.driveState === "stalled") this.world.note({ kind: "stall_ended" });
+    if (this.driveState === "slipping") this.world.note({ kind: "slip_ended" });
+    if (now === "stalled") this.world.note({ kind: "stall_began" });
+    if (now === "slipping") this.world.note({ kind: "slip_began" });
+    this.driveState = now;
   }
   /** A new command takes the motor over, also in the middle of a run-down: the shaft goes on from its speed. */
   private drive(m: Motor, speed: number, brake: boolean): void {

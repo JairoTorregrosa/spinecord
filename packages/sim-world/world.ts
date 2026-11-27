@@ -267,6 +267,27 @@ function ultrasonicReading(d: number): number {
 }
 /** How far ahead of the front the bumper of a touch sensor feels a wall or a box. */
 const TOUCH_REACH_CM = 0.7;
+/**
+ * What happened in the world, for a model that asks after a move (sim.world `events`). `with` names what the body
+ * touches: a box's id, or the wall it meets (`wall_west` x 0, `wall_east` x width, `wall_south` y 0, `wall_north`
+ * y height). Recording one spends no noise and changes nothing.
+ */
+export type WorldEvent = { n: number; t_ms: number } & (
+  | { kind: "contact_began" | "contact_ended"; with: string }
+  | { kind: "push_began"; box: string }
+  | { kind: "push_ended"; box: string; moved_cm: number }
+  | { kind: "stall_began" | "stall_ended" | "slip_began" | "slip_ended" }
+  | { kind: "echo_lost"; why: "slant" | "range" }
+  | { kind: "echo_back"; cm: number }
+  | { kind: "placed"; how: "reset" | "carried" }
+  | { kind: "obstacle_changed"; box: string; change: "added" | "moved" | "removed" }
+);
+type EventBody = WorldEvent extends infer E ? (E extends unknown ? Omit<E, "n" | "t_ms"> : never) : never;
+/** Events the world keeps; older ones are dropped (a reader learns how many it missed). */
+export const EVENT_LOG_MAX = 200;
+/** Within this gap (cm) the body touches something, for contact events (a body at rest against a wall is that close). */
+const CONTACT_CM = 0.01;
+
 /** Halvings of a blocked step: the body comes to rest within 2^-12 of a step's travel from the obstacle. */
 const CONTACT_BISECTIONS = 12;
 /** The trip meter follows a line only while the axle centre is within this distance of it. */
@@ -658,6 +679,17 @@ export class World {
   private segs: Seg[] = [];
   private trackLine = -1;
   private trackS = 0;
+  /**
+   * Whether an ultrasonic sensor listens (the host sets it: a brick with one plugged in). Then the world notes when
+   * its echo is lost and comes back; computing that spends no noise.
+   */
+  watch_echo = false;
+  private readonly log: WorldEvent[] = [];
+  private logged = 0;
+  private touching = new Set<string>();
+  /** Boxes being pushed: where each was when the push began. */
+  private pushing = new Map<string, Vec>();
+  private echo: "echo" | "slant" | "range" | null = null;
   /** Counts every change of the obstacles (a person's, a push): a viewer that saw another number shows them again. */
   obstacles_rev = 0;
   /** The highest n of the `box<n>` ids so far: a box set down later never takes an id one had before. */
@@ -703,6 +735,7 @@ export class World {
         `world "${cfg.name}": the robot does not fit at the start pose (${cfg.start.x}, ${cfg.start.y}): it overlaps a wall or obstacle`,
       );
     this.resetTrip();
+    this.touching = this.touchedAt(this.pose, cfg.boxes);
   }
 
   /** Independent copy (same configuration, pose and drivetrain) with another seed. */
@@ -722,6 +755,7 @@ export class World {
     this.rate_deg_s = 0;
     this.resetGyro();
     this.resetTrip();
+    this.notePlaced("reset");
   }
   /**
    * A person picks the robot up and sets it down at `p` (a viewer). Unlike setPose the gyro keeps counting: it
@@ -748,6 +782,7 @@ export class World {
       this.trackLine = n.line;
       this.trackS = n.s;
     }
+    this.notePlaced("carried");
   }
 
   /** The box with this id, or undefined. */
@@ -765,6 +800,7 @@ export class World {
     if (r.id !== undefined && this.obstacle(r.id))
       throw new ObstacleError("id_taken", `addObstacle: there is a box "${r.id}" already`);
     this.place([...this.cfg.boxes, this.checked("addObstacle", { ...r, id })]);
+    this.noteByHand(id, "added");
     return id;
   }
   /** A person lifts box `id` and sets it down as `to` (a viewer): it keeps its id and its place in the list. Errors as addObstacle, and `no_such_box`. */
@@ -772,11 +808,13 @@ export class World {
     const b = this.existing("moveObstacle", id);
     const moved = this.checked("moveObstacle", { ...b, x: to.x, y: to.y, w: to.w, h: to.h });
     this.place(this.cfg.boxes.map((o) => (o.id === id ? moved : o)));
+    this.noteByHand(id, "moved");
   }
   /** A person takes box `id` away (a viewer). Throws ObstacleError `no_such_box` when there is none. */
   removeObstacle(id: string): void {
     this.existing("removeObstacle", id);
     this.place(this.cfg.boxes.filter((o) => o.id !== id));
+    this.noteByHand(id, "removed");
   }
   /**
    * Every obstacle at once (a viewer restores a world's own boxes), and the robot set down at `pose` when given
@@ -798,7 +836,15 @@ export class World {
       );
     }
     this.obstacles_rev++;
+    const ids = new Set(next.map((b) => b.id));
+    for (const b of before) if (!ids.has(b.id)) this.note({ kind: "obstacle_changed", box: b.id, change: "removed" });
+    for (const b of next) {
+      const was = before.find((o) => o.id === b.id);
+      if (!was || was.x !== b.x || was.y !== b.y || was.w !== b.w || was.h !== b.h)
+        this.note({ kind: "obstacle_changed", box: b.id, change: was ? "moved" : "added" });
+    }
     if (pose) this.setPose(pose);
+    else this.settle();
   }
 
   private existing(op: string, id: string): Obstacle {
@@ -830,6 +876,135 @@ export class World {
       throw new ObstacleError("on_robot", `${op}: the box would overlap the robot; set it down somewhere free`);
     return out;
   }
+  // ----- the event log -----
+  /** Adds an event at `t_ms` (default now). A host (the brick) notes what only it knows: a wheel stalls or slips. */
+  note(e: EventBody, t_ms = this.t_ms): void {
+    this.log.push({ n: ++this.logged, t_ms, ...e } as WorldEvent);
+    if (this.log.length > EVENT_LOG_MAX) this.log.shift();
+  }
+  /**
+   * The events after number `since` (0: all that are kept), oldest first; `next` is the number to ask from next
+   * time, `dropped` how many after `since` are no longer kept.
+   */
+  eventsSince(since = 0): { events: WorldEvent[]; next: number; dropped: number } {
+    const first = this.log[0]?.n ?? this.logged + 1;
+    return {
+      events: this.log.filter((e) => e.n > since).map((e) => ({ ...e })),
+      next: this.logged,
+      dropped: Math.max(0, first - 1 - since),
+    };
+  }
+  private notePlaced(how: "reset" | "carried"): void {
+    this.note({ kind: "placed", how });
+    this.settle();
+  }
+  private noteByHand(box: string, change: "added" | "moved" | "removed"): void {
+    this.note({ kind: "obstacle_changed", box, change });
+    this.settle();
+  }
+  /** After a person changed something: what the body touches now, and whether the echo is there, without a push. */
+  private settle(): void {
+    const now = this.touchedAt(this.pose, this.cfg.boxes);
+    for (const id of this.touching) if (!now.has(id)) this.note({ kind: "contact_ended", with: id });
+    for (const id of now) if (!this.touching.has(id)) this.note({ kind: "contact_began", with: id });
+    this.touching = now;
+    for (const [id] of this.pushing) if (!this.obstacle(id)) this.pushing.delete(id);
+    this.noteEcho();
+  }
+  /** What the footprint at `p` touches (within CONTACT_CM): box ids and walls. */
+  private touchedAt(p: Pose, boxes: readonly Obstacle[]): Set<string> {
+    const g = this.cfg.body,
+      e = CONTACT_CM,
+      c = Math.cos(p.th),
+      s = Math.sin(p.th);
+    const cs = (
+      [
+        [g.front_cm + e, g.half_width_cm + e],
+        [g.front_cm + e, -g.half_width_cm - e],
+        [-g.back_cm - e, -g.half_width_cm - e],
+        [-g.back_cm - e, g.half_width_cm + e],
+      ] as Vec[]
+    ).map(([lx, ly]) => [p.x + lx * c - ly * s, p.y + lx * s + ly * c] as Vec);
+    const out = new Set<string>();
+    const { width, height } = this.cfg;
+    if (cs.some(([x]) => x <= 0)) out.add("wall_west");
+    if (cs.some(([x]) => x >= width)) out.add("wall_east");
+    if (cs.some(([, y]) => y <= 0)) out.add("wall_south");
+    if (cs.some(([, y]) => y >= height)) out.add("wall_north");
+    for (const b of boxes) if (polygonsMeet(cs, b)) out.add(b.id);
+    return out;
+  }
+  /**
+   * Contacts after a physics step that took the body along `pose(q)` for q in [0, f] of the step that began at `t0`
+   * and lasted `dt`, among `boxes` as they were when it began. Each one that began or ended is stamped at the moment
+   * within the step it did (to 2^-12 of the step), so how a viewer cuts the steps does not move it.
+   */
+  private noteContacts(pose: (q: number) => Pose, boxes: readonly Obstacle[], t0: number, dt: number, f: number): void {
+    const now = this.touchedAt(this.pose, this.cfg.boxes);
+    const when = (id: string, began: boolean): number => {
+      const touches = (q: number) => this.touchedAt(pose(q), boxes).has(id);
+      // began: the first moment it touches; ended: the last moment it still did
+      let lo = 0,
+        hi = f;
+      if (began ? touches(0) : !touches(f)) return t0 + (began ? 0 : f) * dt;
+      for (let i = 0; i < CONTACT_BISECTIONS; i++) {
+        const m = (lo + hi) / 2;
+        if (touches(m) === began) hi = m;
+        else lo = m;
+      }
+      return t0 + (began ? hi : lo) * dt;
+    };
+    const changes: { t: number; e: EventBody }[] = [];
+    for (const id of this.touching)
+      if (!now.has(id)) changes.push({ t: when(id, false), e: { kind: "contact_ended", with: id } });
+    for (const id of now)
+      if (!this.touching.has(id)) changes.push({ t: when(id, true), e: { kind: "contact_began", with: id } });
+    changes.sort((a, b) => a.t - b.t);
+    for (const c of changes) this.note(c.e, c.t);
+    this.touching = now;
+  }
+  /** A box that started or stopped sliding in the last step (stamped at the step's end). */
+  private notePushes(before: readonly Obstacle[]): void {
+    const moved = new Set<string>();
+    this.cfg.boxes.forEach((b, i) => {
+      const was = before[i];
+      if (was && was.id === b.id && (was.x !== b.x || was.y !== b.y)) moved.add(b.id);
+    });
+    for (const [id, from] of this.pushing)
+      if (!moved.has(id)) {
+        const b = this.obstacle(id);
+        this.pushing.delete(id);
+        const cm = b ? Math.hypot(b.x - from[0], b.y - from[1]) : 0;
+        this.note({ kind: "push_ended", box: id, moved_cm: Math.round(cm * 100) / 100 });
+      }
+    for (const id of moved)
+      if (!this.pushing.has(id)) {
+        const was = before.find((o) => o.id === id)!;
+        this.pushing.set(id, [was.x, was.y]);
+        this.note({ kind: "push_began", box: id });
+      }
+  }
+  /** The ultrasonic echo came or went (only while one listens): stamped at the step's end. */
+  private noteEcho(): void {
+    if (!this.watch_echo) return;
+    const d = this.coneDistance();
+    let now: "echo" | "slant" | "range" = "echo";
+    if (!(d <= ULTRASONIC_MAX_CM)) {
+      // something within range that sends nothing back, or nothing within range at all
+      let near = false;
+      for (let i = 0; i < ULTRASONIC_RAYS && !near; i++)
+        near =
+          this.rayHit(this.pose, (((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * CONE_HALF_DEG * Math.PI) / 180).d <=
+          ULTRASONIC_MAX_CM;
+      now = near ? "slant" : "range";
+    }
+    const had = this.echo;
+    this.echo = now;
+    if (had === null || (had === "echo") === (now === "echo")) return;
+    if (now === "echo") this.note({ kind: "echo_back", cm: ultrasonicReading(d) });
+    else this.note({ kind: "echo_lost", why: now });
+  }
+
   /** The next `box<n>` no box has had in this world. */
   private freeId(): string {
     let id: string;
@@ -984,6 +1159,8 @@ export class World {
     if (dl_cm === 0 && dr_cm === 0) {
       this.rate_deg_s = 0;
       this.last_stalled = false;
+      this.last_push_n = 0;
+      this.notePushes(this.cfg.boxes); // nothing pushes: a push in progress ends
       return false;
     }
     if (!this.drive)
@@ -998,9 +1175,10 @@ export class World {
         tr = dr_cm * w * this.gainR * r;
       return { w, tl, tr, d: (tl + tr) / 2, th: ((tr - tl) / axle) * (1 - scrub) };
     });
+    const from = { ...this.pose };
     /** The pose after fraction `f` of this step's time, and the turn and travel done until then. */
     const at = (f: number): { pose: Pose; d: number; th: number; wheels: number } => {
-      let { x, y, th } = this.pose,
+      let { x, y, th } = from,
         c = 0,
         d = 0,
         turned = 0,
@@ -1044,7 +1222,11 @@ export class World {
     this.pose = end.pose;
     this.last_stalled = blocked;
     this.last_push_n = push?.force_n ?? 0;
+    const before = this.cfg.boxes;
     if (push?.boxes) this.place(push.boxes);
+    this.noteContacts((q) => at(q).pose, before, this.t_ms - dt_ms, dt_ms, f);
+    this.notePushes(before);
+    this.noteEcho();
     this.rate_deg_s = dt_ms > 0 ? ((end.th * 180) / Math.PI / dt_ms) * 1000 : 0;
     // A spin in place only wobbles the axle centre (wheel noise): that is not travel.
     if (Math.abs(end.d) > 0.1 * end.wheels) this.odometer_cm += Math.abs(end.d);
@@ -1135,6 +1317,8 @@ export class World {
     if (ms > 0) {
       this.t_ms += ms;
       this.rate_deg_s = 0;
+      this.last_push_n = 0;
+      if (this.pushing.size > 0) this.notePushes(this.cfg.boxes); // nothing pushes: a push in progress ends
     }
   }
 
