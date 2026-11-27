@@ -70,7 +70,7 @@ A robot **is the model** when the photo shows its drive (what touches the floor,
 | Model (set) | `builds.json` key | Tells |
 |---|---|---|
 | Driving Base, Robot Educator (45544) | `educator_driving_base` | Brick flat on two large motors, two 56 mm wheels, a steel ball caster behind; attachments, each told by its mount when its face is hidden: low under the front, facing the floor: colour; on the front at brick height, looking ahead: ultrasonic; a beam bar low across the front with a sensor behind it: touch; up on the body away from the floor, top face up: gyro; a medium motor on the front with an arm or lifter: the arm. Name the one the mount shows; never "<a> or maybe <b>" |
-| Gyro Boy (45544) | `gyro_boy` | Brick standing upright on two 56 mm wheels and no caster; ultrasonic eyes on top, two arms; it balances. Any two-wheel balancer with the brick upright takes its ports and its hidden gyro, with tokens |
+| Gyro Boy (45544) | `gyro_boy` | Brick standing upright on two 56 mm wheels and no caster; ultrasonic eyes on top, two arms; it balances. Any two-wheel balancer with the brick upright takes its drive ports (D, A) and its hidden gyro (S2), with tokens; the arm motor and colour sensor only when the arms are seen |
 | Puppy (45544) | `puppy` | Four legs, the brick as the body, a head on a neck |
 | Color Sorter (45544) | `color_sorter` | A station: a belt and a feeder tray, the colour sensor over the belt, no wheels |
 | Robot Arm H25 (45544) | `robot_arm_h25` | A crane-like arm on a turntable base, a gripper at its end, no wheels |
@@ -110,7 +110,7 @@ The letters printed beside the sockets decide when legible. Else count the place
 | The other end's face, straight on | | `1 2 3 4` left to right |
 | The back of a standing brick (ports A-D down: turn the photo upside down first) | mirrored: `D C B A`, the PC socket on the left | `4 3 2 1` |
 
-A plug you can place in its row and follow to a part is read. A plug read with doubt (a slanted row, a cable hiding a socket) is still written as read, and its port keeps its token; the official model never replaces it. A port is **visibly empty** only when you see the socket's open dark slot, with nothing in it and no cable in front of it, and can place it in its row. A port end out of the frame is not read: its ports keep their tokens.
+A plug you can place in its row and follow to a part is read. A plug read with doubt (a slanted row, a cable hiding a socket) keeps its token and its place in the row 4 table (questions.md); when it disagrees with a recognised model's build, write the build's port and ask the difference. A plug read clearly beats the build. A port is **visibly empty** only when you see the socket's open dark slot, with nothing in it and no cable in front of it, and can place it in its row. A port end out of the frame is not read: its ports keep their tokens.
 
 ## Scale
 
