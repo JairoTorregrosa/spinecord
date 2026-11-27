@@ -45,11 +45,11 @@ const DEG = Math.PI / 180;
 const CLICK_BOX = 20;
 const STEP_DEG = 15;
 const HINTS: Record<Mode, string> = {
-  look: "Arrastra el robot para levantarlo (Q / E o la rueda lo giran) · arrastra el suelo para mover la vista",
-  carry: "Pulsa donde quieres el robot y arrastra hacia donde debe mirar · Esc cancela",
-  box: "Arrastra un rectángulo para poner una caja (un clic: 20 × 20 cm) · arrastra una caja para moverla",
-  remove: "Haz clic en una caja para quitarla · Esc vuelve a Mirar",
-  measure: "Arrastra sobre el suelo para medir (desde el robot: desde el centro de su eje) · Esc borra",
+  look: "Arrastra el robot: levantarlo · el suelo: girar la vista",
+  carry: "Pulsa donde va y arrastra hacia donde mira",
+  box: "Arrastra: caja nueva · arrastra una caja: moverla",
+  remove: "Clic en una caja: quitarla",
+  measure: "Arrastra para medir",
 };
 const FIT_WORDS: Record<Exclude<Fit, "free">, string> = {
   wall: "No cabe: se saldría de la pista",
@@ -176,7 +176,7 @@ export class Hand {
   refreshHint(): void {
     hud.hint(
       this.c.cams.mode === "eye" && this.mode !== "look"
-        ? "La mano no alcanza desde la cámara del robot: elige Seguir, Libre o Arriba"
+        ? "Desde la cámara del robot la mano no alcanza"
         : HINTS[this.mode],
     );
   }

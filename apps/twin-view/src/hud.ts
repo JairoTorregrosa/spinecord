@@ -1,8 +1,9 @@
 // The panels around the 3D scene: the robot's state chips, its ports and screen, the MCP calls, and the notes
 // the page gives the person (toasts, hints). All copy is the page's own, in Spanish.
 import { eventRow } from "./events";
-import type { CallEnd, CallStart, MotorState, RefusalCode, RobotState, SensorState, WorldEventMsg } from "./messages";
-import { COLOR_RGB } from "./arena";
+import type { CallEnd, CallStart, MotorState, RefusalCode, RobotState, WorldEventMsg } from "./messages";
+import { TOOL, shortArgs } from "./toolwords";
+import { bar, gauge, sensorWidget } from "./widgets";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const e = document.getElementById(id);
@@ -59,39 +60,10 @@ const MEANING: Record<string, string> = {
   gyro: "grados desde el último reinicio; positivo = a la izquierda (antihorario)",
   ir: "0 = tocando, 100 = lejos (unos 70 cm); no son centímetros",
 };
-export const COLOR_NAMES = ["ninguno", "negro", "azul", "verde", "amarillo", "rojo", "blanco", "marrón"];
-
 export function chip(id: string, [text, kind]: [string, string]): void {
   const el = $(id);
   if (el.textContent !== text) el.textContent = text;
   el.className = `chip ${kind}`;
-}
-
-function sensorValue(s: SensorState): string {
-  const v = s.values;
-  if (!s.kind) return "—";
-  if (!v.length) return '<span class="dim">sin dato</span>';
-  switch (s.kind) {
-    case "touch":
-      return s.mode === 0 ? (v[0] ? "<b>presionado</b>" : "libre") : `${v[0]} golpes`;
-    case "color":
-      if (s.mode === 2) {
-        const c = v[0] ?? 0;
-        return `<span class="swatch" style="background:${COLOR_RGB[c] ?? "#888"}"></span>${COLOR_NAMES[c] ?? c}`;
-      }
-      if (s.mode === 4) return v.map((x) => Math.round(x)).join(" · ");
-      return `${Math.round(v[0]!)} %`;
-    case "ultrasonic":
-      return s.mode === 0 ? `${v[0]!.toFixed(1)} cm` : s.mode === 1 ? `${v[0]!.toFixed(1)} in` : "escuchando";
-    case "gyro":
-      return s.mode === 0
-        ? `${Math.round(v[0]!)}°`
-        : s.mode === 1
-          ? `${Math.round(v[0]!)}°/s`
-          : `${Math.round(v[0]!)}° · ${Math.round(v[1]!)}°/s`;
-    case "ir":
-      return `${Math.round(v[0]!)} %`;
-  }
 }
 
 function motorRow(m: MotorState, role: string): string {
@@ -101,8 +73,8 @@ function motorRow(m: MotorState, role: string): string {
   const tags =
     (m.blocked ? '<span class="tag bad">bloqueado</span>' : "") +
     (m.coasting ? '<span class="tag warn">por inercia</span>' : "");
-  const bar = `<div class="bar-mini" title="velocidad"><i style="${pct >= 0 ? `left:50%;width:${pct / 2}%` : `left:${50 + pct / 2}%;width:${-pct / 2}%`}"></i></div>`;
-  return `<div class="port${m.blocked ? " blocked" : ""}"><span class="id">${m.port}</span><span class="what"><b>Motor ${m.type === "large" ? "grande" : "mediano"}</b>${role ? ` · ${role}` : ""}${tags}${bar}</span><span class="val" title="giro acumulado (tacómetro) y velocidad">${Math.round(m.tacho_deg)}°<br><span class="dim">${Math.round(pct)} %</span></span></div>`;
+  const title = `velocidad ${m.speed_pct} % · giro acumulado (tacómetro) ${m.tacho_deg}°`;
+  return `<div class="port${m.blocked ? " blocked" : ""}"><span class="id">${m.port}</span><span class="what"><b>${m.type === "large" ? "Grande" : "Mediano"}</b>${role ? ` · ${role}` : ""}${tags}</span><span class="val">${gauge(pct, title)}<span class="dim tacho" title="${title}">${Math.round(m.tacho_deg)}°</span></span></div>`;
 }
 
 /** The ports panel. `roles`: what each motor port does on this robot ("oruga izq."). */
@@ -113,15 +85,22 @@ export function ports(s: RobotState, roles: Record<string, string>): void {
     s.sensors
       .map((x) =>
         x.kind
-          ? `<div class="port" title="${esc(MEANING[x.kind] ?? "")}"><span class="id">${x.port}</span><span class="what"><b>${KIND[x.kind]}</b> · ${MODE[x.kind]?.[x.mode] ?? `modo ${x.mode}`}</span><span class="val">${sensorValue(x)}</span></div>`
+          ? `<div class="port" title="${esc(MEANING[x.kind] ?? "")}"><span class="id">${x.port}</span><span class="what"><b>${KIND[x.kind]}</b></span><span class="val">${sensorWidget(x, MODE[x.kind]?.[x.mode] ?? `modo ${x.mode}`)}</span></div>`
           : `<div class="port empty"><span class="id">${x.port}</span><span class="what">vacío</span><span></span></div>`,
       )
       .join(""),
   );
   const low = s.battery_pct < 20;
   const bat = $("battery");
-  const text = `🔋 ${s.battery_v.toFixed(2)} V · ${Math.round(s.battery_pct)} %`;
-  if (bat.textContent !== text) bat.textContent = text;
+  setHtml(
+    "battery",
+    bar(
+      s.battery_pct / 100,
+      `${Math.round(s.battery_pct)} %`,
+      `batería ${s.battery_v.toFixed(2)} V · ${s.battery_pct} %`,
+      low ? "low" : "bat",
+    ),
+  );
   bat.classList.toggle("bad", low);
   const blank = s.lcd.every((l) => l.trim() === "");
   const lcd = blank ? "pantalla en blanco" : s.lcd.slice(0, 10).join("\n");
@@ -183,6 +162,8 @@ export function call(m: CallStart | CallEnd): void {
     const li = document.createElement("li");
     li.tabIndex = 0;
     li.innerHTML = `<span class="st" aria-hidden="true"></span><span class="tool"></span><span class="ms"></span><span class="args"></span><span class="sum" hidden></span>`;
+    li.dataset.tool = m.tool;
+    li.dataset.glance = `<span class="ic" aria-hidden="true">${(TOOL[m.tool] ?? ["⚙"])[0]}</span>${esc(m.tool)}<span class="one">${m.t === "call_start" ? esc(shortArgs(m.args)) : ""}</span>`;
     li.addEventListener("click", () => li.classList.toggle("open"));
     li.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -207,8 +188,7 @@ export function call(m: CallStart | CallEnd): void {
     row.at = m.at;
     row.running = true;
     li.className = "run";
-    q(".tool").innerHTML =
-      `${esc(m.tool)}${m.robot_id ? `<span class="dim">${esc(m.robot_id)}</span>` : ""}<span class="badge run">en curso</span>`;
+    q(".tool").innerHTML = `${li.dataset.glance}<span class="badge run">en curso</span>`;
     q(".args").textContent = m.args === "{}" ? "sin argumentos" : m.args;
     q(".ms").textContent = secs(Date.now() - m.at);
     li.title = `empezó a las ${time}`;
@@ -222,7 +202,8 @@ export function call(m: CallStart | CallEnd): void {
       : odd
         ? `<span class="badge warn">${esc(REASON[reason!] ?? reason!)}</span>`
         : "";
-    q(".tool").innerHTML = `${esc(m.tool)}${m.robot_id ? `<span class="dim">${esc(m.robot_id)}</span>` : ""}${badge}`;
+    q(".tool").innerHTML =
+      `${li.dataset.glance ?? `<span class="ic" aria-hidden="true">${(TOOL[m.tool] ?? ["⚙"])[0]}</span>${esc(m.tool)}`}${badge}`;
     q(".ms").textContent = secs(m.ms);
     const sum = q(".sum");
     sum.hidden = false;
@@ -293,7 +274,7 @@ export function callsTick(): void {
     if (r.running) {
       const ms = Date.now() - r.at;
       r.li.querySelector<HTMLElement>(".ms")!.textContent = secs(ms);
-      const tool = r.li.querySelector(".tool")!.firstChild?.textContent ?? "";
+      const tool = r.li.dataset.tool ?? "";
       newest = { tool, ms };
     }
   const el = $("chip-call");
@@ -330,8 +311,26 @@ function place(text: string, kind: "error" | "info", at: { clientX: number; clie
   toastTimer = setTimeout(() => (el.hidden = true), Math.max(kind === "info" ? 3500 : 5000, text.length * 60));
 }
 
+let hintFade: ReturnType<typeof setTimeout> | null = null;
+/** A short hint at the top of the scene; it fades after the person's next touch of the page. */
 export function hint(text: string): void {
   const el = $("hint");
+  if (hintFade) clearTimeout(hintFade);
   el.textContent = text;
+  el.classList.remove("fade");
   el.hidden = text === "";
+  if (el.hidden) return;
+  const fade = () => {
+    removeEventListener("pointerdown", fade, true);
+    removeEventListener("keydown", fade, true);
+    hintFade = setTimeout(() => {
+      el.classList.add("fade");
+      hintFade = setTimeout(() => (el.hidden = true), 600);
+    }, 1500);
+  };
+  // the hint that the press itself brought (a mode button) waits for the press after it
+  setTimeout(() => {
+    addEventListener("pointerdown", fade, { capture: true, once: true });
+    addEventListener("keydown", fade, { capture: true, once: true });
+  }, 0);
 }

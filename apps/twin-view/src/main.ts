@@ -631,15 +631,6 @@ window.addEventListener("keydown", (e) => {
   e.preventDefault();
 });
 hud.callsInit();
-// the first visit opens with the help: most people here have never seen the page
-try {
-  if (localStorage.getItem("twin-view:helped") === null) {
-    localStorage.setItem("twin-view:helped", "1");
-    showHelp(true);
-  }
-} catch {
-  // storage blocked: the ? button is still there
-}
 // the panels start below the top bar, whose height grows when a narrow window wraps it
 new ResizeObserver(() => {
   const b = $("bar").getBoundingClientRect();

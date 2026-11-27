@@ -7,6 +7,7 @@ import type { ChatPageMessage, ChatServerMessage, ChatState, ChatStatus, ChatVia
 import { CHAT_TEXT_MAX, isStopUtterance } from "./chat-messages";
 import css from "./chat.css" with { type: "text" };
 import type { CallEnd, CallStart } from "./messages";
+import { TOOL, shortArgs } from "./toolwords";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -21,25 +22,6 @@ const STATE: Record<ChatState | "listening" | "speaking" | "offline", [string, s
   listening: ["🎙", "Escuchando", "rec"],
   speaking: ["🔊", "Hablando", "ok"],
   offline: ["✕", "Sin conexión", "bad"],
-};
-/** The tools in the person's words; the MCP name stays in the tooltip. */
-const TOOL: Record<string, [string, string]> = {
-  drive: ["⬆", "avanzar"],
-  turn: ["↻", "girar"],
-  arc: ["⤴", "arco"],
-  stop: ["■", "parar"],
-  read_all: ["👁", "leer sensores"],
-  read_device: ["👁", "leer"],
-  sample_device: ["📈", "muestrear"],
-  wait_until: ["⏳", "esperar"],
-  describe_robot: ["🔎", "conocerse"],
-  describe_device: ["🔎", "mirar"],
-  list_robots: ["🔎", "robots"],
-  command_device: ["⚡", "orden"],
-  run_program: ["▶", "programa"],
-  run_loop: ["🔁", "bucle"],
-  supervise_loop: ["🔁", "vigilar"],
-  reset_fault: ["↺", "reiniciar"],
 };
 /** Why the chat is off, and what the person does about it. */
 const OFF: Record<string, string> = {
@@ -729,25 +711,5 @@ export class ChatPanel {
       }
       list.append(li);
     } else for (const b of list.querySelectorAll<HTMLButtonElement>(".empty button")) b.disabled = !talkable;
-  }
-}
-
-/** A call's arguments in a few words: the numbers that say what it did, without the robot id. */
-function shortArgs(json: string): string {
-  try {
-    const a = JSON.parse(json) as Record<string, unknown>;
-    const parts: string[] = [];
-    for (const [k, v] of Object.entries(a)) {
-      if (k === "robot_id" || k === "request_id") continue;
-      if (typeof v === "number")
-        parts.push(
-          `${v}${k.endsWith("_cm") ? " cm" : k.endsWith("_deg") ? "°" : k.endsWith("_pct") ? "%" : k.endsWith("_ms") ? " ms" : ""}`,
-        );
-      else if (typeof v === "string") parts.push(v);
-      if (parts.length === 3) break;
-    }
-    return parts.join(" · ");
-  } catch {
-    return ""; // cut arguments are not JSON: the tooltip has them
   }
 }
