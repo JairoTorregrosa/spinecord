@@ -81,7 +81,7 @@ describe("--doctor", () => {
   });
 
   test("bun: at least the version the README states", async () => {
-    expect(readFileSync(join(REPO, "README.md"), "utf8")).toContain(`[bun](https://bun.sh) ≥ ${MIN_BUN}`);
+    expect(readFileSync(join(REPO, "docs", "manual.md"), "utf8")).toContain(`[bun](https://bun.sh) ≥ ${MIN_BUN}`);
     expect(line((await run([], probes({ bunVersion: "9.0.0" }))).lines, "bun")!.status).toBe("ok");
     const old = line((await run([], probes({ bunVersion: "1.1.0" }))).lines, "bun")!;
     expect(old).toMatchObject({ status: "fail", next: "bun upgrade" });

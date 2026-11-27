@@ -248,7 +248,7 @@ bun agent.ts -- --ev3
 bun agent.ts --every 60 -- --ev3dev --ssh robot@HOST
 ```
 
-Write the brick's address in place of `HOST`. The flags are the server's own: [Choose the robots](../../README.md#choose-the-robots), or `bun ../../apps/local/main.ts --help`. To keep the server's log, add `--log-file robot.log` after the `--`. Try a mission on the twin first.
+Write the brick's address in place of `HOST`. The flags are the server's own: [Choose the robots](../../docs/manual.md#choose-the-robots), or `bun ../../apps/local/main.ts --help`. To keep the server's log, add `--log-file robot.log` after the `--`. Try a mission on the twin first.
 
 ## What it costs
 

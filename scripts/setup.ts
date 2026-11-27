@@ -307,10 +307,11 @@ async function registration(): Promise<{ scope?: string; command?: string; args?
 }
 
 /**
- * The skills the robot's own Claude Code needs (a photo of the person's robot becomes its twin). Claude Code loads
+ * The skills the robot's own Claude Code needs: a photo of the person's robot becomes its twin, and the setup goes on
+ * later (a new name, an EV3, a fix). Claude Code loads
  * skills from the folder it starts in, and it never starts in the clone, so the workshop folder holds a copy.
  */
-const PERSON_SKILLS = ["robot-twin"] as const;
+const PERSON_SKILLS = ["robot-twin", "setup-spinecord"] as const;
 const skillFile = (root: string, name: string) => join(root, ".claude", "skills", name, "SKILL.md");
 const skillCurrent = (name: string): boolean =>
   existsSync(skillFile(WORKSHOP, name)) &&
