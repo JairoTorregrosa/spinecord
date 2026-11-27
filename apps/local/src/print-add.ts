@@ -1,6 +1,6 @@
 // `--print-add`: the one command that registers this server with Claude Code, written for the computer it runs
-// on. Every path in it is absolute, so the registration works from whatever folder Claude Code is started in,
-// and quoted for that computer's shells, so a folder with a space in its name works. No I/O.
+// on. It registers with local scope, for the folder it is run in: one robot, one Claude Code folder (CONTRACT §6).
+// Every path in it is absolute, so it may be printed in the clone and run in that folder, and quoted for that computer's shells, so a folder with a space in its name works. No I/O.
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { pathFrom } from "./config";
@@ -50,7 +50,7 @@ export interface AddCommandInput {
 }
 
 /**
- * `claude mcp add -s user spinecord -- bun "<repo>/apps/local/main.ts" [robots...]` for that computer.
+ * `claude mcp add -s local spinecord -- bun "<repo>/apps/local/main.ts" [robots...]` for that computer.
  * On Windows the separator is written `"--"`: PowerShell takes a bare `--` for itself when `claude` is a script
  * (the `claude.ps1` that npm installs), and the robot flags after it are then read as options of `claude`.
  * Quoted, it reaches `claude` from PowerShell and from cmd.exe. `home` is the home folder a leading `~` of a
@@ -60,7 +60,7 @@ export function addCommand({ platform, repo, args }: AddCommandInput, home: stri
   const windows = platform === "win32";
   const rules = windows ? win32 : posix;
   const quote = windows ? quoteWindows : quotePosix;
-  const out = ["claude", "mcp", "add", "-s", "user", "spinecord", windows ? '"--"' : "--", "bun"];
+  const out = ["claude", "mcp", "add", "-s", "local", "spinecord", windows ? '"--"' : "--", "bun"];
   out.push(quote(rules.join(repo, "apps", "local", "main.ts")));
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;

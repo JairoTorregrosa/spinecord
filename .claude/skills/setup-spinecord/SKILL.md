@@ -143,6 +143,6 @@ The person asks for one of these after the setup, often in the robot's Claude Co
 
 | The person says | Do | Done when | Restart |
 |---|---|---|---|
-| A new name: "Call the robot Rayo", "llama al robot Rayo", "ponle Rayo a mi robot" | `setup name "<name>"`, or `setup name none` for no name. A `fail` line: do the action after `->` | `setup name` ends `ok` | Yes. The next start shows the name |
+| A new name: "Call the robot Rayo", "llama al robot Rayo", "ponle Rayo a mi robot" | `setup name "<name>"`, or `setup name none` for no name. It registers and runs no doctor. A `fail` line: do the action after `->` | `setup name` ends `ok`. Its `restart` line says what the person does next | Yes. The next start shows the name |
 | "I have an EV3 now", "ya tengo un EV3" | `setup workshop --ev3 yes`. After the restart, run `setup status` and do state 8 EV3 | `setup status` shows `EV3` `ok` | Yes, before state 8 |
 | "spinecord does not work. Run its doctor and fix it", "spinecord no funciona" | `setup workshop` runs the doctor. Fix each `fail` line with fixes.md, except the expected `port` lines. Then do the state that `setup status` names after `next` | After the restart: `setup workshop: ok`, and `setup status` ends `next REPORT` | Yes, after the fixes |

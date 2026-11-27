@@ -18,7 +18,7 @@ const registered = (scope: string, args: string, status = "✔ Connected") =>
 function probes(over: Partial<Probes> & { runs?: Record<string, RunResult> } = {}): Probes & { calls: string[][] } {
   const calls: string[][] = [];
   const runs: Record<string, RunResult> = {
-    "claude mcp get spinecord": registered("User", `${MAIN} --twin`),
+    "claude mcp get spinecord": registered("Local", `${MAIN} --twin`),
     [`${FIREWALL} --getstealthmode --getglobalstate`]: ok(
       "Firewall stealth mode is off\nFirewall is disabled. (State = 0)\n",
     ),
@@ -66,7 +66,7 @@ describe("--doctor", () => {
     const text = report(lines);
     expect(text.trimEnd().split("\n").at(-1)).toBe("doctor: ok");
     expect(text).not.toContain("do-not-print");
-    expect(line(lines, "claude code")!.reason).toContain("user scope");
+    expect(line(lines, "claude code")!.reason).toContain("local scope");
     expect(line(lines, "claude code")!.reason).toContain("--twin");
   });
 
@@ -92,7 +92,7 @@ describe("--doctor", () => {
       platform: "win32",
       env: { LOCALAPPDATA: "C:\\Users\\someone\\AppData\\Local" },
       exists: (p) => p === "C:\\Users\\someone\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe",
-      runs: { "cmd.exe /d /c claude mcp get spinecord": registered("User", `${MAIN} --ev3`) },
+      runs: { "cmd.exe /d /c claude mcp get spinecord": registered("Local", `${MAIN} --ev3`) },
     });
     const edge = line((await run(["--ev3"], win)).lines, "browser")!;
     expect(edge.status).toBe("ok");
@@ -124,13 +124,19 @@ describe("--doctor", () => {
       ["--ev3"],
     );
     expect(missing.status).toBe("fail");
-    expect(missing.next).toBe("bun apps/local/main.ts --print-add --ev3, then run the line it prints");
+    expect(missing.next).toBe(`bun "${MAIN}" --print-add --ev3, then run the line it prints in this folder`);
     const other = await lines(
       probes({ runs: { "claude mcp get spinecord": registered("User", "/elsewhere/spinecord/apps/local/main.ts") } }),
     );
     expect(other.status).toBe("fail");
     expect(other.reason).toContain("/elsewhere/spinecord/apps/local/main.ts");
     expect(other.next).toStartWith("claude mcp remove -s user spinecord");
+    // user scope: every session on the computer starts these robots; still runs, so a warn (CONTRACT §6)
+    const user = await lines(probes({ runs: { "claude mcp get spinecord": registered("User", `${MAIN} --ev3`) } }));
+    expect(user.status).toBe("warn");
+    expect(user.reason).toContain("every Claude Code session on this computer starts its own server");
+    expect(user.next).toStartWith("claude mcp remove -s user spinecord, then ");
+    expect(user.next).toEndWith("in the folder you start Claude Code in");
     // a folder's own registration, seen from that folder, is deliberate: only its sessions start a robot link
     for (const scope of ["Local", "Project"]) {
       const folder = await lines(probes({ runs: { "claude mcp get spinecord": registered(scope, `${MAIN} --ev3`) } }));
@@ -139,7 +145,7 @@ describe("--doctor", () => {
       expect(folder.next).toBeUndefined();
     }
     const broken = await lines(
-      probes({ runs: { "claude mcp get spinecord": registered("User", MAIN, "✘ Failed to connect") } }),
+      probes({ runs: { "claude mcp get spinecord": registered("Local", MAIN, "✘ Failed to connect") } }),
     );
     expect(broken.status).toBe("fail");
     const slow = await lines(probes({ runs: { "claude mcp get spinecord": { code: null, out: "", timedOut: true } } }));
@@ -148,14 +154,14 @@ describe("--doctor", () => {
     // the path of a clone reached through a link, and Windows' case and separators
     const linked = probes({
       realpath: () => "/real/spinecord/apps/local/main.ts",
-      runs: { "claude mcp get spinecord": registered("User", "/real/spinecord/apps/local/main.ts --ev3") },
+      runs: { "claude mcp get spinecord": registered("Local", "/real/spinecord/apps/local/main.ts --ev3") },
     });
     expect((await lines(linked, ["--ev3"])).status).toBe("ok");
     const win = probes({
       platform: "win32",
       repo: "C:\\Users\\someone\\spinecord",
       runs: {
-        "cmd.exe /d /c claude mcp get spinecord": registered("User", "c:/users/someone/spinecord/apps/local/main.ts"),
+        "cmd.exe /d /c claude mcp get spinecord": registered("Local", "c:/users/someone/spinecord/apps/local/main.ts"),
       },
     });
     expect((await lines(win)).status).toBe("ok");
@@ -177,7 +183,7 @@ describe("--doctor", () => {
     // a held port is the likely cause of a registration that does not start: one fail, not two
     const both = probes({
       portFree: async () => false,
-      runs: { "claude mcp get spinecord": registered("User", `${MAIN} --ev3`, "✘ Failed to connect") },
+      runs: { "claude mcp get spinecord": registered("Local", `${MAIN} --ev3`, "✘ Failed to connect") },
     });
     const held = await run(["--ev3"], both);
     expect(line(held.lines, "claude code")!.status).toBe("warn");
@@ -220,7 +226,7 @@ describe("--doctor", () => {
     const win = await lan(
       probes({
         platform: "win32",
-        runs: { "cmd.exe /d /c claude mcp get spinecord": registered("User", MAIN) },
+        runs: { "cmd.exe /d /c claude mcp get spinecord": registered("Local", MAIN) },
       }),
     );
     expect(line(win, "firewall")!.reason).toContain("allow it on private networks");

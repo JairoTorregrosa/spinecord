@@ -211,7 +211,9 @@ async function checkFirewall(p: Probes): Promise<Line | null> {
 
 /** `claude mcp get spinecord` has no JSON form; its Scope, Status and Args lines are read, and nothing is printed. */
 async function checkClaude(p: Probes, robotArgs: string[], portHeld: boolean): Promise<Line> {
-  const printAdd = ["bun apps/local/main.ts --print-add", ...robotArgs].join(" ");
+  const main = join(p.repo, "apps", "local", "main.ts");
+  // by its full path: the doctor runs in the folder Claude Code starts in, and the printed line registers there
+  const printAdd = [`bun "${main}" --print-add`, ...robotArgs].join(" ");
   if (p.which("claude") === null)
     return {
       status: "fail",
@@ -236,10 +238,9 @@ async function checkClaude(p: Probes, robotArgs: string[], portHeld: boolean): P
       status: "fail",
       check: "claude code",
       reason: "spinecord is not registered where Claude Code in this folder sees it",
-      next: `${printAdd}, then run the line it prints`,
+      next: `${printAdd}, then run the line it prints in this folder`,
     };
-  const again = `claude mcp remove -s ${scope} spinecord, then ${printAdd} and run the line it prints`;
-  const main = join(p.repo, "apps", "local", "main.ts");
+  const again = `claude mcp remove -s ${scope} spinecord, then ${printAdd} and run the line it prints in this folder`;
   const norm = (s: string) => (p.platform === "win32" ? s.replaceAll("/", "\\").toLowerCase() : s);
   const mains = [main, p.realpath(main)].map(norm);
   if (!mains.some((m) => norm(args).startsWith(m)))
@@ -249,11 +250,6 @@ async function checkClaude(p: Probes, robotArgs: string[], portHeld: boolean): P
       reason: `spinecord is registered (${scope} scope), but it runs ${args.split(" ")[0] || "nothing"}, not this clone's ${main}`,
       next: again,
     };
-  // local and project scope are deliberate: only sessions opened in this folder start a robot link
-  const where =
-    scope === "user"
-      ? "for every folder (user scope)"
-      : `in ${scope} scope: only sessions opened in this folder see it`;
   const flags = norm(args)
     .slice(mains.find((m) => norm(args).startsWith(m))!.length)
     .trim();
@@ -265,10 +261,19 @@ async function checkClaude(p: Probes, robotArgs: string[], portHeld: boolean): P
       reason: `spinecord is registered (${scope} scope), but Claude Code could not start it${portHeld ? ": the held port above is the likely cause" : ""}`,
       next: portHeld ? "fix the port above" : `bun "${main}" ${flags} --help, then claude --debug`,
     };
+  const runs = `with this clone's main.ts${flags ? ` ${flags}` : ""}`;
+  // local and project scope are deliberate: only sessions opened in this folder start a robot link (CONTRACT §6)
+  if (scope === "user")
+    return {
+      status: "warn",
+      check: "claude code",
+      reason: `spinecord is registered for every folder (user scope), ${runs}: every Claude Code session on this computer starts its own server with these robots`,
+      next: `claude mcp remove -s user spinecord, then ${printAdd} and run the line it prints in the folder you start Claude Code in`,
+    };
   return {
     status: "ok",
     check: "claude code",
-    reason: `spinecord is registered ${where}, with this clone's main.ts${flags ? ` ${flags}` : ""}`,
+    reason: `spinecord is registered in ${scope} scope: only sessions opened in this folder see it, ${runs}`,
   };
 }
 
@@ -392,7 +397,7 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
             status: "warn",
             check: `footprint ${r.id}`,
             reason: clash,
-            next: "a measured value wins; else a footprint read from the photo wins (axle_track_cm = its width minus one wheel or track width), and a default footprint loses (half_width_cm = half of axle track plus one wheel or track width)",
+            next: "a measured value wins; else a recognised build's axle track wins over a footprint read from the photo unless the wheels are visibly further apart (then axle_track_cm = its width minus one wheel or track width), and a default footprint loses (half_width_cm = half of axle track plus one wheel or track width)",
           });
         if (r.unconfirmed?.length)
           add({
