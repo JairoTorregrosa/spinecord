@@ -420,6 +420,68 @@ export class World {
     this.resetGyro();
     this.resetTrip();
   }
+  /**
+   * A person picks the robot up and sets it down at `p` (a viewer). Unlike setPose the gyro keeps counting: it
+   * felt the turn, so its angle changes by the shortest rotation from the old heading to `p.th`. The trip meters
+   * keep their totals; line tracking starts again from the new spot. Fails, changing nothing, if the robot would
+   * overlap a wall or obstacle there.
+   */
+  carry(p: Pose): void {
+    if (![p.x, p.y, p.th].every(Number.isFinite)) throw new Error("carry: the pose must be finite numbers");
+    let turn = (p.th - this.pose.th) % (2 * Math.PI);
+    if (turn > Math.PI) turn -= 2 * Math.PI;
+    else if (turn < -Math.PI) turn += 2 * Math.PI;
+    const next: Pose = { x: p.x, y: p.y, th: this.pose.th + turn };
+    if (this.collides(next))
+      throw new Error(
+        `carry: the robot does not fit at (${p.x.toFixed(1)}, ${p.y.toFixed(1)}): it overlaps a wall or obstacle`,
+      );
+    this.pose = next;
+    this.last_stalled = false;
+    this.rate_deg_s = 0;
+    this.trackLine = -1;
+    const n = this.nearestOnLine(next.x, next.y);
+    if (n && n.dist <= LINE_TRACK_CM) {
+      this.trackLine = n.line;
+      this.trackS = n.s;
+    }
+  }
+
+  /**
+   * A person sets a box down (a viewer). Fails, changing nothing, if it is not a box of positive size or if it
+   * would overlap the robot. Returns its index in `cfg.boxes`. The array is replaced, never changed in place:
+   * clones of this world keep theirs.
+   */
+  addObstacle(r: Rect): number {
+    if (![r.x, r.y, r.w, r.h].every(Number.isFinite) || !(r.w > 0 && r.h > 0))
+      throw new Error("addObstacle: x, y, w, h must be finite numbers, with w and h > 0");
+    const before = this.cfg.boxes;
+    this.cfg.boxes = [...before, { x: r.x, y: r.y, w: r.w, h: r.h }];
+    if (this.collides(this.pose)) {
+      this.cfg.boxes = before;
+      throw new Error("addObstacle: the box would overlap the robot; set it down somewhere free");
+    }
+    return this.cfg.boxes.length - 1;
+  }
+
+  /** A person takes box `i` away (a viewer). Fails if there is no such box. */
+  removeObstacle(i: number): void {
+    if (!Number.isInteger(i) || i < 0 || i >= this.cfg.boxes.length)
+      throw new Error(`removeObstacle: no obstacle ${i}; this world has ${this.cfg.boxes.length}`);
+    this.cfg.boxes = this.cfg.boxes.filter((_, j) => j !== i);
+  }
+
+  /**
+   * The gyro angle without noise and not rounded (degrees since the last reset, counter-clockwise-positive), for a
+   * display. It spends nothing of the sensor generator, so showing it never changes what the robot reads.
+   */
+  peekGyroDeg(): number {
+    return (
+      ((this.pose.th - this.gyroZeroTh) * 180) / Math.PI +
+      (this.cfg.noise.gyro_drift_deg_s * (this.t_ms - this.gyroZeroMs)) / 1000
+    );
+  }
+
   resetGyro(): void {
     this.gyroZeroTh = this.pose.th;
     this.gyroZeroMs = this.t_ms;

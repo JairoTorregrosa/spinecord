@@ -33,6 +33,7 @@ flowchart LR
 |---|---|
 | [`local`](apps/local) | the server: MCP over stdio, the runtime and the robots (twin, ev3dev, stock EV3) in one bun process |
 | [`robot-page`](apps/robot-page) | the bridge page a person opens in Chrome or Edge to lend a stock EV3 over USB; `local` serves it on `127.0.0.1` |
+| [`twin-view`](apps/twin-view) | the 3D page a person opens to watch the twins move with the MCP calls, and to move the robot, set boxes down and press the brick's buttons; `local --view` serves it on `127.0.0.1` |
 | [`peripheral-page`](apps/peripheral-page) | the page a person opens to lend a robot this computer's camera, microphone, speaker, screen and buttons; `local --pages` serves it on `127.0.0.1` ([docs](docs/peripheral-pages.md)) |
 
 | Example | Does |
@@ -133,6 +134,7 @@ Without arguments the server runs a simulated twin of the example robot (`r1-sim
 | the twin of the example arm: two free motors and a touch sensor, no wheels | `--twin deployments/example/robots/arm.json` |
 | a robot file of your own | `--ev3 <robot.json>`, `--twin <robot.json>`, `--ev3dev <robot.json>` |
 | devices lent by browser pages, beside the twin | `--twin --pages` ([Peripheral pages](#peripheral-pages-devices-lent-by-a-browser)) |
+| any of these, and the twins in 3D in a browser | add `--view` ([3D view](#3d-view-of-the-twins)) |
 | several robots of a kind | `--config <file.json>` |
 
 The registration holds the arguments. To switch robots, remove it and add it again, then start Claude Code again:
@@ -145,6 +147,16 @@ bun apps/local/main.ts --print-add --ev3 --twin
 and run the line it prints.
 
 `--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C driven as one pair, heading from its gyro. The other example, [`deployments/example/robots/arm.json`](deployments/example/robots/arm.json), declares no `pair` and no `drivetrain`: its motors are devices for `command_device`, and `drive`, `turn` and `arc` answer `unsupported`. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](apps/local/examples), [`packages/sim-world/examples`](packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](CONTRACT.md). The server logs on stderr (`claude --debug` shows it); `--log-file <path>` keeps the log in a file ([Troubleshooting](#troubleshooting)).
+
+### 3D view of the twins
+
+`--view` serves a 3D view of every twin on `http://127.0.0.1:8769/` (`--view-port <n>` for another port): open it in a browser while a model drives the twin. The robot moves as the tools move it, its tracks or wheels and motor hubs turn with the tachos, the brick shows its LED and screen, the distance sensor draws its rays, and every call appears as it begins and ends with its summary. The page plays the brick's tones and says `sim.speaker`'s phrases once sound is turned on. The person there can act on the twin as on a robot on the floor: drag the robot to pick it up and set it down (the gyro feels the turn), set boxes down and take them away, restore the room, and hold the brick's buttons. What the page shows carries no noise and changes nothing the robot reads.
+
+```sh
+bun apps/local/main.ts --print-add --twin --view
+```
+
+How a twin looks comes from its world file: `extensions.view` says tracks or wheels, where the brick, a phone and each sensor sit, a bumper and a label ([`apps/twin-view/src/look.ts`](apps/twin-view/src/look.ts)); without it the page draws an educator base. [`deployments/orugas`](deployments/orugas) is a tracked EV3 with a phone at the front and its room.
 
 ### Peripheral pages: devices lent by a browser
 

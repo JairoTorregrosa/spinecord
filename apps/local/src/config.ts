@@ -14,6 +14,9 @@ import { parseWorld } from "../../../packages/sim-world/world";
 import type { LanConfig } from "./lan";
 import { DEFAULT_PAGE_PORT } from "./pages";
 
+/** Port of the 3D view of the twins (`--view`), on 127.0.0.1. */
+export const DEFAULT_VIEW_PORT = 8769;
+
 export const DEFAULT_PORT = 8767;
 /** The repository root: where a relative path on the command line is taken from. */
 export const REPO = join(import.meta.dir, "..", "..", "..");
@@ -81,10 +84,16 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  it at a listener on 127.0.0.1, port --page-port + 2
     --page-ext <folder>          serve the .js files of this folder next to the page, which loads each after its
                                  kit: devices of your own (deployments/example/page-ext)
+  --view                         a 3D view of every twin on http://127.0.0.1:<view-port>/ in a browser: the
+                                 robot, its motors, sensors, LED, screen, tones and speech move live with
+                                 the MCP calls, and the person there can pick the robot up, set boxes down
+                                 and press the brick's buttons (needs a twin)
+    --view-port <n>              its port (default ${DEFAULT_VIEW_PORT}; 0 takes a free port)
   --log-file <path>              also append every JSON log line of stderr to this file; its folder is
                                  created, and a file that cannot be opened ends the start
   --config <file.json>           the robots and the port as a file, for more than one robot of a kind:
-                                 {"port"?: n, "pages"?: {"port"?: n, "lan"?: true | {"interface"?: s,
+                                 {"port"?: n, "view"?: true | {"port"?: n},
+                                   "pages"?: {"port"?: n, "lan"?: true | {"interface"?: s,
                                    "cert"?: path, "key"?: path, "host"?: s}, "origin"?: url, "ext"?: path},
                                    "robots": [
                                    {"source": "twin", "robot": path, "world": path, "seed"?: n, "id"?: s},
@@ -126,6 +135,8 @@ export interface LocalConfig {
   logFile?: string;
   /** Peripheral pages (CONTRACT §2.4): null when off. On, every robot gets a page hub, and the page listener binds this port. */
   pages?: PagesConfig | null;
+  /** `--view`: the 3D view of the twins on 127.0.0.1, at this port. Null or absent when off. */
+  view?: { port: number } | null;
 }
 
 export interface PagesConfig {
@@ -294,8 +305,16 @@ function fromFile(file: string): LocalConfig {
   const where = `--config ${file}`;
   const json = readJson("--config", file);
   if (!isObj(json)) throw new Error(`${where}: must be an object {"robots": [...]}`);
-  const unknown = Object.keys(json).filter((k) => k !== "port" && k !== "robots" && k !== "pages");
-  if (unknown.length) throw new Error(`${where}: unknown field ${unknown.join(", ")}; allowed: port, pages, robots`);
+  const unknown = Object.keys(json).filter((k) => !["port", "robots", "pages", "view"].includes(k));
+  if (unknown.length)
+    throw new Error(`${where}: unknown field ${unknown.join(", ")}; allowed: port, pages, view, robots`);
+  let view: { port: number } | null = null;
+  if (json.view !== undefined && json.view !== false) {
+    const v = json.view === true ? {} : json.view;
+    if (!isObj(v) || Object.keys(v).some((k) => k !== "port"))
+      throw new Error(`${where}: view must be true or {"port"?: n}`);
+    view = { port: v.port === undefined ? DEFAULT_VIEW_PORT : int(`${where}: view.port`, v.port, 0, 65535) };
+  }
   let pages: PagesConfig | null = null;
   if (json.pages !== undefined) {
     const shape = '{"port"?: n, "lan"?: true | {"interface"?, "cert"?, "key"?, "host"?}, "origin"?: url, "ext"?: path}';
@@ -406,6 +425,7 @@ function fromFile(file: string): LocalConfig {
     robots,
     port: json.port === undefined ? DEFAULT_PORT : int(`${where}: port`, json.port, 1, 65535),
     pages,
+    view,
   };
 }
 
@@ -457,6 +477,8 @@ export function loadConfig(argv: string[]): LocalConfig {
       "lan-host": { type: "string" },
       "page-origin": { type: "string" },
       "page-ext": { type: "string" },
+      view: { type: "boolean" },
+      "view-port": { type: "string" },
     },
   });
   if (values.help) throw new HelpAsked();
@@ -485,6 +507,7 @@ export function loadConfig(argv: string[]): LocalConfig {
     if (values.lan !== undefined) needs("lan", "pages", values.pages !== undefined);
     if (values["page-origin"] !== undefined) needs("page-origin", "pages", values.pages !== undefined);
     if (values["page-ext"] !== undefined) needs("page-ext", "pages", values.pages !== undefined);
+    if (values["view-port"] !== undefined) needs("view-port", "view", values.view === true);
     for (const flag of ["lan-interface", "lan-cert", "lan-key", "lan-host"] as const)
       if (values[flag] !== undefined) needs(flag, "lan", values.lan === true);
     if ((values["lan-cert"] === undefined) !== (values["lan-key"] === undefined))
@@ -493,7 +516,8 @@ export function loadConfig(argv: string[]): LocalConfig {
       throw new Error("--lan-host names the host of a certificate of your own: it needs --lan-cert");
     for (const flag of ["ssh", "ssh-key", "install-bridge"] as const)
       if (values[flag] !== undefined) needs(flag, "ev3dev", values.ev3dev !== undefined);
-    if (given.length === 0)
+    // --view alone shows the twin a bare start runs
+    if (given.length === 0 || given.every((k) => k === "view" || k === "view-port"))
       robots.push({
         source: "twin",
         id: twinId(robotFile("example robot", EXAMPLE.robot).file.profile.id),
@@ -541,6 +565,12 @@ export function loadConfig(argv: string[]): LocalConfig {
     config = {
       robots,
       port: values.port === undefined ? DEFAULT_PORT : int("--port", values.port, 1, 65535),
+      view: values.view
+        ? {
+            port:
+              values["view-port"] === undefined ? DEFAULT_VIEW_PORT : int("--view-port", values["view-port"], 0, 65535),
+          }
+        : null,
       pages:
         values.pages === undefined
           ? null
@@ -578,6 +608,10 @@ export function loadConfig(argv: string[]): LocalConfig {
   if (config.pages && (config.pages.lan || config.pages.origin) && config.pages.port > 65533)
     throw new Error(
       `the page port is ${config.pages.port}: --lan takes the port after it and --page-origin the one after that; pick one up to 65533`,
+    );
+  if (config.view && !config.robots.some((r) => r.source === "twin"))
+    throw new Error(
+      '--view shows the simulated twins, and there is none: add --twin (a config file: a robot of source "twin")',
     );
   const ids = config.robots.map((r) => r.id);
   for (const id of ids)

@@ -97,15 +97,55 @@ export function logCall(
   write("call", { ...(broken ? { ...line, ok: false, code: "internal", reason: null } : line) });
 }
 
-export function buildServer(robots: readonly LocalRobot[]): Server {
+/** Longest argument text a watcher gets from one call. */
+export const WATCH_ARGS_MAX = 600;
+/**
+ * Someone who watches the calls as they happen (the 3D view shows them next to the twin). It gets each call when
+ * it begins, with its arguments cut to WATCH_ARGS_MAX characters of JSON, and when it ends, with its summary line.
+ * A watcher that throws changes nothing of the call.
+ */
+export interface CallWatcher {
+  callStarted(call: { n: number; tool: string; robot_id: string | null; args: string }): void;
+  callEnded(call: {
+    n: number;
+    tool: string;
+    robot_id: string | null;
+    ok: boolean;
+    code: string | null;
+    summary: string;
+    ms: number;
+  }): void;
+}
+
+export function buildServer(robots: readonly LocalRobot[], watcher?: CallWatcher): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
   server.setRequestHandler("tools/list", async () => ({ tools: LISTED_TOOLS as never }));
+  let calls = 0;
+  const watch = (f: (w: CallWatcher) => void): void => {
+    if (!watcher) return;
+    try {
+      f(watcher);
+    } catch {
+      // a watcher is a display: what it does never changes the call
+    }
+  };
   server.setRequestHandler("tools/call", async (request, ctx) => {
     const name = request.params.name;
     const args = request.params.arguments;
+    const n = ++calls;
+    const robot_id = robotOf(args);
+    watch((w) => {
+      const text = JSON.stringify(args ?? {});
+      w.callStarted({
+        n,
+        tool: name,
+        robot_id,
+        args: text.length > WATCH_ARGS_MAX ? `${text.slice(0, WATCH_ARGS_MAX)}…` : text,
+      });
+    });
     const t0 = performance.now();
     // the client's notifications/cancelled aborts this signal: a moving call is then stopped, any other aborted
     const out = await callTool(robots, name, args, ctx.mcpReq.signal);
@@ -117,9 +157,23 @@ export function buildServer(robots: readonly LocalRobot[]): Server {
       const trace_id = newTraceId();
       const e = new Error(`${name}: the result does not match its outputSchema: ${mismatch} (trace_id ${trace_id})`);
       logCall(name, args, out, ms, { trace_id, message: e.message, stack: stackOf(e) });
+      watch((w) =>
+        w.callEnded({ n, tool: name, robot_id, ok: false, code: "internal", summary: e.message, ms: Math.round(ms) }),
+      );
       throw e;
     }
     logCall(name, args, out, ms);
+    watch((w) =>
+      w.callEnded({
+        n,
+        tool: name,
+        robot_id,
+        ok: out.envelope.ok,
+        code: out.envelope.ok ? null : out.envelope.error.code,
+        summary: summarize(name, out.envelope),
+        ms: Math.round(ms),
+      }),
+    );
     const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [
       { type: "text", text: `${summarize(name, out.envelope)}\n${JSON.stringify(out.envelope)}` },
     ];

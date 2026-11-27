@@ -1,0 +1,42 @@
+{
+  "description": "EV3 de orugas con un teléfono de pie al frente (su pantalla es la cara) y el sensor infrarrojo encima, mirando adelante. Motores grandes en B (oruga izquierda) y C (oruga derecha), infrarrojo en el puerto 4, sin giroscopio: el rumbo sale de los encoders. Las medidas son aproximadas: mide en el robot real y ajusta wheel_diameter_cm (avanza 50 cm y compara) y axle_track_cm (gira 360° y compara). El gemelo orugas-sim se construye con este mismo archivo.",
+  "pair": {
+    "left": "B",
+    "right": "C"
+  },
+  "hardware": {
+    "low_battery_v": 6.5,
+    "max_tone_ms": 5000,
+    "tone_volume_pct": 50,
+    "speech_volume_pct": 100
+  },
+  "profile": {
+    "id": "orugas",
+    "roles": {
+      "left_wheel": "ev3.B",
+      "right_wheel": "ev3.C",
+      "distance": "ev3.S4"
+    },
+    "drivetrain": {
+      "type": "differential",
+      "pair_device": "ev3.pair",
+      "wheel_diameter_cm": 3.5,
+      "axle_track_cm": 13.5,
+      "forward_sign": 1,
+      "max_drive_cm": 100,
+      "max_turn_deg": 360
+    },
+    "limits": {
+      "max_speed_pct": 60,
+      "max_command_ms": 15000,
+      "max_program_ms": 120000,
+      "max_loop_ms": 60000
+    },
+    "notes": [
+      "Tracked base (skid steer): wheel_diameter_cm is the effective diameter of the drive sprockets with the tread; turns slip more than on wheels.",
+      "No gyro: the heading of a move comes from the wheel encoders.",
+      "The infrared sensor on S4 sits on top of the phone, about 20 cm above the floor and 6 cm ahead of the axle, looking forward: the front of the tracks is about 2.5 cm ahead of it. It reads proximity_pct (0 touching, 100 far), not centimetres.",
+      "A phone stands at the front with its screen facing forward; it can join as a page and lend its camera, screen and speaker."
+    ]
+  }
+}

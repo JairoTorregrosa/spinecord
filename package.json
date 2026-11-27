@@ -9,6 +9,7 @@
   "workspaces": [
     "packages/*",
     "apps/local",
+    "apps/twin-view",
     "examples/assistant"
   ],
   "type": "module",

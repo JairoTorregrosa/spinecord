@@ -15,10 +15,25 @@ import {
   readParam,
 } from "../driver-ev3/encode";
 import type { Transport } from "../driver-ev3/transport";
-import { World, DT_MS, COLOR_RGB } from "../sim-world/world";
+import {
+  World,
+  DT_MS,
+  COLOR_RGB,
+  IR_FULL_SCALE_CM,
+  REFLECT_BY_COLOR,
+  ULTRASONIC_MAX_CM,
+  ULTRASONIC_MIN_CM,
+} from "../sim-world/world";
 import type { WorldHost } from "../sim-world/world-provider";
 import type { RobotProfile } from "../protocol/types";
-import { parseBrickPorts, type BrickPorts, type MotorPort, type MotorType, type SensorKindName } from "./ports";
+import {
+  parseBrickPorts,
+  type BrickPorts,
+  type MotorPort,
+  type MotorType,
+  type SensorKindName,
+  type SensorPort,
+} from "./ports";
 
 export const TYPE_LARGE_MOTOR = 7;
 export const TYPE_MEDIUM_MOTOR = 8;
@@ -115,6 +130,43 @@ export interface SimBrickOptions {
   batteryV?: number;
   batteryPct?: number;
 }
+/** One motor as a viewer shows it. */
+export interface MotorPeek {
+  port: MotorPort;
+  /** What is plugged in; null = nothing. */
+  type: MotorType | null;
+  tacho_deg: number;
+  /** Signed speed in percent, as OUTPUT_READ reports it (0 when blocked, the run-down speed while coasting). */
+  speed_pct: number;
+  /** A drive wheel held by a wall or obstacle: the command runs, the tacho does not move. */
+  blocked: boolean;
+  coasting: boolean;
+}
+/** One input port as a viewer shows it. */
+export interface SensorPeek {
+  port: SensorPort;
+  /** What is plugged in; null = nothing. */
+  kind: SensorKindName | null;
+  mode: number;
+  silent: boolean;
+  /** The SI values of the current mode as the firmware gives them, but without noise; [] for an empty port. */
+  values: number[];
+}
+/** Everything about the brick a viewer shows (see SimBrick.peek). */
+export interface BrickPeek {
+  motors: MotorPeek[];
+  sensors: SensorPeek[];
+  /** LED pattern 0..9 (UI_WRITE LED): off, green, red, orange, then the flashing and pulsing ones. */
+  led: number;
+  lcd: string[];
+  battery_v: number;
+  battery_pct: number;
+  /** Buttons held down (1 up, 2 enter, 3 down, 4 right, 5 left, 6 back). */
+  buttons: number[];
+  /** Tones played so far: a viewer plays those after the count it saw last (the newest are in `tones`). */
+  tone_count: number;
+}
+
 export interface BrickLogEntry {
   at: number;
   counter: number;
@@ -143,6 +195,8 @@ export class SimBrick implements Transport, WorldHost {
   lcd: string[] = [];
   led = 0;
   tones: { hz: number; ms: number; volume: number }[] = [];
+  /** Tones played since this brick was made; `tones` keeps only the last 100. */
+  toneCount = 0;
   /** Brick buttons held down (1 up, 2 enter, 3 down, 4 right, 5 left, 6 back). */
   readonly buttons = new Set<number>();
 
@@ -267,6 +321,62 @@ export class SimBrick implements Transport, WorldHost {
   turnShaft(port: MotorPort, degrees: number): void {
     this.tick();
     this.motors["ABCD".indexOf(port)]!.pos += degrees;
+  }
+  /**
+   * The brick as a viewer shows it, after running the physics up to now. Sensor values carry no noise and spend
+   * nothing of the world's sensor generator, so looking never changes what the robot reads.
+   */
+  peek(): BrickPeek {
+    this.tick();
+    return {
+      motors: this.motors.map((m) => ({
+        port: m.port,
+        type: m.plugged,
+        tacho_deg: m.pos,
+        speed_pct: this.speedNow(m),
+        blocked: m.blocked,
+        coasting: m.speedPct === 0 && m.coastLeft > 0,
+      })),
+      sensors: this.sensors.map((s, i) => ({
+        port: String(i + 1) as SensorPort,
+        kind: s?.kind ?? null,
+        mode: s?.mode ?? 0,
+        silent: s?.silent === true,
+        values: s && !s.silent ? this.peekValues(s) : [],
+      })),
+      led: this.led,
+      lcd: [...this.lcd],
+      battery_v: this.batteryV,
+      battery_pct: this.batteryPct,
+      buttons: [...this.buttons].sort((a, b) => a - b),
+      tone_count: this.toneCount,
+    };
+  }
+  /** sensorValues without noise (see peek); [] for a mode the emulator does not have. */
+  private peekValues(s: Sensor): number[] {
+    const w = this.world;
+    const cm = (d: number) => Math.round(Math.min(ULTRASONIC_MAX_CM, Math.max(ULTRASONIC_MIN_CM, d)) * 10) / 10;
+    switch (s.kind) {
+      case "touch":
+        return s.mode === 0 ? [w.senseTouch()] : s.mode === 1 ? [this.bumps] : [];
+      case "color":
+        if (s.mode === 0) return [REFLECT_BY_COLOR[w.senseColorId()]!];
+        if (s.mode === 1) return [5];
+        if (s.mode === 2) return [w.senseColorId()];
+        if (s.mode === 4) return COLOR_RGB[w.senseColorId()]!.map((c) => Math.round((c / 255) * 400));
+        return [];
+      case "ultrasonic":
+        if (s.mode === 0) return [cm(w.coneDistance())];
+        if (s.mode === 1) return [Math.round((cm(w.coneDistance()) / 2.54) * 10) / 10];
+        return s.mode === 2 ? [0] : [];
+      case "gyro": {
+        const angle = -Math.round(w.peekGyroDeg()) + 0,
+          rate = Math.round(-w.rate_deg_s) + 0;
+        return s.mode === 0 ? [angle] : s.mode === 1 ? [rate] : s.mode === 3 ? [angle, rate] : [];
+      }
+      case "ir":
+        return s.mode === 0 ? [Math.round(Math.min(100, Math.max(0, (w.rayDistance() / IR_FULL_SCALE_CM) * 100)))] : [];
+    }
   }
   pressButton(button: number, down = true): void {
     if (down) this.buttons.add(button);
@@ -724,6 +834,7 @@ export class SimBrick implements Transport, WorldHost {
           const hz = num() & 0xffff;
           const ms = num() & 0xffff;
           this.tones.push({ hz, ms, volume });
+          this.toneCount++;
           if (this.tones.length > 100) this.tones.shift();
           break;
         }

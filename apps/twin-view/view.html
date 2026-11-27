@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EV3 · gemelo 3D</title>
+    <link rel="stylesheet" href="view.css" />
+  </head>
+  <body>
+    <canvas id="scene" aria-label="Vista 3D del robot simulado"></canvas>
+
+    <header class="bar panel">
+      <div class="brand"><span class="logo" aria-hidden="true"></span>EV3 <b>gemelo 3D</b></div>
+      <select id="robot" title="Robot" hidden></select>
+      <div class="chips">
+        <span id="chip-ws" class="chip warn">Conectando…</span>
+        <span id="chip-link" class="chip">—</span>
+        <span id="chip-activity" class="chip">—</span>
+        <span id="chip-stall" class="chip bad" hidden>¡Choque!</span>
+      </div>
+      <div class="pose mono" id="pose">x — · y — · θ —</div>
+    </header>
+
+    <nav class="tools panel" aria-label="Herramientas">
+      <div class="group-title">Mano</div>
+      <div class="seg" role="radiogroup" id="modes">
+        <button
+          data-mode="look"
+          class="on"
+          title="Mirar: arrastra para girar la cámara, rueda para acercar. Arrastra el robot para levantarlo y moverlo. (Esc)"
+        >
+          <span aria-hidden="true">👁</span>Mirar
+        </button>
+        <button
+          data-mode="carry"
+          title="Mover robot: pulsa donde lo quieres poner y arrastra hacia donde debe mirar. Q / E lo giran 15°."
+        >
+          <span aria-hidden="true">✋</span>Mover
+        </button>
+        <button
+          data-mode="box"
+          title="Poner caja: arrastra un rectángulo en el suelo (un clic pone una caja de 20 × 20 cm)."
+        >
+          <span aria-hidden="true">▢</span>Caja
+        </button>
+        <button data-mode="remove" title="Quitar caja: haz clic en una caja.">
+          <span aria-hidden="true">✕</span>Quitar
+        </button>
+      </div>
+      <button
+        id="restore"
+        class="wide"
+        title="Devuelve las cajas del mundo y pone el robot en su salida (el giroscopio vuelve a 0)"
+      >
+        ↺ Restaurar mundo
+      </button>
+
+      <div class="group-title">Cámara</div>
+      <div class="seg" id="cams">
+        <button data-cam="free" title="Cámara libre">Libre</button>
+        <button data-cam="follow" class="on" title="La cámara sigue al robot">Seguir</button>
+        <button data-cam="eye" title="Lo que ve la cámara del robot">Robot</button>
+      </div>
+
+      <div class="group-title">Mostrar</div>
+      <label class="toggle"><input type="checkbox" id="opt-cone" checked /> Cono ultrasónico</label>
+      <label class="toggle"><input type="checkbox" id="opt-trail" checked /> Rastro</label>
+      <label class="toggle"><input type="checkbox" id="opt-pip" checked /> Vista del robot</label>
+      <label class="toggle"><input type="checkbox" id="opt-sound" /> Sonido y voz</label>
+    </nav>
+
+    <aside class="brick panel" aria-label="Ladrillo EV3">
+      <div class="group-title">Ladrillo EV3 <span id="battery" class="mono dim"></span></div>
+      <div class="lcd mono" id="lcd"></div>
+      <div class="pad" id="pad" aria-label="Botones del ladrillo">
+        <button data-btn="6" class="b-back" title="Atrás">◂</button>
+        <button data-btn="1" class="b-up" title="Arriba">▴</button>
+        <button data-btn="5" class="b-left" title="Izquierda">◂</button>
+        <button data-btn="2" class="b-enter" title="Centro"><span id="led" class="led"></span></button>
+        <button data-btn="4" class="b-right" title="Derecha">▸</button>
+        <button data-btn="3" class="b-down" title="Abajo">▾</button>
+      </div>
+      <div class="group-title">Motores</div>
+      <div id="motors" class="ports"></div>
+      <div class="group-title">Sensores</div>
+      <div id="sensors" class="ports"></div>
+    </aside>
+
+    <section class="calls panel" aria-label="Llamadas MCP">
+      <div class="group-title">
+        Llamadas MCP <span class="dim" id="calls-hint">— pídele a Claude que mueva el robot</span>
+      </div>
+      <ol id="calls"></ol>
+    </section>
+
+    <div id="pip" class="pip" hidden><span>📱 Cámara del robot</span></div>
+    <div id="bubble" class="bubble" hidden></div>
+    <div id="hint" class="hint" hidden></div>
+    <div id="toast" class="toast" hidden></div>
+    <div id="offline" class="offline" hidden>
+      <div class="panel">
+        <b>Sin conexión con spinecord</b>
+        <p>
+          Esta página muestra el gemelo que corre dentro del servidor MCP. Arranca Claude Code con spinecord y
+          <code>--view</code>; la página se reconecta sola.
+        </p>
+      </div>
+    </div>
+    <script type="module" src="view.js"></script>
+  </body>
+</html>

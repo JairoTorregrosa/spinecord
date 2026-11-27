@@ -37,6 +37,15 @@ const FORBIDDEN: Record<string, string[]> = {
     ...["protocol", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
     "apps/local",
   ],
+  // the 3D view draws what apps/local sends it: three.js and its own message types, nothing of a runtime or a driver
+  "apps/twin-view": [
+    ...["protocol", "driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime", "page-hub"].map(
+      (p) => `packages/${p}`,
+    ),
+    "apps/local",
+    "apps/robot-page",
+    "apps/peripheral-page",
+  ],
   // the peripheral page speaks the page protocol and nothing else: protocol's types, never a runtime or the hub
   "apps/peripheral-page": [
     ...["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime", "page-hub"].map((p) => `packages/${p}`),

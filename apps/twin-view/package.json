@@ -1,0 +1,12 @@
+{
+  "name": "@spinecord/twin-view",
+  "private": true,
+  "description": "The 3D page a person opens in a browser to watch the simulated twins of the spinecord process move with the MCP calls, and to act on them as on a robot on the floor",
+  "type": "module",
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.187.0"
+  }
+}
