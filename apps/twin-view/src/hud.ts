@@ -215,7 +215,11 @@ export function call(m: CallStart | CallEnd): void {
 /** One world event as a compact row of the activity list (src/events.ts); nothing for one it does not show. */
 export function worldEvent(e: WorldEventMsg): void {
   const r = eventRow(e);
-  if (!r) return;
+  if (r) activity(r.icon, r.text, `t ${(e.t_ms / 1000).toFixed(1)} s`, JSON.stringify(e));
+}
+/** One compact row of the activity list: a world event, or what the person did on the page. */
+export function activity(icon: string, text: string, when: string, title: string): void {
+  const r = { icon, text };
   const list = $<HTMLOListElement>("calls");
   $("calls-hint").hidden = true;
   // the same thing again (a stall that begins and ends against a wall): one row with a count, not a column of them
@@ -224,8 +228,8 @@ export function worldEvent(e: WorldEventMsg): void {
     const n = Number(top.dataset.n ?? "1") + 1;
     top.dataset.n = String(n);
     top.querySelector(".what")!.textContent = `${r.text} ×${n}`;
-    top.querySelector(".ms")!.textContent = `t ${(e.t_ms / 1000).toFixed(1)} s`;
-    top.title = `${top.title}\n${JSON.stringify(e)}`.slice(-2000);
+    top.querySelector(".ms")!.textContent = when;
+    top.title = `${top.title}\n${title}`.slice(-2000);
     return;
   }
   const li = document.createElement("li");
@@ -234,8 +238,8 @@ export function worldEvent(e: WorldEventMsg): void {
   li.innerHTML = `<span class="ico" aria-hidden="true"></span><span class="what"></span><span class="ms"></span>`;
   li.querySelector(".ico")!.textContent = r.icon;
   li.querySelector(".what")!.textContent = r.text;
-  li.querySelector(".ms")!.textContent = `t ${(e.t_ms / 1000).toFixed(1)} s`;
-  li.title = JSON.stringify(e);
+  li.querySelector(".ms")!.textContent = when;
+  li.title = title;
   const reading = list.scrollTop > 4;
   const before = list.scrollHeight;
   list.prepend(li);

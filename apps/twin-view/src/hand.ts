@@ -1,7 +1,8 @@
 // The hand of the person at the page: what one does to a robot on the floor, plus a tape measure. Modes:
 //   look     drag the robot to carry it (turn it on the way with Q / E or the wheel), drag elsewhere to orbit
 //   carry    press where the robot goes, drag towards where it must face
-//   box      drag a rectangle to set a box down (a click: 20 × 20 cm), drag a box to move it
+//   box      drag a rectangle to set a box down (a click: 20 × 20 cm), then back to look unless Shift is held;
+//            drag a box to move it
 //   remove   click a box to take it away
 //   measure  drag on the floor, or click and click: distance and angle, as the tools count them (cm, degrees counter-clockwise)
 // What the hand holds is drawn as a ghost: blue where it can go, red where the process would refuse it, with the
@@ -47,7 +48,7 @@ const STEP_DEG = 15;
 const HINTS: Record<Mode, string> = {
   look: "Arrastra el robot: levantarlo · el suelo: girar la vista",
   carry: "Pulsa donde va y arrastra hacia donde mira",
-  box: "Arrastra: caja nueva · arrastra una caja: moverla",
+  box: "Arrastra: caja nueva (Mayús: otra más) · arrastra una caja: moverla",
   remove: "Clic en una caja: quitarla",
   measure: "Arrastra, o clic y clic, para medir",
 };
@@ -169,7 +170,7 @@ export class Hand {
     if (d?.kind !== "move") return;
     if (this.c.focus()?.world.boxes.some((b) => b.id === d.id)) return;
     this.cancel();
-    hud.toast("Las cajas cambiaron mientras movías una (otra pestaña): tómala otra vez");
+    hud.toast("Las cajas cambiaron mientras movías una: tómala otra vez");
   }
 
   setMode(m: Mode): void {
@@ -407,7 +408,11 @@ export class Hand {
         d.kind === "box"
           ? this.c.link.request({ t: "box_add", id: f.id, ...b })
           : this.c.link.request({ t: "box_move", id: f.id, box: d.id, ...b });
-      void sent.then((r) => this.answer(r, e));
+      void sent.then((r) => {
+        this.answer(r, e);
+        // one box, then back to look; Shift held keeps placing
+        if (r.ok && d.kind === "box" && !e.shiftKey && this.mode === "box") this.setMode("look");
+      });
     } else {
       const click = Math.hypot(d.x - d.x0, d.y - d.y0) < 0.5;
       if (!click) {
@@ -461,9 +466,13 @@ export class Hand {
     if (turned < 1 && moved < 1) return;
     const gyro = Object.values(f.ports.sensors).includes("gyro");
     hud.toast(
-      gyro
-        ? `Robot movido ${fmt(moved)} cm y girado ${Math.round(turned)}°: el giroscopio sintió el giro; los encoders no se enteran.`
-        : `Robot movido ${fmt(moved)} cm y girado ${Math.round(turned)}°. Sin giroscopio, el robot no lo sabe: su rumbo y su distancia salen de los encoders.`,
+      !gyro
+        ? "El robot no sabe que lo moviste: no tiene giroscopio."
+        : turned < 1
+          ? "El robot no sabe que lo moviste."
+          : moved < 1
+            ? "El robot sintió el giro con su giroscopio."
+            : "El robot sintió el giro con su giroscopio, pero no sabe que lo moviste.",
       "info",
     );
   }

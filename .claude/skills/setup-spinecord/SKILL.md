@@ -92,7 +92,7 @@ Exit check: `setup login: ok`. Else use fixes.md.
 Run `setup status`. Read the line `PAYS`.
 If it says `todo` with an organization name, ask the person: "Claude will use the credits of "<name>". Is that the organization with your credits?"
 If yes, run `setup confirm org`. If no, use the row "Wrong Console organization" of fixes.md.
-If it says `todo` with only an organization id, run `setup confirm org` and ask nothing. State SMOKE shows if the credits pay.
+If it says `todo` with only an organization id, ask the person to compare it with the id at platform.claude.com, Settings, Organization. If it is the organization with the credits, run `setup confirm org`. If it is another one, or the person cannot find the id, use the row "Wrong Console organization" of fixes.md.
 If it says `fail`, use the row of fixes.md that it names after `->`.
 
 ### 5 WORKSHOP
@@ -139,7 +139,7 @@ Running the skill again changes nothing and ends here.
 
 ## Later asks
 
-The person asks for one of these after the setup, often in the robot's Claude Code in `~/mi-robot`. There, this session's spinecord holds its ports: a `port` `fail` that names them is expected until the restart. A registration change is read only at start. Then say: "Type /exit in Claude Code. Then paste the launch line again."
+The person asks for one of these after the setup, often in the robot's Claude Code in `~/mi-robot`. There, this session's spinecord holds its ports: while `list_robots` answers, a `port` `fail` that names them is expected. Do not tell the person about it. A registration change is read only at start. Then say: "Type /exit in Claude Code. Then paste the launch line again."
 
 | The person says | Do | Done when | Restart |
 |---|---|---|---|

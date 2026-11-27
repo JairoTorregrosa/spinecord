@@ -143,6 +143,8 @@ async function checkPorts(p: Probes, c: LocalConfig): Promise<Line[]> {
   const ports = portsOf(c);
   if (ports.length === 0) return [{ status: "ok", check: "ports", reason: "these robots listen on no port" }];
   const out: Line[] = [];
+  // run from inside a Claude Code session, the holder is most likely that session's own spinecord
+  const inSession = isSet(p.env, "CLAUDECODE");
   for (const { port, what } of ports)
     out.push(
       (await p.portFree(port))
@@ -150,8 +152,12 @@ async function checkPorts(p: Probes, c: LocalConfig): Promise<Line[]> {
         : {
             status: "fail",
             check: "port",
-            reason: `${port} is held (${what}), most likely by another spinecord that another Claude Code session started`,
-            next: "close the other Claude Code session (or its bun process), then run this again",
+            reason: inSession
+              ? `${port} is held (${what}), most likely by this Claude Code session's own spinecord`
+              : `${port} is held (${what}), most likely by another spinecord that another Claude Code session started`,
+            next: inSession
+              ? "expected while this session's spinecord tools answer (list_robots); else close the other Claude Code session"
+              : "close the other Claude Code session (or its bun process), then run this again",
           },
     );
   return out;
