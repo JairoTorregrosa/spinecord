@@ -245,6 +245,35 @@ describe("sensors", () => {
     expect(b.rayDistance()).toBeCloseTo(20, 6);
     expect(b.irProximity()).toBeGreaterThan(20 * (40.5 / 38) + 1); // about 10 % farther than a wall at 20 cm
   });
+  test("IR proximity depends on what the surface sends back: black (ir_reflectivity 0.21) reads 88-90 at 38 cm", () => {
+    // a wide box against the room's far wall, faced square on: it fills the beam as the wall does
+    const wall = (ir?: number) =>
+      quietWorld({
+        ...EXAMPLES.lineOval,
+        arena: { width_cm: 300, height_cm: 300 },
+        obstacles: [{ id: "panel", x: 290, y: 0, w: 10, h: 300, ...(ir === undefined ? {} : { ir_reflectivity: ir }) }],
+      });
+    const at = (w: World, cm: number) => {
+      const ahead = w.cfg.body.distance_sensor_x_cm;
+      w.setPose({ x: 290 - ahead - cm, y: 150, th: 0 });
+      return w.senseIrProximity();
+    };
+    expect(at(wall(), 38)).toBe(41); // absent: white, as before
+    expect(at(wall(1), 38)).toBe(41);
+    const black = at(wall(0.21), 38);
+    expect(black).toBeGreaterThanOrEqual(88); // EV3-G read 88-90 from black at 38 cm (issue518)
+    expect(black).toBeLessThanOrEqual(90);
+    expect(at(wall(0.21), 60)).toBe(100); // a dark thing goes out of range sooner
+    // the ultrasonic and the camera do not see the colour
+    const w = wall(0.21);
+    at(w, 38);
+    expect(w.rayDistance()).toBeCloseTo(38, 6);
+    expect(() => wall(0)).toThrow(/ir_reflectivity/);
+    expect(() => wall(1.5)).toThrow(/at most 1/);
+    expect(() => wall(1).addObstacle({ x: 10, y: 10, w: 5, h: 5, ir_reflectivity: 2 })).toThrow(/ir_reflectivity/);
+    const id = wall(1).addObstacle({ x: 10, y: 10, w: 5, h: 5, ir_reflectivity: 0.5 });
+    expect(id).toBe("box1");
+  });
   test("IR noise grows with the reading", () => {
     const spread = (cm: number) => {
       const w = room(7);

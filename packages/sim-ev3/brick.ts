@@ -46,6 +46,11 @@ export const LARGE_STALL_NCM = 40;
 export const MEDIUM_STALL_NCM = 12;
 /** Standard gravity, m/s2. */
 const G = 9.81;
+/**
+ * The most the EV3 gyro (45505) measures, deg/s: the LEGO MINDSTORMS Education EV3 User Guide (2013) gives 440 deg/s,
+ * and ev3dev's sensor table GYRO-RATE -440..440. A faster spin reads 440 (signed).
+ */
+export const GYRO_MAX_DEG_S = 440;
 /** The fastest loop rate the twin declares: a tick is an exchange with this emulator in the same process. */
 export const SIM_BRICK_LOOP_RATE_HZ = 100;
 /**
@@ -814,9 +819,11 @@ export class SimBrick implements Transport, WorldHost {
       }
       case "gyro": {
         // The real EV3 gyro counts CLOCKWISE as positive. The world is counter-clockwise positive, so negate.
+        // Its rate saturates at GYRO_MAX_DEG_S. (The angle a saturated gyro loses is not modelled.)
+        const rate = () => Math.round(Math.max(-GYRO_MAX_DEG_S, Math.min(GYRO_MAX_DEG_S, -w.gyroRateDegS()))) + 0;
         if (s.mode === 0) return [-w.senseGyro() + 0];
-        if (s.mode === 1) return [Math.round(-w.gyroRateDegS()) + 0];
-        if (s.mode === 3) return [-w.senseGyro() + 0, Math.round(-w.gyroRateDegS()) + 0];
+        if (s.mode === 1) return [rate()];
+        if (s.mode === 3) return [-w.senseGyro() + 0, rate()];
         break;
       }
       case "ir": {

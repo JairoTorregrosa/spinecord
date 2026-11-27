@@ -50,11 +50,18 @@ export interface Obstacle extends Rect {
    * It slides when the robot pushes harder than its friction on the floor (BOX_FLOOR_FRICTION x weight).
    */
   mass_g?: number;
+  /**
+   * How much of the infrared sensor's light it sends back, relative to a white wall (0 < r <= 1; absent: 1). The
+   * stock firmware read 40-41 % from a white wall at 38 cm and 88-90 % from black (issue518, IR_PCT_PER_CM): under
+   * the twin's model (the reading grows with one over the square root of the light) black is about (41 / 89)^2 =
+   * 0.21. Walls of the arena reflect as white. Only the infrared sensor sees it.
+   */
+  ir_reflectivity?: number;
 }
 /** A box as it is handed to the world: without `id` the world gives it the next free `box<n>`. */
-export type ObstacleInput = Rect & { id?: string; height_cm?: number; mass_g?: number };
+export type ObstacleInput = Rect & { id?: string; height_cm?: number; mass_g?: number; ir_reflectivity?: number };
 /** The parts of an obstacle the world keeps (also what a world file may say of one). */
-const OBSTACLE_KEYS = ["id", "x", "y", "w", "h", "height_cm", "mass_g"] as const;
+const OBSTACLE_KEYS = ["id", "x", "y", "w", "h", "height_cm", "mass_g", "ir_reflectivity"] as const;
 /** `b` with only the fields of an obstacle, the optional ones only when present. */
 function obstacleOf(b: ObstacleInput, id: string): Obstacle {
   return {
@@ -65,6 +72,7 @@ function obstacleOf(b: ObstacleInput, id: string): Obstacle {
     h: b.h,
     ...(b.height_cm === undefined ? {} : { height_cm: b.height_cm }),
     ...(b.mass_g === undefined ? {} : { mass_g: b.mass_g }),
+    ...(b.ir_reflectivity === undefined ? {} : { ir_reflectivity: b.ir_reflectivity }),
   };
 }
 /** Why the world refused to change its obstacles (it then changed nothing). */
@@ -448,11 +456,16 @@ export function parseWorld(json: unknown): WorldConfig {
           fail(`obstacles[${i}].id`, `must be 1 to 32 letters, digits, _ or -, got ${JSON.stringify(o.id)}`);
         const more = (k: "height_cm" | "mass_g") =>
           o[k] === undefined ? {} : { [k]: num(o[k], `obstacles[${i}].${k}`, Number.MIN_VALUE) };
+        if (o.ir_reflectivity !== undefined) {
+          const r = num(o.ir_reflectivity, `obstacles[${i}].ir_reflectivity`, Number.MIN_VALUE);
+          if (r > 1) fail(`obstacles[${i}].ir_reflectivity`, `is relative to a white wall: at most 1, got ${r}`);
+        }
         return {
           ...rect(b, `obstacles[${i}]`),
           ...(o.id === undefined ? {} : { id: o.id as string }),
           ...more("height_cm"),
           ...more("mass_g"),
+          ...(o.ir_reflectivity === undefined ? {} : { ir_reflectivity: o.ir_reflectivity as number }),
         };
       }),
       (i, why) => fail(`obstacles[${i}].id`, why),
@@ -871,6 +884,9 @@ export class World {
     for (const k of ["height_cm", "mass_g"] as const)
       if (b[k] !== undefined && !(Number.isFinite(b[k]) && b[k] > 0))
         throw new ObstacleError("invalid", `${op}: ${k} must be a finite number > 0, got ${JSON.stringify(b[k])}`);
+    const r = b.ir_reflectivity;
+    if (r !== undefined && !(Number.isFinite(r) && r > 0 && r <= 1))
+      throw new ObstacleError("invalid", `${op}: ir_reflectivity must be > 0 and at most 1, got ${JSON.stringify(r)}`);
     const out = obstacleOf(b, b.id);
     if (robot && this.boxCollides(out, this.pose))
       throw new ObstacleError("on_robot", `${op}: the box would overlap the robot; set it down somewhere free`);
@@ -1433,22 +1449,24 @@ export class World {
     p: Pose = this.pose,
     offset_rad = 0,
     vHalfRad = (CONE_HALF_DEG * Math.PI) / 180,
-  ): { d: number; cos: number; top_cm: number } {
+  ): { d: number; cos: number; top_cm: number; ir: number } {
     const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
     const z = this.cfg.body.distance_sensor_z_cm,
       spread = vHalfRad >= Math.PI / 2 ? Infinity : Math.tan(vHalfRad);
     const dx = Math.cos(p.th + offset_rad),
       dy = Math.sin(p.th + offset_rad);
     const { width, height, boxes } = this.cfg;
-    if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return { d: 0, cos: 1, top_cm: Infinity };
+    if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return { d: 0, cos: 1, top_cm: Infinity, ir: 1 };
     let best = Infinity,
       cos = 1,
-      top = Infinity;
-    const take = (t: number, c: number, h = Infinity): void => {
+      top = Infinity,
+      ir = 1;
+    const take = (t: number, c: number, h = Infinity, r = 1): void => {
       if (t < best) {
         best = t;
         cos = c;
         top = h;
+        ir = r;
       }
     };
     if (dx > 1e-12) take((width - ox) / dx, Math.abs(dx));
@@ -1490,12 +1508,13 @@ export class World {
       }
       if (!hit) continue;
       const below = b.height_cm === undefined ? 0 : z - b.height_cm;
-      if (below <= 0 || spread === Infinity) take(t0, c0, b.height_cm);
+      const r = b.ir_reflectivity ?? 1;
+      if (below <= 0 || spread === Infinity) take(t0, c0, b.height_cm, r);
       // a box lower than the sensor: seen only once the beam's lower edge comes down to its top, and then where the
       // beam meets its top edge, slanted down (the slant counts against the echo as a sideways one does)
-      else if (below <= t0 * spread) take(Math.hypot(t0, below), c0 * Math.cos(Math.atan2(below, t0)), b.height_cm);
+      else if (below <= t0 * spread) take(Math.hypot(t0, below), c0 * Math.cos(Math.atan2(below, t0)), b.height_cm, r);
     }
-    return { d: best, cos, top_cm: top };
+    return { d: best, cos, top_cm: top, ir };
   }
 
   /**
@@ -1564,8 +1583,9 @@ export class World {
    * What the infrared sensor reads without noise and not rounded (a display): 0..100 %. It measures the intensity of
    * its own light reflected back. Each ray of its beam (weighted by the beam's brightness) returns light falling
    * with the square of the distance and with the cosine of incidence (a matte surface), and the reading is the
-   * distance at which a square, beam-filling surface would return that much, times IR_PCT_PER_CM: linear for a
-   * large wall square on, farther for a wall at a slant or an object that fills only part of the beam.
+   * distance at which a square, beam-filling white surface would return that much, times IR_PCT_PER_CM: linear for
+   * a large white wall square on, farther for a wall at a slant, an object that fills only part of the beam, or a
+   * darker one (an obstacle's ir_reflectivity: black at 0.21 reads 89 at 38 cm, as the stock firmware does).
    */
   irProximity(): number {
     return Math.min(100, this.irUncapped());
@@ -1580,7 +1600,7 @@ export class World {
         w = Math.cos((u * Math.PI) / 2) ** 2;
       const h = this.rayHit(this.pose, off, (IR_CONE_HALF_DEG * Math.PI) / 180),
         d = Math.max(h.d, 0.1);
-      sum += (w * h.cos) / (d * d);
+      sum += (w * h.cos * h.ir) / (d * d);
       full += w * Math.cos(off) ** 3; // a square wall at distance 1
     }
     return IR_PCT_PER_CM * Math.sqrt(full / sum);

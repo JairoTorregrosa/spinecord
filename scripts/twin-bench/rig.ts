@@ -18,7 +18,7 @@ import {
   NO_NOISE,
   type NoiseConfig,
   parseWorld,
-  type Rect,
+  type ObstacleInput,
   World,
 } from "../../packages/sim-world/world";
 import { SimWorldProvider } from "../../packages/sim-world/world-provider";
@@ -55,7 +55,7 @@ export interface RigOptions {
   seed?: number;
   /** Override what is plugged in (default: the robot file's twin.ev3, plus a free large motor on D). */
   ev3?: { motors: Record<string, string>; sensors: Record<string, string> };
-  boxes?: Rect[];
+  boxes?: ObstacleInput[];
   lines?: { points: [number, number][]; width_cm: number }[];
   arena?: { width_cm: number; height_cm: number };
   start?: { x: number; y: number; heading_deg: number };

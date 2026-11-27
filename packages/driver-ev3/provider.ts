@@ -321,7 +321,8 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
           range: [0, 100],
           noise: 5,
           max_rate_hz: 20,
-          approx: "Depends on distance and surface; calibrate on the actual floor.",
+          approx:
+            "Depends on the surface and, on a robot, on the sensor's height above it; calibrate on the actual floor.",
           description: "Reflected red light, 0 dark to 100 bright.",
         }),
         ch(1, {
@@ -331,7 +332,7 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
           range: [0, 100],
           noise: 5,
           max_rate_hz: 5,
-          approx: MODE_NOTE,
+          approx: `Room light; a simulated twin has none and reads a dim constant. ${MODE_NOTE}`,
           description: "Ambient light, 0 dark to 100 bright.",
         }),
         ch(2, {
@@ -339,7 +340,7 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
           type: "number",
           range: [0, 7],
           max_rate_hz: 5,
-          approx: `LEGO colors only, unreliable beyond 2 cm. ${MODE_NOTE}`,
+          approx: `LEGO colors only; on a robot unreliable beyond 2 cm from the surface. ${MODE_NOTE}`,
           description: "Color id: 0 none, 1 black, 2 blue, 3 green, 4 yellow, 5 red, 6 white, 7 brown.",
         }),
         ch(
@@ -372,7 +373,8 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
             range: [3, 255],
             noise: 2,
             max_rate_hz: 20,
-            approx: "About +-1 cm from 3 to 250 cm; 255 means nothing detected; soft or angled surfaces read long.",
+            approx:
+              "About +-1 cm from 3 to 250 cm; 255 means nothing detected; a surface angled away reads long or gives no echo (255), a soft one may too.",
             description: "Distance to the nearest object in front.",
           },
           num(1),
@@ -393,7 +395,8 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
             range: [-32767, 32768],
             noise: 2,
             max_rate_hz: 20,
-            approx: "About +-3 deg per 90 deg turn; drifts over time.",
+            approx:
+              "About +-3 deg per 90 deg turn; drifts if it was reset or powered while the robot moved (and, on a robot, slowly anyway); the angle falls behind on spins faster than 440 deg/s.",
             description:
               "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the provider negates the sensor's native clockwise-positive value. A condition compares it as it reads, not relative to the start of a call: send reset first, or compare against a value read just before. turn measures the change of heading itself.",
           },
@@ -428,7 +431,7 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
           noise: 3,
           max_rate_hz: 20,
           approx:
-            "Not a distance: roughly 1 cm per unit against a large light wall square on, farther for dark, slanted or narrow things; depends strongly on surface colour; 100 means nothing in range (beyond about 95 cm).",
+            "Not a distance: roughly 1 cm per unit against a large white wall square on (41 at 38 cm), farther for dark, slanted or narrow things (black reads about 89 at 38 cm); 100 means nothing in range, which for a white wall LEGO and ev3dev put at about 70 cm and a linear reading at about 94 cm (sources disagree).",
           description: "Proximity of the nearest object, 0 touching to 100 far.",
         }),
         ch(

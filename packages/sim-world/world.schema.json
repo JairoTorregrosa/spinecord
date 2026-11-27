@@ -243,6 +243,12 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "A box the robot can push (cardboard, a cup): it slides when pushed harder than 0.4 x its weight. Absent: fixed in place."
+        },
+        "ir_reflectivity": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "How much of the infrared sensor's light it sends back, relative to a white wall (absent: 1). Black is about 0.21: the stock firmware reads 88-90 % from black at 38 cm, 40-41 % from white. Only the infrared sensor sees it."
         }
       }
     }

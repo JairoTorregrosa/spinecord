@@ -12,6 +12,7 @@ import {
   MEDIUM_DEG_S,
   LARGE_STALL_NCM,
   MEDIUM_STALL_NCM,
+  GYRO_MAX_DEG_S,
   drivetrainFromProfile,
 } from "./brick";
 import { BOX_FLOOR_FRICTION, DEFAULT_PUSH_N, World, parseWorld } from "../sim-world/world";
@@ -353,6 +354,15 @@ describe("sensors on ports come from the world", () => {
     expect((await call([E.OP.INPUT_DEVICE, 0x0a, 0])).ok).toBe(true);
     expect(await read()).toBe(0);
     expect((await call(E.inputStopAll())).ok).toBe(true);
+  });
+  test("gyro rate saturates at 440 deg/s (GYRO_MAX_DEG_S): a spin at 100 % turns the body at 476", async () => {
+    const { call, run, world } = rig();
+    await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 1, 1, 0), 4); // rate mode while still (a switch resets it)
+    await call(E.outputTimeSync(BC, 100, 200, 2000, true)); // B forward, C back: a right (clockwise) spin
+    run(500);
+    expect(world.gyroRateDegS()).toBeLessThan(-470); // the body, clockwise
+    const rate = E.readF32((await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 1, 1, 0), 4)).globals, 0);
+    expect(rate).toBe(GYRO_MAX_DEG_S); // native clockwise-positive, clamped
   });
   test("gyro rate (mode 1) is non-zero only while turning", async () => {
     const { call, run } = rig();
