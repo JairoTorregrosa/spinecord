@@ -13,6 +13,7 @@ import * as hud from "./hud";
 import { draftLines } from "./draft";
 import { LOST_GRACE_MS, hideNo3d, showNo3d } from "./no3d";
 import { SensorRayView } from "./rays";
+import { Stillness } from "./still";
 import { Link, type LinkState } from "./link";
 import { lookOf } from "./look";
 import type { RobotMeta, RobotState, ServerMessage } from "./messages";
@@ -50,6 +51,8 @@ if (renderer) {
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.toneMappingExposure = 1.0;
 }
+/** Whether a frame would draw anything new (still.ts). */
+const still = new Stillness();
 // a context the browser takes back (a GPU reset, too many tabs) and does not return within LOST_GRACE_MS
 let lostTimer: ReturnType<typeof setTimeout> | null = null;
 canvas.addEventListener("webglcontextlost", (e) => {
@@ -57,6 +60,7 @@ canvas.addEventListener("webglcontextlost", (e) => {
   lostTimer ??= setTimeout(() => showNo3d("lost", "webglcontextlost without webglcontextrestored"), LOST_GRACE_MS);
 });
 canvas.addEventListener("webglcontextrestored", () => {
+  still.reset();
   if (lostTimer) clearTimeout(lostTimer);
   lostTimer = null;
   hideNo3d();
@@ -747,24 +751,35 @@ function frame(now: number): void {
   if (!renderer) return; // no 3D: the panels go on, the scene is a message
   const w = canvas.clientWidth,
     h = canvas.clientHeight;
-  renderer.setScissorTest(false);
-  renderer.setViewport(0, 0, w, h);
   scene.updateMatrixWorld();
   shadowFrame(now);
+  const pip = $("pip");
+  const pipOn = !pip.hidden && model !== null && s !== null;
+  const pr = pipOn ? pip.getBoundingClientRect() : null;
+  const cr = pipOn ? canvas.getBoundingClientRect() : null;
+  if (pr && cr) {
+    eyeCam.aspect = pr.width / pr.height;
+    eyeCam.updateProjectionMatrix();
+  }
+  // the cameras are not in the scene: their world matrices are brought up to date here, before they are compared
+  camera.updateMatrixWorld();
+  if (pipOn) eyeCam.updateMatrixWorld();
+  // nothing to draw that the canvas does not show already: the frame costs a look at the scene, not a render
+  const extra = [canvas.width, canvas.height, renderer.shadowMap.needsUpdate ? 1 : 0];
+  if (pr && cr) extra.push(pr.left - cr.left, cr.bottom - pr.bottom, pr.width, pr.height);
+  if (!still.changed(scene, pipOn ? [camera, eyeCam] : [camera], extra)) return frameStats(renderer, now);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, w, h);
   renderer.render(scene, camera);
   // the first frame that shows a robot, for a test or a person in the console (bench/page.ts times it)
   if (robotRoot.visible && !firstFrame) {
     firstFrame = true;
     performance.mark("twin:first-frame");
   }
-  const pip = $("pip");
-  if (!pip.hidden && model && s) {
-    const r = pip.getBoundingClientRect();
-    const c = canvas.getBoundingClientRect();
-    const x = r.left - c.left,
-      y = c.bottom - r.bottom;
-    eyeCam.aspect = r.width / r.height;
-    eyeCam.updateProjectionMatrix();
+  if (model && pr && cr) {
+    const r = pr;
+    const x = r.left - cr.left,
+      y = cr.bottom - r.bottom;
     renderer.setScissorTest(true);
     renderer.setScissor(x, y, r.width, r.height);
     renderer.setViewport(x, y, r.width, r.height);

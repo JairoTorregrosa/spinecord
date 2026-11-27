@@ -32,6 +32,7 @@ export class SensorRayView {
   private readonly usPos = new Float32Array(16 * 6);
   private readonly fanPos = new Float32Array(17 * 3);
   private readonly irPos = new Float32Array(16 * 6);
+  private drawn = "";
 
   constructor() {
     const line = (pos: Float32Array, colour: number, opacity: number) => {
@@ -72,6 +73,10 @@ export class SensorRayView {
   }
 
   update(r: SensorRays): void {
+    // the same rays as last time: nothing to upload, and the frame may stay as it is (still.ts)
+    const key = JSON.stringify(r);
+    if (key === this.drawn) return;
+    this.drawn = key;
     const f = r.from;
     const o: [number, number, number] = [f.ahead_cm, f.z_cm, 0];
     // ultrasonic: every even ray, the fan through their ends, the echo the reading comes from
