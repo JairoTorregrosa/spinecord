@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { isStopUtterance, type ChatServerMessage } from "../../twin-view/src/chat-messages";
 import type { ServerMessage } from "../../twin-view/src/messages";
 import { buildViewPage } from "../../twin-view/view-build";
+import { ROBOT_NAME_RULE } from "../../../packages/protocol/tools";
 import { Chat, NoLogin, chatEnv, persona, robotName, systemPrompt, type Brain, type BrainEvent } from "../src/chat";
 import { DEFAULT_CHAT_MODEL, DEFAULT_CHAT_USD, loadConfig } from "../src/config";
 import { buildFleet, type Fleet } from "../src/sources";
@@ -41,10 +42,14 @@ describe("the words of the chat", () => {
     expect(robotName({ display_name: " Luna " }, "r1-sim")).toBe("Luna");
     expect(robotName({ id: "r1-sim" }, "r1-sim")).toBe("r1-sim");
     expect(persona("Rayo", "orugas-sim")).toBe(
-      "You are Rayo, the robot with id orugas-sim: speak in the first person as this robot, never as an assistant who describes it.",
+      "You are Rayo, the robot with robot_id orugas-sim, never an assistant who describes it.",
     );
+    expect(persona("r1-sim", "r1-sim")).toContain("first person as this robot under its id");
     const p = systemPrompt({ id: "orugas-sim", name: "Rayo" }, { id: "orugas-sim" }, { robots: [] });
     expect(p.startsWith(persona("Rayo", "orugas-sim"))).toBe(true);
+    // the server's own rule for a robot's name, imported, never written again in other words
+    expect(p).toContain(ROBOT_NAME_RULE);
+    expect(p.split("speak in the first person").length - 1).toBe(1);
     expect(p).toContain("your robot_id is orugas-sim");
   });
   test("the chat's Claude Code loses the markers of a Claude Code session, never a credential", () => {
@@ -151,7 +156,7 @@ describe("the chat over the view's socket", () => {
   test("hello carries the chat; a typed message is a turn: shown, streamed, ended, then idle again", async () => {
     const brain = new FakeBrain();
     const r = await rig(brain);
-    expect(r.prompt()).toContain("You are r1-sim, the robot with id r1-sim");
+    expect(r.prompt().startsWith(persona("r1-sim", "r1-sim"))).toBe(true);
     const p = await r.connect();
     const hello = await p.next<Extract<ServerMessage, { t: "hello" }>>((m) => m.t === "hello");
     expect(hello.chat?.status).toMatchObject({ state: "idle", paid_by: "paid by: a test", model: "claude-test" });

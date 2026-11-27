@@ -7,7 +7,7 @@ import type { ChatPageMessage, ChatServerMessage, ChatState, ChatStatus, ChatVia
 import { CHAT_TEXT_MAX, isStopUtterance } from "./chat-messages";
 import css from "./chat.css" with { type: "text" };
 import type { CallEnd, CallStart } from "./messages";
-import { TOOL, shortArgs } from "./toolwords";
+import { TOOL, glance } from "./toolwords";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -344,15 +344,22 @@ export class ChatPanel {
   /** A tool call began or ended: it goes in the timeline, where the person sees what the robot did. */
   call(m: CallStart | CallEnd): void {
     if (!this.root || m.tool === "list_robots" || m.tool === "describe_robot") return;
-    const [icon, word] = TOOL[m.tool] ?? ["⚙", m.tool];
+    const word = (TOOL[m.tool] ?? ["⚙", m.tool])[1];
     let row = this.callRows.get(m.n);
     this.tool = m.t === "call_start" ? word : null;
     if (m.t === "call_start") {
       row = this.row(
         "call busy",
-        `<span class="ic">${icon}</span><b>${esc(word)}</b> <span class="args">${esc(shortArgs(m.args))}</span><span class="st">…</span>`,
+        `${glance(m.tool, m.args)}<span class="st">…</span><span class="more" hidden></span>`,
       );
       row.title = `${m.tool} ${m.args}`;
+      // one click shows the whole call, as in the activity list
+      const r = row;
+      r.addEventListener("click", () => {
+        const more = r.querySelector<HTMLElement>(".more")!;
+        more.textContent = r.title;
+        more.hidden = !more.hidden;
+      });
       this.callRows.set(m.n, row);
     } else if (row) {
       row.classList.remove("busy");

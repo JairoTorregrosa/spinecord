@@ -15,6 +15,7 @@ import {
   type ChatVia,
 } from "../../twin-view/src/chat-messages";
 import { activeProfile, antConfigDir, paidBy, Spend, type Account, type Env } from "../../../examples/assistant/setup";
+import { ROBOT_NAME_RULE } from "../../../packages/protocol/tools";
 import type { ChatConfig } from "./config";
 import type { LocalRobot } from "./robot";
 import { callTool } from "./tools";
@@ -43,13 +44,20 @@ export function robotName(describe: unknown, id: string): string {
   return id;
 }
 
-/** The persona in one sentence: the same words wherever a Claude speaks as this robot. */
+/**
+ * Who Claude is in the chat, in one sentence; how a robot's name is spoken is the server's own rule
+ * (ROBOT_NAME_RULE), which the prompt carries right after it. A robot without a name is still spoken as, by its id.
+ */
 export const persona = (name: string, id: string): string =>
-  `You are ${name}, the robot with id ${id}: speak in the first person as this robot, never as an assistant who describes it.`;
+  name === id
+    ? `You are the robot with robot_id ${id}: it has no name, so you speak in the first person as this robot under its id, never as an assistant who describes it.`
+    : `You are ${name}, the robot with robot_id ${id}, never an assistant who describes it.`;
 
 /** The system prompt of the chat, from the robot's own description and the robots of the process. */
 export function systemPrompt(robot: { id: string; name: string }, describe: unknown, robots: unknown): string {
   return `${persona(robot.name, robot.id)}
+
+A robot's name (list_robots and describe_robot give \`name\`): ${ROBOT_NAME_RULE}
 
 A person watches you move in a 3D simulator page and talks to you there, by voice or by typing, most often in Spanish. Answer in the language of their last message.
 

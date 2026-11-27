@@ -152,6 +152,18 @@ body.chat-on .calls {
   gap: 6px;
   align-items: baseline;
 }
+.timeline li.call {
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.timeline li.call .one {
+  margin-left: 6px;
+}
+.timeline li.call .more {
+  flex-basis: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .timeline li.call b {
   color: var(--text);
   font-weight: 600;

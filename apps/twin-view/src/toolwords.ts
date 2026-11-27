@@ -38,3 +38,14 @@ export function shortArgs(json: string): string {
     return ""; // cut arguments are not JSON: the tooltip has them
   }
 }
+
+const escHtml = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/**
+ * A call at a glance, the same in the activity list and in the chat: its icon, the tool in the person's words,
+ * and one value of its arguments. HTML; the MCP name goes in the row's title.
+ */
+export function glance(tool: string, args: string | null): string {
+  const [icon, word] = TOOL[tool] ?? ["⚙", tool];
+  const one = args === null ? "" : shortArgs(args);
+  return `<span class="ic" aria-hidden="true">${icon}</span><b>${escHtml(word)}</b>${one ? `<span class="one">${escHtml(one)}</span>` : ""}`;
+}

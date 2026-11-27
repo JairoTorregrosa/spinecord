@@ -2,7 +2,7 @@
 // the page gives the person (toasts, hints). All copy is the page's own, in Spanish.
 import { eventRow } from "./events";
 import type { CallEnd, CallStart, MotorState, RefusalCode, RobotState, WorldEventMsg } from "./messages";
-import { TOOL, shortArgs } from "./toolwords";
+import { glance } from "./toolwords";
 import { bar, gauge, sensorWidget } from "./widgets";
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -163,7 +163,7 @@ export function call(m: CallStart | CallEnd): void {
     li.tabIndex = 0;
     li.innerHTML = `<span class="st" aria-hidden="true"></span><span class="tool"></span><span class="ms"></span><span class="args"></span><span class="sum" hidden></span>`;
     li.dataset.tool = m.tool;
-    li.dataset.glance = `<span class="ic" aria-hidden="true">${(TOOL[m.tool] ?? ["⚙"])[0]}</span>${esc(m.tool)}<span class="one">${m.t === "call_start" ? esc(shortArgs(m.args)) : ""}</span>`;
+    li.dataset.glance = glance(m.tool, m.t === "call_start" ? m.args : null);
     li.addEventListener("click", () => li.classList.toggle("open"));
     li.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -202,8 +202,7 @@ export function call(m: CallStart | CallEnd): void {
       : odd
         ? `<span class="badge warn">${esc(REASON[reason!] ?? reason!)}</span>`
         : "";
-    q(".tool").innerHTML =
-      `${li.dataset.glance ?? `<span class="ic" aria-hidden="true">${(TOOL[m.tool] ?? ["⚙"])[0]}</span>${esc(m.tool)}`}${badge}`;
+    q(".tool").innerHTML = `${li.dataset.glance ?? glance(m.tool, null)}${badge}`;
     q(".ms").textContent = secs(m.ms);
     const sum = q(".sum");
     sum.hidden = false;
