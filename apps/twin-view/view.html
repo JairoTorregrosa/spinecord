@@ -9,101 +9,189 @@
   <body>
     <canvas id="scene" aria-label="Vista 3D del robot simulado"></canvas>
 
-    <header class="bar panel">
+    <header class="bar panel" id="bar">
       <div class="brand"><span class="logo" aria-hidden="true"></span>EV3 <b>gemelo 3D</b></div>
-      <select id="robot" title="Robot" hidden></select>
+      <select id="robot" title="Qué robot mirar" aria-label="Robot" hidden></select>
       <div class="chips">
-        <span id="chip-ws" class="chip warn">Conectando…</span>
-        <span id="chip-link" class="chip">—</span>
-        <span id="chip-activity" class="chip">—</span>
-        <span id="chip-stall" class="chip bad" hidden>¡Choque!</span>
+        <span id="chip-ws" class="chip warn" title="Conexión de esta página con spinecord">Conectando…</span>
+        <span id="chip-link" class="chip" title="Enlace del robot">—</span>
+        <span id="chip-activity" class="chip" title="Qué está haciendo el robot">—</span>
+        <span id="chip-stall" class="chip bad" title="El robot empuja contra una pared o una caja" hidden
+          >Atascado</span
+        >
+        <span id="chip-call" class="chip busy mono" title="Llamada MCP en curso" hidden></span>
       </div>
-      <div class="pose mono" id="pose">x — · y — · θ —</div>
+      <div class="readout mono">
+        <span
+          title="Posición real del robot en el simulador (centro del eje): x, y en cm; θ en grados, 0 = hacia +x, positivo = a la izquierda. Como el canal pose de sim.world."
+          ><span class="dim">Robot</span> <span id="pose">—</span></span
+        >
+        <span title="Punto del suelo bajo el puntero, en cm"
+          ><span class="dim">Puntero</span> <span id="pointer">—</span></span
+        >
+        <span id="clock" class="dim" title="Tiempo simulado del mundo"></span>
+      </div>
+      <button id="sound" class="icon-btn" aria-pressed="false" title="Sonido y voz del robot (M)">🔇 Sonido</button>
+      <button id="help-open" class="icon-btn" title="Ayuda y atajos de teclado (?)" aria-label="Ayuda">?</button>
     </header>
 
-    <nav class="tools panel" aria-label="Herramientas">
-      <div class="group-title">Mano</div>
-      <div class="seg" role="radiogroup" id="modes">
-        <button
-          data-mode="look"
-          class="on"
-          title="Mirar: arrastra para girar la cámara, rueda para acercar. Arrastra el robot para levantarlo y moverlo. (Esc)"
-        >
-          <span aria-hidden="true">👁</span>Mirar
-        </button>
-        <button
-          data-mode="carry"
-          title="Mover robot: pulsa donde lo quieres poner y arrastra hacia donde debe mirar. Q / E lo giran 15°."
-        >
-          <span aria-hidden="true">✋</span>Mover
-        </button>
-        <button
-          data-mode="box"
-          title="Poner caja: arrastra un rectángulo en el suelo (un clic pone una caja de 20 × 20 cm)."
-        >
-          <span aria-hidden="true">▢</span>Caja
-        </button>
-        <button data-mode="remove" title="Quitar caja: haz clic en una caja.">
-          <span aria-hidden="true">✕</span>Quitar
-        </button>
+    <nav class="tools panel" id="tools" aria-label="Herramientas">
+      <div class="group-title">
+        Mano
+        <button class="fold" data-fold="tools" aria-label="Plegar herramientas" title="Plegar">▾</button>
       </div>
-      <button
-        id="restore"
-        class="wide"
-        title="Devuelve las cajas del mundo y pone el robot en su salida (el giroscopio vuelve a 0)"
-      >
-        ↺ Restaurar mundo
-      </button>
+      <div class="body">
+        <div class="seg three" role="radiogroup" id="modes" aria-label="Qué hace la mano">
+          <button
+            data-mode="look"
+            role="radio"
+            title="Mirar (1): arrastra el robot para levantarlo; el suelo para girar la vista"
+          >
+            <span aria-hidden="true">👁</span>Mirar
+          </button>
+          <button
+            data-mode="carry"
+            role="radio"
+            title="Mover (2): pulsa donde quieres el robot y arrastra hacia donde debe mirar"
+          >
+            <span aria-hidden="true">✋</span>Mover
+          </button>
+          <button data-mode="box" role="radio" title="Caja (3): arrastra un rectángulo; arrastra una caja para moverla">
+            <span aria-hidden="true">▢</span>Caja
+          </button>
+          <button data-mode="remove" role="radio" title="Quitar (4): haz clic en una caja">
+            <span aria-hidden="true">✕</span>Quitar
+          </button>
+          <button data-mode="measure" role="radio" title="Medir (5): arrastra sobre el suelo">
+            <span aria-hidden="true">📏</span>Medir
+          </button>
+        </div>
+        <button
+          id="restore"
+          class="wide"
+          title="Devuelve las cajas con las que vino el mundo y pone el robot en su salida (giroscopio y odometría a cero)"
+        >
+          ↺ Restaurar mundo
+        </button>
 
-      <div class="group-title">Cámara</div>
-      <div class="seg" id="cams">
-        <button data-cam="free" title="Cámara libre">Libre</button>
-        <button data-cam="follow" class="on" title="La cámara sigue al robot">Seguir</button>
-        <button data-cam="eye" title="Lo que ve la cámara del robot">Robot</button>
+        <div class="group-title">Cámara</div>
+        <div class="seg four" role="radiogroup" id="cams" aria-label="Cámara">
+          <button data-cam="follow" role="radio" class="on" title="La cámara sigue al robot (C cambia de cámara)">
+            Seguir
+          </button>
+          <button data-cam="free" role="radio" title="Cámara libre: gira, desplaza y acerca">Libre</button>
+          <button data-cam="top" role="radio" title="Vista desde arriba, norte arriba: para medir">Arriba</button>
+          <button data-cam="eye" role="radio" title="Lo que ve la cámara del robot">Robot</button>
+        </div>
+        <button id="cam-reset" class="wide" title="Vuelve a encuadrar el robot (0)">⌖ Centrar vista</button>
+
+        <div class="group-title">Mostrar</div>
+        <label class="toggle" id="opt-cone-row"
+          ><input type="checkbox" id="opt-cone" checked /> <span id="opt-cone-label">Cono</span></label
+        >
+        <div class="toggle-row">
+          <label class="toggle"><input type="checkbox" id="opt-trail" checked /> Rastro</label>
+          <button id="trail-clear" class="mini" title="Borra el rastro dibujado">borrar</button>
+        </div>
+        <label class="toggle"><input type="checkbox" id="opt-pip" checked /> Vista del robot</label>
       </div>
-
-      <div class="group-title">Mostrar</div>
-      <label class="toggle"><input type="checkbox" id="opt-cone" checked /> Cono ultrasónico</label>
-      <label class="toggle"><input type="checkbox" id="opt-trail" checked /> Rastro</label>
-      <label class="toggle"><input type="checkbox" id="opt-pip" checked /> Vista del robot</label>
-      <label class="toggle"><input type="checkbox" id="opt-sound" /> Sonido y voz</label>
     </nav>
 
-    <aside class="brick panel" aria-label="Ladrillo EV3">
-      <div class="group-title">Ladrillo EV3 <span id="battery" class="mono dim"></span></div>
-      <div class="lcd mono" id="lcd"></div>
-      <div class="pad" id="pad" aria-label="Botones del ladrillo">
-        <button data-btn="6" class="b-back" title="Atrás">◂</button>
-        <button data-btn="1" class="b-up" title="Arriba">▴</button>
-        <button data-btn="5" class="b-left" title="Izquierda">◂</button>
-        <button data-btn="2" class="b-enter" title="Centro"><span id="led" class="led"></span></button>
-        <button data-btn="4" class="b-right" title="Derecha">▸</button>
-        <button data-btn="3" class="b-down" title="Abajo">▾</button>
+    <aside class="brick panel" id="brick" aria-label="Ladrillo EV3">
+      <div class="group-title">
+        Ladrillo EV3 <span id="battery" class="mono dim" title="Batería"></span>
+        <button class="fold" data-fold="brick" aria-label="Plegar ladrillo" title="Plegar">▾</button>
       </div>
-      <div class="group-title">Motores</div>
-      <div id="motors" class="ports"></div>
-      <div class="group-title">Sensores</div>
-      <div id="sensors" class="ports"></div>
+      <div class="body">
+        <div class="lcd mono" id="lcd" title="Pantalla del ladrillo"></div>
+        <div class="pad" id="pad" aria-label="Botones del ladrillo: mantén pulsado para sostener">
+          <button data-btn="6" class="b-back" title="Atrás" aria-label="Atrás">↩</button>
+          <button data-btn="1" class="b-up" title="Arriba" aria-label="Arriba">▲</button>
+          <button data-btn="5" class="b-left" title="Izquierda" aria-label="Izquierda">◀</button>
+          <button data-btn="2" class="b-enter" title="Centro" aria-label="Centro">
+            <span id="led" class="led"></span>
+          </button>
+          <button data-btn="4" class="b-right" title="Derecha" aria-label="Derecha">▶</button>
+          <button data-btn="3" class="b-down" title="Abajo" aria-label="Abajo">▼</button>
+        </div>
+        <div class="group-title">Motores <span class="dim">giro · velocidad</span></div>
+        <div id="motors" class="ports"></div>
+        <div class="group-title">Sensores</div>
+        <div id="sensors" class="ports"></div>
+      </div>
     </aside>
 
-    <section class="calls panel" aria-label="Llamadas MCP">
+    <section class="calls panel" id="callpanel" aria-label="Llamadas MCP">
       <div class="group-title">
-        Llamadas MCP <span class="dim" id="calls-hint">— pídele a Claude que mueva el robot</span>
+        <span>Llamadas MCP <span class="dim" id="calls-hint">— pídele a Claude que mueva el robot</span></span>
+        <button id="calls-new" class="mini" hidden></button>
+        <button class="fold" data-fold="callpanel" aria-label="Plegar llamadas" title="Plegar">▾</button>
       </div>
-      <ol id="calls"></ol>
+      <ol id="calls" class="body" aria-live="polite"></ol>
     </section>
 
     <div id="pip" class="pip" hidden><span>📱 Cámara del robot</span></div>
     <div id="bubble" class="bubble" hidden></div>
+    <div id="tag" class="tag3d mono" hidden></div>
     <div id="hint" class="hint" hidden></div>
-    <div id="toast" class="toast" hidden></div>
+    <div id="toast" class="toast" role="status" hidden></div>
     <div id="offline" class="offline" hidden>
-      <div class="panel">
+      <div class="panel" role="alert">
         <b>Sin conexión con spinecord</b>
         <p>
-          Esta página muestra el gemelo que corre dentro del servidor MCP. Arranca Claude Code con spinecord y
-          <code>--view</code>; la página se reconecta sola.
+          Esta página muestra el gemelo que corre dentro del servidor MCP. Si cerraste Claude Code o el servidor se
+          reinició, vuelve a abrirlo con <code>--view</code>: la página se reconecta sola y recupera el estado.
         </p>
+        <p class="mono dim" id="offline-since"></p>
+      </div>
+    </div>
+    <div id="help" class="offline" hidden>
+      <div class="panel help" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <b id="help-title">Cómo se usa</b>
+        <p>
+          Claude mueve este robot con sus herramientas MCP. Tú puedes hacerle lo que le harías a un robot en el suelo:
+          levantarlo y ponerlo en otro sitio, ponerle cajas delante, pulsar los botones del ladrillo. Las llamadas de
+          Claude aparecen abajo; un clic en una llamada la muestra entera.
+        </p>
+        <table>
+          <tr>
+            <td><kbd>1</kbd>…<kbd>5</kbd></td>
+            <td>Mirar · Mover · Caja · Quitar · Medir</td>
+          </tr>
+          <tr>
+            <td><kbd>Q</kbd> <kbd>E</kbd></td>
+            <td>girar el robot 15° (o lo que llevas en la mano); la rueda gira 5°, con <kbd>Mayús</kbd> 1°</td>
+          </tr>
+          <tr>
+            <td><kbd>Esc</kbd> · clic derecho</td>
+            <td>soltar sin dejar el robot / borrar la medida / volver a Mirar</td>
+          </tr>
+          <tr>
+            <td><kbd>C</kbd> · <kbd>0</kbd></td>
+            <td>cambiar de cámara · centrar la vista</td>
+          </tr>
+          <tr>
+            <td>arrastrar · rueda</td>
+            <td>girar la vista · acercar (en Arriba, arrastrar desplaza)</td>
+          </tr>
+          <tr>
+            <td><kbd>Mayús</kbd>+arrastrar · clic derecho</td>
+            <td>desplazar la vista; en el táctil, dos dedos</td>
+          </tr>
+          <tr>
+            <td><kbd>M</kbd></td>
+            <td>sonido y voz</td>
+          </tr>
+          <tr>
+            <td><kbd>?</kbd></td>
+            <td>esta ayuda</td>
+          </tr>
+        </table>
+        <p class="dim">
+          Unidades como en las herramientas: cm, y grados en sentido antihorario desde +x (θ entre −180 y 180). El robot
+          sin giroscopio no siente que lo muevas: su rumbo sale de los encoders.
+        </p>
+        <button id="help-close" class="wide">Entendido</button>
       </div>
     </div>
     <script type="module" src="view.js"></script>

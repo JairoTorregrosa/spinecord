@@ -6,6 +6,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { World } from "../../../packages/sim-world/world";
+import { loadWorldFile } from "../../../packages/sim-world/world-file";
+import { fit } from "../../twin-view/src/fit";
 import type { ServerMessage } from "../../twin-view/src/messages";
 import { buildViewPage } from "../../twin-view/view-build";
 import { DEFAULT_VIEW_PORT, loadConfig } from "../src/config";
@@ -358,4 +361,27 @@ test("call arguments are cut for the page without splitting a character in two",
   // "😀" is two UTF-16 units: a cut through it drops it whole
   expect(cutText("ab😀", 3)).toBe("ab…");
   expect(cutText("a😀b", 3)).toBe("a😀…");
+});
+
+test("the page's preview of where the robot fits agrees with the world's own rule", async () => {
+  const cfg = await loadWorldFile(join(import.meta.dir, "..", "examples", "room.json"));
+  cfg.boxes = [
+    { x: 20, y: 20, w: 15, h: 30 },
+    { x: 80, y: 70, w: 25, h: 10 },
+    { x: 50, y: 95, w: 10, h: 10 },
+  ];
+  const w = new World(cfg);
+  const shape = { width: cfg.width, height: cfg.height, body: cfg.body } as Parameters<typeof fit>[0];
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let hits = 0;
+  for (let i = 0; i < 2000; i++) {
+    const x = rnd() * 130 - 5,
+      y = rnd() * 130 - 5,
+      th = rnd() * 7 - 3.5;
+    const mine = fit(shape, cfg.boxes, x, y, th);
+    expect({ x, y, th, collides: mine !== "free" }).toEqual({ x, y, th, collides: w.collides({ x, y, th }) });
+    if (mine === "box") hits++;
+  }
+  expect(hits).toBeGreaterThan(50);
 });
