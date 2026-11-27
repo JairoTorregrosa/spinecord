@@ -4,7 +4,7 @@
 // The robots come from the skill's robots.json; what no command can detect (the person's answers, the smoke
 // test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|todo|fail  <what>  <why>  ->  <next>`, the
 // last line `setup <step>: ok` (exit 0) or `setup <step>: not done` (exit 1). Nothing here prints a secret.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { parseRobotName } from "../apps/local/src/config";
@@ -306,6 +306,16 @@ async function registration(): Promise<{ scope?: string; command?: string; args?
   return r.code === 0 ? parseMcpGet(r.out + r.err) : {};
 }
 
+/**
+ * The skills the robot's own Claude Code needs (a photo of the person's robot becomes its twin). Claude Code loads
+ * skills from the folder it starts in, and it never starts in the clone, so the workshop folder holds a copy.
+ */
+const PERSON_SKILLS = ["robot-twin"] as const;
+const skillFile = (root: string, name: string) => join(root, ".claude", "skills", name, "SKILL.md");
+const skillCurrent = (name: string): boolean =>
+  existsSync(skillFile(WORKSHOP, name)) &&
+  readFileSync(skillFile(WORKSHOP, name), "utf8") === readFileSync(skillFile(REPO, name), "utf8");
+
 async function checkWorkshop(s: State): Promise<Line[]> {
   if (s.ev3 === undefined)
     return [
@@ -325,6 +335,17 @@ async function checkWorkshop(s: State): Promise<Line[]> {
           status: "todo",
           what: "settings",
           why: `${SETTINGS} does not allow ${RULE}`,
+          next: "bun scripts/setup.ts workshop",
+        },
+  );
+  const stale = PERSON_SKILLS.filter((n) => !skillCurrent(n));
+  out.push(
+    stale.length === 0
+      ? { status: "ok", what: "skills", why: `${PERSON_SKILLS.join(", ")} in ${join(WORKSHOP, ".claude", "skills")}` }
+      : {
+          status: "todo",
+          what: "skills",
+          why: `${stale.join(", ")} missing or older than the clone's in ${WORKSHOP}`,
           next: "bun scripts/setup.ts workshop",
         },
   );
@@ -421,6 +442,8 @@ async function workshop(s: State): Promise<Line[]> {
     settings.permissions = { ...settings.permissions, allow: [...allow, RULE] };
     writeFileSync(SETTINGS, `${JSON.stringify(settings, null, 2)}\n`);
   }
+  for (const name of PERSON_SKILLS)
+    cpSync(join(REPO, ".claude", "skills", name), join(WORKSHOP, ".claude", "skills", name), { recursive: true });
   const reg = await registration();
   const want = [MAIN, ...wanted(s)];
   if (!isRegistered(reg, process.execPath, want)) {
