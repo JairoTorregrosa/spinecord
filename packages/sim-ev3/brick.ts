@@ -50,9 +50,14 @@ const G = 9.81;
 export const SIM_BRICK_LOOP_RATE_HZ = 100;
 /**
  * A motor released without brake keeps turning while friction slows it down: a constant deceleration that takes
- * this long from 100 % speed (proportionally shorter from less). An approximation, to be calibrated on a real robot.
+ * this long from 100 % speed (proportionally shorter from less), so about 710 deg from 100 % and 180 from 50 %.
+ * An estimate, not a measurement (docs/twin-fidelity.md, scripts/twin-bench/real.json `coast_ms_100`): the
+ * friction torque is the no-load current times the torque constant, 0.06 A x 0.43 N m / 1.8 A = 0.014 N m
+ * (Philo's EV3 motor figures), against a shaft inertia of 0.0009-0.0014 kg m2 (Things DAQ) at 17.6 rad/s:
+ * 1.1-1.7 s. The middle of that. A wheel under a robot coasts differently (more inertia, rolling friction); not
+ * measured either.
  */
-export const COAST_MS_AT_100 = 200;
+export const COAST_MS_AT_100 = 1400;
 /**
  * Mechanical time constant of a motor: the shaft speed follows a speed or power command as a first-order lag with
  * this constant, at 63 % of the new speed after it and at 90 % after 2.3 times it (175 ms). Things DAQ measured
