@@ -11,6 +11,7 @@ import { ChatPanel } from "./chat";
 import { Hand, MODES, heading, type Mode } from "./hand";
 import * as hud from "./hud";
 import { draftLines } from "./draft";
+import { LOST_GRACE_MS, hideNo3d, showNo3d } from "./no3d";
 import { SensorRayView } from "./rays";
 import { Link, type LinkState } from "./link";
 import { lookOf } from "./look";
@@ -27,26 +28,50 @@ const HELPERS = 1; // layer of what only the person sees: rays, trail, ghosts
 
 // ---------------------------------------------------------------- renderer, scene, lights
 const canvas = $<HTMLCanvasElement>("scene");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
-// 1.5 device pixels per CSS pixel: past that an integrated GPU pays in fill rate for detail nobody sees
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
-// the sun's shadow does not depend on the camera: drawn when something casting it moved (shadowFrame) and shared
-// by the robot's camera
-renderer.shadowMap.autoUpdate = false;
-// Neutral keeps LEGO's saturated colours and white plastic white, where ACES turns them grey and yellow
-renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = 1.0;
+/**
+ * The renderer, or null when this browser cannot draw in 3D (no WebGL context): the page then says so where the
+ * scene would be (src/no3d.ts) and everything else (connection, panels, widgets, calls) goes on without it.
+ */
+let renderer: THREE.WebGLRenderer | null = null;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+} catch (e) {
+  showNo3d("no_context", (e as Error).message);
+}
+if (renderer) {
+  // 1.5 device pixels per CSS pixel: past that an integrated GPU pays in fill rate for detail nobody sees
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  // the sun's shadow does not depend on the camera: drawn when something casting it moved (shadowFrame) and shared
+  // by the robot's camera
+  renderer.shadowMap.autoUpdate = false;
+  // Neutral keeps LEGO's saturated colours and white plastic white, where ACES turns them grey and yellow
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  renderer.toneMappingExposure = 1.0;
+}
+// a context the browser takes back (a GPU reset, too many tabs) and does not return within LOST_GRACE_MS
+let lostTimer: ReturnType<typeof setTimeout> | null = null;
+canvas.addEventListener("webglcontextlost", (e) => {
+  e.preventDefault(); // ask for it back
+  lostTimer ??= setTimeout(() => showNo3d("lost", "webglcontextlost without webglcontextrestored"), LOST_GRACE_MS);
+});
+canvas.addEventListener("webglcontextrestored", () => {
+  if (lostTimer) clearTimeout(lostTimer);
+  lostTimer = null;
+  hideNo3d();
+});
 const scene = new THREE.Scene();
 // a bright room around the arena, the fog melting the far floor into it
 const ROOM = 0xc9c6bf;
 scene.background = new THREE.Color(ROOM);
 scene.fog = new THREE.Fog(ROOM, 500, 2000);
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.55;
-pmrem.dispose();
+if (renderer) {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.55;
+  pmrem.dispose();
+}
 scene.add(new THREE.HemisphereLight(0xeef2ff, 0x5a5048, 0.9));
 // the window's light: warm, from high up at a slant, with soft shadows
 const sun = new THREE.DirectionalLight(0xfff1de, 2.2);
@@ -74,7 +99,7 @@ function shadowFrame(now: number): void {
   });
   sig += n * 1e6;
   if (sig === shadowSig || now - shadowAt < 30) return;
-  renderer.shadowMap.needsUpdate = true;
+  if (renderer) renderer.shadowMap.needsUpdate = true;
   shadowSig = sig;
   shadowAt = now;
 }
@@ -312,7 +337,7 @@ function setFocus(id: string | null): void {
   const look = lookOf(focus);
   model = buildRobot(focus, look);
   robotRoot.add(model.group);
-  arena = buildArena(focus.world, model.height, renderer.capabilities.getMaxAnisotropy());
+  arena = buildArena(focus.world, model.height, renderer?.capabilities.getMaxAnisotropy() ?? 1);
   scene.add(arena.group);
   coneGroup.visible = hasRays(focus) && $<HTMLInputElement>("opt-cone").checked;
   roles = {};
@@ -655,6 +680,7 @@ const tmpA = new THREE.Vector3(),
 function resize(): void {
   const w = canvas.clientWidth,
     h = canvas.clientHeight;
+  if (!renderer) return;
   const c = renderer.domElement;
   if (c.width !== Math.floor(w * renderer.getPixelRatio()) || c.height !== Math.floor(h * renderer.getPixelRatio())) {
     renderer.setSize(w, h, false);
@@ -663,6 +689,7 @@ function resize(): void {
     cams.resized();
   }
 }
+const seeThrough = [new THREE.Vector3(), new THREE.Vector3()];
 function updateCone(st: RobotState): void {
   if (coneGroup.visible) sensorRays.update(st.rays);
 }
@@ -689,6 +716,13 @@ function frame(now: number): void {
     eyeCam.lookAt(tmpB.copy(model.eye.look).applyMatrix4(robotRoot.matrixWorld));
   }
   cams.update(s, model && s ? eyeCam : null);
+  // nothing hides the robot from the person's camera: a box or a wall in the way turns see-through meanwhile
+  if (arena && s && model && cams.mode !== "eye" && cams.mode !== "top") {
+    const base = toScene(s.x, s.y);
+    seeThrough[0]!.set(base.x, model.height * 0.5, base.z);
+    seeThrough[1]!.set(base.x, model.height * 0.9, base.z);
+    arena.clearView(camera.position, seeThrough);
+  } else arena?.clearView(camera.position, []);
   hand.frame();
   // the robot's camera sees what the robot sees, never the helpers
   if (cams.mode === "eye" && model && s) camera.layers.disable(HELPERS);
@@ -709,6 +743,7 @@ function frame(now: number): void {
     }
   }
 
+  if (!renderer) return; // no 3D: the panels go on, the scene is a message
   const w = canvas.clientWidth,
     h = canvas.clientHeight;
   renderer.setScissorTest(false);

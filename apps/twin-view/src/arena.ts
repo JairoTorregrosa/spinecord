@@ -12,6 +12,9 @@ import type { Obstacle, WorldShape } from "./messages";
 /** Floor colours of the colour ids of contract §2.2, as sim-world draws them. */
 export const COLOR_RGB = ["#282828", "#141414", "#3478dc", "#3caa5a", "#f5cd3c", "#dc463c", "#f5f3ec", "#8c5f3c"];
 
+/** Opacity of a box or wall while it hides the robot from the camera. */
+export const SEE_THROUGH = 0.25;
+
 export const toScene = (x: number, y: number, h = 0): THREE.Vector3 => new THREE.Vector3(x, h, -y);
 
 export interface Arena {
@@ -22,6 +25,11 @@ export interface Arena {
   /** Highlights obstacle `i` (or none) as the one a click would take away. */
   /** Lights the box with this id (null: none). */
   highlight(id: string | null): void;
+  /**
+   * Draws see-through (SEE_THROUGH) every box and the walls while they stand between the camera at `eye` and any
+   * of `targets` (points of the robot), solid again once they no longer hide it. Returns how many it faded.
+   */
+  clearView(eye: THREE.Vector3, targets: readonly THREE.Vector3[]): number;
   dispose(): void;
 }
 
@@ -295,6 +303,7 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
   const hot = keep(
     new THREE.MeshStandardMaterial({ map: boxTex, color: 0xff9c8c, emissive: 0x501010, roughness: 0.8 }),
   );
+  const ray = new THREE.Raycaster();
   const boxGroup = new THREE.Group();
   group.add(boxGroup);
   const meshes: THREE.Mesh[] = [];
@@ -311,7 +320,9 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
       const uv = geo.attributes.uv!;
       for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) / 2 + (Math.floor(i / 4) === 2 ? 0.5 : 0));
       temp.push(geo);
-      const own = b.mass_g === undefined ? boxMat : pushMat;
+      // its own copy of the material, so that it alone can turn see-through while it hides the robot
+      const own = (b.mass_g === undefined ? boxMat : pushMat).clone();
+      temp.push(own);
       const m = new THREE.Mesh(geo, own);
       m.position.copy(toScene(b.x + b.w / 2, b.y + b.h / 2, bh / 2));
       m.castShadow = true;
@@ -330,6 +341,27 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
     setBoxes,
     highlight(id) {
       for (const m of meshes) m.material = m.userData.id === id ? hot : (m.userData.own as THREE.Material);
+    },
+    clearView(eye, targets) {
+      const hiding = new Set<THREE.Object3D>();
+      for (const t of targets) {
+        const dir = t.clone().sub(eye);
+        const far = dir.length();
+        ray.set(eye, dir.normalize());
+        ray.far = far;
+        for (const h of ray.intersectObjects([...meshes, walls], false)) hiding.add(h.object);
+      }
+      for (const m of [...meshes, walls]) {
+        const mat = m.material as THREE.MeshStandardMaterial;
+        if (mat === hot) continue;
+        const see = hiding.has(m);
+        if (mat.transparent === see) continue;
+        mat.transparent = see;
+        mat.opacity = see ? SEE_THROUGH : 1;
+        mat.depthWrite = !see;
+        mat.needsUpdate = true;
+      }
+      return hiding.size;
     },
     dispose() {
       for (const t of temp) t.dispose();
