@@ -221,6 +221,14 @@ function receive(m: ServerMessage): void {
 // ---------------------------------------------------------------- focus: build the world and the robot
 /** The robot and world the camera last framed: another one is framed afresh, the same one keeps the view. */
 let framed = "";
+/** Fog hides where the floor ends at eye level. From straight above the camera stands far off: there it would hide the arena. */
+function fitFog(): void {
+  if (!focus) return;
+  const size = Math.max(focus.world.width, focus.world.height);
+  const far = cams.mode === "top" ? 40 : 4.5;
+  (scene.fog as THREE.Fog).near = (size * far) / 3;
+  (scene.fog as THREE.Fog).far = size * far;
+}
 function setFocus(id: string | null): void {
   focus = robots.find((r) => r.id === id) ?? null;
   if (arena) {
@@ -264,8 +272,7 @@ function setFocus(id: string | null): void {
   sc.near = 1;
   sc.far = size * 4;
   sc.updateProjectionMatrix();
-  (scene.fog as THREE.Fog).near = size * 1.5;
-  (scene.fog as THREE.Fog).far = size * 4.5;
+  fitFog();
   const key = `${focus.id}\n${w.name}`;
   const first = key !== framed;
   cams.fitArena(w, first);
@@ -375,6 +382,7 @@ const cams = new Cameras(
       b.classList.toggle("on", on);
       b.setAttribute("aria-checked", String(on));
     }
+    fitFog();
     $("pip").hidden = m === "eye" || !$<HTMLInputElement>("opt-pip").checked;
     canvas.dataset.cam = m;
     hand.refreshHint();
