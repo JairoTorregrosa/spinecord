@@ -465,6 +465,7 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#pad button")) {
 }
 
 // panels fold away to give the scene room; the choice is kept for the next visit
+const narrow = matchMedia("(max-width: 760px)");
 for (const b of document.querySelectorAll<HTMLButtonElement>("[data-fold]")) {
   const panel = $(b.dataset.fold!);
   const key = `twin-view:fold:${b.dataset.fold}`;
@@ -483,8 +484,10 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("[data-fold]")) {
   } catch {
     // see above
   }
-  set(stored === null ? matchMedia("(max-width: 760px)").matches : stored === "1");
+  set(stored === null ? narrow.matches : stored === "1");
   b.addEventListener("click", () => set(!panel.classList.contains("folded")));
+  // a window made narrow folds the side panels, so they do not cover the robot; widened, they open again
+  if (b.dataset.fold !== "callpanel") narrow.addEventListener("change", () => set(narrow.matches));
 }
 
 const help = $("help");

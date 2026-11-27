@@ -27,8 +27,14 @@ export class Link {
     private readonly onMessage: (m: ServerMessage) => void,
     private readonly onState: (s: LinkState) => void,
   ) {
+    let checked = performance.now();
     setInterval(() => {
-      if (this.state === "open" && performance.now() - this.lastMessage > SILENCE_MS) this.ws?.close();
+      const now = performance.now();
+      // this check itself came late: the page was frozen (a heavy frame, a resize, sleep), not the process
+      // silent; the messages queued meanwhile have not been read yet, so the silence counts from now
+      if (now - checked > 1500) this.lastMessage = Math.max(this.lastMessage, now);
+      checked = now;
+      if (this.state === "open" && now - this.lastMessage > SILENCE_MS) this.ws?.close();
     }, 500);
     // back from sleep or from another tab: try at once rather than after the wait that was growing meanwhile
     document.addEventListener("visibilitychange", () => {

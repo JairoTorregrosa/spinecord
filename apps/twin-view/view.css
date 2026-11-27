@@ -761,9 +761,17 @@ code {
 @media (max-width: 760px) {
   /* a narrow window: the panels fold (main.ts folds them on the first visit) and the calls take the width */
   :root {
-    --side: 150px;
-    --brick: 190px;
+    --side: 176px;
+    --brick: 220px;
     --calls-h: 140px;
+  }
+  .brand {
+    display: none;
+  }
+  .readout {
+    order: 10;
+    width: 100%;
+    margin-left: 0;
   }
   .calls {
     left: 12px;
@@ -772,7 +780,6 @@ code {
   .pip {
     display: none;
   }
-  .readout span:nth-child(2),
   #clock {
     display: none;
   }

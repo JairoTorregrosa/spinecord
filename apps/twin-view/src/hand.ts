@@ -49,7 +49,7 @@ const HINTS: Record<Mode, string> = {
   carry: "Pulsa donde quieres el robot y arrastra hacia donde debe mirar · Esc cancela",
   box: "Arrastra un rectángulo para poner una caja (un clic: 20 × 20 cm) · arrastra una caja para moverla",
   remove: "Haz clic en una caja para quitarla · Esc vuelve a Mirar",
-  measure: "Arrastra sobre el suelo para medir distancia y ángulo · Esc borra la medida",
+  measure: "Arrastra sobre el suelo para medir (desde el robot: desde el centro de su eje) · Esc borra",
 };
 const FIT_WORDS: Record<Exclude<Fit, "free">, string> = {
   wall: "No cabe: se saldría de la pista",
@@ -88,20 +88,29 @@ export class Hand {
     depthWrite: false,
   });
   private readonly ghostBox = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.ghostBoxMat);
-  private readonly tape = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
-    new THREE.LineDashedMaterial({ color: 0xffe066, dashSize: 2, gapSize: 1.2, depthTest: false }),
-  );
+  /** A tape on the floor, 1 cm wide (a line would be one pixel at any zoom), with a dot at each end. */
+  private readonly tape = new THREE.Group();
+  private readonly tapeStrip: THREE.Mesh;
+  private readonly tapeEnds: THREE.Mesh[];
   /** The finished measure stays on the floor until the next one or Esc. */
   private measured: { x0: number; y0: number; x: number; y: number } | null = null;
   private readonly tag = document.getElementById("tag")!;
   private tagAt: THREE.Vector3 | null = null;
 
   constructor(private readonly c: HandContext) {
+    const tapeMat = new THREE.MeshBasicMaterial({ color: 0xff8c1a, depthTest: false, transparent: true });
+    const flat = (g: THREE.BufferGeometry) => {
+      const m = new THREE.Mesh(g, tapeMat);
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 10;
+      return m;
+    };
+    this.tapeStrip = flat(new THREE.PlaneGeometry(1, 1));
+    this.tapeEnds = [flat(new THREE.CircleGeometry(1.4, 20)), flat(new THREE.CircleGeometry(1.4, 20))];
+    this.tape.add(this.tapeStrip, ...this.tapeEnds);
     this.ghostFill.rotation.x = -Math.PI / 2;
     this.ghostRobot.add(this.ghostOutline, this.ghostArrow, this.ghostFill);
     this.ghostRobot.visible = this.ghostBox.visible = this.tape.visible = false;
-    this.tape.renderOrder = 10;
     c.scene.add(this.ghostRobot, this.ghostBox, this.tape);
     for (const o of [this.ghostRobot, this.ghostBox, this.tape]) o.traverse((x) => x.layers.set(c.helpers));
     const cv = c.canvas;
@@ -256,7 +265,11 @@ export class Hand {
       const p = this.floorAt(e, m !== "carry");
       if (!p) return;
       if (m === "carry") this.drag = { kind: "place", x: p.x, y: p.y, th: pose.th, from: pose };
-      else this.drag = { kind: "measure", x0: p.x, y0: p.y, x: p.x, y: p.y };
+      else {
+        // a measure that starts on the robot starts at its axle centre: where the tools count from
+        const o = this.onRobot(e) ? pose : p;
+        this.drag = { kind: "measure", x0: o.x, y0: o.y, x: p.x, y: p.y };
+      }
     }
     this.take(e);
     this.show();
@@ -466,12 +479,12 @@ export class Hand {
     if (m) {
       const dx = m.x - m.x0,
         dy = m.y - m.y0;
-      const pos = this.tape.geometry.attributes.position as THREE.BufferAttribute;
-      pos.setXYZ(0, m.x0, 0.3, -m.y0);
-      pos.setXYZ(1, m.x, 0.3, -m.y);
-      pos.needsUpdate = true;
-      this.tape.geometry.computeBoundingSphere();
-      this.tape.computeLineDistances();
+      const len = Math.hypot(dx, dy);
+      this.tapeStrip.position.copy(toScene((m.x + m.x0) / 2, (m.y + m.y0) / 2, 0.3));
+      this.tapeStrip.scale.set(Math.max(0.01, len), 1, 1);
+      this.tapeStrip.rotation.set(-Math.PI / 2, 0, Math.atan2(dy, dx));
+      this.tapeEnds[0]!.position.copy(toScene(m.x0, m.y0, 0.3));
+      this.tapeEnds[1]!.position.copy(toScene(m.x, m.y, 0.3));
       this.tape.visible = true;
       const ang = Math.round(heading(Math.atan2(dy, dx) / DEG));
       return this.label(
