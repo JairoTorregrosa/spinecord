@@ -23,6 +23,11 @@ export interface Arena {
   dispose(): void;
 }
 
+/** What lies just under the mat (its own edge, the wooden floor) is drawn as if a little farther away: seen
+ *  from the top camera, a few metres up, the depth buffer cannot tell a millimetre apart and the mat's grey edge
+ *  would cover its print. The offset grows with distance, so the mat wins from any height. */
+const BEHIND = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 4 } as const;
+
 let seed = 1;
 const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 
@@ -230,7 +235,8 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
   woodTex.anisotropy = maxAnisotropy;
   const ground = new THREE.Mesh(
     keep(new THREE.CircleGeometry(around / 2, 64)),
-    keep(new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.6 })),
+    // pushed back in depth: from far above, 3 mm under the mat is less than the depth buffer can tell apart
+    keep(new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.6, ...BEHIND })),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(w.width / 2, -0.3, -w.height / 2);
@@ -239,9 +245,9 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
   // the mat's thickness, so it lies on the wood rather than being painted on it
   const matEdge = new THREE.Mesh(
     keep(new THREE.BoxGeometry(w.width + 1, 0.3, w.height + 1)),
-    keep(new THREE.MeshStandardMaterial({ color: 0x8c877d, roughness: 0.9 })),
+    keep(new THREE.MeshStandardMaterial({ color: 0x8c877d, roughness: 0.9, ...BEHIND })),
   );
-  matEdge.position.set(w.width / 2, -0.155, -w.height / 2);
+  matEdge.position.set(w.width / 2, -0.16, -w.height / 2);
   matEdge.receiveShadow = true;
   group.add(matEdge);
 
