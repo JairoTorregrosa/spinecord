@@ -259,6 +259,9 @@ export class Chat implements ViewChat {
   private brain: Brain | null = null;
   private turn = 0;
   private turnAt = 0;
+  /** When this turn's first text and first tool call came, ms after the person's message: the log's latency. */
+  private firstText: number | null = null;
+  private firstTool: number | null = null;
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
   private robot: { id: string; name: string };
@@ -339,6 +342,7 @@ export class Chat implements ViewChat {
       });
     this.turn += 1;
     this.turnAt = performance.now();
+    this.firstText = this.firstTool = null;
     this.keep({ t: "chat_user", turn: this.turn, text, via, at: Date.now() });
     this.go("thinking");
     const turn = this.turn;
@@ -407,11 +411,13 @@ export class Chat implements ViewChat {
   private onBrain(e: BrainEvent): void {
     switch (e.kind) {
       case "text":
+        this.firstText ??= Math.round(performance.now() - this.turnAt);
         // after a stop nothing more of that turn is said
         if (this.state === "thinking" || this.state === "acting")
           this.keep({ t: "chat_delta", turn: this.turn, text: e.text });
         return;
       case "tool":
+        this.firstTool ??= Math.round(performance.now() - this.turnAt);
         if (this.state === "thinking") this.go("acting");
         return;
       case "tool_done":
@@ -429,7 +435,16 @@ export class Chat implements ViewChat {
         const error = this.pendingError ?? (stopped ? undefined : e.error);
         this.pendingError = null;
         const ok = e.ok && !stopped;
-        this.o.log("chat_turn", { turn: this.turn, ok, stopped, cost_usd: cost, ms, ...(error ? { error } : {}) });
+        this.o.log("chat_turn", {
+          turn: this.turn,
+          ok,
+          stopped,
+          cost_usd: cost,
+          ms,
+          first_text_ms: this.firstText,
+          first_tool_ms: this.firstTool,
+          ...(error ? { error } : {}),
+        });
         this.keep({
           t: "chat_end",
           turn: this.turn,
