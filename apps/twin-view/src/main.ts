@@ -667,6 +667,7 @@ function updateCone(st: RobotState): void {
   if (coneGroup.visible) sensorRays.update(st.rays);
 }
 
+let firstFrame = false;
 function frame(now: number): void {
   requestAnimationFrame(frame);
   resize();
@@ -716,6 +717,11 @@ function frame(now: number): void {
   scene.updateMatrixWorld();
   shadowFrame(now);
   renderer.render(scene, camera);
+  // the first frame that shows a robot, for a test or a person in the console (bench/page.ts times it)
+  if (robotRoot.visible && !firstFrame) {
+    firstFrame = true;
+    performance.mark("twin:first-frame");
+  }
   const pip = $("pip");
   if (!pip.hidden && model && s) {
     const r = pip.getBoundingClientRect();
