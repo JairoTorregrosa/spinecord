@@ -22,6 +22,7 @@
           >Atascado</span
         >
         <span id="chip-call" class="chip busy mono" title="Llamada MCP en curso" hidden></span>
+        <span id="chip-3d" class="chip bad" title="Este navegador no dibuja en 3D (WebGL)" hidden>Sin 3D</span>
         <button
           id="chip-draft"
           class="chip warn"
@@ -150,6 +151,10 @@
     <div id="tag" class="tag3d mono" hidden></div>
     <div id="hint" class="hint" hidden></div>
     <div id="toast" class="toast" role="status" hidden></div>
+    <div id="no3d" class="no3d-msg panel" role="alert" hidden>
+      <b>Sin gráficos 3D</b>
+      <p></p>
+    </div>
     <div id="offline" class="offline" hidden>
       <div class="panel" role="alert">
         <b>Sin conexión con spinecord</b>
