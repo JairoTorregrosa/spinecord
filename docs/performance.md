@@ -7,7 +7,7 @@ What a person waits for, measured before and after each change. One machine for 
 | view.js on the wire | `bun bench/page.ts` (`view_js_wire`) | 763,940 B | 212,054 B (gzip) | 3.6x smaller |
 | page load on the wire, cold | `bun bench/page.ts` (`wire_cold`) | 893,602 B | 322,481 B | 2.8x smaller |
 | page load on the wire, reload | `bun bench/page.ts` (`wire_reload`) | 893,602 B | 1,128 B (304s) | 790x smaller |
-| frame time, robot still, weak GPU | `bun bench/page.ts --software --throttle 4` (`frame_idle`) | 183.3 ms (p95 233) | 16.7 ms (p95 16.8) | 11x |
+| frame time, robot still, weak GPU | `bun bench/page.ts --software --throttle 4` (`frame_idle`) | 183.3 ms (p95 233) per drawn frame | no frame is drawn; callbacks arrive at the display's 16.7 ms interval | not a frame time: the work of a still frame is gone |
 | frame time, robot turning, weak GPU | same (`frame_drive`) | 216.6 ms | 200.0 ms | 1.08x, not changed |
 | frame time, GPU, still and turning | `bun bench/page.ts` (`frame_idle`, `frame_drive`) | 16.7 ms | 16.7 ms | one vsync before and after |
 | first frame with the robot, cold, GPU | `bun bench/page.ts` (`first_frame_cold`) | 300.6 ms | 300.4 ms | 1.0x |
@@ -20,6 +20,8 @@ What a person waits for, measured before and after each change. One machine for 
 | tool latency on the twin, p50 | `bun run bench`, then `bun run bench --compare <before.json> <after.json>` | read_all 0.10 ms, stop 2.80 ms, first motion 1.17 ms, MCP over stdio read_all 0.24 ms | read_all 0.10 ms, stop 2.79 ms, first motion 1.11 ms, stdio read_all 0.24 ms | not changed |
 | server install, empty cache | `bun bench/install.ts --branch <branch>` (`install`) | 3.77 s, 112 packages, 403 MB | 0.70 s, 11 packages, 46 MB | 5.4x faster, 8.7x smaller |
 | clone | `bun bench/install.ts` (`clone`) | 1.29 s, .git 3.4 MB | not changed | `--depth 1`: 1.30 s, .git 2.2 MB |
+
+Two of these rows measure less than their names say. "Frame time, robot still" is the gap between animation callbacks: before, each callback drew a frame that took 183 ms; after, a still robot draws no frame, so the gap is the display's own interval and the main-thread time saved was not recorded. "First frame with the robot" is the first frame with the robot's procedural shapes; the real LDraw meshes arrive after it, and that later moment is not in the table.
 
 ## What changed
 
