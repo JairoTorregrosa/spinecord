@@ -310,7 +310,13 @@ function setFocus(id: string | null): void {
     const s = toScene(w.start.x, w.start.y);
     controls.target.copy(s);
     const h = w.start.heading_deg * DEG;
-    camera.position.set(s.x - Math.cos(h) * 42 + Math.sin(h) * 26, 36, s.z + Math.sin(h) * 42 + Math.cos(h) * 26);
+    // behind the robot and to its right, close enough to see its parts; a robot whose phone looks ahead is first
+    // seen from the front, where its face reads
+    const az = (look.phone && Math.cos(look.phone.yaw * DEG) > 0.5 ? -135 : -32) * DEG;
+    const a = h + Math.PI - az,
+      d = 58,
+      el = 38 * DEG;
+    camera.position.set(s.x + Math.cos(a) * Math.cos(el) * d, Math.sin(el) * d, s.z - Math.sin(a) * Math.cos(el) * d);
     placeCamera(camera, controls.target, h);
     controls.update();
   }

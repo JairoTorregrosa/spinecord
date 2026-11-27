@@ -166,7 +166,8 @@ export function makeKit(group: THREE.Group): Kit {
     box(lx, ly, lz, x, y, z, mat, radius = 0, parent = group) {
       const rr = Math.min(radius, lx / 2, ly / 2, lz / 2);
       const geo = cached(`box ${r2(lx)} ${r2(ly)} ${r2(lz)} ${r2(rr)}`, () =>
-        rr > 0 ? new RoundedBoxGeometry(lx, lz, ly, 2, rr) : new THREE.BoxGeometry(lx, lz, ly),
+        // a small radius reads the same with one bevel segment as with two, at a third of the triangles
+        rr > 0 ? new RoundedBoxGeometry(lx, lz, ly, rr >= 0.4 ? 2 : 1, rr) : new THREE.BoxGeometry(lx, lz, ly),
       );
       return add(geo, mat, P(x, y, z), parent);
     },

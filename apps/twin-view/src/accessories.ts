@@ -194,8 +194,8 @@ export function buildAccessories(kit: Kit, meta: RobotMeta, look: Look, m: Brick
       keep(new THREE.MeshStandardMaterial({ map: keep(labelTexture(look.label)), roughness: 0.9 })),
     );
     const b = m.box;
-    const end = look.brick.pose === "flat" ? (look.brick.screen === "front" ? -1 : 1) : 0;
-    lab.position.copy(P((b.min.x + b.max.x) / 2 + end * 3.4, b.max.y + 0.03, b.min.z + 1.4));
+    // between the pin holes of the brick's side
+    lab.position.copy(P((b.min.x + b.max.x) / 2, b.max.y + 0.03, b.min.z + 1.4));
     lab.rotation.set(0, Math.PI, 0.06); // it faces out of the brick's left side
     group.add(lab);
   }

@@ -48,8 +48,9 @@ export function placeCamera(camera: THREE.PerspectiveCamera, target: THREE.Vecto
   const off = camera.position.clone().sub(target);
   const dist = link.dist ?? off.length();
   const el = (link.el ?? Math.asin(off.y / off.length()) / DEG) * DEG;
-  // three.js: the robot looks along (cos h, 0, -sin h); behind it is the opposite way
-  const a = heading + Math.PI + (link.az ?? 0) * DEG;
+  // robot frame: behind is heading + 180°, turning toward its left (counter-clockwise from above) as az grows;
+  // three.js puts the robot's y at -Z
+  const a = heading + Math.PI - (link.az ?? 0) * DEG;
   camera.position.set(
     target.x + Math.cos(a) * Math.cos(el) * dist,
     target.y + Math.sin(el) * dist,
