@@ -70,6 +70,35 @@ describe("a box the robot can push", () => {
     expect(w.obstacle("light")!.x + 10).toBeLessThanOrEqual(80);
     expect(w.obstacle("wall")!.x).toBe(80);
   });
+  test("the push limit is the drive's whole force: boxes side by side or in a row that weigh more together stop it", () => {
+    // each alone slides: 0.6 of the limit
+    const each = massFor(DEFAULT_PUSH_N) * 0.6;
+    expect(room([{ x: 60, y: 44, w: 10, h: 6, mass_g: each }]).advance(40, 40, 20).stalled).toBe(false);
+    // side by side across the 12 cm front: both touch it at once, 1.2 of the limit together
+    const side = room([
+      { id: "l", x: 60, y: 44, w: 10, h: 6, mass_g: each },
+      { id: "r", x: 60, y: 50, w: 10, h: 6, mass_g: each },
+    ]);
+    expect(side.advance(40, 40, 20).stalled).toBe(true);
+    expect(side.obstacle("l")!.x).toBe(60);
+    expect(side.obstacle("r")!.x).toBe(60);
+    expect(side.pose.x + 8).toBeCloseTo(60, 2);
+    // in a row, the first leaning on the second: the robot touches one and stops against both
+    const row = room([
+      { id: "a", x: 60, y: 45, w: 10, h: 10, mass_g: each },
+      { id: "b", x: 70, y: 45, w: 10, h: 10, mass_g: each },
+    ]);
+    expect(row.advance(40, 40, 20).stalled).toBe(true);
+    expect(row.obstacle("a")!.x).toBe(60);
+    expect(row.obstacle("b")!.x).toBe(70);
+    // two that weigh less than the limit together slide side by side
+    const light = room([
+      { x: 60, y: 44, w: 10, h: 6, mass_g: each / 2 },
+      { x: 60, y: 50, w: 10, h: 6, mass_g: each / 2 },
+    ]);
+    expect(light.advance(40, 40, 20).stalled).toBe(false);
+    expect(light.last_push_n).toBeCloseTo(DEFAULT_PUSH_N * 0.6, 9);
+  });
   test("a robot turning against a box sweeps it aside, and the box never ends inside the robot", () => {
     const w = room([{ x: 34, y: 57, w: 6, h: 6, mass_g: 100 }]);
     for (let i = 0; i < 50; i++) {

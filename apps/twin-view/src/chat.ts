@@ -5,6 +5,7 @@
 // MCP calls, and shows the calls in its own timeline: one story of what was said and what was done.
 import type { ChatPageMessage, ChatServerMessage, ChatState, ChatStatus, ChatVia } from "./chat-messages";
 import { CHAT_TEXT_MAX, isStopUtterance } from "./chat-messages";
+import { Utterances } from "./utterances";
 import css from "./chat.css" with { type: "text" };
 import type { CallEnd, CallStart } from "./messages";
 import { TOOL, glance } from "./toolwords";
@@ -416,6 +417,7 @@ export class ChatPanel {
       );
     }
     this.listening = true;
+    this.ticket = this.utterances.begin();
     this.stoppedWhileListening = false;
     this.heard("");
     this.ear.start({
@@ -447,27 +449,32 @@ export class ChatPanel {
     if (!this.listening) return "";
     this.listening = false;
     this.render();
+    const ticket = this.ticket;
     const text = await this.ear.finish();
     this.heard("");
-    await this.afterHearing(text);
+    await this.afterHearing(text, ticket);
     return text;
   }
 
   /**
    * What the recognizer heard, once the person let go: a stop when it is only a stop word (unless that stop was
-   * already sent while they spoke), else a message, sent once a stopped turn has ended.
+   * already sent while they spoke), else a message, sent once a stopped turn has ended. A Stop since the person
+   * began this utterance (`ticket`) drops it: the recognizer and the turn before may take seconds, and a stop wins.
    */
-  private async afterHearing(text: string): Promise<void> {
-    if (!text) return;
+  private async afterHearing(text: string, ticket: number): Promise<void> {
+    if (!text || !this.utterances.live(ticket)) return;
     if (isStopUtterance(text)) {
       if (!this.stoppedWhileListening) this.stop();
       return;
     }
     for (let i = 0; i < 50 && this.status?.state !== "idle" && this.status?.state !== "off"; i++)
       await new Promise((r) => setTimeout(r, 100));
-    this.sendText(text, "voice");
+    if (this.utterances.live(ticket)) this.sendText(text, "voice");
   }
   private stoppedWhileListening = false;
+  private readonly utterances = new Utterances();
+  /** The ticket of the utterance being heard (Utterances). */
+  private ticket = 0;
 
   private stopListening(abort: boolean): void {
     if (!this.listening) return;
@@ -490,10 +497,17 @@ export class ChatPanel {
     if (!this.host.send({ t: "chat_send", text, via })) this.host.toast("Sin conexión con spinecord: no se envió");
   }
 
-  /** Stop: the process stops the robot; this page silences itself at once, without waiting for the answer. */
+  /**
+   * Stop: the process stops the robot; this page silences itself at once, without waiting for the answer, and
+   * drops what it was still hearing. A "para" spoken while the person still talks (`endListening` false) keeps
+   * listening: the rest of that sentence is sent at the release, and only what came before it is dropped.
+   */
   private stop(endListening = true): void {
     this.voice.cancel();
-    if (endListening) this.stopListening(true);
+    if (endListening) {
+      this.utterances.stop();
+      this.stopListening(true);
+    } else this.utterances.stop(this.ticket);
     if (!this.host.send({ t: "chat_stop" })) this.host.toast("Sin conexión con spinecord: no se pudo parar");
   }
 
@@ -607,7 +621,7 @@ export class ChatPanel {
       sayFile: (url: string) => this.sayFile(url),
       ear: () => ({ where: this.ear.where, lang: this.ear.lang }),
       /** The step after the recognizer, for a test whose browser has no recognizer: as if `text` was heard. */
-      heard: (text: string) => this.afterHearing(text),
+      heard: (text: string) => this.afterHearing(text, this.utterances.begin()),
       voice: () => this.voice.label,
     };
   }

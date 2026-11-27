@@ -76,7 +76,7 @@ bun install --filter @spinecord/local
 
 `--filter @spinecord/local` installs what the server needs and nothing of the development toolchain. That includes the Claude Agent SDK of `--chat`, with its own Claude Code, which is most of it: 113 packages, 744 MB on Linux arm64, 5.7 s with an empty cache (2026-11-27). A plain `bun install` adds the development toolchain and the [example assistant](../examples/assistant).
 
-### 2. Register it with Claude Code
+### 2. Ask for the command that registers it
 
 Still in the `spinecord` folder, ask the server for the command of this computer:
 
@@ -87,23 +87,28 @@ bun apps/local/main.ts --print-add
 It prints one line, with the full path of your clone in quotes. On a Mac it looks like this:
 
 ```sh
-claude mcp add -s user spinecord -- bun "/Users/you/spinecord/apps/local/main.ts"
+claude mcp add -s local spinecord -- bun "/Users/you/spinecord/apps/local/main.ts"
 ```
 
-Copy the printed line, paste it in the same terminal and press Enter. On Windows the printed line is the same for PowerShell and cmd.exe.
+Copy the printed line. Do not run it here: it registers the server for the folder it runs in. On Windows the printed line is the same for PowerShell and cmd.exe.
 
-- `-s user` registers the server for every folder of your user. Without it Claude Code knows the server only in the folder where the command ran.
-- The path is absolute, so the server starts from whatever folder Claude Code is in. Typed by hand on macOS or Linux, the line is `claude mcp add -s user spinecord -- bun "<full path of the clone>/apps/local/main.ts"`. On Windows use the printed line: it writes the separator as `"--"`, because PowerShell drops a bare `--` when `claude` was installed with npm, and it holds the path in full, because cmd.exe does not expand `$PWD`.
+- `-s local` registers the server for one folder, the one you start Claude Code in. Never use `-s user`: why is under [Stopping the robot](#stopping-the-robot).
+- The path is absolute, so the line works in any folder. Typed by hand on macOS or Linux, the line is `claude mcp add -s local spinecord -- bun "<full path of the clone>/apps/local/main.ts"`. On Windows use the printed line: it writes the separator as `"--"`, because PowerShell drops a bare `--` when `claude` was installed with npm, and it holds the path in full, because cmd.exe does not expand `$PWD`.
 
-### 3. Start Claude Code in a folder of your own
+### 3. Register it in a folder of your own and start Claude Code there
 
 ```sh
 mkdir my-robot
 cd my-robot
+```
+
+Paste the printed line here and press Enter, then start Claude Code in the same folder:
+
+```sh
 claude
 ```
 
-Make the folder anywhere outside the clone (your home folder, the desktop). Inside the clone Claude Code reads this repository's `AGENTS.md` and source, which are written for people who change spinecord, not for driving a robot.
+Make the folder anywhere outside the clone (your home folder, the desktop). Inside the clone Claude Code reads this repository's `AGENTS.md` and source, which are written for people who change spinecord, not for driving a robot. Every later command that changes or checks the registration (`claude mcp remove`, a printed line, `--doctor`) runs in this folder too.
 
 `/mcp` inside Claude Code shows `spinecord` connected with 16 tools.
 
@@ -119,13 +124,13 @@ Then ask: "list the robots, then drive until 15 cm from the wall".
 
 ### Check a computer
 
-In the `spinecord` folder, with the robot arguments of your registration:
+In the folder you start Claude Code in, with the full path of the clone and the robot arguments of your registration:
 
 ```sh
-bun apps/local/main.ts --doctor --ev3
+bun "<full path of the clone>/apps/local/main.ts" --doctor --ev3
 ```
 
-It changes nothing and starts no robot. It checks bun, Chrome or Edge, the registration in Claude Code (that this folder's sessions see it, and that it runs this clone's `main.ts`; at local or project scope only sessions opened in this folder see it, which is `ok`), that no other spinecord holds the ports, that the robot files parse, and with `--lan` the private address and the firewall. Add `--assistant` to check who pays for the [example assistant](../examples/assistant): it names the variables that are set, never their values, and with `ANTHROPIC_PROFILE` it asks `ant auth status` whether that profile is logged in. Each line is `ok`, `warn` or `fail`, why, and after `->` the command that fixes it. The last line is `doctor: ok`, or `doctor: <n> to fix` with the number of `fail` lines and exit code 1; a `warn` alone keeps `doctor: ok`.
+It changes nothing and starts no robot. It checks bun, Chrome or Edge, the registration in Claude Code (that this folder's sessions see it, and that it runs this clone's `main.ts`; local or project scope is `ok`, user scope a `warn`), that no other spinecord holds the ports, that the robot files parse, and with `--lan` the private address and the firewall. Add `--assistant` to check who pays for the [example assistant](../examples/assistant): it names the variables that are set, never their values, and with `ANTHROPIC_PROFILE` it asks `ant auth status` whether that profile is logged in. Each line is `ok`, `warn` or `fail`, why, and after `->` the command that fixes it. The last line is `doctor: ok`, or `doctor: <n> to fix` with the number of `fail` lines and exit code 1; a `warn` alone keeps `doctor: ok`.
 
 ### Choose the robots
 
@@ -144,14 +149,13 @@ Without arguments the server runs a simulated twin of the example robot (`r1-sim
 | several robots of a kind | `--config <file.json>` |
 | any of these, with the name the person gave the robot | add `--name <text>` (CONTRACT §3): Claude speaks as it, the 3D page and the brick's screen show it |
 
-The registration holds the arguments. To switch robots, remove it and add it again, then start Claude Code again:
+The registration holds the arguments. To switch robots, print the new line in the `spinecord` folder:
 
 ```sh
-claude mcp remove -s user spinecord
 bun apps/local/main.ts --print-add --ev3 --twin
 ```
 
-and run the line it prints.
+Then, in the folder you start Claude Code in, run `claude mcp remove -s local spinecord` and the printed line, and start Claude Code again.
 
 `--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](../deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C driven as one pair, heading from its gyro. The other example, [`deployments/example/robots/arm.json`](../deployments/example/robots/arm.json), declares no `pair` and no `drivetrain`: its motors are devices for `command_device`, and `drive`, `turn` and `arc` answer `unsupported`. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](../apps/local/examples), [`packages/sim-world/examples`](../packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](../CONTRACT.md). The server logs on stderr (`claude --debug` shows it); `--log-file <path>` keeps the log in a file ([Troubleshooting](#troubleshooting)).
 
@@ -223,7 +227,7 @@ Put the robot on the floor with free space ahead and ask: "drive forward 5 cm". 
 | Stock EV3: close the bridge tab or pull the USB cable | No further command reaches the brick. The one that is running ends by itself: every motion command is limited to 250 ms on the brick |
 | ev3dev: the network or the computer goes away | A watchdog on the brick brakes every motor after 1 s without a message. A second process on the brick brakes them when the bridge itself is killed |
 
-One Claude Code session per robot. With `-s user` every Claude Code session on the computer starts its own server with the same robots. A second session opens a second link to the same ev3dev brick, and when either session ends, the brick brakes every motor, also in the middle of a move of the other session. With `--ev3` the second session's server does not start: the page's port is taken.
+One Claude Code session per robot, which is why the registration has local scope. With `-s user` every Claude Code session on the computer starts its own server with the same robots. A second session opens a second link to the same ev3dev brick, and when either session ends, the brick brakes every motor, also in the middle of a move of the other session. With `--ev3` the second session's server does not start: the page's port is taken.
 
 Keep a hand near the robot on a first run. These paths are tested against the twin, the byte-level EV3 emulator and a fake ev3dev brick; what has run on a real brick is in the next section.
 
@@ -277,11 +281,10 @@ bun run bench   # latency of the path from a tool call to the robot, on the twin
 The server writes one JSON object per line on stderr (`claude --debug` shows it). To keep those lines, register the server with `--log-file <path>`: it appends every one of them to that file as well, across restarts. In the `spinecord` folder, on macOS, Linux and Windows (PowerShell) alike:
 
 ```sh
-claude mcp remove -s user spinecord
 bun apps/local/main.ts --print-add --log-file ~/spinecord.log
 ```
 
-Run the line it prints, then start Claude Code again. Put the robot arguments of your registration (`--ev3`, `--twin`, …) on the same line, next to `--log-file`. The printed line holds the file's full path: `~` is your home folder (`/Users/you/spinecord.log` on a Mac, `C:\Users\you\spinecord.log` on Windows), and a relative path is taken from the clone. The server creates the file's folder, and it does not start when the file cannot be opened. When a write fails later (a full disk), the server keeps running and logs on stderr alone, after one `"ev":"log_file_failed"` line there. The line being written when the disk filled stays cut off at the end of the file. Keep the file on a local disk: every line is written as it happens, so a folder that stalls (a network or cloud-synced folder) stalls the server too.
+In the folder you start Claude Code in, run `claude mcp remove -s local spinecord` and the printed line, then start Claude Code again. Put the robot arguments of your registration (`--ev3`, `--twin`, …) on the same line, next to `--log-file`. The printed line holds the file's full path: `~` is your home folder (`/Users/you/spinecord.log` on a Mac, `C:\Users\you\spinecord.log` on Windows), and a relative path is taken from the clone. The server creates the file's folder, and it does not start when the file cannot be opened. When a write fails later (a full disk), the server keeps running and logs on stderr alone, after one `"ev":"log_file_failed"` line there. The line being written when the disk filled stays cut off at the end of the file. Keep the file on a local disk: every line is written as it happens, so a folder that stalls (a network or cloud-synced folder) stalls the server too.
 
 Read the file while the server runs:
 

@@ -1259,7 +1259,7 @@ export class World {
   }
 
   /**
-   * Where the boxes go if the body moves to `p`: null when it cannot (a wall, a fixed box, a box too heavy to push, or
+   * Where the boxes go if the body moves to `p`: null when it cannot (a wall, a fixed box, boxes too heavy to push together, or
    * a pushed box that would meet a wall or another box), else the new list (null if nothing moves) and the force the
    * drive spends sliding them. A pushed box moves the least way that clears the body (the separating axis of the
    * smallest overlap), quasi-statically: a light box on a floor stops the instant nothing pushes it (sliding
@@ -1285,6 +1285,8 @@ export class World {
       force += resist;
     }
     if (!next) return { boxes: null, force_n: 0 };
+    // the limit is what the drive pushes in all: boxes it touches at once share it
+    if (force > limit) return null;
     // a pushed box stops against any box it did not already overlap (boxes stacked by hand may be dragged apart)
     for (let i = 0; i < next.length; i++) {
       if (next[i] === boxes[i]) continue;

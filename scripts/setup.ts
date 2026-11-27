@@ -2,12 +2,13 @@
 // git, bun, ant, Claude Code and this clone exist. Every step is idempotent: it checks first, acts only when the
 // check fails, and checks again. `status` acts never and names the next step, so an agent resumes from any state.
 // The robots come from the skill's robots.json; what no command can detect (the person's answers, the smoke
-// test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|todo|fail  <what>  <why>  ->  <next>`, the
+// test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|warn|todo|fail  <what>  <why>  ->  <next>`, the
 // last line `setup <step>: ok` (exit 0) or `setup <step>: not done` (exit 1). Nothing here prints a secret.
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { parseRobotName } from "../apps/local/src/config";
+import { MOVES } from "../apps/local/src/twin-build";
 import { paysBeforeProfile, type Env } from "../examples/assistant/setup";
 
 const REPO = join(import.meta.dir, "..");
@@ -25,6 +26,12 @@ const MIN_BUN = (
   JSON.parse(readFileSync(join(REPO, "package.json"), "utf8")) as { packageManager: string }
 ).packageManager.replace(/^bun@/, "");
 
+export interface Line {
+  status: Status;
+  what: string;
+  why: string;
+  next?: string;
+}
 export interface Robots {
   /** The robot flags of a person without an EV3, paths from the repository root. */
   twin: string[];
@@ -44,13 +51,8 @@ export interface State {
   /** The EV3 drove forward when asked to. */
   forward?: boolean;
 }
-type Status = "ok" | "todo" | "fail";
-interface Line {
-  status: Status;
-  what: string;
-  why: string;
-  next?: string;
-}
+/** `warn`: done, with something the person must know; the step still ends `ok`. */
+export type Status = "ok" | "warn" | "todo" | "fail";
 
 // ---- pure parts (setup-skill.test.ts) ----
 
@@ -136,6 +138,22 @@ export function launchLine(platform: string, profile: string): string {
   return platform === "win32"
     ? `cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "${profile}"; claude --model sonnet`
     : `cd ~/mi-robot && ANTHROPIC_PROFILE=${profile} claude --model sonnet`;
+}
+
+/**
+ * The person's own robot file is the EV3's too: what nobody confirmed in it that changes how the robot moves (a
+ * port, the front, a wheel size read from a photo) plans the real robot's moves until state 6 CALIBRATE of the
+ * robot-twin skill. One warn line, or none.
+ */
+export function ev3DraftWarn(file: string, unconfirmed: readonly string[] | undefined): Line | null {
+  const moves = (unconfirmed ?? []).filter((u) => (MOVES as readonly string[]).includes(u));
+  if (moves.length === 0) return null;
+  return {
+    status: "warn",
+    what: "ev3 draft",
+    why: `${file} drives the real EV3 too, and nobody confirmed ${moves.join(", ")} (twin.unconfirmed): its moves are planned from guesses`,
+    next: "robot-twin skill, state 6 CALIBRATE, before any other move of the real robot",
+  };
 }
 
 // ---- probes ----
@@ -435,7 +453,8 @@ async function login(s: State): Promise<Line[]> {
     : [{ ...after, status: "fail", next: `fixes.md, row "The login did not finish"` }];
 }
 
-async function workshop(s: State): Promise<Line[]> {
+/** The workshop folder's settings, skills and registration, written when they differ, then checked again. */
+async function register(s: State): Promise<Line[]> {
   mkdirSync(join(WORKSHOP, ".claude"), { recursive: true });
   const settings = existsSync(SETTINGS) ? readJson<{ permissions?: { allow?: string[] } }>(SETTINGS) : {};
   const allow = settings.permissions?.allow ?? [];
@@ -458,7 +477,12 @@ async function workshop(s: State): Promise<Line[]> {
       return [{ status: "fail", what: "registration", why: `claude mcp add: ${(r.out + r.err).trim()}` }];
   }
   const lines = await checkWorkshop(s);
-  if (lines.some((l) => l.status !== "ok")) return lines.map((l) => (l.status === "ok" ? l : { ...l, status: "fail" }));
+  return lines.map((l) => (l.status === "ok" ? l : { ...l, status: "fail" }));
+}
+
+async function workshop(s: State): Promise<Line[]> {
+  const lines = await register(s);
+  if (lines.some((l) => l.status !== "ok")) return lines;
   // the doctor reads the registration of the folder it runs in
   const d = await run([process.execPath, MAIN, "--doctor", ...wanted(s)]);
   process.stdout.write(d.out);
@@ -472,6 +496,12 @@ async function workshop(s: State): Promise<Line[]> {
           next: "its fix after ->, then this step again",
         },
   );
+  // after the doctor: a robot file it cannot read is its `robots` fail, not a throw here
+  const own = ownRobot();
+  if (own !== null && ev3File(s) === own && !/^fail\s+robots\b/m.test(d.out)) {
+    const warn = ev3DraftWarn(own, readJson<{ twin?: { unconfirmed?: string[] } }>(own).twin?.unconfirmed);
+    if (warn) lines.push(warn);
+  }
   return lines;
 }
 
@@ -564,10 +594,21 @@ async function flip(s: State): Promise<Line[]> {
   return [{ status: "ok", what: "flip", why: `${copy}: forward_sign ${d.forward_sign}` }, ...(await workshop(s))];
 }
 
+/** What the person does after a registration change: Claude Code reads its servers only when it starts. */
+export function restartLine(platform: string, profile: string): Line {
+  return {
+    status: "ok",
+    what: "restart",
+    why: "Claude Code reads the new registration when it starts again",
+    next: `the person types /exit in Claude Code, then starts it again with: ${launchLine(platform, profile)}`,
+  };
+}
+
 /**
  * The person named the robot, renamed it, or took its name away (`none`): the name of setup's own registration
  * changes, and nothing else. A registration this setup did not write (the robot-twin skill's) is left alone: its
- * robot file holds the name.
+ * robot file holds the name. No doctor runs: the person often asks in the robot's own Claude Code, whose spinecord
+ * holds the ports the doctor checks, so its `port` lines fail until the restart.
  */
 async function name(s: State, raw: string): Promise<Line[]> {
   let next: string | undefined;
@@ -576,12 +617,15 @@ async function name(s: State, raw: string): Promise<Line[]> {
   } catch (e) {
     return [{ status: "fail", what: "name", why: (e as Error).message, next: "ask the person for another name" }];
   }
-  // the workshop step below registers again with the new name, whatever was registered before
+  // register() below writes the registration again with the new name, whatever was registered before
   s.name = next;
   saveState(s);
   const said: Line = { status: "ok", what: "name", why: next === undefined ? "no name" : `"${next}"` };
   if (s.ev3 === undefined) return [said, ...(await checkWorkshop(s))];
-  return [said, ...(await workshop(s))];
+  const lines = await register(s);
+  return lines.every((l) => l.status === "ok")
+    ? [said, ...lines, restartLine(process.platform, s.profile)]
+    : [said, ...lines];
 }
 
 async function report(s: State): Promise<string> {
@@ -609,7 +653,7 @@ function print(step: string, lines: Line[]): 0 | 1 {
   const w = Math.max(...lines.map((l) => l.what.length));
   for (const l of lines)
     console.log(`${l.status.padEnd(4)}  ${l.what.padEnd(w)}  ${l.why}${l.next ? `  ->  ${l.next}` : ""}`);
-  const done = lines.every((l) => l.status === "ok");
+  const done = lines.every((l) => l.status === "ok" || l.status === "warn");
   console.log(`setup ${step}: ${done ? "ok" : "not done"}`);
   return done ? 0 : 1;
 }
@@ -622,7 +666,7 @@ const USAGE = `usage: bun scripts/setup.ts <step>
   confirm org            the person said the organization that pays holds the credits
   workshop --ev3 yes|no [--name <name>]
                          ${WORKSHOP}: settings, local registration, doctor; --name: the robot's name
-  name <name>|none       give the robot a name, or take it away; registers again (restart Claude Code)
+  name <name>|none       give the robot a name, or take it away; registers again, no doctor (restart Claude Code)
   smoke                  one claude -p request drives the twin (at most USD 0.50)
   view                   wait for the 3D view of the person's Claude Code (under ${STEP_MS / 1000} s), open it
   confirm moved          the person saw the robot move
