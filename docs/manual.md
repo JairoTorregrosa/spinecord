@@ -72,7 +72,7 @@ cd spinecord
 bun install --filter @spinecord/local
 ```
 
-`--filter @spinecord/local` installs what the server needs and nothing of the development toolchain: 6 packages, 16 MB. Measured on a fresh clone with an empty cache: 0.7 s on macOS (Apple M1 Pro), 1.1 s on a Windows CI runner. A plain `bun install` adds the development toolchain and the Claude Agent SDK of the [example assistant](../examples/assistant): 202 packages, 456 MB on the same Mac.
+`--filter @spinecord/local` installs what the server needs and nothing of the development toolchain: 11 packages, 46 MB, 0.7 s on macOS (Apple M1 Pro), measured by `bun bench/install.ts` on a fresh clone with an empty cache. It leaves out the Claude Agent SDK, which only the experimental `--chat` uses: `bun install --filter @spinecord/local --filter @spinecord/chat-sdk` adds it (112 packages, 403 MB on the same Mac, most of it the SDK's own Claude Code), and `--chat` without it ends the start with that command. A plain `bun install` adds the development toolchain, the chat's SDK and that of the [example assistant](../examples/assistant).
 
 ### 2. Register it with Claude Code
 
