@@ -94,6 +94,13 @@ export class Hand {
   private readonly tapeEnds: THREE.Mesh[];
   /** The finished measure stays on the floor until the next one or Esc. */
   private measured: { x0: number; y0: number; x: number; y: number } | null = null;
+  /** The pointer that holds the drag, and where it last was on screen (for a second finger's twist). */
+  private holder: { id: number; x: number; y: number } | null = null;
+  /**
+   * A second finger on a touch screen while the first holds the robot or a box: turning the two fingers turns the
+   * robot; a box (its sides stay along x and y) turns a quarter turn once the twist passes 45°.
+   */
+  private twist: { id: number; angle: number; acc: number } | null = null;
   /** A measure by two clicks: where the first click was, until the second (the tape follows the pointer). */
   private anchor: { x: number; y: number } | null = null;
   private readonly tag = document.getElementById("tag")!;
@@ -117,10 +124,16 @@ export class Hand {
     for (const o of [this.ghostRobot, this.ghostBox, this.tape]) o.traverse((x) => x.layers.set(c.helpers));
     const cv = c.canvas;
     // capture phase: the hand sees a press before OrbitControls and keeps it when it takes it
-    cv.addEventListener("pointerdown", (e) => this.down(e), { capture: true });
-    cv.addEventListener("pointermove", (e) => this.move(e));
-    cv.addEventListener("pointerup", (e) => this.up(e));
-    cv.addEventListener("pointercancel", () => this.cancel());
+    cv.addEventListener("pointerdown", (e) => (this.twistDown(e) ? undefined : this.down(e)), { capture: true });
+    cv.addEventListener("pointermove", (e) => (this.twistMove(e) ? undefined : this.move(e)));
+    cv.addEventListener("pointerup", (e) => {
+      if (this.twist?.id === e.pointerId) this.twist = null;
+      else if (!this.holder || this.holder.id === e.pointerId) this.up(e);
+    });
+    cv.addEventListener("pointercancel", (e) => {
+      if (this.twist?.id === e.pointerId) this.twist = null;
+      else this.cancel();
+    });
     cv.addEventListener("pointerleave", () => (this.pointer = null));
     cv.addEventListener(
       "wheel",
@@ -290,8 +303,42 @@ export class Hand {
     this.show();
   }
 
+  /** A second touch while the hand holds something: it twists what is held, and the camera does not see it. */
+  private twistDown(e: PointerEvent): boolean {
+    const d = this.drag,
+      h = this.holder;
+    if (!d || !h || e.pointerType !== "touch" || e.pointerId === h.id || this.twist) return false;
+    if (d.kind !== "robot" && d.kind !== "place" && d.kind !== "move") return false;
+    e.stopImmediatePropagation();
+    this.twist = { id: e.pointerId, angle: Math.atan2(h.y - e.clientY, e.clientX - h.x), acc: 0 };
+    return true;
+  }
+  private twistMove(e: PointerEvent): boolean {
+    if (this.holder?.id === e.pointerId) {
+      this.holder.x = e.clientX;
+      this.holder.y = e.clientY;
+    }
+    const t = this.twist,
+      h = this.holder,
+      d = this.drag;
+    if (!t || t.id !== e.pointerId || !h || !d) return false;
+    const a = Math.atan2(h.y - e.clientY, e.clientX - h.x);
+    const delta = heading((a - t.angle) / DEG); // degrees, counter-clockwise on screen
+    t.angle = a;
+    if (d.kind === "move") {
+      t.acc += delta;
+      if (Math.abs(t.acc) >= 45) {
+        t.acc = 0;
+        [d.box.w, d.box.h] = [d.box.h, d.box.w];
+        this.show();
+      }
+    } else this.turnHeld(delta);
+    return true;
+  }
+
   /** The hand has this press: the camera must not move with it. */
   private take(e: PointerEvent): void {
+    this.holder = { id: e.pointerId, x: e.clientX, y: e.clientY };
     e.stopImmediatePropagation();
     this.c.cams.handBusy(true);
     try {
@@ -383,6 +430,7 @@ export class Hand {
 
   private release(e: PointerEvent): void {
     this.drag = null;
+    this.holder = this.twist = null;
     this.c.cams.handBusy(false);
     this.c.canvas.classList.remove("holding");
     if (this.c.canvas.hasPointerCapture(e.pointerId)) this.c.canvas.releasePointerCapture(e.pointerId);
@@ -390,6 +438,7 @@ export class Hand {
   }
 
   private cancel(): void {
+    this.holder = this.twist = null;
     if (!this.drag) return;
     this.drag = null;
     this.c.cams.handBusy(false);

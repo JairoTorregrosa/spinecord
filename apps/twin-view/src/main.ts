@@ -322,6 +322,15 @@ function setFocus(id: string | null): void {
     roles[focus.drivetrain.left] = `${turns} izq.`;
     roles[focus.drivetrain.right] = `${turns} der.`;
   }
+  // and the others what they move, as the look builds it
+  const MOVES: Record<string, string> = {
+    axle: "eje",
+    arm: "brazo",
+    lift: "elevador",
+    turntable: "plataforma",
+    gripper: "pinza",
+  };
+  for (const m of look.motors) roles[m.port] ??= MOVES[m.attachment] ?? "";
   $("pip").hidden = !$<HTMLInputElement>("opt-pip").checked;
   // light and fog to the size of the arena
   const w = focus.world,
