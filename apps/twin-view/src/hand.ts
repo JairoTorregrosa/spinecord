@@ -82,9 +82,9 @@ export class Hand {
   private readonly ghostArrow = new THREE.Line(new THREE.BufferGeometry(), this.ghostMat);
   private readonly ghostFill = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.ghostFillMat);
   private readonly ghostBoxMat = new THREE.MeshBasicMaterial({
-    color: 0x6fb3ff,
+    color: 0x3d8bff,
     transparent: true,
-    opacity: 0.3,
+    opacity: 0.55,
     depthWrite: false,
   });
   private readonly ghostBox = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.ghostBoxMat);

@@ -514,6 +514,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (t instanceof HTMLButtonElement && (k === " " || k === "enter")) return; // the button's own
   if (k === "?" || k === "h") showHelp(help.hidden === true);
+  else if (!help.hidden) return; // the help is up: the scene behind it takes no keys
   else if (k === "q" || k === "e") hand.turnKey(k === "q" ? 1 : -1);
   else if (k >= "1" && k <= "5") hand.setMode(MODES[Number(k) - 1]!);
   else if (k === "c") setCam(CAMS[(CAMS.indexOf(cams.mode) + 1) % CAMS.length]!);
@@ -523,6 +524,15 @@ window.addEventListener("keydown", (e) => {
   e.preventDefault();
 });
 hud.callsInit();
+// the first visit opens with the help: most people here have never seen the page
+try {
+  if (localStorage.getItem("twin-view:helped") === null) {
+    localStorage.setItem("twin-view:helped", "1");
+    showHelp(true);
+  }
+} catch {
+  // storage blocked: the ? button is still there
+}
 // the panels start below the top bar, whose height grows when a narrow window wraps it
 new ResizeObserver(() => {
   const b = $("bar").getBoundingClientRect();

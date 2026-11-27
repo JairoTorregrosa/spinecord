@@ -797,3 +797,10 @@ code {
     transition: none !important;
   }
 }
+/* the scene alone (a deep link's hud=0): every panel and note hidden by this one class on <body> */
+body.no-hud .panel,
+body.no-hud .pip,
+body.no-hud .hint,
+body.no-hud .tag3d {
+  display: none !important;
+}
