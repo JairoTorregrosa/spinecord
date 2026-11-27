@@ -1,0 +1,10 @@
+{
+  "twin": [
+    "--twin",
+    "deployments/orugas/robots/orugas.json",
+    "--world",
+    "deployments/orugas/worlds/sala.json",
+    "--view"
+  ],
+  "ev3": "deployments/orugas/robots/orugas.json"
+}
