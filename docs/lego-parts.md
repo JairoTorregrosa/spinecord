@@ -52,11 +52,26 @@ The complete inventories of 31313, 45544 and 45560 are in [`sets.json`](../packa
 
 ## Official builds
 
-The data is in [`builds.json`](../packages/lego-parts/data/builds.json).
+The data is in [`builds.json`](../packages/lego-parts/data/builds.json). Each port value reads `<kind>, <role>`; `motor, …` means the program does not say large or medium. Ports come from the Pybricks official-model programs unless the row says otherwise; motor kinds of the 31313 models from the ev3dev demos. Placements are sourced only for TRACK3R.
 
-- **Education driving base (45544):** wheel Ø 55.5 mm, axle track 104 mm (an older example program says 114). Motors on B (left) and C (right), the colour sensor on 3, the ultrasonic on 4. The program values come from Pybricks. No LDraw model exists, so placements are unknown.
-- **TRACK3R (31313):** the tracks' centrelines are 176 mm apart and the rims 96 mm apart. The footprint is 270 × 216 × 107 mm. Port A drives the medium motor (spinner), B the right track, C the left track, and 4 is the IR sensor. All of this is read from Philippe Hurbain's LDraw model (CC BY 2.0).
-- **Tank Bot (45544 + 45560):** wheel Ø about 54 mm, axle track about 200 mm. Large motors on B and C, the gyro on 4. These values are from Pybricks; placements are unknown.
+| Build | Set | Motors | Sensors | Wheel Ø / axle track (mm) |
+|---|---|---|---|---|
+| Education driving base | 45544 | B large left, C large right, A medium attachment (ev3dev demo) | 1 touch, 2 gyro (default ports), 3 colour, 4 ultrasonic | 55.5 / 104 (older example: 56 / 114) |
+| Gyro Boy | 45544 | D left wheel, A right wheel, C arms | 1 colour, 2 gyro, 4 ultrasonic | unknown; it balances |
+| Puppy | 45544 | D left leg, A right leg, C head | 1 touch, 4 colour | no drive |
+| Color Sorter | 45544 | D belt, A feeder | 1 touch, 3 colour | no drive |
+| Robot Arm H25 | 45544 | A gripper, B elbow, C base | 1 touch, 3 colour | no drive |
+| Tank Bot | 45544 + 45560 | B large left track, C large right track | 4 gyro | 54 / 200 |
+| Stair Climber | 45544 + 45560 | B front wheels, A rear wheels, D lift | 2 gyro, 3 touch | unknown; no pair |
+| Znap | 45544 + 45560 | A left wheel, D right wheel, B head | 3 ultrasonic | 45 / 150 |
+| Elephant | 45544 + 45560 | A legs, B trunk, D neck | 1 touch, 4 colour | walks |
+| TRACK3R | 31313 | B and C large tracks, A medium tool | 4 infrared | 36.8 / 176 (LDraw model) |
+| EV3RSTORM | 31313 | B large left track, C large right track, A medium bazooka | 1 touch, 3 colour, 4 infrared | 36.8 (track) / 102 |
+| GRIPP3R | 31313 | B large left track, C large right track, A medium gripper | 1 touch, 4 infrared | 36.8 (track) / 115 |
+| R3PTAR | 31313 | A medium steering, B large drive, D large striker | 1 touch, 4 infrared | steers; no pair |
+| SPIK3R | 31313 | A medium claw, B large legs, D large tail | 1 touch, 3 colour, 4 infrared | walks |
+
+The Education models' programs do not name motor kinds; 45544 holds two large motors and one medium and 45560 none, so a three-motor Education model has exactly one medium. TRACK3R's left track is B in both programs and C in the LDraw model's cable routing: unresolved, both are in the data. Not in the map: the 31313 bonus models (BOBB3E, DINOR3X, EV3D4, KRAZ3, MR-B3AM, RAC3 TRUCK, ROBODOZ3R, WACK3M, EL3CTRIC GUITAR), and every footprint but TRACK3R's.
 
 ## Attribution
 

@@ -204,4 +204,20 @@ describe("builds", () => {
       ).toBe(true);
     expect(Object.keys(t.ports).sort()).toEqual(["4", "A", "B", "C"]);
   });
+
+  test("every build has a unique key, ports A-D or 1-4, each port a 'kind, role' text with a source", () => {
+    const keys = parts.builds.map((b) => b.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const b of parts.builds)
+      for (const [port, m] of Object.entries(b.ports)) {
+        expect(port, `${b.key}.${port}`).toMatch(/^[A-D1-4]$/);
+        if (isUnknown(m)) continue;
+        expect(m.value, `${b.key}.${port}`).toMatch(
+          /^(large motor|medium motor|motor|touch sensor|color sensor|gyro sensor|ultrasonic sensor|infrared sensor)\b/,
+        );
+        expect(/^[A-D]$/.test(port), `${b.key}.${port}: motor on a sensor port or the reverse`).toBe(
+          /motor/.test(m.value.split(",")[0]!),
+        );
+      }
+  });
 });
