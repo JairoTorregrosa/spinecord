@@ -100,7 +100,7 @@ Clone that exists already: update it. `--ff-only` refuses to change a clone with
 cd ~/spinecord; git pull --ff-only
 ```
 
-Then, in both cases, install the server's packages (6 packages, about 16 MB):
+Then, in both cases, install the server's packages. That takes a few seconds:
 
 ```sh
 cd ~/spinecord; bun install --filter @spinecord/local

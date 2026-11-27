@@ -38,4 +38,4 @@ Not verified:
 - The folder where Claude Code reads `ant` profiles on native Windows. fixes.md has the row "No `Profile:` line on Windows".
 - The first start of Claude Code with `ANTHROPIC_PROFILE` set and no other login: which questions come before the trust question.
 - The winget flags `--accept-source-agreements` and `--accept-package-agreements`, and the `PATH` line for PowerShell, were not run on Windows.
-- `open` on macOS and the default browser on Windows for `ant auth login` and `setup view`.
+- `open` on macOS, and on Windows the default browser of `ant auth login` and `rundll32.exe url.dll,FileProtocolHandler` of `setup view`.

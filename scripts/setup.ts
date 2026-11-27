@@ -76,7 +76,9 @@ export function robotArgs(robots: Robots, ev3File: string | null, repo: string =
   const out: string[] = [];
   if (ev3File !== null) out.push("--ev3", abs(ev3File));
   const pathFlags = new Set(["--twin", "--world", "--ev3", "--config"]);
-  robots.twin.forEach((a, i) => out.push(i > 0 && pathFlags.has(robots.twin[i - 1]!) ? abs(a) : a));
+  robots.twin.forEach((a, i) =>
+    out.push(i > 0 && pathFlags.has(robots.twin[i - 1]!) && !a.startsWith("-") ? abs(a) : a),
+  );
   return out;
 }
 
@@ -107,6 +109,8 @@ const ev3Copy = (): string => join(WORKSHOP, "robots", basename(robots().ev3));
 const ev3File = (s: State): string | null =>
   s.ev3 ? (existsSync(ev3Copy()) ? ev3Copy() : join(REPO, robots().ev3)) : null;
 const wanted = (s: State): string[] => robotArgs(robots(), ev3File(s));
+/** The smoke test drives the twin only, so its record holds the twin flags, which an EV3 change leaves alone. */
+const twinKey = (): string => robotArgs(robots(), null).join(" ");
 const norm = (s: string) => (process.platform === "win32" ? s.replaceAll("/", "\\").toLowerCase() : s);
 
 interface Ran {
@@ -138,7 +142,8 @@ async function run(cmd: string[], o: { ms?: number; cwd?: string; env?: Env; inh
 /** The environment without the credentials that pay ahead of a profile, and with ANTHROPIC_PROFILE set. */
 function profileEnv(profile: string): Env {
   const env: Env = { ...process.env, ANTHROPIC_PROFILE: profile };
-  for (const n of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]) delete env[n];
+  // CLAUDECODE: the agent itself may be a Claude Code session, and its child is a session of its own
+  for (const n of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE"]) delete env[n];
   return env;
 }
 const cwd = () => (existsSync(WORKSHOP) ? WORKSHOP : REPO);
@@ -268,7 +273,7 @@ async function checkWorkshop(s: State): Promise<Line[]> {
 }
 
 const checkSmoke = (s: State): Line =>
-  s.smoke && s.smoke.args === wanted(s).join(" ")
+  s.smoke && s.smoke.args === twinKey()
     ? { status: "ok", what: "smoke", why: `${s.smoke.answer} (USD ${s.smoke.cost_usd})` }
     : {
         status: "todo",
@@ -375,8 +380,8 @@ async function workshop(s: State): Promise<Line[]> {
 }
 
 async function smoke(s: State): Promise<Line[]> {
-  const twinId = `${readJson<{ profile: { id: string } }>(join(REPO, robots().twin[1]!)).profile.id}-sim`;
-  const prompt = `List the robots. Then drive ${twinId} forward 5 cm. Answer in one line.`;
+  // no id in the prompt: only a running spinecord can name the twin, so an answer without one proves nothing
+  const prompt = "List the robots. Then drive the simulated one forward 5 cm. Answer in one line that names its id.";
   const r = await run(
     ["claude", "-p", prompt, "--allowedTools", RULE, "--max-budget-usd", "0.50", "--output-format", "json"],
     { env: profileEnv(s.profile) },
@@ -393,8 +398,10 @@ async function smoke(s: State): Promise<Line[]> {
     return [
       { status: "fail", what: "smoke", why: `${j.result ?? "no result"}`, next: "fixes.md, the row of this text" },
     ];
+  if (!/\b[\w.]+-sim\b/.test(j.result))
+    return [{ status: "fail", what: "smoke", why: `no twin id in the answer: ${j.result.slice(0, 300)}` }];
   s.smoke = {
-    args: wanted(s).join(" "),
+    args: twinKey(),
     answer: j.result.replaceAll(/\s+/g, " ").trim(),
     cost_usd: j.total_cost_usd ?? 0,
   };
@@ -427,7 +434,7 @@ async function view(): Promise<Line[]> {
     process.platform === "darwin"
       ? ["open", url]
       : process.platform === "win32"
-        ? ["cmd.exe", "/d", "/c", "start", '""', url]
+        ? ["rundll32.exe", "url.dll,FileProtocolHandler", url]
         : ["xdg-open", url];
   const r = await run(opener, { ms: 10_000, cwd: cwd() });
   return [

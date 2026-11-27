@@ -34,7 +34,7 @@ Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next
 - Never put `ANTHROPIC_PROFILE` in a settings file. Claude Code ignores it there.
 - Never register spinecord with user scope. Never start the robot's Claude Code in the clone.
 - Before `sudo`, say why. Change a shell profile only as install.md says, after the approval of the plan.
-- Give installs and `setup login` a command timeout of 10 minutes. The other `setup` steps end within 2 minutes.
+- Give every command a timeout of 10 minutes. Every step is safe to run again.
 - If the same step fails 2 times, stop. Show the error line and the row of fixes.md, in the person's language.
 - On Windows, use PowerShell for all commands.
 
@@ -101,7 +101,7 @@ A doctor `warn` line does not stop this state. For a `fail` line, use fixes.md, 
 
 ### 6 SMOKE
 
-Run `setup smoke`. One `claude -p` request drives the twin 5 cm, for at most USD 0.50.
+Run `setup smoke`. One `claude -p` request drives the twin 5 cm, for at most USD 0.50. It needs no person.
 Show the person the answer and the cost from the `smoke` line.
 
 ### 7 SEE IT (PERSON)

@@ -111,6 +111,8 @@ test("setup.ts registers absolute paths, the EV3 first, and prints a launch line
     "/home/a/mi-robot/robots/r.json",
     "--twin",
   ]);
+  // the example twin, without a file: --view after --twin is a flag, not a path
+  expect(robotArgs({ twin: ["--twin", "--view"], ev3: "d/r.json" }, null, "/r")).toEqual(["--twin", "--view"]);
   expect(launchLine("linux", "credits")).toBe("cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude");
   expect(launchLine("win32", "credits")).toBe('cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "credits"; claude');
   const json = JSON.parse(readFileSync(join(DIR, "robots.json"), "utf8")) as typeof robots;
