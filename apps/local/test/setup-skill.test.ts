@@ -166,6 +166,19 @@ test("setup.ts registers absolute paths, the EV3 first, and prints a launch line
   ]);
   // the example twin, without a file: --view after --twin is a flag, not a path
   expect(robotArgs({ twin: ["--twin", "--view"], ev3: "d/r.json" }, null, "/r")).toEqual(["--twin", "--view"]);
+  // the person's own robot file, once written, is the twin of every later registration: the room and the view stay
+  expect(robotArgs(robots, null, "/r", undefined, "/home/a/mi-robot/robot.json")).toEqual([
+    "--twin",
+    "/home/a/mi-robot/robot.json",
+    "--world",
+    "/r/d/w.json",
+    "--view",
+  ]);
+  expect(robotArgs({ twin: ["--twin", "--view"], ev3: "d/r.json" }, null, "/r", undefined, "/o.json")).toEqual([
+    "--twin",
+    "/o.json",
+    "--view",
+  ]);
   // the person's name for the robot comes last, as one argument: a second run gives the same registration, and a
   // new name changes only its value
   const named = robotArgs(robots, "/m/r.json", "/r", "Doña Tuerca");

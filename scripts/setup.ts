@@ -102,15 +102,31 @@ export function isRegistered(
   return reg.scope === "local" && n(reg.command ?? "") === n(bun) && n(reg.args ?? "") === n(args.join(" "));
 }
 
-/** The robot flags of the registration, with every path absolute, and the person's name for the robot last. */
-export function robotArgs(robots: Robots, ev3File: string | null, repo: string = REPO, name?: string): string[] {
+/**
+ * The robot flags of the registration, with every path absolute, and the person's name for the robot last.
+ * `own` is the person's own robot file: once it exists it is the twin's robot, whatever robots.json names.
+ */
+export function robotArgs(
+  robots: Robots,
+  ev3File: string | null,
+  repo: string = REPO,
+  name?: string,
+  own: string | null = null,
+): string[] {
   const abs = (p: string) => (isAbsolute(p) ? p : join(repo, p));
   const out: string[] = [];
   if (ev3File !== null) out.push("--ev3", abs(ev3File));
   const pathFlags = new Set(["--twin", "--world", "--ev3", "--config"]);
-  robots.twin.forEach((a, i) =>
-    out.push(i > 0 && pathFlags.has(robots.twin[i - 1]!) && !a.startsWith("-") ? abs(a) : a),
-  );
+  robots.twin.forEach((a, i) => {
+    const prev = robots.twin[i - 1];
+    const next = robots.twin[i + 1];
+    if (prev !== undefined && pathFlags.has(prev) && !a.startsWith("-"))
+      out.push(prev === "--twin" && own ? own : abs(a));
+    else {
+      out.push(a);
+      if (a === "--twin" && own && (next === undefined || next.startsWith("-"))) out.push(own);
+    }
+  });
   if (name !== undefined) out.push("--name", name);
   return out;
 }
@@ -137,11 +153,13 @@ function saveState(s: State): void {
   mkdirSync(WORKSHOP, { recursive: true });
   writeFileSync(STATE_FILE, `${JSON.stringify(s, null, 2)}\n`);
 }
-/** The EV3 robot file in the workshop folder, made by `flip`: it wins over the clone's. */
-const ev3Copy = (): string => join(WORKSHOP, "robots", basename(robots().ev3));
+/** The person's own robot file, written by the robot-twin skill. A later setup run keeps it registered. */
+const ownRobot = (): string | null => (existsSync(join(WORKSHOP, "robot.json")) ? join(WORKSHOP, "robot.json") : null);
+/** The EV3 robot file in the workshop folder: the person's own, or the copy `flip` makes. It wins over the clone's. */
+const ev3Copy = (): string => ownRobot() ?? join(WORKSHOP, "robots", basename(robots().ev3));
 const ev3File = (s: State): string | null =>
   s.ev3 ? (existsSync(ev3Copy()) ? ev3Copy() : join(REPO, robots().ev3)) : null;
-const wanted = (s: State): string[] => robotArgs(robots(), ev3File(s), REPO, s.name);
+const wanted = (s: State): string[] => robotArgs(robots(), ev3File(s), REPO, s.name, ownRobot());
 /**
  * The smoke test drives the twin only, so its record holds the twin flags, which an EV3 change and a new name
  * leave alone.
