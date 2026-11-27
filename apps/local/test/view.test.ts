@@ -189,7 +189,7 @@ describe("the view listener", () => {
       ok: false,
       code: "outside",
     });
-    expect(await p.act({ t: "box_remove", id: "r1-sim", index: 0 })).toMatchObject({ ok: true });
+    expect(await p.act({ t: "box_remove", id: "r1-sim", box: "box1" })).toMatchObject({ ok: true });
     expect(Math.abs((await reading("distance", "distance_cm")) - far)).toBeLessThan(3);
     await p.act({ t: "box_add", id: "r1-sim", x: 85, y: 50, w: 10, h: 20 });
     await p.act({ t: "carry", id: "r1-sim", x: 30, y: 30, heading_deg: 45 });
@@ -209,17 +209,56 @@ describe("the view listener", () => {
     const { connect, reading } = await rig();
     const p = await connect();
     await p.act({ t: "box_add", id: "r1-sim", x: 10, y: 10, w: 10, h: 10 });
-    expect(await p.act({ t: "box_move", id: "r1-sim", index: 0, x: 85, y: 50, w: 10, h: 20 })).toMatchObject({
+    expect(await p.act({ t: "box_move", id: "r1-sim", box: "box1", x: 85, y: 50, w: 10, h: 20 })).toMatchObject({
       ok: true,
     });
     expect(Math.abs((await reading("distance", "distance_cm")) - 17)).toBeLessThan(3);
-    const refused = await p.act({ t: "box_move", id: "r1-sim", index: 0, x: 55, y: 55, w: 10, h: 10 });
+    const refused = await p.act({ t: "box_move", id: "r1-sim", box: "box1", x: 55, y: 55, w: 10, h: 10 });
     expect(refused).toMatchObject({ ok: false, code: "box_on_robot" });
-    expect(await p.act({ t: "box_move", id: "r1-sim", index: 3, x: 5, y: 5, w: 5, h: 5 })).toMatchObject({
+    expect(await p.act({ t: "box_move", id: "r1-sim", box: "box9", x: 5, y: 5, w: 5, h: 5 })).toMatchObject({
       ok: false,
       code: "no_such_box",
     });
     await p.next((m) => m.t === "boxes" && m.boxes.length === 1 && m.boxes[0]!.x === 85, 0);
+  });
+
+  test("every obstacle reaches the page whole, by id; a push moves it on every page alike", async () => {
+    const { connect, tool, fleet } = await rig();
+    const w = fleet.bricks.get("r1-sim")!.world;
+    w.addObstacle({ id: "cup", x: 80, y: 55, w: 8, h: 10, height_cm: 9, mass_g: 50, ir_reflectivity: 0.21 });
+    const a = await connect(),
+      b = await connect();
+    const hello = await a.next<Extract<ServerMessage, { t: "hello" }>>((m) => m.t === "hello", 0);
+    expect(hello.robots[0]!.world.boxes).toEqual([
+      { id: "cup", x: 80, y: 55, w: 8, h: 10, height_cm: 9, mass_g: 50, ir_reflectivity: 0.21 },
+    ]);
+    expect(hello.robots[0]!.world.body.distance_sensor_z_cm).toBe(w.cfg.body.distance_sensor_z_cm);
+    // the robot drives into the cup and pushes it: both pages get the box where the world has it
+    const from = a.got.length;
+    expect((await tool("drive", { distance_cm: 25, speed_pct: 30 })).ok).toBe(true);
+    const moved = (m: ServerMessage) => m.t === "boxes" && m.boxes[0]!.x > 80.5;
+    const ma = await a.next<Extract<ServerMessage, { t: "boxes" }>>(moved, from);
+    await b.next(moved, 0);
+    const last = (p: typeof a) => p.got.filter((m) => m.t === "boxes").at(-1) as Extract<ServerMessage, { t: "boxes" }>;
+    await until(
+      "both pages at the world's last revision",
+      () => last(a).rev === w.obstacles_rev && last(b).rev === w.obstacles_rev,
+    );
+    expect(last(a).boxes).toEqual(w.cfg.boxes as never);
+    expect(last(b).boxes).toEqual(last(a).boxes);
+    expect(ma.boxes[0]).toMatchObject({ id: "cup", height_cm: 9, mass_g: 50 });
+    // a page moves it by id: its height and mass stay; an id no box has is refused
+    expect(await b.act({ t: "box_move", id: "r1-sim", box: "cup", x: 20, y: 20, w: 8, h: 10 })).toMatchObject({
+      ok: true,
+    });
+    expect(w.obstacle("cup")).toMatchObject({ x: 20, y: 20, height_cm: 9, mass_g: 50, ir_reflectivity: 0.21 });
+    expect(await a.act({ t: "box_remove", id: "r1-sim", box: "nope" })).toMatchObject({
+      ok: false,
+      code: "no_such_box",
+    });
+    expect(await a.act({ t: "box_remove", id: "r1-sim", box: "cup" })).toMatchObject({ ok: true });
+    await a.next((m) => m.t === "boxes" && m.boxes.length === 0, 0);
+    await b.next((m) => m.t === "boxes" && m.boxes.length === 0, 0);
   });
 
   test("restore right after load_world, before any frame, brings that world's own boxes back", async () => {
@@ -276,7 +315,7 @@ describe("the view listener", () => {
     for (const bad of [
       { t: "carry", id: "r1-sim", x: "1", y: 2, heading_deg: 0 },
       { t: "carry", id: { toString: 1 }, x: 1, y: 2, heading_deg: 0 },
-      { t: "box_remove", id: "r1-sim", index: 0.5 },
+      { t: "box_remove", id: "r1-sim", box: 0 },
       { t: "button", id: "r1-sim", button: 2.5, down: true },
     ])
       expect(await good.act(bad)).toMatchObject({ ok: false });

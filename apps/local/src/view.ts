@@ -13,6 +13,7 @@ import type { SimWorldProvider } from "../../../packages/sim-world/world-provide
 import type {
   Box,
   CallEnd,
+  Obstacle,
   CallStart,
   RefusalCode,
   RobotMeta,
@@ -80,7 +81,7 @@ function shape(w: World): WorldShape {
     name: c.name,
     width: c.width,
     height: c.height,
-    boxes: c.boxes.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h })),
+    boxes: c.boxes.map((b) => ({ ...b })),
     zones: c.zones.map((z) => ({
       x: z.x,
       y: z.y,
@@ -91,7 +92,15 @@ function shape(w: World): WorldShape {
     })),
     lines: c.lines.map((l) => ({ points: l.points.map((p) => [p[0], p[1]]), width: l.width, closed: l.closed })),
     points: c.points.map((p) => ({ ...p })),
-    body: { ...c.body },
+    body: {
+      front_cm: c.body.front_cm,
+      back_cm: c.body.back_cm,
+      half_width_cm: c.body.half_width_cm,
+      color_sensor_x_cm: c.body.color_sensor_x_cm,
+      color_spot_radius_cm: c.body.color_spot_radius_cm,
+      distance_sensor_x_cm: c.body.distance_sensor_x_cm,
+      distance_sensor_z_cm: c.body.distance_sensor_z_cm,
+    },
     start: { x: c.start.x, y: c.start.y, heading_deg: c.start.th * DEG },
     look: look !== null && typeof look === "object" && !Array.isArray(look) ? (look as Record<string, unknown>) : null,
   };
@@ -184,9 +193,9 @@ export function serveView(
   /** Actions of each page in the current second, for VIEW_ACTIONS_PER_S. */
   const rate = new Map<Socket, { second: number; n: number }>();
   /** What each twin looked like at the last tick: its world, its obstacles, its tone count. */
-  const seen = new Map<string, { world: World; boxes: string; tones: number }>();
+  const seen = new Map<string, { world: World; rev: number; tones: number }>();
   /** The obstacles each world came with, for `restore`. */
-  const original = new WeakMap<World, Box[]>();
+  const original = new WeakMap<World, Obstacle[]>();
   const calls: (CallStart | CallEnd)[] = [];
 
   let stopped = false;
@@ -221,7 +230,7 @@ export function serveView(
     remember(t.brick.world);
     seen.set(t.id, {
       world: t.brick.world,
-      boxes: JSON.stringify(t.brick.world.cfg.boxes),
+      rev: t.brick.world.obstacles_rev,
       tones: t.brick.toneCount,
     });
   }
@@ -247,14 +256,12 @@ export function serveView(
       if (w !== last.world) {
         remember(w);
         last.world = w;
-        last.boxes = JSON.stringify(w.cfg.boxes);
+        last.rev = w.obstacles_rev;
         broadcast({ t: "robot", robot: meta(t) });
-      } else {
-        const boxes = JSON.stringify(w.cfg.boxes);
-        if (boxes !== last.boxes) {
-          last.boxes = boxes;
-          broadcast({ t: "boxes", id: t.id, boxes: w.cfg.boxes.map((b) => ({ ...b })) });
-        }
+      } else if (w.obstacles_rev !== last.rev) {
+        // every change of the obstacles counts in obstacles_rev: a push, a page's action, sim.world
+        last.rev = w.obstacles_rev;
+        broadcast({ t: "boxes", id: t.id, rev: w.obstacles_rev, boxes: w.cfg.boxes.map((b) => ({ ...b })) });
       }
       const count = t.brick.toneCount;
       if (count > last.tones) {
@@ -277,11 +284,16 @@ export function serveView(
     const { brick } = t;
     brick.tick(); // the physics up to now happens where the robot was
     const w = brick.world;
-    const boxIndex = () => {
-      const i = num(msg, "index");
-      if (!Number.isInteger(i) || i < 0 || i >= w.cfg.boxes.length)
-        throw new Refused("no_such_box", `no box ${i}: this world has ${w.cfg.boxes.length}`);
-      return i;
+    /** The id of the box the action names; refused when no box of this world has it (another page took it). */
+    const boxId = () => {
+      const id = msg.box;
+      if (typeof id !== "string") throw new Refused("invalid", "box must be the id of a box");
+      if (!w.obstacle(id))
+        throw new Refused(
+          "no_such_box",
+          `no box ${JSON.stringify(id)}: this world has ${w.cfg.boxes.map((b) => b.id).join(", ") || "none"}`,
+        );
+      return id;
     };
     switch (msg.t) {
       case "carry": {
@@ -300,12 +312,12 @@ export function serveView(
         break;
       }
       case "box_remove": {
-        const id = w.cfg.boxes[boxIndex()]!.id;
+        const id = boxId();
         boxChange(() => w.removeObstacle(id));
         break;
       }
       case "box_move": {
-        const id = w.cfg.boxes[boxIndex()]!.id;
+        const id = boxId();
         const r = boxOf(msg, w);
         boxChange(() => w.moveObstacle(id, r)); // refused, the box stays where it was
         break;

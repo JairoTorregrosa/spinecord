@@ -21,7 +21,7 @@ type Drag =
   | { kind: "robot"; dx: number; dy: number; x: number; y: number; th: number; from: Pose }
   | { kind: "place"; x: number; y: number; th: number; from: Pose }
   | { kind: "box"; x0: number; y0: number; x: number; y: number }
-  | { kind: "move"; index: number; dx: number; dy: number; box: Box }
+  | { kind: "move"; id: string; dx: number; dy: number; box: Box }
   | { kind: "measure"; x0: number; y0: number; x: number; y: number };
 
 export interface HandContext {
@@ -146,11 +146,13 @@ export class Hand {
   }
 
   /**
-   * The boxes changed (another tab, or this one's last action): a box held by index may now be another one,
-   * so the hand lets go of it rather than move the wrong box.
+   * The boxes changed (a push, another tab, or this one's last action): the hand holds a box by its id, so it
+   * lets go only when that box is gone.
    */
   boxesChanged(): void {
-    if (this.drag?.kind !== "move") return;
+    const d = this.drag;
+    if (d?.kind !== "move") return;
+    if (this.c.focus()?.world.boxes.some((b) => b.id === d.id)) return;
     this.cancel();
     hud.toast("Las cajas cambiaron mientras movías una (otra pestaña): tómala otra vez");
   }
@@ -237,12 +239,12 @@ export class Hand {
     this.aim(e);
     return this.ray.intersectObject(g, true).length > 0;
   }
-  private boxUnder(e: PointerEvent): number | null {
+  private boxUnder(e: PointerEvent): string | null {
     const a = this.c.arena();
     if (!a) return null;
     this.aim(e);
     const hit = this.ray.intersectObjects(a.boxes, false)[0];
-    return hit ? (hit.object.userData.index as number) : null;
+    return hit ? (hit.object.userData.id as string) : null;
   }
 
   private down(e: PointerEvent): void {
@@ -252,11 +254,11 @@ export class Hand {
     if (!f || !pose || this.c.cams.mode === "eye") return;
     const m = this.mode;
     if (m === "remove") {
-      const i = this.boxUnder(e);
-      if (i === null) return;
+      const box = this.boxUnder(e);
+      if (box === null) return;
       this.take(e);
       this.c.cams.handBusy(false);
-      void this.c.link.request({ t: "box_remove", id: f.id, index: i }).then((r) => this.answer(r, e));
+      void this.c.link.request({ t: "box_remove", id: f.id, box }).then((r) => this.answer(r, e));
       return;
     }
     if (m === "look") {
@@ -264,12 +266,12 @@ export class Hand {
       const p = this.floorAt(e)!;
       this.drag = { kind: "robot", dx: pose.x - p.x, dy: pose.y - p.y, x: pose.x, y: pose.y, th: pose.th, from: pose };
     } else if (m === "box") {
-      const i = this.boxUnder(e);
+      const id = this.boxUnder(e);
       const p = this.floorAt(e);
       if (!p) return;
-      if (i !== null) {
-        const b = f.world.boxes[i]!;
-        this.drag = { kind: "move", index: i, dx: b.x - p.x, dy: b.y - p.y, box: { ...b } };
+      const b = id === null ? undefined : f.world.boxes.find((o) => o.id === id);
+      if (b) {
+        this.drag = { kind: "move", id: b.id, dx: b.x - p.x, dy: b.y - p.y, box: { x: b.x, y: b.y, w: b.w, h: b.h } };
       } else this.drag = { kind: "box", x0: p.x, y0: p.y, x: p.x, y: p.y };
     } else {
       const p = this.floorAt(e, m !== "carry");
@@ -350,7 +352,7 @@ export class Hand {
       const sent =
         d.kind === "box"
           ? this.c.link.request({ t: "box_add", id: f.id, ...b })
-          : this.c.link.request({ t: "box_move", id: f.id, index: d.index, ...b });
+          : this.c.link.request({ t: "box_move", id: f.id, box: d.id, ...b });
       void sent.then((r) => this.answer(r, e));
     } else {
       this.measured = Math.hypot(d.x - d.x0, d.y - d.y0) < 0.5 ? null : { x0: d.x0, y0: d.y0, x: d.x, y: d.y };

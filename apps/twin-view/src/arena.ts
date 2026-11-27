@@ -1,12 +1,13 @@
 // The world of a twin in 3D: a mat on a wooden floor with its zones (paper), lines (tape) and named points
 // (marker), a faint 10 cm grid and cm rulers along its edges to measure by; plywood walls around it and
-// cardboard boxes as obstacles. The 2D world has no heights: walls and boxes are drawn higher than the distance
-// sensor, because for the physics they are as tall as they need to be. Every texture is drawn here on a canvas.
+// cardboard boxes as obstacles. Walls, and boxes without a height, are drawn higher than the distance sensor,
+// because for the physics they are as tall as they need to be; a box with a height stands as tall as it is, and
+// one the robot can push (it has a mass) is tinted blue. Every texture is drawn here on a canvas.
 //
 // World (x right, y up, cm) to three.js: X = x, Z = -y, Y up.
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import type { Box, WorldShape } from "./messages";
+import type { Obstacle, WorldShape } from "./messages";
 
 /** Floor colours of the colour ids of contract §2.2, as sim-world draws them. */
 export const COLOR_RGB = ["#282828", "#141414", "#3478dc", "#3caa5a", "#f5cd3c", "#dc463c", "#f5f3ec", "#8c5f3c"];
@@ -15,11 +16,12 @@ export const toScene = (x: number, y: number, h = 0): THREE.Vector3 => new THREE
 
 export interface Arena {
   group: THREE.Group;
-  /** The obstacle meshes, in the order of the world's boxes. */
+  /** The obstacle meshes; each one's `userData.id` is its box's id. */
   boxes: THREE.Mesh[];
-  setBoxes(boxes: Box[]): void;
+  setBoxes(boxes: Obstacle[]): void;
   /** Highlights obstacle `i` (or none) as the one a click would take away. */
-  highlight(i: number | null): void;
+  /** Lights the box with this id (null: none). */
+  highlight(id: string | null): void;
   dispose(): void;
 }
 
@@ -286,6 +288,10 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
   boxTex.colorSpace = THREE.SRGBColorSpace;
   boxTex.anisotropy = maxAnisotropy;
   const boxMat = keep(new THREE.MeshStandardMaterial({ map: boxTex, roughness: 0.86 }));
+  // a box the robot can push (it has a mass) is lighter cardboard with a blue tint: it moves, a fixed one does not
+  const pushMat = keep(
+    new THREE.MeshStandardMaterial({ map: boxTex, color: 0x6fa8ff, emissive: 0x0a2050, roughness: 0.8 }),
+  );
   const hot = keep(
     new THREE.MeshStandardMaterial({ map: boxTex, color: 0xff9c8c, emissive: 0x501010, roughness: 0.8 }),
   );
@@ -293,24 +299,28 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
   group.add(boxGroup);
   const meshes: THREE.Mesh[] = [];
   const temp: { dispose(): void }[] = [];
-  const setBoxes = (boxes: Box[]) => {
+  const setBoxes = (boxes: Obstacle[]) => {
     for (const m of meshes) boxGroup.remove(m);
     for (const t of temp.splice(0)) t.dispose();
     meshes.length = 0;
-    boxes.forEach((b, i) => {
-      const geo = new THREE.BoxGeometry(b.w, boxH, b.h);
+    for (const b of boxes) {
+      // a box with a height stands as tall as it is; one without is taller than any sensor looks over
+      const bh = b.height_cm ?? boxH;
+      const geo = new THREE.BoxGeometry(b.w, bh, b.h);
       // faces in order +x, -x, +y, -y, +z, -z, four vertices each: the top (+y) takes the atlas's right half
       const uv = geo.attributes.uv!;
       for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) / 2 + (Math.floor(i / 4) === 2 ? 0.5 : 0));
       temp.push(geo);
-      const m = new THREE.Mesh(geo, boxMat);
-      m.position.copy(toScene(b.x + b.w / 2, b.y + b.h / 2, boxH / 2));
+      const own = b.mass_g === undefined ? boxMat : pushMat;
+      const m = new THREE.Mesh(geo, own);
+      m.position.copy(toScene(b.x + b.w / 2, b.y + b.h / 2, bh / 2));
       m.castShadow = true;
       m.receiveShadow = true;
-      m.userData.index = i;
+      m.userData.id = b.id;
+      m.userData.own = own;
       boxGroup.add(m);
       meshes.push(m);
-    });
+    }
   };
   setBoxes(w.boxes);
 
@@ -318,8 +328,8 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
     group,
     boxes: meshes,
     setBoxes,
-    highlight(i) {
-      meshes.forEach((m, j) => (m.material = j === i ? hot : boxMat));
+    highlight(id) {
+      for (const m of meshes) m.material = m.userData.id === id ? hot : (m.userData.own as THREE.Material);
     },
     dispose() {
       for (const t of temp) t.dispose();
