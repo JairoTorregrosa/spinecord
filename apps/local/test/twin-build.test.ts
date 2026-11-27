@@ -243,3 +243,19 @@ describe("refused at start, naming the field", () => {
     expect(twinOf({ ...TRACKED, profile: { ...TRACKED.profile, roles } }).ownBuild).toBe(true);
   });
 });
+
+describe("the robot-twin skill", () => {
+  const skill = join(import.meta.dir, "..", "..", "..", ".claude", "skills", "robot-twin");
+  test("its template is a robot file the server takes, and its links point at files that are there", () => {
+    const ref = readFileSync(join(skill, "reference", "robot-file.md"), "utf8");
+    const template = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(ref)![1]);
+    const t = twinOf(template);
+    expect(t.ownBuild).toBe(true);
+    expect(t.id).toBe("my-robot-sim");
+    for (const md of ["SKILL.md", join("reference", "robot-file.md")]) {
+      const text = readFileSync(join(skill, md), "utf8");
+      for (const [, link] of text.matchAll(/\]\(((?:reference\/)?[a-z-]+\.md)\)/g))
+        expect(Bun.file(join(skill, md.includes("reference") ? "reference" : "", link)).size).toBeGreaterThan(0);
+    }
+  });
+});
