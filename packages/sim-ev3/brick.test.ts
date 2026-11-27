@@ -10,9 +10,11 @@ import {
   MOTOR_TAU_MS,
   MEDIUM_MOTOR_TAU_MS,
   MEDIUM_DEG_S,
+  LARGE_STALL_NCM,
+  MEDIUM_STALL_NCM,
   drivetrainFromProfile,
 } from "./brick";
-import { World, parseWorld } from "../sim-world/world";
+import { BOX_FLOOR_FRICTION, DEFAULT_PUSH_N, World, parseWorld } from "../sim-world/world";
 import { EXAMPLES, config, quietWorld } from "../sim-world/testkit";
 import { rig, DRIVETRAIN, lagged } from "./testkit";
 import { DRIVE } from "../sim-world/testkit";
@@ -478,7 +480,7 @@ describe("the robot's geometry comes from the profile, not from the world", () =
     await wide.call(E.outputStepSync(BC, -30, 200, Math.round((Math.PI / 2) * 6 * DEG_PER_CM), true));
     wide.run(3000);
     expect((wide.world.pose.th * 180) / Math.PI).toBeCloseTo(45, 0);
-    expect(wide.world.drive).toEqual({ axle_track_cm: 24, turn_scrub: 0 });
+    expect(wide.world.drive).toMatchObject({ axle_track_cm: 24, turn_scrub: 0 });
   });
   test("forward_sign -1: positive motor rotation drives the robot backwards", async () => {
     const { call, run, world, brick } = rig(quietWorld(), { ...DRIVETRAIN, forward_sign: -1 });
@@ -636,5 +638,60 @@ describe("sensor mode switches behave like the real sensors", () => {
     expect(await read(1)).toBe(1);
     expect(await read(0)).toBe(1);
     expect(await read(1)).toBe(1);
+  });
+});
+
+describe("pushing and grip: the motors feel the load", () => {
+  /** lineOval's walls with one box 10 cm ahead of the robot's front, of sliding friction `n` newtons. */
+  const boxAhead = (n: number) =>
+    quietWorld(EXAMPLES.lineOval, {
+      boxes: [{ id: "box", x: 61, y: 20, w: 8, h: 10, mass_g: (n / (BOX_FLOOR_FRICTION * 9.81)) * 1000 }],
+    });
+  const speedB = async (call: ReturnType<typeof rig>["call"]) =>
+    E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0);
+
+  test("a heavy box slows a robot at full speed along its motors' torque line; at half speed it holds its speed", async () => {
+    const full = rig(boxAhead(4.5));
+    await full.call(E.outputTimeSync(BC, 100, 0, 3000, true));
+    full.run(700); // in contact since about 0.3 s, pushing, 20 cm short of the wall
+    expect(full.world.obstacle("box")!.x).toBeGreaterThan(61);
+    // each motor turns against 4.5 N / 2 on a 2.8 cm wheel: 6.3 N·cm of LARGE_STALL_NCM's 40
+    expect(Math.abs((await speedB(full.call)) - 100 * (1 - (2.25 * 2.8) / LARGE_STALL_NCM))).toBeLessThanOrEqual(1);
+    const half = rig(boxAhead(4.5));
+    await half.call(E.outputTimeSync(BC, 50, 0, 3000, true));
+    half.run(1500);
+    expect(half.world.obstacle("box")!.x).toBeGreaterThan(61);
+    expect(await speedB(half.call)).toBe(50);
+  });
+  test("a tread that grips less than its motors push slips at a wall: the wheels keep turning, the robot stays", async () => {
+    const plastic = rig(quietWorld(), { ...DRIVETRAIN, mass_g: 1000, grip: 0.25 });
+    await plastic.call(E.outputTimeSync(BC, 50, 0, 5000, true));
+    plastic.run(4000); // at the wall at x 120 since about 2.8 s
+    const [x, tacho] = [plastic.world.pose.x, plastic.brick.tacho("B")];
+    expect(x + 8).toBeCloseTo(120, 2);
+    plastic.run(500);
+    expect(plastic.world.pose.x).toBeCloseTo(x, 6);
+    expect(plastic.brick.tacho("B") - tacho).toBeGreaterThan(0.95 * 0.5 * 0.5 * LARGE_DEG_S);
+    expect(plastic.brick.peek().motors[1]!.blocked).toBe(false);
+    // a build that does not say how it grips stalls there, as before
+    const told = rig(quietWorld());
+    await told.call(E.outputTimeSync(BC, 50, 0, 5000, true));
+    told.run(4000);
+    const t = told.brick.tacho("B");
+    told.run(500);
+    expect(told.brick.tacho("B")).toBe(t);
+    expect(told.brick.peek().motors[1]!.blocked).toBe(true);
+  });
+  test("what the robot can push is what its tread grips with, never more than its motors turn against", async () => {
+    const heavy = rig(quietWorld(), { ...DRIVETRAIN, mass_g: 1200, grip: 1.2 });
+    expect(heavy.world.drive!.push_n).toBeCloseTo(1.2 * 1.2 * 9.81, 6);
+    // medium motors on small wheels: their torque is the limit, and they stall at a wall rather than slip
+    const medium = rig(
+      quietWorld(EXAMPLES.lineOval, { extensions: { ev3: { motors: { B: "medium", C: "medium" } } } }),
+      { ...DRIVETRAIN, mass_g: 1200, grip: 1.2 },
+    );
+    expect(medium.world.drive!.push_n).toBeCloseTo((2 * MEDIUM_STALL_NCM) / 2.8, 6);
+    expect(rig(quietWorld()).world.drive!.push_n).toBeCloseTo(DEFAULT_PUSH_N, 9);
+    expect(() => rig(quietWorld(), { ...DRIVETRAIN, mass_g: 1000 })).toThrow(/mass_g and grip both > 0, or neither/);
   });
 });

@@ -373,7 +373,7 @@ test("the page's preview of where the robot fits agrees with the world's own rul
     ],
   };
   const w = new World(cfg);
-  const shape = { width: cfg.width, height: cfg.height, body: cfg.body } as Parameters<typeof fit>[0];
+  const shape = { width: cfg.width, height: cfg.height, body: cfg.body } as unknown as Parameters<typeof fit>[0];
   let seed = 7;
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   let hits = 0;

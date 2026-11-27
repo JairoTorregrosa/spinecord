@@ -11,7 +11,7 @@ import { parseWorld, type BodyShape } from "../../../packages/sim-world/world";
 /** The top-level keys of a robot file; anything else is a typo that would otherwise go unnoticed. */
 const FILE_KEYS = ["description", "hardware", "profile", "pair", "twin"];
 const TWIN_KEYS = ["body", "ev3", "view", "drive", "unconfirmed"];
-const DRIVE_KEYS = ["wheel_diameter_cm", "axle_track_cm", "turn_scrub"] as const;
+const DRIVE_KEYS = ["wheel_diameter_cm", "axle_track_cm", "turn_scrub", "mass_g", "grip"] as const;
 
 /** What of a build nobody confirmed (CONTRACT §3, `twin.unconfirmed`). The ones that change how the robot moves first. */
 export const MOVES = [
@@ -98,12 +98,21 @@ function readDrive(v: unknown, where: string, hasDrivetrain: boolean): PhysicalD
     if (!(DRIVE_KEYS as readonly string[]).includes(k))
       throw new Error(`${at}.${k} is not a part of twin.drive (${DRIVE_KEYS.join(", ")})`);
     const scrub = k === "turn_scrub";
+    const what = scrub
+      ? "a number from 0 up to (not including) 1, the share of a turn lost"
+      : k === "mass_g"
+        ? "a number > 0 (what the robot weighs, in grams)"
+        : k === "grip"
+          ? "a number > 0 (the friction coefficient of its tread on the floor)"
+          : "a number > 0 (cm)";
     if (typeof x !== "number" || !Number.isFinite(x) || (scrub ? !(x >= 0 && x < 1) : !(x > 0)))
-      throw new Error(
-        `${at}.${k} must be ${scrub ? "a number from 0 up to (not including) 1, the share of a turn lost" : "a number > 0 (cm)"}, got ${JSON.stringify(x)}`,
-      );
+      throw new Error(`${at}.${k} must be ${what}, got ${JSON.stringify(x)}`);
     out[k as (typeof DRIVE_KEYS)[number]] = x;
   }
+  if ((out.mass_g === undefined) !== (out.grip === undefined))
+    throw new Error(
+      `${at}: mass_g and grip go together (the tread's traction is grip x weight): give both, or neither for the default push and no slip`,
+    );
   return out;
 }
 

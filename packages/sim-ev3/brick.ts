@@ -15,7 +15,7 @@ import {
   readParam,
 } from "../driver-ev3/encode";
 import type { Transport } from "../driver-ev3/transport";
-import { World, DT_MS, COLOR_RGB, checkDrive } from "../sim-world/world";
+import { World, DT_MS, COLOR_RGB, DEFAULT_PUSH_N, checkDrive } from "../sim-world/world";
 import type { WorldHost } from "../sim-world/world-provider";
 import type { RobotProfile } from "../protocol/types";
 import {
@@ -45,6 +45,16 @@ export function providerRate(ports: BrickPorts, pair?: { left: MotorPort; right:
   const types = pair ? [ports.motors[pair.left], ports.motors[pair.right]] : Object.values(ports.motors);
   return types.length > 0 && types.every((t) => t === "medium") ? MEDIUM_DEG_S : LARGE_DEG_S;
 }
+/**
+ * Stall torque, N·cm: the most a motor turns against, at zero speed and full power. LEGO gives 40 for the large motor
+ * and 12 for the medium (https://robolab.inf.tu-dresden.de/hardware/motors; 0.4 and 0.12 N·m); one measurement found
+ * 43 for the large (https://www.eurobricks.com/forum/forums/topic/87670-ev3-large-and-medium-motors-comparison).
+ * Between no load and that, the speed a motor can reach falls in a straight line (a DC motor's torque-speed line).
+ */
+export const LARGE_STALL_NCM = 40;
+export const MEDIUM_STALL_NCM = 12;
+/** Standard gravity, m/s2. */
+const G = 9.81;
 /** The fastest loop rate the twin declares: a tick is an exchange with this emulator in the same process. */
 export const SIM_BRICK_LOOP_RATE_HZ = 100;
 /**
@@ -129,12 +139,22 @@ export interface BrickDrivetrain {
   forward_sign: 1 | -1;
   /** Share of a turn a skid-steer base loses to its treads scrubbing sideways (World DriveGeometry). Default 0. */
   turn_scrub?: number;
+  /**
+   * What the robot weighs (g) and the friction coefficient of its tread on the floor, both or neither. With them
+   * the drive pushes at most grip x weight, and when that is less than its motors can turn against, its wheels slip
+   * and keep turning against a wall instead of stalling. Without them it pushes DEFAULT_PUSH_N and stalls at walls.
+   */
+  mass_g?: number;
+  grip?: number;
 }
 /** What a twin's build says the drivetrain physically is (a robot file's `twin.drive`); each absent field is the profile's. */
 export interface PhysicalDrive {
   wheel_diameter_cm?: number;
   axle_track_cm?: number;
   turn_scrub?: number;
+  /** What the robot weighs (g) and how its tread grips the floor (friction coefficient): both or neither. */
+  mass_g?: number;
+  grip?: number;
 }
 /**
  * Builds the brick's drivetrain from a robot profile plus the ports of its motor pair (the same `pair` the EV3
@@ -159,6 +179,8 @@ export function drivetrainFromProfile(
     axle_track_cm: physical.axle_track_cm ?? d.axle_track_cm,
     forward_sign: d.forward_sign,
     turn_scrub: physical.turn_scrub ?? 0,
+    ...(physical.mass_g === undefined ? {} : { mass_g: physical.mass_g }),
+    ...(physical.grip === undefined ? {} : { grip: physical.grip }),
   };
 }
 /** System reply with error: [len][counter][0x05][command][status]. */
@@ -290,6 +312,12 @@ export class SimBrick implements Transport, WorldHost {
   private last: number;
   private inFlight = false;
   private bumps = 0;
+  /** The drive's wheels slip at a wall (its tread's traction is below what its motors turn against): see BrickDrivetrain. */
+  private slips = false;
+  /** Traction of the tread (N), or null when the build does not say. */
+  private tractionN: number | null = null;
+  /** Torque (N·cm) the last physics step put on each drive motor: a box it slides, or a tread slipping at a wall. */
+  private loadNcm = 0;
   private touchWas = false;
   private hasTouch = false;
 
@@ -316,6 +344,10 @@ export class SimBrick implements Transport, WorldHost {
       if (!"ABCD".includes(d.left) || !"ABCD".includes(d.right) || d.left === d.right)
         throw new Error(`SimBrick: drivetrain needs two different motor ports A-D, got ${d.left} and ${d.right}`);
       checkDrive({ axle_track_cm: d.axle_track_cm, turn_scrub: d.turn_scrub ?? 0 });
+      if ((d.mass_g === undefined) !== (d.grip === undefined) || !((d.mass_g ?? 1) > 0 && (d.grip ?? 1) > 0))
+        throw new Error(
+          `SimBrick: drivetrain needs mass_g and grip both > 0, or neither, got ${d.mass_g} and ${d.grip}`,
+        );
     }
     this.drivetrain = d ? { ...d } : null;
     this.world = opts.world;
@@ -345,12 +377,26 @@ export class SimBrick implements Transport, WorldHost {
     return ports;
   }
 
+  private stallNcm(type: MotorType): number {
+    return type === "medium" ? MEDIUM_STALL_NCM : LARGE_STALL_NCM;
+  }
   private plug(ports: BrickPorts): void {
     this.ports = ports;
     // The physics gets the axle track and the scrub of the physical drivetrain; without one the body cannot roll.
-    this.world.drive = this.drivetrain
-      ? { axle_track_cm: this.drivetrain.axle_track_cm, turn_scrub: this.drivetrain.turn_scrub ?? 0 }
-      : null;
+    const d = this.drivetrain;
+    if (d) {
+      // what the drive pushes: what its tread grips with, and never more than its two motors turn against
+      const stall = Math.min(...[d.left, d.right].map((p) => this.stallNcm(ports.motors[p] ?? "large")));
+      const motorN = (2 * stall) / (d.wheel_diameter_cm / 2);
+      this.tractionN = d.mass_g !== undefined && d.grip !== undefined ? (d.grip * d.mass_g * G) / 1000 : null;
+      this.slips = this.tractionN !== null && this.tractionN < motorN;
+      this.world.drive = {
+        axle_track_cm: d.axle_track_cm,
+        turn_scrub: d.turn_scrub ?? 0,
+        push_n: Math.min(this.tractionN ?? DEFAULT_PUSH_N, motorN),
+      };
+    } else this.world.drive = null;
+    this.loadNcm = 0;
     this.motors = (["A", "B", "C", "D"] as MotorPort[]).map((port) => {
       const plugged = ports.motors[port] ?? null;
       return {
@@ -509,7 +555,13 @@ export class SimBrick implements Transport, WorldHost {
       }
       // A time bound can end the command inside this step: the rest of the step is its brake or run-down.
       const active = m.until !== null ? Math.max(0, Math.min(h, m.until - at)) : h;
-      const run = motorStep(m.vel, { run: (m.speedPct / 100) * m.rate }, active, m.rate, m.tau);
+      // a load on a drive wheel lowers the speed its motor can reach (its torque-speed line), whatever it was told
+      let vt = (m.speedPct / 100) * m.rate;
+      if ((i === li || i === ri) && this.loadNcm > 0) {
+        const cap = m.rate * Math.max(0, 1 - this.loadNcm / this.stallNcm(m.plugged ?? "large"));
+        vt = Math.sign(vt) * Math.min(Math.abs(vt), cap);
+      }
+      const run = motorStep(m.vel, { run: vt }, active, m.rate, m.tau);
       let d = run.d,
         v = run.v;
       if (m.until !== null && at + h >= m.until - 1e-9) {
@@ -532,8 +584,12 @@ export class SimBrick implements Transport, WorldHost {
     const blocked = dt
       ? this.world.stepWheels(want[li]! * cmPerDeg, want[ri]! * cmPerDeg, h)
       : (this.world.wait(h), false);
+    // A tread that grips less than its motors push slips at a wall: the wheels keep turning, the body stays.
+    const slipping = blocked && this.slips;
+    const r = dt ? dt.wheel_diameter_cm / 2 : 0;
+    this.loadNcm = ((slipping ? this.tractionN! : blocked ? 0 : this.world.last_push_n) / 2) * r;
     this.motors.forEach((m, i) => {
-      const held = (i === li || i === ri) && blocked;
+      const held = (i === li || i === ri) && blocked && !slipping;
       // A drive wheel held by a wall stops: its tacho counts up to where the body came to rest, then stays.
       m.pos += held ? want[i]! * this.world.last_step_fraction : want[i]!;
       m.vel = held ? 0 : vEnd[i]!;

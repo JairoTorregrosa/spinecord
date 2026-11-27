@@ -7,22 +7,29 @@
   },
   "obstacles": [
     {
+      "id": "mueble",
       "x": 120,
       "y": 60,
       "w": 22,
-      "h": 30
+      "h": 30,
+      "height_cm": 45
     },
     {
+      "id": "libros",
       "x": 60,
       "y": 118,
       "w": 40,
-      "h": 14
+      "h": 14,
+      "height_cm": 8
     },
     {
+      "id": "caja",
       "x": 150,
       "y": 10,
       "w": 18,
-      "h": 18
+      "h": 18,
+      "height_cm": 18,
+      "mass_g": 300
     }
   ],
   "zones": [

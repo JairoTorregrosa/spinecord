@@ -40,9 +40,33 @@ export const COLOR_RGB: readonly (readonly [number, number, number])[] = [
 /** A box on the floor. `id` names it for as long as it exists: a page and the event log refer to it by that. */
 export interface Obstacle extends Rect {
   id: string;
+  /**
+   * How tall it stands (cm). Absent: higher than any sensor looks over. A sensor sees it only where its beam comes
+   * down to that height; the body is stopped by a box of any height (wheels and tracks meet it at the floor).
+   */
+  height_cm?: number;
+  /**
+   * Its mass (g), for a box the robot can push across the floor (a cardboard box, a cup). Absent: fixed in place.
+   * It slides when the robot pushes harder than its friction on the floor (BOX_FLOOR_FRICTION x weight).
+   */
+  mass_g?: number;
 }
 /** A box as it is handed to the world: without `id` the world gives it the next free `box<n>`. */
-export type ObstacleInput = Rect & { id?: string };
+export type ObstacleInput = Rect & { id?: string; height_cm?: number; mass_g?: number };
+/** The parts of an obstacle the world keeps (also what a world file may say of one). */
+const OBSTACLE_KEYS = ["id", "x", "y", "w", "h", "height_cm", "mass_g"] as const;
+/** `b` with only the fields of an obstacle, the optional ones only when present. */
+function obstacleOf(b: ObstacleInput, id: string): Obstacle {
+  return {
+    id,
+    x: b.x,
+    y: b.y,
+    w: b.w,
+    h: b.h,
+    ...(b.height_cm === undefined ? {} : { height_cm: b.height_cm }),
+    ...(b.mass_g === undefined ? {} : { mass_g: b.mass_g }),
+  };
+}
 /** Why the world refused to change its obstacles (it then changed nothing). */
 export type ObstacleErrorCode = "invalid" | "outside" | "on_robot" | "no_such_box" | "id_taken";
 export class ObstacleError extends Error {
@@ -84,6 +108,14 @@ export interface BodyShape {
   color_spot_radius_cm: number;
   /** Distance sensor (ultrasonic or infrared): cm ahead of the axle, looking forward. */
   distance_sensor_x_cm: number;
+  /**
+   * How high the distance sensor is mounted (cm above the floor, the centre of its beam). It sees a box only where its
+   * beam, spreading up and down as it does sideways, comes down to the box's height: mounted at 20 cm it looks over a
+   * 10 cm box until about 47 cm away. Physics, not the look (`extensions.view.sensors.<port>.z_cm` only draws it).
+   */
+  distance_sensor_z_cm: number;
+  /** How high above the floor the lowest part of the bumper on the touch sensor is: a box lower than that passes under it. */
+  touch_z_cm: number;
 }
 /**
  * The drivetrain as it physically is: what the body really does, which may differ from what the robot profile
@@ -97,6 +129,11 @@ export interface DriveGeometry {
    * A property of the robot's tracks on its floor, so it travels with the robot from room to room.
    */
   turn_scrub?: number;
+  /**
+   * The most the drive pushes a box (N): it slides a box whose friction is no more than this, and stalls against a
+   * heavier one as against a wall. Default DEFAULT_PUSH_N.
+   */
+  push_n?: number;
 }
 
 export interface NoiseConfig {
@@ -147,6 +184,10 @@ export const DEFAULT_BODY: BodyShape = {
   color_sensor_x_cm: 7,
   color_spot_radius_cm: 1,
   distance_sensor_x_cm: 8,
+  // a sensor nobody measured: about where the EV3 educator base carries it; walls and boxes without a height are
+  // higher than any mount, so in a world of those it changes nothing
+  distance_sensor_z_cm: 6,
+  touch_z_cm: 0,
 };
 
 export const DEFAULT_NOISE: NoiseConfig = {
@@ -224,6 +265,8 @@ function ultrasonicReading(d: number): number {
   if (!(d <= ULTRASONIC_MAX_CM)) return ULTRASONIC_NO_ECHO_CM;
   return Math.round(Math.max(ULTRASONIC_MIN_CM, d) * 10) / 10;
 }
+/** How far ahead of the front the bumper of a touch sensor feels a wall or a box. */
+const TOUCH_REACH_CM = 0.7;
 /** Halvings of a blocked step: the body comes to rest within 2^-12 of a step's travel from the obstacle. */
 const CONTACT_BISECTIONS = 12;
 /** The trip meter follows a line only while the axle centre is within this distance of it. */
@@ -378,11 +421,18 @@ export function parseWorld(json: unknown): WorldConfig {
       arr(root.obstacles, "obstacles").map((b, i) => {
         const o = obj(b, `obstacles[${i}]`);
         for (const k of Object.keys(o))
-          if (!["x", "y", "w", "h", "id"].includes(k))
-            fail(`obstacles[${i}].${k}`, "is not a known field (x, y, w, h, id)");
+          if (!(OBSTACLE_KEYS as readonly string[]).includes(k))
+            fail(`obstacles[${i}].${k}`, `is not a known field (${OBSTACLE_KEYS.join(", ")})`);
         if (o.id !== undefined && (typeof o.id !== "string" || !OBSTACLE_ID.test(o.id)))
           fail(`obstacles[${i}].id`, `must be 1 to 32 letters, digits, _ or -, got ${JSON.stringify(o.id)}`);
-        return { ...rect(b, `obstacles[${i}]`), ...(o.id === undefined ? {} : { id: o.id as string }) };
+        const more = (k: "height_cm" | "mass_g") =>
+          o[k] === undefined ? {} : { [k]: num(o[k], `obstacles[${i}].${k}`, Number.MIN_VALUE) };
+        return {
+          ...rect(b, `obstacles[${i}]`),
+          ...(o.id === undefined ? {} : { id: o.id as string }),
+          ...more("height_cm"),
+          ...more("mass_g"),
+        };
       }),
       (i, why) => fail(`obstacles[${i}].id`, why),
     ),
@@ -435,9 +485,101 @@ export function parseWorld(json: unknown): WorldConfig {
   };
 }
 
+/** Standard gravity, m/s2. */
+const G = 9.81;
+/**
+ * Friction of a box on the floor, static: it slides once pushed with this times its weight. No measurement of
+ * cardboard on a classroom floor found; tables give 0.25-0.5 for wood on wood
+ * (https://www.engineeringtoolbox.com/friction-coefficients-d_778.html) and a textbook cardboard box of books on
+ * concrete slides at 0.19. 0.4 is near the top: a box that slides on the twin slides on the floor too.
+ */
+export const BOX_FLOOR_FRICTION = 0.4;
+/**
+ * The most a robot pushes (N) when its build does not say what it weighs and how its tread grips (twin.drive):
+ * about 1 kg of robot (no published weight for an EV3 base; a large motor is 76 g) times a grip of 0.5, between the
+ * plastic EV3 track links (0.25) and LEGO rubber tyres (1.0-1.2) that Brick Experiment Channel measured on wood
+ * (https://www.youtube.com/watch?v=cDpcdVf39kA). It pushes a box of up to about 1.25 kg of floor friction 0.4.
+ */
+export const DEFAULT_PUSH_N = 1 * 0.5 * G;
+/** The force (N) that slides box `b`, or null for a box that is fixed in place. */
+export function slideForceN(b: Obstacle): number | null {
+  return b.mass_g === undefined ? null : (BOX_FLOOR_FRICTION * b.mass_g * G) / 1000;
+}
+/** Gap (cm) a pushed box is left at from the body, so that the next step starts free of it. */
+const PUSH_GAP_CM = 1e-6;
+/** Whether a convex quadrilateral (corners in order) and a box meet, touching included (separating axes). */
+function polygonsMeet(q: Vec[], b: Rect): boolean {
+  const bc: Vec[] = [
+    [b.x, b.y],
+    [b.x + b.w, b.y],
+    [b.x + b.w, b.y + b.h],
+    [b.x, b.y + b.h],
+  ];
+  const axes: Vec[] = [
+    [1, 0],
+    [0, 1],
+    ...q.map((a, i) => {
+      const n = q[(i + 1) % q.length]!;
+      return [a[1] - n[1], n[0] - a[0]] as Vec;
+    }),
+  ];
+  for (const [nx, ny] of axes) {
+    const a = q.map(([x, y]) => x * nx + y * ny),
+      o = bc.map(([x, y]) => x * nx + y * ny);
+    if (Math.max(...a) < Math.min(...o) || Math.max(...o) < Math.min(...a)) return false;
+  }
+  return true;
+}
+/** Whether two boxes overlap by more than touching. */
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w - 1e-9 && b.x < a.x + a.w - 1e-9 && a.y < b.y + b.h - 1e-9 && b.y < a.y + a.h - 1e-9;
+}
+/**
+ * The least translation of box `b` that clears the footprint at `p` (corners `cs`): of the four separating axes
+ * (the world's x and y, the body's forward and sideways), the one with the smallest overlap, away from the body.
+ */
+function clearOf(b: Rect, p: Pose, cs: Vec[], g: BodyShape): Vec {
+  const bc: Vec[] = [
+    [b.x, b.y],
+    [b.x + b.w, b.y],
+    [b.x + b.w, b.y + b.h],
+    [b.x, b.y + b.h],
+  ];
+  const c = Math.cos(p.th),
+    s = Math.sin(p.th);
+  const mid: Vec = [b.x + b.w / 2, b.y + b.h / 2];
+  let best: Vec = [0, 0],
+    least = Infinity;
+  for (const [nx, ny] of [
+    [1, 0],
+    [0, 1],
+    [c, s],
+    [-s, c],
+  ] as Vec[]) {
+    const proj = (q: Vec) => q[0] * nx + q[1] * ny;
+    const a = cs.map(proj),
+      o = bc.map(proj);
+    const amin = Math.min(...a),
+      amax = Math.max(...a),
+      omin = Math.min(...o),
+      omax = Math.max(...o);
+    // away from the body's centre (its centre of area, not the axle: front and back differ)
+    const centre = proj([p.x + ((g.front_cm - g.back_cm) / 2) * c, p.y + ((g.front_cm - g.back_cm) / 2) * s]);
+    const sign = proj(mid) >= centre ? 1 : -1;
+    const need = sign > 0 ? amax - omin : omax - amin;
+    if (need < least) {
+      least = need;
+      best = [nx * sign * (need + PUSH_GAP_CM), ny * sign * (need + PUSH_GAP_CM)];
+    }
+  }
+  return best;
+}
+
 /** Fails loud on a drivetrain the physics cannot roll. */
 export function checkDrive(d: DriveGeometry): void {
   if (!(d.axle_track_cm > 0)) throw new Error(`world: drive.axle_track_cm must be > 0, got ${d.axle_track_cm}`);
+  if (d.push_n !== undefined && !(d.push_n >= 0))
+    throw new Error(`world: drive.push_n must be a number >= 0, got ${d.push_n}`);
   const s = d.turn_scrub ?? 0;
   if (!(s >= 0 && s < 1))
     throw new Error(`world: drive.turn_scrub must be 0 or more and below 1 (the share of a turn lost), got ${s}`);
@@ -453,12 +595,12 @@ function withIds(list: readonly ObstacleInput[], fail: (i: number, why: string) 
   });
   let n = 0;
   return list.map((b) => {
-    if (b.id !== undefined) return { id: b.id, x: b.x, y: b.y, w: b.w, h: b.h };
+    if (b.id !== undefined) return obstacleOf(b, b.id);
     let id: string;
     do id = `box${++n}`;
     while (taken.has(id));
     taken.add(id);
-    return { id, x: b.x, y: b.y, w: b.w, h: b.h };
+    return obstacleOf(b, id);
   });
 }
 
@@ -494,6 +636,8 @@ export class World {
   t_ms = 0;
   /** True if the last physics step was blocked by a wall or obstacle. */
   last_stalled = false;
+  /** Force (N) the drive spent in the last physics step sliding the boxes it pushed: 0 when it pushed none. */
+  last_push_n = 0;
   /** Fraction (0..1) of its wheel travel the last physics step did: below 1 when the body came to rest against something. */
   last_step_fraction = 1;
   /** Real turning rate during the last physics step (deg/s, counter-clockwise-positive). */
@@ -678,7 +822,10 @@ export class World {
     const { width, height } = this.cfg;
     if (b.x < 0 || b.y < 0 || b.x + b.w > width || b.y + b.h > height)
       throw new ObstacleError("outside", `${op}: a box lies wholly inside the arena (0..${width} x 0..${height} cm)`);
-    const out: Obstacle = { id: b.id, x: b.x, y: b.y, w: b.w, h: b.h };
+    for (const k of ["height_cm", "mass_g"] as const)
+      if (b[k] !== undefined && !(Number.isFinite(b[k]) && b[k] > 0))
+        throw new ObstacleError("invalid", `${op}: ${k} must be a finite number > 0, got ${JSON.stringify(b[k])}`);
+    const out = obstacleOf(b, b.id);
     if (robot && this.boxCollides(out, this.pose))
       throw new ObstacleError("on_robot", `${op}: the box would overlap the robot; set it down somewhere free`);
     return out;
@@ -876,28 +1023,70 @@ export class World {
       return { pose: { x, y, th }, d, th: turned, wheels };
     };
     let f = 1,
-      end = at(1);
-    const blocked = this.collides(end.pose);
+      end = at(1),
+      push = this.pushTo(end.pose);
+    const blocked = push === null;
     if (blocked) {
-      // Bisect to the last free fraction: the body stops against the obstacle, not up to a step short of it.
+      // Bisect to the last free fraction: the body stops against the obstacle (or a box it pushes stops against
+      // one), not up to a step short of it. Fraction 0 is where the body already is: free by construction.
       let lo = 0,
         hi = 1;
       for (let i = 0; i < CONTACT_BISECTIONS; i++) {
         const m = (lo + hi) / 2;
-        if (this.collides(at(m).pose)) hi = m;
+        if (this.pushTo(at(m).pose) === null) hi = m;
         else lo = m;
       }
       f = lo;
       end = at(lo);
+      push = lo > 0 ? this.pushTo(end.pose) : { boxes: null, force_n: 0 };
     }
     this.last_step_fraction = f;
     this.pose = end.pose;
     this.last_stalled = blocked;
+    this.last_push_n = push?.force_n ?? 0;
+    if (push?.boxes) this.place(push.boxes);
     this.rate_deg_s = dt_ms > 0 ? ((end.th * 180) / Math.PI / dt_ms) * 1000 : 0;
     // A spin in place only wobbles the axle centre (wheel noise): that is not travel.
     if (Math.abs(end.d) > 0.1 * end.wheels) this.odometer_cm += Math.abs(end.d);
     if (this.segs.length > 0) this.followLine();
     return blocked;
+  }
+
+  /**
+   * Where the boxes go if the body moves to `p`: null when it cannot (a wall, a fixed box, a box too heavy to push, or
+   * a pushed box that would meet a wall or another box), else the new list (null if nothing moves) and the force the
+   * drive spends sliding them. A pushed box moves the least way that clears the body (the separating axis of the
+   * smallest overlap), quasi-statically: a light box on a floor stops the instant nothing pushes it (sliding
+   * friction stops a box at 20 cm/s in about 5 ms), so it carries no speed of its own. It translates and does not
+   * turn: an off-centre push slides it straight instead of rotating it.
+   */
+  private pushTo(p: Pose): { boxes: Obstacle[] | null; force_n: number } | null {
+    const { width, height, boxes } = this.cfg;
+    const cs = this.corners(p);
+    for (const [x, y] of cs) if (x < 0 || x > width || y < 0 || y > height) return null;
+    const limit = this.drive?.push_n ?? DEFAULT_PUSH_N;
+    let next: Obstacle[] | null = null,
+      force = 0;
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i]!;
+      if (!this.boxCollides(b, p, cs)) continue;
+      const resist = slideForceN(b);
+      if (resist === null || resist > limit) return null;
+      const [dx, dy] = clearOf(b, p, cs, this.cfg.body);
+      const moved = { ...b, x: b.x + dx, y: b.y + dy };
+      if (moved.x < 0 || moved.y < 0 || moved.x + moved.w > width || moved.y + moved.h > height) return null;
+      (next ??= [...boxes])[i] = moved;
+      force += resist;
+    }
+    if (!next) return { boxes: null, force_n: 0 };
+    // a pushed box stops against any box it did not already overlap (boxes stacked by hand may be dragged apart)
+    for (let i = 0; i < next.length; i++) {
+      if (next[i] === boxes[i]) continue;
+      for (let j = 0; j < next.length; j++)
+        if (j !== i && overlaps(next[i]!, next[j]!) && !overlaps(boxes[i]!, boxes[j]!)) return null;
+      if (this.boxCollides(next[i]!, p, cs)) return null; // two pushes that undo each other
+    }
+    return { boxes: next, force_n: force };
   }
 
   /** The slices of motion noise that [t0, t0 + dt] of world time spans: each one's share of the time and wheel factors. */
@@ -1044,16 +1233,21 @@ export class World {
     return this.floorColorAt(sx, sy);
   }
 
-  /** True distance (no noise, no clamp) of one ray from the distance sensor to a wall or obstacle. */
-  rayDistance(p: Pose = this.pose, offset_rad = 0): number {
-    return this.rayHit(p, offset_rad).d;
+  /**
+   * True distance (no noise, no clamp) of one ray from the distance sensor to a wall or obstacle it sees; `vHalfRad`
+   * as rayHit (Math.PI / 2 sees every box, whatever its height: a camera's view).
+   */
+  rayDistance(p: Pose = this.pose, offset_rad = 0, vHalfRad = (CONE_HALF_DEG * Math.PI) / 180): number {
+    return this.rayHit(p, offset_rad, vHalfRad).d;
   }
   /**
    * One ray from the distance sensor: how far it goes (cm, no noise, no clamp) and the cosine of the angle between
    * it and the normal of the surface it hits (1 = square on).
    */
-  rayHit(p: Pose = this.pose, offset_rad = 0): { d: number; cos: number } {
+  rayHit(p: Pose = this.pose, offset_rad = 0, vHalfRad = (CONE_HALF_DEG * Math.PI) / 180): { d: number; cos: number } {
     const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
+    const z = this.cfg.body.distance_sensor_z_cm,
+      spread = vHalfRad >= Math.PI / 2 ? Infinity : Math.tan(vHalfRad);
     const dx = Math.cos(p.th + offset_rad),
       dy = Math.sin(p.th + offset_rad);
     const { width, height, boxes } = this.cfg;
@@ -1103,7 +1297,12 @@ export class World {
           break;
         }
       }
-      if (hit) take(t0, c0);
+      if (!hit) continue;
+      const below = b.height_cm === undefined ? 0 : z - b.height_cm;
+      if (below <= 0) take(t0, c0);
+      // a box lower than the sensor: seen only once the beam's lower edge comes down to its top, and then where the
+      // beam meets its top edge, slanted down (the slant counts against the echo as a sideways one does)
+      else if (below <= t0 * spread) take(Math.hypot(t0, below), c0 * Math.cos(Math.atan2(below, t0)));
     }
     return { d: best, cos };
   }
@@ -1146,6 +1345,8 @@ export class World {
       y <= 0 ||
       y >= height ||
       boxes.some((b) => b !== skip && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+    const z = this.cfg.body.distance_sensor_z_cm,
+      spread = Math.tan(half);
     for (const b of boxes)
       for (const [x, y] of [
         [b.x, b.y],
@@ -1154,7 +1355,8 @@ export class World {
         [b.x + b.w, b.y + b.h],
       ] as Vec[])
         // a corner on a wall or in another box is no edge: the surfaces meet there flush or hollow
-        if (!inside(x, y, b)) look(x, y, ULTRASONIC_EDGE_MAX_CM);
+        if (!inside(x, y, b) && !(b.height_cm !== undefined && z - b.height_cm > Math.hypot(x - ox, y - oy) * spread))
+          look(x, y, ULTRASONIC_EDGE_MAX_CM);
     return best;
   }
   /** What the ultrasonic sensor reads without noise (a display): 3..250 cm, 255 with no echo in range. */
@@ -1185,7 +1387,7 @@ export class World {
       const u = (2 * i) / (IR_RAYS - 1) - 1,
         off = (u * IR_CONE_HALF_DEG * Math.PI) / 180,
         w = Math.cos((u * Math.PI) / 2) ** 2;
-      const h = this.rayHit(this.pose, off),
+      const h = this.rayHit(this.pose, off, (IR_CONE_HALF_DEG * Math.PI) / 180),
         d = Math.max(h.d, 0.1);
       sum += (w * h.cos) / (d * d);
       full += w * Math.cos(off) ** 3; // a square wall at distance 1
@@ -1199,10 +1401,25 @@ export class World {
     return Math.round(Math.min(100, Math.max(0, v)));
   }
 
-  /** Front bumper: 1 if a wall or obstacle is less than 0.7 cm ahead. */
+  /**
+   * Front bumper: 1 if a wall, or a box at least as tall as the bumper's lowest part (body.touch_z_cm), is less than
+   * TOUCH_REACH_CM ahead of the front, across the body's width. A wall along the robot's side does not press it.
+   */
   senseTouch(): 0 | 1 {
-    const p = this.pose;
-    return this.collides({ x: p.x + 0.7 * Math.cos(p.th), y: p.y + 0.7 * Math.sin(p.th), th: p.th }) ? 1 : 0;
+    const p = this.pose,
+      g = this.cfg.body,
+      c = Math.cos(p.th),
+      s = Math.sin(p.th);
+    const strip: Vec[] = [
+      [g.front_cm, g.half_width_cm],
+      [g.front_cm + TOUCH_REACH_CM, g.half_width_cm],
+      [g.front_cm + TOUCH_REACH_CM, -g.half_width_cm],
+      [g.front_cm, -g.half_width_cm],
+    ].map(([lx, ly]) => [p.x + lx! * c - ly! * s, p.y + lx! * s + ly! * c] as Vec);
+    const { width, height, boxes } = this.cfg;
+    if (strip.some(([x, y]) => x < 0 || x > width || y < 0 || y > height)) return 1;
+    const tall = (b: Obstacle) => b.height_cm === undefined || b.height_cm > g.touch_z_cm;
+    return boxes.some((b) => tall(b) && polygonsMeet(strip, b)) ? 1 : 0;
   }
 
   /** Accumulated gyro angle in whole degrees since the last reset, counter-clockwise-positive. */

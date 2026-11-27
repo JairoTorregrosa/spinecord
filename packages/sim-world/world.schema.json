@@ -233,6 +233,16 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]{1,32}$",
           "description": "Names the box in events and in a page's messages; unique within the world."
+        },
+        "height_cm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "How tall it stands. Absent: higher than any sensor looks over. A distance sensor sees it only where its beam comes down to this height (body.distance_sensor_z_cm); the touch sensor only when it reaches the bumper (body.touch_z_cm). Every box stops the body."
+        },
+        "mass_g": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "A box the robot can push (cardboard, a cup): it slides when pushed harder than 0.4 x its weight. Absent: fixed in place."
         }
       }
     }

@@ -16,6 +16,8 @@ describe("world files", () => {
         color_sensor_x_cm: 7,
         color_spot_radius_cm: 1,
         distance_sensor_x_cm: 8,
+        distance_sensor_z_cm: 6,
+        touch_z_cm: 0,
       });
       expect(JSON.stringify(cfg)).not.toMatch(/wheel_diameter|axle_track/);
       expect(new World(cfg, 1).drive).toBeNull();
