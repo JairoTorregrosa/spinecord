@@ -282,6 +282,24 @@ describe("twin.unconfirmed: a draft twin says what nobody confirmed", () => {
     expect((noView.world as { extensions: { view: unknown } }).extensions.view).toEqual({ unconfirmed: ["A"] });
     expect(describeTwin(noView.robot, noView.world, true)).toContain("look default;");
   });
+  test("the running twin keeps the list in its world, also after load_world of its room by name", async () => {
+    const fleet = await buildFleet(loadConfig(["--twin", file("draft.json", draft(["B", "front"])), "--world", room]), {
+      log: () => {},
+    });
+    try {
+      const brick = fleet.bricks.get("tracked-sim")!;
+      expect(brick.world.cfg.extensions.view).toEqual({ ...TRACKED.twin.view, unconfirmed: ["B", "front"] });
+      const loaded = await toolsOf(fleet.robots, "tracked-sim")("command_device", {
+        device: "sim.world",
+        command: "load_world",
+        args: { world: "hall" },
+      });
+      expect(loaded.ok).toBe(true);
+      expect(brick.world.cfg.extensions.view).toEqual({ ...TRACKED.twin.view, unconfirmed: ["B", "front"] });
+    } finally {
+      await fleet.shutdown();
+    }
+  }, 30_000);
   test("refused when read, from any source, naming twin.unconfirmed", () => {
     expect(fails(draft("front"))).toThrow("twin.unconfirmed must be a list");
     expect(fails(draft(["ports"]))).toThrow('twin.unconfirmed: "ports" is not one of A, B, C, D, S1');

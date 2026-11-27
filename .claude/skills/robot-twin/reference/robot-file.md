@@ -4,7 +4,7 @@ One JSON file holds the robot: the model reads `profile`, the real brick uses `h
 
 ## Template: a two-motor drive base, nothing confirmed
 
-Copy it. Every value in it is a placeholder, and `twin.unconfirmed` says so: fill each value from state 1, and take a token out only when its value has a source (SKILL.md "Confirm"). Add parts from "Parts" below.
+Copy it. Every value in it is a placeholder, and `twin.unconfirmed` says so: fill each value from state 1, and take a token out only when its value has a source (SKILL.md "Confirm"). Its ports B and C are placeholders like every other value. Add parts from "Parts" below.
 
 ```json
 {
@@ -39,18 +39,18 @@ A port token stays listed until you know what is on that port, **also when you b
 
 ## Parts
 
-Add each one the robot has. An unknown port: take the lowest free port of its row (motors: B and C for the drive, then A, D; sensors: 1, 2, 3, 4) and keep its token.
+Add each one the robot has, on its confirmed port. A port nobody confirmed: the one rule is in [questions.md](questions.md) row 4; keep its token. `<X>` is a motor port `A`-`D`, `<n>` a sensor port `1`-`4`.
 
 | Part | `twin.ev3` | `profile.roles` | Also |
 |---|---|---|---|
-| Large or medium motor that does not drive | `"motors": {"A": "medium"}` | a free name for what it does: `"arm": "ev3.A"` (`lift`, `gripper`, `head`, `wings`, `dial`) | a note: what it does, which way positive degrees move it, its range |
-| Touch | `"sensors": {"1": "touch"}` | `"touch": "ev3.S1"` | none: the twin's touch is pressed when the whole front of the body is within 0.7 cm of a wall or a box |
-| Colour | `"sensors": {"3": "color"}` | `"color": "ev3.S3"` | `twin.body.color_sensor_x_cm`, `color_spot_radius_cm` |
-| Ultrasonic or infrared | `"sensors": {"4": "ultrasonic"}` or `"ir"` | `"distance": "ev3.S4"` | `twin.body.distance_sensor_x_cm` |
-| Gyro | `"sensors": {"2": "gyro"}` | `"gyro": "ev3.S2"` | `"heading": {"device": "gyro", "channel": "angle_deg"}` in the drivetrain, only when the port is confirmed. Its place changes nothing in the physics |
+| Large or medium motor that does not drive | `"motors": {"<X>": "large"}` or `"medium"` | a free name for what it does: `"arm": "ev3.<X>"` (`lift`, `gripper`, `head`, `wings`, `dial`) | a note: what it does, which way positive degrees move it, its range |
+| Touch | `"sensors": {"<n>": "touch"}` | `"touch": "ev3.S<n>"` | none: the twin's touch is pressed when the whole front of the body is within 0.7 cm of a wall or a box |
+| Colour | `"sensors": {"<n>": "color"}` | `"color": "ev3.S<n>"` | `twin.body.color_sensor_x_cm`, `color_spot_radius_cm` |
+| Ultrasonic or infrared | `"sensors": {"<n>": "ultrasonic"}` or `"ir"` | `"distance": "ev3.S<n>"` | `twin.body.distance_sensor_x_cm` |
+| Gyro | `"sensors": {"<n>": "gyro"}` | `"gyro": "ev3.S<n>"` | `"heading": {"device": "gyro", "channel": "angle_deg"}` in the drivetrain, only when the port is confirmed. Its place changes nothing in the physics |
 | Phone | none | none | `twin.view.phone`; a note "A phone stands at the front with its screen facing forward; it joins as a page and lends its camera, screen and speaker." (README "Peripheral pages on a phone") |
 
-`twin.view.sensors.<port>` (`x_cm`, `y_cm`, `z_cm`) places a sensor in the 3D look only. Leave out the body fields of a sensor the robot does not have.
+`twin.view.sensors.<n>` (`x_cm`, `y_cm`, `z_cm`) places a sensor in the 3D look only. Leave out the body fields of a sensor the robot does not have.
 
 ## A robot with no drive (an arm, a crane, a station, a controller)
 

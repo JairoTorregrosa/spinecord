@@ -13,7 +13,7 @@ Talk to the person in the language the person uses. Keep commands, file names an
 |---|---|
 | `<clone>` | the spinecord clone. `claude mcp get spinecord` in the workshop folder shows `<clone>/apps/local/main.ts`. This file is `<clone>/.claude/skills/robot-twin/SKILL.md` |
 | robot file | `~/mi-robot/robot.json`. Never write in the clone |
-| the brick | the EV3, connected to this computer and `online` in spinecord |
+| the brick | the EV3 on USB, with spinecord registered with `--ev3` and the robot `online` (skill `setup-spinecord`, its EV3 state). Which robot file it was registered with does not matter: the brick reports what is plugged in |
 | the person | someone who answers you in this session. When you were told that nobody will answer, or the person says to go on without questions, there is no person |
 | check | `bun <clone>/apps/local/main.ts --doctor --files-only --twin ~/mi-robot/robot.json`. It reads only the file: exit 0 means the file is valid |
 | token | an entry of `twin.unconfirmed`: `A`-`D`, `S1`-`S4`, `left_right`, `front`, `drive`, `wheel_diameter`, `axle_track` change how the robot moves; `footprint`, `places` change only the look and collisions |
@@ -63,7 +63,7 @@ Sources, best first; a later source never overrides an earlier one.
 1. **The brick.** Call `list_robots`, then `describe_robot` on the robot whose source is `ev3`; map each port with [reference/brick.md](reference/brick.md). It confirms what is on each port, not what it does or where it sits.
 2. **The photos.** Read them with [reference/identify.md](reference/identify.md): name each part (its LEGO part number where identify.md has it), where it sits, the scale. A part's kind comes from its tells; when two kinds fit (a part seen from behind, a colour sensor or a touch sensor), the kind is assumed and asked, never picked. One photo is enough to start; each value it cannot settle is assumed.
 3. **The person.** Everything still unconfirmed, in one message, from [reference/questions.md](reference/questions.md). Ask again only for what the answers left open. "I don't know" keeps the value assumed.
-4. **Assumed.** With no source left, take the value questions.md gives for it, and write its token. Never copy a port, a side or a number from an example because it is usual.
+4. **Assumed.** With no source left, take the value questions.md gives for it (one rule per value; for a port, row 4), and write its token. Never take a port, a side or a number from an example file.
 
 ### Confirm
 

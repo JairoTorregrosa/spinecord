@@ -19,7 +19,7 @@ Offer the rows as a pick list. `wheel_diameter` is confirmed when the person pic
 | Tracks on the large 10-tooth sprocket (5 × 5 studs; the retail set's tracked builds), wide tread links with 2 pin holes | sprocket 57519, links 57518 | 40.4 to 40.7 mm over the teeth | 4.0; calibrate | [BrickLink 57519](https://www.bricklink.com/v2/catalog/catalogitem.page?P=57519); [Brick Owl 57519](https://brickowl.com/ca/catalog/lego-technic-sprocket-wheel-40-4-57519) |
 | Any other tracks, or tread links with rubber pads | | | the sprocket's diameter over the teeth, measured; else 4.0; calibrate | |
 
-Look-alikes. Tell 56 mm from 43.2 mm by the size against the brick: a 56 mm wheel is about half the brick's length (11.5 cm), a 43.2 mm one well under half, and the 43.2 mm tire hides its small rim almost fully. Tell 49.5 from 56 by width: `49.5 x 20` is visibly thinner than `56 x 28`. A rim with six round pin holes is 56908; a solid reinforced rim is 56145.
+Look-alikes. Tell 56 mm from 43.2 mm by the size against the brick: a 56 mm wheel is about half the brick's length (11.1 cm), a 43.2 mm one well under half, and the 43.2 mm tire hides its small rim almost fully. Tell 49.5 from 56 by width: `49.5 x 20` is visibly thinner than `56 x 28`. A rim with six round pin holes is 56908; a solid reinforced rim is 56145.
 
 Tracks: the diameter over the sprocket teeth is not the distance a track moves per turn. A tracked base also turns with slip, so its `axle_track_cm` after calibration is larger than the distance between the tracks. That is expected. Always do state 6.
 

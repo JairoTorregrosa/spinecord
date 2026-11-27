@@ -14,7 +14,7 @@ Sizes are the parts' bounding boxes from BrickLink's catalogue (marked verified 
 
 | Brick | Tells | spinecord |
 |---|---|---|
-| **EV3** | Dark grey and light grey, about 11-12 × 7-7.6 cm ([BrickLink 95646c01](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01)). A grey monochrome screen at one end of the top face; below it six buttons: a centre button inside a ring of four arrow buttons that light green, orange or red, and a back button at the screen's corner. `EV3` printed on it. **Four** output ports `A B C D` on the end beside the screen, **four** input ports `1 2 3 4` on the other end; the USB plug between them on the A-D end | yes |
+| **EV3** | Dark grey and light grey, 11.1 × 7.2 × 5.1 cm ([BrickLink 95646c01](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01)). A grey monochrome screen at one end of the top face; below it six buttons: a centre button inside a ring of four arrow buttons that light green, orange or red, and a back button at the screen's corner. `EV3` printed on it. **Four** output ports `A B C D` on the end beside the screen, **four** input ports `1 2 3 4` on the other end; the USB plug between them on the A-D end | yes |
 | NXT | Light grey and white, an **orange** square button with two grey arrow buttons, `NXT` printed, a smaller screen. **Three** output ports `A B C` on one end, four inputs `1 2 3 4` on the other. With the brick hidden, its parts tell it: an ultrasonic with **orange rings** round its eyes, an **orange** touch plunger, motors with an **orange** hub | no: stop |
 | SPIKE Prime, Robot Inventor | A square hub, no screen: a **5 × 5 grid of white lights** and one round button; **six** ports `A`-`F` along two sides. SPIKE Prime is yellow and white, Robot Inventor teal, white and black | no: stop |
 | SPIKE Essential, WeDo 2.0, Powered Up | A small hub with two ports and a light, often on a yellow or light-blue base | no: stop |
@@ -71,7 +71,7 @@ On an EV3 lying flat, screen up, with the screen end away from you, the output p
 
 With no ruler, measure against the parts:
 
-- the EV3 brick: about 11.5 cm from port end to port end, 7.5 cm across;
+- the EV3 brick: 11.1 cm from port end to port end, 7.2 cm across ([BrickLink 95646c01](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01));
 - a large motor: about 11 cm long;
 - a LEGO hole or stud: 0.8 cm from centre to centre ([LUGNET, measured 7.986 mm](https://www.lugnet.com/~330/FAQ/Build/dimensions)), so a beam of n holes is 0.8 × n cm long.
 
