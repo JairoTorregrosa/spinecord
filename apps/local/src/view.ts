@@ -21,6 +21,7 @@ import type {
   WorldShape,
 } from "../../twin-view/src/messages";
 import type { ViewPageFiles } from "../../twin-view/view-build";
+import type { ViewChat } from "./chat";
 import type { CallWatcher } from "./mcp";
 import type { LocalRobot } from "./robot";
 
@@ -161,7 +162,7 @@ function setDown(w: World, r: Box): void {
 export function serveView(
   twins: readonly ViewTwin[],
   port: number,
-  o: { page: ViewPageFiles; log: Log; rateHz?: number },
+  o: { page: ViewPageFiles; log: Log; rateHz?: number; chat?: ViewChat },
 ): ViewServer {
   if (twins.length === 0) throw new Error("the 3D view needs at least one twin");
   const hz = o.rateHz ?? VIEW_RATE_HZ;
@@ -263,6 +264,7 @@ export function serveView(
     }
     broadcast({ t: "state", robots }, true);
   };
+  o.chat?.attach((m) => broadcast(m));
   const timer = setInterval(tick, Math.max(10, Math.round(1000 / hz)));
   timer.unref?.();
 
@@ -384,7 +386,13 @@ export function serveView(
           if (stopped) return ws.close(1001, "the process is ending");
           sockets.add(ws);
           held.set(ws, new Map());
-          send(ws, { t: "hello", robots: twins.map(meta), rate_hz: hz, calls });
+          send(ws, {
+            t: "hello",
+            robots: twins.map(meta),
+            rate_hz: hz,
+            calls,
+            ...(o.chat ? { chat: o.chat.hello() } : {}),
+          });
         },
         message(ws, data) {
           if (typeof data !== "string") return ws.close(4000, "bad message: expected JSON text");
@@ -402,6 +410,9 @@ export function serveView(
           const release = m.t === "button" && m.down !== true;
           if (!release && !allowed(ws))
             return send(ws, { t: "reply", req, ok: false, code: "too_fast", error: "too many actions this second" });
+          // --chat: the chat's own messages (src/chat.ts); without it they are unknown actions, as before
+          if (o.chat && typeof m.t === "string" && m.t.startsWith("chat_"))
+            return o.chat.message(m, (r) => send(ws, r));
           try {
             act(ws, m);
             send(ws, { t: "reply", req, ok: true });

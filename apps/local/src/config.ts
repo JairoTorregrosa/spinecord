@@ -17,6 +17,28 @@ import { readBuild, withBuild, type TwinBuild, type Unconfirmed } from "./twin-b
 
 /** Port of the 3D view of the twins (`--view`), on 127.0.0.1. */
 export const DEFAULT_VIEW_PORT = 8769;
+/** `--chat` (experimental, CONTRACT §6): the model and the budget of the process, US dollars. */
+export const DEFAULT_CHAT_MODEL = "claude-haiku-5-5";
+export const DEFAULT_CHAT_USD = 1;
+export interface ChatConfig {
+  model: string;
+  usd: number;
+}
+/** A model id as the API names them: letters, digits, dots and dashes. */
+const MODEL_ID = /^[a-z0-9][a-z0-9.-]{2,63}$/;
+function chatConfig(where: string, model: unknown, usd: unknown): ChatConfig {
+  const m = model === undefined ? DEFAULT_CHAT_MODEL : model;
+  if (typeof m !== "string" || !MODEL_ID.test(m))
+    throw new Error(
+      `${where}: the chat model must be a model id such as ${DEFAULT_CHAT_MODEL}, got ${JSON.stringify(model)}`,
+    );
+  const n = usd === undefined ? DEFAULT_CHAT_USD : typeof usd === "string" && usd.trim() !== "" ? Number(usd) : usd;
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0 || n > 100)
+    throw new Error(
+      `${where}: the chat budget must be a number of US dollars above 0 and up to 100, got ${JSON.stringify(usd)}`,
+    );
+  return { model: m, usd: n };
+}
 
 export const DEFAULT_PORT = 8767;
 /** The repository root: where a relative path on the command line is taken from. */
@@ -92,6 +114,11 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  the MCP calls, and the person there can pick the robot up, set boxes down
                                  and press the brick's buttons (needs a twin)
     --view-port <n>              its port (default ${DEFAULT_VIEW_PORT}; 0 takes a free port)
+    --chat                       experimental: a chat with Claude in the view, typed or spoken, as the first
+                                 twin; Claude Code's login of this computer pays (ANTHROPIC_PROFILE selects
+                                 an ant profile)
+      --chat-model <id>          its model (default ${DEFAULT_CHAT_MODEL})
+      --chat-usd <n>             its budget for this process, US dollars (default ${DEFAULT_CHAT_USD})
   --log-file <path>              also append every JSON log line of stderr to this file; its folder is
                                  created, and a file that cannot be opened ends the start
   --config <file.json>           the robots and the port as a file, for more than one robot of a kind:
@@ -150,7 +177,7 @@ export interface LocalConfig {
   /** Peripheral pages (CONTRACT §2.4): null when off. On, every robot gets a page hub, and the page listener binds this port. */
   pages?: PagesConfig | null;
   /** `--view`: the 3D view of the twins on 127.0.0.1, at this port. Null or absent when off. */
-  view?: { port: number } | null;
+  view?: { port: number; chat?: ChatConfig | null } | null;
 }
 
 export interface PagesConfig {
@@ -342,12 +369,18 @@ function fromFile(file: string): LocalConfig {
   const unknown = Object.keys(json).filter((k) => !["port", "robots", "pages", "view"].includes(k));
   if (unknown.length)
     throw new Error(`${where}: unknown field ${unknown.join(", ")}; allowed: port, pages, view, robots`);
-  let view: { port: number } | null = null;
+  let view: { port: number; chat?: ChatConfig | null } | null = null;
   if (json.view !== undefined && json.view !== false) {
     const v = json.view === true ? {} : json.view;
-    if (!isObj(v) || Object.keys(v).some((k) => k !== "port"))
-      throw new Error(`${where}: view must be true or {"port"?: n}`);
+    if (!isObj(v) || Object.keys(v).some((k) => k !== "port" && k !== "chat"))
+      throw new Error(`${where}: view must be true or {"port"?: n, "chat"?: true | {"model"?, "usd"?}}`);
     view = { port: v.port === undefined ? DEFAULT_VIEW_PORT : int(`${where}: view.port`, v.port, 0, 65535) };
+    if (v.chat !== undefined && v.chat !== false) {
+      const c = v.chat === true ? {} : v.chat;
+      if (!isObj(c) || Object.keys(c).some((k) => k !== "model" && k !== "usd"))
+        throw new Error(`${where}: view.chat must be true or {"model"?: id, "usd"?: n}`);
+      view.chat = chatConfig(`${where}: view.chat`, c.model, c.usd);
+    }
   }
   let pages: PagesConfig | null = null;
   if (json.pages !== undefined) {
@@ -514,6 +547,9 @@ export function loadConfig(argv: string[]): LocalConfig {
       "page-ext": { type: "string" },
       view: { type: "boolean" },
       "view-port": { type: "string" },
+      chat: { type: "boolean" },
+      "chat-model": { type: "string" },
+      "chat-usd": { type: "string" },
     },
   });
   if (values.help) throw new HelpAsked();
@@ -543,6 +579,9 @@ export function loadConfig(argv: string[]): LocalConfig {
     if (values["page-origin"] !== undefined) needs("page-origin", "pages", values.pages !== undefined);
     if (values["page-ext"] !== undefined) needs("page-ext", "pages", values.pages !== undefined);
     if (values["view-port"] !== undefined) needs("view-port", "view", values.view === true);
+    if (values.chat !== undefined) needs("chat", "view", values.view === true);
+    for (const flag of ["chat-model", "chat-usd"] as const)
+      if (values[flag] !== undefined) needs(flag, "chat", values.chat === true);
     for (const flag of ["lan-interface", "lan-cert", "lan-key", "lan-host"] as const)
       if (values[flag] !== undefined) needs(flag, "lan", values.lan === true);
     if ((values["lan-cert"] === undefined) !== (values["lan-key"] === undefined))
@@ -552,7 +591,7 @@ export function loadConfig(argv: string[]): LocalConfig {
     for (const flag of ["ssh", "ssh-key", "install-bridge"] as const)
       if (values[flag] !== undefined) needs(flag, "ev3dev", values.ev3dev !== undefined);
     // --view alone shows the twin a bare start runs
-    if (given.length === 0 || given.every((k) => k === "view" || k === "view-port")) {
+    if (given.length === 0 || given.every((k) => ["view", "view-port", "chat", "chat-model", "chat-usd"].includes(k))) {
       const example = robotFile("example robot", EXAMPLE.robot);
       robots.push({
         source: "twin",
@@ -606,6 +645,7 @@ export function loadConfig(argv: string[]): LocalConfig {
         ? {
             port:
               values["view-port"] === undefined ? DEFAULT_VIEW_PORT : int("--view-port", values["view-port"], 0, 65535),
+            ...(values.chat ? { chat: chatConfig("--chat", values["chat-model"], values["chat-usd"]) } : {}),
           }
         : null,
       pages:

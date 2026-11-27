@@ -1,6 +1,7 @@
 // The messages between apps/local's view listener (src/view.ts) and this page: one JSON object per WebSocket
 // text frame. Units as in sim-world: cm and ms, degrees at the edges; x to the right, y up, headings
 // counter-clockwise from +x seen from above.
+import type { ChatServerMessage, ChatStatus } from "./chat-messages";
 
 export interface Box {
   x: number;
@@ -109,7 +110,14 @@ export interface CallEnd {
 }
 
 export type ServerMessage =
-  | { t: "hello"; robots: RobotMeta[]; rate_hz: number; calls: (CallStart | CallEnd)[] }
+  | {
+      t: "hello";
+      robots: RobotMeta[];
+      rate_hz: number;
+      calls: (CallStart | CallEnd)[];
+      /** Only with --chat (chat-messages.ts): its status and what a page that opens late missed. */
+      chat?: { status: ChatStatus; history: ChatServerMessage[] };
+    }
   /** The world of a twin was replaced (sim.world load_world): rebuild everything of that robot. */
   | { t: "robot"; robot: RobotMeta }
   /** Only the obstacles changed. */
@@ -119,6 +127,7 @@ export type ServerMessage =
   | { t: "speak"; id: string; text: string }
   | CallStart
   | CallEnd
+  | ChatServerMessage
   | { t: "reply"; req: number; ok: true }
   /** An action refused, changing nothing: `code` says why for the page's own words, `error` in English. */
   | { t: "reply"; req: number; ok: false; code: RefusalCode; error: string };

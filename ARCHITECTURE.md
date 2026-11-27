@@ -15,7 +15,8 @@ protocol, runtime, driver-ev3, driver-ev3dev, sim-ev3, sim-world, page-hub ← a
 driver-ev3 ← apps/robot-page
 protocol ← apps/peripheral-page   (types; its tests also use protocol's validators)
 apps/twin-view ← apps/local   (its message types; the page itself imports only three.js)
-examples/assistant/setup.ts ← apps/local   (only `--doctor --assistant`: which credential pays ahead of an ant profile)
+examples/assistant/setup.ts ← apps/local   (only `--doctor --assistant`: which credential pays ahead of an ant profile; and `--chat`: who pays, and the spend of a session)
+@anthropic-ai/claude-agent-sdk ← apps/local   (only `--chat`, loaded by a dynamic import: the chat's Claude, experimental)
 ```
 
 `protocol` imports nothing. Apps import packages; no package imports an app. `scripts/check-boundaries.ts` enforces this graph.
