@@ -8,14 +8,14 @@ Sizes are the parts' bounding boxes from BrickLink's catalogue (marked verified 
 |---|---|
 | A photo of a built robot | Real light and shadow, a floor or table, cables that sag, parts slightly out of line, often a hand, a mat or a room |
 | An instruction drawing | Flat shading, no shadow on a floor, a step number, a parts call-out box (`1x`, `2x`), an arrow showing where a part goes, white background |
-| A render or box art | Perfect parts, glossy, no cables or cables drawn ideal, logo or set number, staged background |
+| A render, box art or product photo | Perfect parts, glossy, no cables or cables drawn ideal, logo or set number; or a studio shot: a seamless backdrop curving up behind the robot, soft even light, a flawless build, no table edge, room, hand, mat or other object. Treat it like box art |
 | A slide, poster or screen | A frame, text blocks, a projector's keystone, a monitor bezel, moiré, other images beside it |
-| Several robots | More than one drive base or more than one brick |
+| Several robots | More than one drive base or more than one brick. A robot in the background, out of focus or cut off, while one robot is the sharp subject in the middle, does not make it several: go on with the subject and say in the report which robot you used |
 
 ## Readable
 
 The gate of state 0 counts the brick and the drive as readable only when the photo shows:
-- **the brick**: its body, not only an edge or a cable, and at least one of its own signs that only an EV3 has: the screen with the dark grey button cross below it, or one port end with its row of four sockets. A brick covered by parts, seen only from below, or too blurred to tell the screen from the buttons is not readable. Tilted or standing upright is fine: say so in the file;
+- **the brick**: its body, not only an edge or a cable, and at least one of the signs of an EV3: the screen, the dark grey button cross, a port end with its row of four sockets, or the `EV3` print. A brick covered by parts, seen only from below or from a side with none of these, or too blurred to tell any of them, is not readable. Tilted or standing upright is fine: say so in the file;
 - **the drive**: what touches the floor on at least one side (wheels, tracks, legs, a fixed base), and that side's motor or the axle it drives.
 A robot that hides one of the two is the "not readable" row of state 0, also when everything else is sharp.
 
@@ -82,6 +82,8 @@ When the robot looks like one of these, name it (state 0). The tells are what a 
 | SPIK3R (31313) | `spik3r` | A scorpion on legs, a claw in front and a tail over the back |
 
 A model not in this table (the 31313 bonus models, a community build) is a custom robot: no build data.
+
+**On a model's base.** A robot that has a model's drive (the Driving Base's two motors and wheels, Tank Bot's tracks) but other parts or another layout on it is built *on* that model, not the model. Take from the build only the drive: its drive ports, wheel diameter and axle track, assumed. Read every other part from the photo as for a custom robot. The build's other ports are not added; ask about them in question 14 ("Is there a gyro on port 2, as on the Driving Base?").
 
 ## Reading a build
 
