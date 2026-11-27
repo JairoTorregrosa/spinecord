@@ -72,16 +72,29 @@ export interface DriveGeometry {
 }
 
 export interface NoiseConfig {
-  /** Relative standard deviation, per physics step, of each wheel's real travel. */
+  /** Relative standard deviation, per MOTION_NOISE_MS of world time, of each wheel's real travel. */
   motor: number;
   /** Mean fraction of wheel rotation lost to slip. */
   slip: number;
   /** Fixed bias between the wheels (relative std dev, drawn from the seed): the robot veers. */
   wheel_bias: number;
+  /**
+   * Fraction of a turn that a skid-steer base (tracks) loses to the treads scrubbing sideways: it turns
+   * (1 - turn_scrub) of what its encoders say, while driving straight is untouched. 0 for wheels; below 1.
+   */
+  turn_scrub: number;
   ultrasonic_cm: number;
+  /** Std dev of infrared proximity at 40 %, in %; it grows in proportion to the reading (a weaker return is noisier). */
+  ir_pct: number;
   reflect_pct: number;
   gyro_deg: number;
   gyro_drift_deg_s: number;
+  /**
+   * Scale error of the gyro (relative std dev, drawn from the seed): it counts (1 + e) degrees per real degree. LEGO
+   * gives the EV3 gyro (45505) an accuracy of +-3 deg on a 90 deg turn
+   * (https://education.lego.com/ar-ae/lessons/ev3-space/turn-using-sensor/); 0.017 makes that about two std devs.
+   */
+  gyro_scale: number;
 }
 
 export interface WorldConfig {
@@ -113,29 +126,70 @@ export const DEFAULT_NOISE: NoiseConfig = {
   motor: 0.01,
   slip: 0.01,
   wheel_bias: 0.003,
+  turn_scrub: 0,
   ultrasonic_cm: 0.3,
+  ir_pct: 0.5,
   reflect_pct: 1,
   gyro_deg: 0.3,
   gyro_drift_deg_s: 0,
+  gyro_scale: 0.017,
 };
 export const NO_NOISE: NoiseConfig = {
   motor: 0,
   slip: 0,
   wheel_bias: 0,
+  turn_scrub: 0,
   ultrasonic_cm: 0,
+  ir_pct: 0,
   reflect_pct: 0,
   gyro_deg: 0,
   gyro_drift_deg_s: 0,
+  gyro_scale: 0,
 };
 
 /** Physics step (ms of simulated time). */
 export const DT_MS = 20;
+/**
+ * Motion noise is one draw per wheel for each slice this long of world time, made from the seed and the slice's
+ * index: a step that spans slices takes from each its share. How time is cut into steps (a viewer that ticks the
+ * physics every frame) therefore changes neither the noise drawn nor the path, beyond float rounding.
+ */
+export const MOTION_NOISE_MS = DT_MS;
+/** The EV3 ultrasonic sensor (45504) measures 3..250 cm (LEGO); with no echo it reads 255 (LEGO's EV3 user guide). */
 export const ULTRASONIC_MIN_CM = 3;
 export const ULTRASONIC_MAX_CM = 250;
+export const ULTRASONIC_NO_ECHO_CM = 255;
 /** Half angle of the ultrasonic cone (an approximation: the real one is around +-10..20 deg). */
 export const CONE_HALF_DEG = 12;
-/** Infrared proximity is a percentage, not cm: here 100 % is about 70 cm, linear. */
-export const IR_FULL_SCALE_CM = 70;
+/** Rays across the ultrasonic cone, evenly from -CONE_HALF_DEG to +CONE_HALF_DEG. */
+export const ULTRASONIC_RAYS = 9;
+/**
+ * A ray echoes off a surface it meets within this angle of square, so a flat wall stops echoing when the sensor
+ * looks more than CONE_HALF_DEG + this (25 deg) off its normal. 25 is what one EV3 project measured ("the sensors
+ * need to be within a +/- 25 deg angle to the wall to operate",
+ * https://github.com/jamesjackson/ev3-localization/blob/master/overview.md); others quote 40-45 deg. The stricter
+ * number: a strategy that works with it also works where the sensor is more forgiving.
+ */
+export const ULTRASONIC_ECHO_DEG = 13;
+/**
+ * Infrared proximity (45509) per cm of a large light surface square on: the stock firmware (EV3-G) read 40-41 % with
+ * a white wall at 38 cm, 88-90 % with black on it (https://github.com/ev3dev/ev3dev-lang-python/issues/518); ev3dev's
+ * guide: "for large white objects the proximity value is VERY roughly equal to the distance in cm". 100 % with
+ * nothing in range.
+ */
+export const IR_PCT_PER_CM = 40.5 / 38;
+/** Half angle of the infrared beam. No measurement found: an estimate, wider than the ultrasonic cone. */
+export const IR_CONE_HALF_DEG = 25;
+/** Rays across the infrared beam. */
+export const IR_RAYS = 11;
+
+/** The value the ultrasonic sensor gives for an echo at `d` cm (Infinity: none): tenths of a cm, 255 out of range. */
+function ultrasonicReading(d: number): number {
+  if (!(d <= ULTRASONIC_MAX_CM)) return ULTRASONIC_NO_ECHO_CM;
+  return Math.round(Math.max(ULTRASONIC_MIN_CM, d) * 10) / 10;
+}
+/** Halvings of a blocked step: the body comes to rest within 2^-12 of a step's travel from the obstacle. */
+const CONTACT_BISECTIONS = 12;
 /** The trip meter follows a line only while the axle centre is within this distance of it. */
 export const LINE_TRACK_CM = 12;
 
@@ -173,6 +227,17 @@ export class Rng {
     this.spare = r * Math.sin(a);
     return r * Math.cos(a);
   }
+}
+
+/** Two 32-bit integers to one well-mixed seed (murmur3's finaliser), so that neighbouring slices get unrelated streams. */
+function mixSeed(a: number, b: number): number {
+  let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul((b + 0x632be5ab) | 0, 0xc2b2ae35);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
 }
 
 // ---------- Geometry helpers ----------
@@ -308,7 +373,12 @@ export function parseWorld(json: unknown): WorldConfig {
       };
     }),
     body: partial(root.body, "body", DEFAULT_BODY),
-    noise: partial(root.noise, "noise", DEFAULT_NOISE),
+    noise: ((n) =>
+      n.turn_scrub < 1
+        ? n
+        : fail("noise.turn_scrub", `must be below 1 (the share of a turn lost), got ${n.turn_scrub}`))(
+      partial(root.noise, "noise", DEFAULT_NOISE),
+    ),
     start: {
       x: num(start.x, "start.x"),
       y: num(start.y, "start.y"),
@@ -349,6 +419,8 @@ export class World {
   t_ms = 0;
   /** True if the last physics step was blocked by a wall or obstacle. */
   last_stalled = false;
+  /** Fraction (0..1) of its wheel travel the last physics step did: below 1 when the body came to rest against something. */
+  last_step_fraction = 1;
   /** Real turning rate during the last physics step (deg/s, counter-clockwise-positive). */
   rate_deg_s = 0;
   /** Trip meter since the last teleport: path length of the axle centre (turning on the spot adds nothing). */
@@ -361,6 +433,9 @@ export class World {
   private gainR = 1;
   private gyroZeroTh: number;
   private gyroZeroMs = 0;
+  /** deg/s the gyro took as its zero when it was last reset: the turning rate at that moment (0 when still). */
+  private gyroOffset = 0;
+  private readonly gyroGain: number;
   private segs: Seg[] = [];
   private trackLine = -1;
   private trackS = 0;
@@ -378,6 +453,8 @@ export class World {
     this.sensorRng = new Rng(seed ^ 0x5bd1e995);
     this.gainL = 1 + cfg.noise.wheel_bias * this.motionRng.gauss();
     this.gainR = 1 + cfg.noise.wheel_bias * this.motionRng.gauss();
+    // Its own stream, so the motion of a seed is the same whatever the gyro's error.
+    this.gyroGain = 1 + cfg.noise.gyro_scale * new Rng(mixSeed(seed, 0x6779726f)).gauss();
     cfg.lines.forEach((line, li) => {
       const p = line.points;
       if (p.length < 2) throw new Error("world: a line needs at least 2 points");
@@ -477,12 +554,21 @@ export class World {
    */
   peekGyroDeg(): number {
     return (
-      ((this.pose.th - this.gyroZeroTh) * 180) / Math.PI +
-      (this.cfg.noise.gyro_drift_deg_s * (this.t_ms - this.gyroZeroMs)) / 1000
+      (((this.pose.th - this.gyroZeroTh) * 180) / Math.PI) * this.gyroGain +
+      ((this.cfg.noise.gyro_drift_deg_s - this.gyroOffset) * (this.t_ms - this.gyroZeroMs)) / 1000
     );
   }
+  /** The gyro's rate without noise and not rounded (deg/s, counter-clockwise-positive). */
+  gyroRateDegS(): number {
+    return this.rate_deg_s * this.gyroGain + this.cfg.noise.gyro_drift_deg_s - this.gyroOffset;
+  }
 
+  /**
+   * Zeroes the angle (a reset, a mode switch, plugging it in). The real gyro also takes the rate it feels at that
+   * moment as its zero: reset while the robot turns, it then drifts by that rate until the next reset while still.
+   */
   resetGyro(): void {
+    this.gyroOffset = this.rate_deg_s * this.gyroGain;
     this.gyroZeroTh = this.pose.th;
     this.gyroZeroMs = this.t_ms;
   }
@@ -576,6 +662,8 @@ export class World {
     for (let i = 0; i < n; i++) {
       res.ms += dt;
       if (this.stepWheels(dl, dr, dt)) {
+        res.left_cm += dl * this.last_step_fraction;
+        res.right_cm += dr * this.last_step_fraction;
         res.stalled = true;
         break;
       }
@@ -587,10 +675,12 @@ export class World {
 
   /**
    * One physics step: the wheels want to roll `dl_cm` / `dr_cm` during `dt_ms`.
-   * Returns true if the footprint would hit something: then the wheels are blocked and the robot does not move.
+   * Returns true if the footprint would hit something: then the body rolls only up to contact (the fraction of the
+   * travel it did is `last_step_fraction`) and the wheels are blocked there.
    */
   stepWheels(dl_cm: number, dr_cm: number, dt_ms: number): boolean {
     this.t_ms += dt_ms;
+    this.last_step_fraction = 1;
     if (dl_cm === 0 && dr_cm === 0) {
       this.rate_deg_s = 0;
       this.last_stalled = false;
@@ -600,25 +690,83 @@ export class World {
       throw new Error(
         "world: this body has no drivetrain geometry (set World.drive from the robot profile before rolling the wheels)",
       );
-    const nz = this.cfg.noise;
-    const tl = dl_cm * this.gainL * (1 + nz.motor * this.motionRng.gauss()) * (1 - nz.slip * 2 * this.motionRng.next());
-    const tr = dr_cm * this.gainR * (1 + nz.motor * this.motionRng.gauss()) * (1 - nz.slip * 2 * this.motionRng.next());
-    const d = (tl + tr) / 2,
-      dth = (tr - tl) / this.drive.axle_track_cm;
-    const mid = this.pose.th + dth / 2;
-    const np: Pose = { x: this.pose.x + d * Math.cos(mid), y: this.pose.y + d * Math.sin(mid), th: this.pose.th + dth };
-    if (this.collides(np)) {
-      this.rate_deg_s = 0;
-      this.last_stalled = true;
-      return true;
+    const nz = this.cfg.noise,
+      axle = this.drive.axle_track_cm;
+    // Each slice of motion noise is its own arc, so the path does not depend on where steps begin and end.
+    const arcs = this.wheelNoise(this.t_ms - dt_ms, dt_ms).map(({ w, l, r }) => {
+      const tl = dl_cm * w * this.gainL * l,
+        tr = dr_cm * w * this.gainR * r;
+      return { w, tl, tr, d: (tl + tr) / 2, th: ((tr - tl) / axle) * (1 - nz.turn_scrub) };
+    });
+    /** The pose after fraction `f` of this step's time, and the turn and travel done until then. */
+    const at = (f: number): { pose: Pose; d: number; th: number; wheels: number } => {
+      let { x, y, th } = this.pose,
+        c = 0,
+        d = 0,
+        turned = 0,
+        wheels = 0;
+      for (const a of arcs) {
+        const q = Math.min(1, Math.max(0, (f - c) / a.w));
+        c += a.w;
+        if (q === 0) break;
+        const sd = a.d * q,
+          sth = a.th * q;
+        // The exact arc of constant curvature, not its midpoint approximation.
+        const chord = Math.abs(sth) > 1e-9 ? ((2 * sd) / sth) * Math.sin(sth / 2) : sd;
+        x += chord * Math.cos(th + sth / 2);
+        y += chord * Math.sin(th + sth / 2);
+        th += sth;
+        d += sd;
+        turned += sth;
+        wheels += (q * (Math.abs(a.tl) + Math.abs(a.tr))) / 2;
+      }
+      return { pose: { x, y, th }, d, th: turned, wheels };
+    };
+    let f = 1,
+      end = at(1);
+    const blocked = this.collides(end.pose);
+    if (blocked) {
+      // Bisect to the last free fraction: the body stops against the obstacle, not up to a step short of it.
+      let lo = 0,
+        hi = 1;
+      for (let i = 0; i < CONTACT_BISECTIONS; i++) {
+        const m = (lo + hi) / 2;
+        if (this.collides(at(m).pose)) hi = m;
+        else lo = m;
+      }
+      f = lo;
+      end = at(lo);
     }
-    this.pose = np;
-    this.last_stalled = false;
-    this.rate_deg_s = dt_ms > 0 ? ((dth * 180) / Math.PI / dt_ms) * 1000 : 0;
+    this.last_step_fraction = f;
+    this.pose = end.pose;
+    this.last_stalled = blocked;
+    this.rate_deg_s = dt_ms > 0 ? ((end.th * 180) / Math.PI / dt_ms) * 1000 : 0;
     // A spin in place only wobbles the axle centre (wheel noise): that is not travel.
-    if (Math.abs(d) > (0.1 * (Math.abs(tl) + Math.abs(tr))) / 2) this.odometer_cm += Math.abs(d);
+    if (Math.abs(end.d) > 0.1 * end.wheels) this.odometer_cm += Math.abs(end.d);
     if (this.segs.length > 0) this.followLine();
-    return false;
+    return blocked;
+  }
+
+  /** The slices of motion noise that [t0, t0 + dt] of world time spans: each one's share of the time and wheel factors. */
+  private wheelNoise(t0: number, dt: number): { w: number; l: number; r: number }[] {
+    const nz = this.cfg.noise;
+    if (nz.motor === 0 && nz.slip === 0) return [{ w: 1, l: 1, r: 1 }];
+    const draw = (k: number, w: number) => {
+      const g = new Rng(mixSeed(this.seed, k));
+      const l = (1 + nz.motor * g.gauss()) * (1 - nz.slip * 2 * g.next());
+      return { w, l, r: (1 + nz.motor * g.gauss()) * (1 - nz.slip * 2 * g.next()) };
+    };
+    if (!(dt > 0)) return [draw(Math.floor(t0 / MOTION_NOISE_MS), 1)];
+    const out: { w: number; l: number; r: number }[] = [];
+    const end = t0 + dt;
+    let a = t0;
+    while (end - a > 1e-9) {
+      const k = Math.floor(a / MOTION_NOISE_MS + 1e-9),
+        b = Math.min(end, (k + 1) * MOTION_NOISE_MS);
+      out.push(draw(k, (b - a) / dt));
+      a = b;
+    }
+    return out;
   }
 
   private followLine(): void {
@@ -717,6 +865,11 @@ export class World {
   // ----- sensors (every read spends noise from the sensor generator, never from the motion one) -----
   /** Reflected light 0..100 %: the average of the spot under the sensor, so the edge of a line reads in between. */
   senseReflect(): number {
+    const v = this.reflectSpot() + this.cfg.noise.reflect_pct * this.sensorRng.gauss();
+    return Math.round(Math.min(100, Math.max(0, v)));
+  }
+  /** What senseReflect reads without noise and not rounded (a display): it spends nothing of the sensor generator. */
+  reflectSpot(): number {
     const g = this.cfg.body;
     const [sx, sy] = this.pointAhead(g.color_sensor_x_cm);
     let sum = REFLECT_BY_COLOR[this.floorColorAt(sx, sy)]!,
@@ -729,8 +882,7 @@ export class World {
         n++;
       }
     }
-    const v = sum / n + this.cfg.noise.reflect_pct * this.sensorRng.gauss();
-    return Math.round(Math.min(100, Math.max(0, v)));
+    return sum / n;
   }
 
   /** Colour id 0..7 of the floor right under the centre of the sensor. */
@@ -741,19 +893,34 @@ export class World {
 
   /** True distance (no noise, no clamp) of one ray from the distance sensor to a wall or obstacle. */
   rayDistance(p: Pose = this.pose, offset_rad = 0): number {
+    return this.rayHit(p, offset_rad).d;
+  }
+  /**
+   * One ray from the distance sensor: how far it goes (cm, no noise, no clamp) and the cosine of the angle between
+   * it and the normal of the surface it hits (1 = square on).
+   */
+  rayHit(p: Pose = this.pose, offset_rad = 0): { d: number; cos: number } {
     const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
     const dx = Math.cos(p.th + offset_rad),
       dy = Math.sin(p.th + offset_rad);
     const { width, height, boxes } = this.cfg;
-    if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return 0;
-    let best = Infinity;
-    if (dx > 1e-12) best = Math.min(best, (width - ox) / dx);
-    else if (dx < -1e-12) best = Math.min(best, -ox / dx);
-    if (dy > 1e-12) best = Math.min(best, (height - oy) / dy);
-    else if (dy < -1e-12) best = Math.min(best, -oy / dy);
+    if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return { d: 0, cos: 1 };
+    let best = Infinity,
+      cos = 1;
+    const take = (t: number, c: number): void => {
+      if (t < best) {
+        best = t;
+        cos = c;
+      }
+    };
+    if (dx > 1e-12) take((width - ox) / dx, Math.abs(dx));
+    else if (dx < -1e-12) take(-ox / dx, Math.abs(dx));
+    if (dy > 1e-12) take((height - oy) / dy, Math.abs(dy));
+    else if (dy < -1e-12) take(-oy / dy, Math.abs(dy));
     for (const b of boxes) {
       let t0 = 0,
         t1 = Infinity,
+        c0 = 1,
         hit = true;
       for (const [o, d, lo, hi] of [
         [ox, dx, b.x, b.x + b.w],
@@ -773,34 +940,77 @@ export class World {
           a = c;
           c = t;
         }
-        if (a > t0) t0 = a;
+        if (a > t0) {
+          t0 = a;
+          c0 = Math.abs(d); // the ray enters through a face across this axis
+        }
         if (c < t1) t1 = c;
         if (t0 > t1) {
           hit = false;
           break;
         }
       }
-      if (hit && t0 < best) best = t0;
+      if (hit) take(t0, c0);
+    }
+    return { d: best, cos };
+  }
+
+  /**
+   * What the ultrasonic sensor measures without noise, unclamped: the nearest echo across its cone, or Infinity when
+   * no surface sends one back. A hard flat surface reflects like a mirror, so a ray echoes only off a surface it
+   * meets within ULTRASONIC_ECHO_DEG of square: a wall slanted more than CONE_HALF_DEG + ULTRASONIC_ECHO_DEG gives
+   * nothing back (the sensor then reads 255).
+   */
+  coneDistance(p: Pose = this.pose): number {
+    const minCos = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
+    let best = Infinity;
+    for (let i = 0; i < ULTRASONIC_RAYS; i++) {
+      const off = (((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * CONE_HALF_DEG * Math.PI) / 180;
+      const h = this.rayHit(p, off);
+      if (h.cos >= minCos - 1e-12 && h.d < best) best = h.d;
     }
     return best;
   }
-
-  /** A real ultrasonic sensor sees a cone, not a ray: here the nearest echo of three rays (0 and +-CONE_HALF_DEG). */
-  coneDistance(p: Pose = this.pose): number {
-    const a = (CONE_HALF_DEG * Math.PI) / 180;
-    return Math.min(this.rayDistance(p, -a), this.rayDistance(p, 0), this.rayDistance(p, a));
+  /** What the ultrasonic sensor reads without noise (a display): 3..250 cm, 255 with no echo in range. */
+  ultrasonicCm(): number {
+    return ultrasonicReading(this.coneDistance());
   }
-
-  /** Ultrasonic distance in cm, with noise, clamped to 3..250 like the real sensor. */
+  /** Ultrasonic distance in cm, with noise: 3..250 like the real sensor, 255 when no echo comes back. */
   senseUltrasonic(): number {
-    const d = this.coneDistance() + this.cfg.noise.ultrasonic_cm * this.sensorRng.gauss();
-    return Math.round(Math.min(ULTRASONIC_MAX_CM, Math.max(ULTRASONIC_MIN_CM, d)) * 10) / 10;
+    const d = this.coneDistance();
+    return ultrasonicReading(Number.isFinite(d) ? d + this.cfg.noise.ultrasonic_cm * this.sensorRng.gauss() : d);
   }
 
-  /** Infrared proximity in % (0 touching, 100 far). Approximate: the real one depends on the material. */
+  /**
+   * What the infrared sensor reads without noise and not rounded (a display): 0..100 %. It measures the intensity of
+   * its own light reflected back. Each ray of its beam (weighted by the beam's brightness) returns light falling
+   * with the square of the distance and with the cosine of incidence (a matte surface), and the reading is the
+   * distance at which a square, beam-filling surface would return that much, times IR_PCT_PER_CM: linear for a
+   * large wall square on, farther for a wall at a slant or an object that fills only part of the beam.
+   */
+  irProximity(): number {
+    return Math.min(100, this.irUncapped());
+  }
+  /** irProximity before the sensor's 100 % cap: noise goes on this, so far from everything it still reads 100. */
+  private irUncapped(): number {
+    let sum = 0,
+      full = 0;
+    for (let i = 0; i < IR_RAYS; i++) {
+      const u = (2 * i) / (IR_RAYS - 1) - 1,
+        off = (u * IR_CONE_HALF_DEG * Math.PI) / 180,
+        w = Math.cos((u * Math.PI) / 2) ** 2;
+      const h = this.rayHit(this.pose, off),
+        d = Math.max(h.d, 0.1);
+      sum += (w * h.cos) / (d * d);
+      full += w * Math.cos(off) ** 3; // a square wall at distance 1
+    }
+    return IR_PCT_PER_CM * Math.sqrt(full / sum);
+  }
+  /** Infrared proximity in % (0 touching, 100 far), with noise that grows with the reading. */
   senseIrProximity(): number {
-    const d = this.rayDistance() + this.cfg.noise.ultrasonic_cm * 2 * this.sensorRng.gauss();
-    return Math.round(Math.min(100, Math.max(0, (d / IR_FULL_SCALE_CM) * 100)));
+    const p = this.irUncapped(),
+      v = p + ((this.cfg.noise.ir_pct * Math.min(100, p)) / 40) * this.sensorRng.gauss();
+    return Math.round(Math.min(100, Math.max(0, v)));
   }
 
   /** Front bumper: 1 if a wall or obstacle is less than 0.7 cm ahead. */
@@ -811,12 +1021,7 @@ export class World {
 
   /** Accumulated gyro angle in whole degrees since the last reset, counter-clockwise-positive. */
   senseGyro(): number {
-    const nz = this.cfg.noise;
-    const deg =
-      ((this.pose.th - this.gyroZeroTh) * 180) / Math.PI +
-      (nz.gyro_drift_deg_s * (this.t_ms - this.gyroZeroMs)) / 1000 +
-      nz.gyro_deg * this.sensorRng.gauss();
-    return Math.round(deg) + 0;
+    return Math.round(this.peekGyroDeg() + this.cfg.noise.gyro_deg * this.sensorRng.gauss()) + 0;
   }
 
   /** A named point of the map. Fails if it does not exist, listing the ones that do. */

@@ -6,11 +6,11 @@ import { test, expect, describe } from "bun:test";
 import { Ev3Provider, EXAMPLE_EV3_HARDWARE } from "../driver-ev3/provider";
 import * as E from "../driver-ev3/encode";
 import type { CommandResult } from "../protocol/types";
-import { World } from "../sim-world/world";
+import { NO_NOISE, World } from "../sim-world/world";
 import { SimWorldProvider } from "../sim-world/world-provider";
 import { quietWorld, EXAMPLES, config, DRIVE } from "../sim-world/testkit";
 import { SimBrick, LARGE_DEG_S, type BrickDrivetrain } from "./brick";
-import { DRIVETRAIN } from "./testkit";
+import { DRIVETRAIN, lagged } from "./testkit";
 
 // Kept low on purpose: the provider's polls ride on real timers, whose granularity (about 15 ms on Windows)
 // times this factor is how late the provider can see a target.
@@ -115,11 +115,35 @@ describe("Ev3Provider on SimBrick", () => {
     expect(op.reason).toBe("timeout");
     expect(op.measured.time_limited).toBe(true);
     const deg = op.measured.left_deg as number;
-    expect(Math.abs(deg - 0.5 * LARGE_DEG_S * 0.25)).toBeLessThan(8);
+    expect(Math.abs(deg - lagged(0.5 * LARGE_DEG_S, 250))).toBeLessThan(8); // a start from rest lags
     expect(world.pose.x - 43).toBeCloseTo(deg / DEG_PER_CM, 1);
     expect(brick.busy()).toBe(false);
     expectClean(brick);
   });
+
+  test("a tracked base with noise off: 50 cm by its encoders ends within 1 cm of 50, a 90 deg encoder turn turns about 72", async () => {
+    const tracks: BrickDrivetrain = { ...DRIVETRAIN, wheel_diameter_cm: 3.5, axle_track_cm: 13.5 };
+    const world = quietWorld(EXAMPLES.lineOval, { noise: { ...NO_NOISE, turn_scrub: 0.2 } });
+    world.drive = { axle_track_cm: 13.5 };
+    const { ev3, brick } = twin(world, tracks);
+    await ev3.devices();
+    const perCm = 360 / (Math.PI * 3.5);
+    const deg = Math.round(50 * perCm);
+    const t0 = performance.now();
+    const go = await pairMove(ev3, deg, deg, 60);
+    expect(go.reason).toBe("completed");
+    expect(Math.abs(world.pose.x - 43 - 50)).toBeLessThan(1);
+    expect(Math.abs(world.pose.x - 43 - brick.tacho("B") / perCm)).toBeLessThan(0.05); // what the encoders say
+    expect(((performance.now() - t0) * SPEEDUP) / 1000).toBeGreaterThan(50 / ((0.6 * LARGE_DEG_S) / perCm));
+    const arc = Math.round((((Math.PI / 2) * 13.5) / 2) * perCm);
+    const [b0, c0] = [brick.tacho("B"), brick.tacho("C")];
+    const turn = await pairMove(ev3, -arc, arc, 40);
+    expect(turn.reason).toBe("completed");
+    const spun = (brick.tacho("C") - c0 - (brick.tacho("B") - b0)) / 2;
+    const byEncoders = ((spun / perCm / (13.5 / 2)) * 180) / Math.PI;
+    expect(Math.abs((world.pose.th * 180) / Math.PI - 0.8 * byEncoders)).toBeLessThan(0.5);
+    expect(Math.abs((world.pose.th * 180) / Math.PI - 72)).toBeLessThan(4);
+  }, 15000);
 
   test("chained operations drive the simulated robot the commanded distance", async () => {
     const { ev3, brick, world } = twin(new World(config(), 4, DRIVE)); // default noise
@@ -216,7 +240,7 @@ describe("Ev3Provider on SimBrick", () => {
     const { ev3, brick, world } = twin();
     await ev3.devices();
     const move = ev3.command("ev3.pair", "run_pair", { left_deg: 3000, right_deg: 3000, speed_pct: 30 }, idle());
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 100)); // a start from rest turns little in its first tens of ms
     expect(await ev3.stop()).toEqual({ motors_stopped: true });
     const r = await move;
     expect(r.reason).toBe("preempted");
@@ -252,7 +276,7 @@ describe("Ev3Provider on SimBrick", () => {
     ).rejects.toMatchObject({ code: "unknown_device" });
     const op = await ev3.command("ev3.B", "run_time", { ms: 200, speed_pct: 50 }, idle());
     expect(op.reason).toBe("completed");
-    expect(op.measured.degrees as number).toBeGreaterThan(80);
+    expect(op.measured.degrees as number).toBeGreaterThan(50);
     expect(world.pose).toEqual({ x: 43, y: 25, th: 0 });
     expectClean(brick);
   });
@@ -308,7 +332,7 @@ describe("Ev3Provider on SimBrick", () => {
     expect(refreshed.length).toBe(1);
     await refreshed[0];
     expect(kinds["ev3.S4"]).toBe("infrared");
-    expect(await value(ev3, "ev3.S4", "proximity_pct")).toBe(100);
+    expect(await value(ev3, "ev3.S4", "proximity_pct")).toBeGreaterThan(77); // the far wall, 77 cm ahead
     expectClean(brick);
   });
 });

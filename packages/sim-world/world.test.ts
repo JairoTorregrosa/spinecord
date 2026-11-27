@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { World, parseWorld, COLOR, WORLD_SCHEMA } from "./world";
+import { World, parseWorld, COLOR, NO_NOISE, WORLD_SCHEMA } from "./world";
 import { join } from "node:path";
 import { loadWorldFile } from "./world-file";
 import { EXAMPLES, DRIVE, config, quietWorld } from "./testkit";
@@ -97,6 +97,30 @@ describe("physics", () => {
     expect(r.left_cm).toBeLessThan(70);
     expect(w.senseTouch()).toBe(1);
   });
+  test("a drive into a wall ends in contact with it, and the wheel travel reported is the travel done", () => {
+    const w = quietWorld(); // front of the body at x 51, the wall at 120
+    const r = w.advance(200, 200, 25);
+    expect(120 - (w.pose.x + w.cfg.body.front_cm)).toBeLessThan(0.01);
+    expect(r.left_cm).toBeCloseTo(w.pose.x - 43, 2);
+    // at a slant the corner comes to rest on the wall
+    const v = quietWorld();
+    v.setPose({ x: 90, y: 40, th: Math.PI / 6 });
+    expect(v.advance(50, 50, 25).stalled).toBe(true);
+    expect(Math.max(...v.corners().map(([x]) => x))).toBeGreaterThan(119.99);
+  });
+  test("a tracked base with turn_scrub 0.2 turns 80 % of what its encoders say; driving straight is untouched", () => {
+    const w = quietWorld(EXAMPLES.lineOval, { noise: { ...NO_NOISE, turn_scrub: 0.2 } });
+    const arc = (Math.PI / 2) * (DRIVE.axle_track_cm / 2); // each wheel's travel for 90 deg by the encoders
+    const r = w.advance(-arc, arc, 10);
+    expect(r.right_cm).toBeCloseTo(arc, 6); // the encoders report what the motors turned
+    expect((w.pose.th * 180) / Math.PI).toBeCloseTo(72, 6);
+    w.setPose({ x: 43, y: 25, th: 0 });
+    w.advance(30, 30, 20);
+    expect(w.pose.x).toBeCloseTo(73, 6);
+    expect(() => parseWorld({ ...EXAMPLES.lineOval, noise: { turn_scrub: 1 } })).toThrow(
+      /noise.turn_scrub must be below 1/,
+    );
+  });
   test("an obstacle blocks too", () => {
     const w = quietWorld();
     w.setPose({ x: 30, y: 45, th: 0 });
@@ -178,10 +202,86 @@ describe("sensors", () => {
     expect(w.rayDistance()).toBeCloseTo(120 - 38, 1);
     expect(w.senseUltrasonic()).toBeLessThan(25);
   });
-  test("IR proximity is a percentage of about 70 cm", () => {
+  // A 300 x 300 cm room with one wall the tests aim at (x 300): nothing else falls in the infrared beam.
+  const room = (seed?: number) => {
+    const json = { ...EXAMPLES.lineOval, arena: { width_cm: 300, height_cm: 300 }, obstacles: [] };
+    return seed === undefined ? quietWorld(json) : new World(config(json), seed, DRIVE);
+  };
+  /** Sensor `cm` from the wall at x 300 along its axis, the axis `deg` off the wall's normal. */
+  const aim = (w: World, cm: number, deg = 0) => {
+    const th = (deg * Math.PI) / 180,
+      ahead = w.cfg.body.distance_sensor_x_cm;
+    w.setPose({ x: 300 - (ahead + cm) * Math.cos(th), y: 150 - (ahead + cm) * Math.sin(th), th });
+  };
+  test("IR proximity of a large wall square on reads about its distance in cm: 41 at 38 cm, 100 with nothing in range", () => {
+    const w = room();
+    const at = (cm: number) => (aim(w, cm), w.senseIrProximity());
+    expect(at(38)).toBe(41); // EV3-G read 40-41 at 38 cm from a white wall
+    expect(at(10)).toBe(11);
+    expect(at(30)).toBe(32);
+    expect(at(60)).toBe(64);
+    expect(at(100)).toBe(100);
+  });
+  test("IR proximity is not linear in distance: a slanted wall or an object smaller than the beam reads farther", () => {
+    const w = room();
+    aim(w, 30);
+    const square = w.irProximity();
+    aim(w, 30, 40);
+    expect(w.rayDistance()).toBeCloseTo(30, 6);
+    expect(w.irProximity()).toBeGreaterThan(square + 2); // about 11 % farther at 40 deg
+    // a 10 cm box 20 cm ahead fills only part of the beam
+    const b = quietWorld({
+      ...EXAMPLES.lineOval,
+      arena: { width_cm: 300, height_cm: 300 },
+      obstacles: [{ x: 150, y: 145, w: 10, h: 10 }],
+    });
+    b.setPose({ x: 150 - 20 - 8, y: 150, th: 0 });
+    expect(b.rayDistance()).toBeCloseTo(20, 6);
+    expect(b.irProximity()).toBeGreaterThan(20 * (40.5 / 38) + 1); // about 10 % farther than a wall at 20 cm
+  });
+  test("IR noise grows with the reading", () => {
+    const spread = (cm: number) => {
+      const w = room(7);
+      aim(w, cm);
+      const v = Array.from({ length: 400 }, () => w.senseIrProximity());
+      const m = v.reduce((a, b) => a + b, 0) / v.length;
+      return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length);
+    };
+    expect(spread(70)).toBeGreaterThan(1.5 * spread(20));
+    // with nothing within reach it reads 100 every time, noise or not
+    const far = room(7);
+    aim(far, 150);
+    expect(new Set(Array.from({ length: 200 }, () => far.senseIrProximity()))).toEqual(new Set([100]));
+  });
+  test("ultrasonic: a wall square on echoes, one slanted 20 deg still does, one at 60 deg gives no echo (255)", () => {
+    const w = room();
+    const look = (deg: number) => (aim(w, 40, deg), w.senseUltrasonic());
+    expect(look(0)).toBeCloseTo(40, 1);
+    expect(look(20)).toBeLessThan(45);
+    expect(look(30)).toBe(255);
+    expect(look(60)).toBe(255);
+    // and nothing in range reads 255 too: the far wall 292 cm away
+    w.setPose({ x: 0 + 10.5, y: 150, th: 0 });
+    expect(w.senseUltrasonic()).toBe(255);
+  });
+  test("a gyro reset while the robot turns drifts by the rate it had; reset while still, it does not", () => {
     const w = quietWorld();
-    w.setPose({ x: 77, y: 20, th: 0 }); // 35 cm to the wall
-    expect(w.senseIrProximity()).toBe(50);
+    w.stepWheels(-0.5, 0.5, 20); // turning left at about 240 deg/s
+    w.resetGyro();
+    w.wait(1000); // still, for a second
+    expect(w.senseGyro()).toBeLessThan(-200);
+    w.resetGyro(); // still now: a good zero
+    w.wait(1000);
+    expect(w.senseGyro()).toBe(0);
+  });
+  test("the gyro is within +-3 deg on a 90 deg turn for most seeds, off by its own scale error", () => {
+    const errors = Array.from({ length: 100 }, (_, seed) => {
+      const w = new World(config(EXAMPLES.lineOval, { noise: { ...NO_NOISE, gyro_scale: 0.017 } }), seed, DRIVE);
+      w.advance(-Math.PI * 3, Math.PI * 3, 10); // exactly 90 deg on a 12 cm axle
+      return w.peekGyroDeg() - 90;
+    });
+    expect(errors.filter((e) => Math.abs(e) <= 3).length).toBeGreaterThanOrEqual(90);
+    expect(errors.some((e) => Math.abs(e) > 0.5)).toBe(true);
   });
   test("sensor noise is seeded and does not disturb the motion", () => {
     const a = new World(config(), 5, DRIVE),
