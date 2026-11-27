@@ -6,13 +6,42 @@
     "height_cm": 150
   },
   "obstacles": [
-    { "x": 120, "y": 60, "w": 22, "h": 30 },
-    { "x": 60, "y": 118, "w": 40, "h": 14 },
-    { "x": 150, "y": 10, "w": 18, "h": 18 }
+    {
+      "x": 120,
+      "y": 60,
+      "w": 22,
+      "h": 30
+    },
+    {
+      "x": 60,
+      "y": 118,
+      "w": 40,
+      "h": 14
+    },
+    {
+      "x": 150,
+      "y": 10,
+      "w": 18,
+      "h": 18
+    }
   ],
   "zones": [
-    { "x": 15, "y": 55, "w": 45, "h": 40, "color": "blue", "label": "base" },
-    { "x": 165, "y": 110, "w": 28, "h": 32, "color": "green", "label": "meta" }
+    {
+      "x": 15,
+      "y": 55,
+      "w": 45,
+      "h": 40,
+      "color": "blue",
+      "label": "base"
+    },
+    {
+      "x": 165,
+      "y": 110,
+      "w": 28,
+      "h": 32,
+      "color": "green",
+      "label": "meta"
+    }
   ],
   "lines": [
     {
@@ -26,21 +55,23 @@
     }
   ],
   "points": [
-    { "label": "inicio", "x": 38, "y": 75, "radius_cm": 8 },
-    { "label": "meta", "x": 179, "y": 126, "radius_cm": 10 }
+    {
+      "label": "inicio",
+      "x": 38,
+      "y": 75,
+      "radius_cm": 8
+    },
+    {
+      "label": "meta",
+      "x": 179,
+      "y": 126,
+      "radius_cm": 10
+    }
   ],
   "start": {
     "x": 38,
     "y": 75,
     "heading_deg": 0
-  },
-  "body": {
-    "front_cm": 8.5,
-    "back_cm": 13.5,
-    "half_width_cm": 9,
-    "color_sensor_x_cm": 7,
-    "color_spot_radius_cm": 1,
-    "distance_sensor_x_cm": 6
   },
   "noise": {
     "motor": 0.02,
@@ -48,24 +79,5 @@
     "wheel_bias": 0.006,
     "turn_scrub": 0.2,
     "ultrasonic_cm": 0.5
-  },
-  "extensions": {
-    "ev3": {
-      "motors": {
-        "B": "large",
-        "C": "large"
-      },
-      "sensors": {
-        "4": "ir"
-      }
-    },
-    "view": {
-      "drive": "tracks",
-      "brick": { "x_cm": -1.5, "screen": "front" },
-      "phone": { "x_cm": 5.2, "bottom_cm": 10.8, "screen": "front" },
-      "sensors": { "4": { "x_cm": 5, "y_cm": 4.6, "z_cm": 19.6 } },
-      "bumper": { "x_cm": -10.5 },
-      "label": "3"
-    }
   }
 }

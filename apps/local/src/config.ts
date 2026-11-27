@@ -13,6 +13,7 @@ import type { RobotProfile } from "../../../packages/protocol/types";
 import { parseWorld } from "../../../packages/sim-world/world";
 import type { LanConfig } from "./lan";
 import { DEFAULT_PAGE_PORT } from "./pages";
+import { readBuild, withBuild, type TwinBuild } from "./twin-build";
 
 /** Port of the 3D view of the twins (`--view`), on 127.0.0.1. */
 export const DEFAULT_VIEW_PORT = 8769;
@@ -116,7 +117,16 @@ decides nothing. A file that is not there ends the start with its absolute path.
 export class HelpAsked extends Error {}
 
 export type RobotSource =
-  | { source: "twin"; id: string; robot: RobotFile; world: unknown; seed: number }
+  | {
+      source: "twin";
+      id: string;
+      robot: RobotFile;
+      /** The world's JSON with the robot's build (its file's `twin`) in place, checked against the profile. */
+      world: unknown;
+      seed: number;
+      /** true when the build came from the robot file's `twin`, false when from the world. */
+      ownBuild?: boolean;
+    }
   | { source: "ev3"; id: string; robot: RobotFile }
   | {
       source: "ev3dev";
@@ -245,10 +255,25 @@ export function parsePagesRobot(json: unknown, where: string): RobotProfile {
   };
 }
 
-function robotFile(where: string, path: string): { file: RobotFile; raw: unknown } {
-  const raw = readJson(where, path);
-  return { file: parseRobotFile(raw, `${where} ${path}`), raw };
+interface ReadRobot {
+  file: RobotFile;
+  raw: unknown;
+  build: TwinBuild | null;
+  path: string;
 }
+function robotFile(where: string, path: string): ReadRobot {
+  const raw = readJson(where, path);
+  const file = parseRobotFile(raw, `${where} ${path}`);
+  return { file, raw, build: readBuild(raw, `${where} ${path}`), path };
+}
+/** The world a twin of `r` runs in: the room read from `path`, with the robot's build in place. */
+function twinWorld(r: ReadRobot, where: string, path: string): Pick<Source<"twin">, "world" | "ownBuild"> {
+  return {
+    world: withBuild(world(where, path), r.build, r.file, { robot: r.path, world: `${where} ${path}` }),
+    ownBuild: r.build !== null,
+  };
+}
+type Source<K extends RobotSource["source"]> = Extract<RobotSource, { source: K }>;
 /** A private key ssh is told to use. Checked here: ssh itself goes on with its default keys when the file is missing. */
 /** `--page-ext`: a folder that is there. Its files are listed at each request, so an edit shows on a reload. */
 function extFolder(where: string, path: string): string {
@@ -377,14 +402,15 @@ function fromFile(file: string): LocalConfig {
       pages ??= { port: DEFAULT_PAGE_PORT };
       return { source: "pages", id: r.id ?? profile.id, profile };
     }
-    const { file, raw } = robotFile(`${where}: ${f}.robot`, robotPath);
+    const read = robotFile(`${where}: ${f}.robot`, robotPath);
+    const { file, raw } = read;
     switch (r.source) {
       case "twin":
         return {
           source: "twin",
           id: r.id ?? twinId(file.profile.id),
           robot: file,
-          world: world(`${where}: ${f}.world`, at(r.world, `${f}.world`)),
+          ...twinWorld(read, `${where}: ${f}.world`, at(r.world, `${f}.world`)),
           seed: r.seed === undefined ? 1 : int(`${where}: ${f}.seed`, r.seed, 0, 0xffffffff),
         };
       case "ev3":
@@ -517,14 +543,16 @@ export function loadConfig(argv: string[]): LocalConfig {
     for (const flag of ["ssh", "ssh-key", "install-bridge"] as const)
       if (values[flag] !== undefined) needs(flag, "ev3dev", values.ev3dev !== undefined);
     // --view alone shows the twin a bare start runs
-    if (given.length === 0 || given.every((k) => k === "view" || k === "view-port"))
+    if (given.length === 0 || given.every((k) => k === "view" || k === "view-port")) {
+      const example = robotFile("example robot", EXAMPLE.robot);
       robots.push({
         source: "twin",
-        id: twinId(robotFile("example robot", EXAMPLE.robot).file.profile.id),
-        robot: robotFile("example robot", EXAMPLE.robot).file,
-        world: world("example world", EXAMPLE.world),
+        id: twinId(example.file.profile.id),
+        robot: example.file,
+        ...twinWorld(example, "example world", EXAMPLE.world),
         seed: 1,
       });
+    }
     if (values.ev3 !== undefined) {
       const { file } = robotFile("--ev3", fromRepo(values.ev3));
       robots.push({ source: "ev3", id: file.profile.id, robot: file });
@@ -548,12 +576,12 @@ export function loadConfig(argv: string[]): LocalConfig {
       });
     }
     if (values.twin !== undefined) {
-      const { file } = robotFile("--twin", fromRepo(values.twin));
+      const read = robotFile("--twin", fromRepo(values.twin));
       robots.push({
         source: "twin",
-        id: twinId(file.profile.id),
-        robot: file,
-        world: world("--world", values.world === undefined ? EXAMPLE.world : fromRepo(values.world)),
+        id: twinId(read.file.profile.id),
+        robot: read.file,
+        ...twinWorld(read, "--world", values.world === undefined ? EXAMPLE.world : fromRepo(values.world)),
         seed: values.seed === undefined ? 1 : int("--seed", values.seed, 0, 0xffffffff),
       });
     }
