@@ -14,6 +14,7 @@ import { BEAM, MODULE } from "./dims";
 import { buildDevices, cableTo, type BrickMount } from "./devices";
 import { buildDrive } from "./drive";
 import { Occupancy } from "./layout";
+import { loadReal } from "./meshes";
 import type { Look } from "./look";
 import type { RobotMeta, RobotState } from "./messages";
 import { boxOf, disposeKit, makeKit, mergeKit, orient, P, pointOf } from "./parts";
@@ -127,6 +128,9 @@ export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
   group.add(shadow);
 
   mergeKit(kit);
+  // the real meshes come after: the robot is drawn now from its procedural parts, each replaced as its mesh arrives
+  let alive = true;
+  void loadReal(kit, () => alive);
 
   const ray = devices.rayOrigin;
   return {
@@ -141,6 +145,7 @@ export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
       devices.update(s, timeS, tachos);
     },
     dispose() {
+      alive = false;
       group.traverse((o) => (o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).dispose());
       disposeKit(kit);
     },

@@ -4,6 +4,7 @@
 //   az     around the robot, from behind it: 0 behind, 90 its left side, 180 in front, 270 its right side
 //   el     degrees above the floor; dist: cm from the robot to the camera
 //   hud=0  hides the panels, so only the scene shows; stats=1 shows draw calls, triangles and frame time
+//   mesh=0 draws every part from boxes and cylinders, never from its real LDraw mesh (to compare the two)
 import type * as THREE from "three";
 
 const DEG = Math.PI / 180;
@@ -15,6 +16,8 @@ export interface DeepLink {
   dist: number | null;
   hud: boolean;
   stats: boolean;
+  /** Draw the parts that have one from their real mesh. */
+  meshes: boolean;
 }
 
 const num = (q: URLSearchParams, k: string): number | null => {
@@ -37,6 +40,7 @@ export function readDeepLink(search: string): DeepLink {
     dist: num(q, "dist"),
     hud: q.get("hud") !== "0",
     stats: q.get("stats") === "1",
+    meshes: q.get("mesh") !== "0",
   };
 }
 
