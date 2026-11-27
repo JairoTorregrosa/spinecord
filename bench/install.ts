@@ -1,5 +1,5 @@
 // What a person waits for to install spinecord, as .claude/skills/setup-spinecord/install.md does it:
-// `bun bench/install.ts [--runs 5] [--repo <url>]`. One line per metric: `<name> median=<v> min=<v> max=<v> n=<runs> <unit>`.
+// `bun bench/install.ts [--runs 5] [--repo <url>] [--branch <name>]`. One line per metric: `<name> median=<v> min=<v> max=<v> n=<runs> <unit>`.
 // - clone: `git clone <repo>` into an empty folder (seconds, and the size of its .git and of the checkout).
 // - clone_shallow: the same with `--depth 1`, for comparison.
 // - install: `bun install --filter @spinecord/local` in that clone with an empty package cache (seconds, packages,
@@ -13,6 +13,9 @@ const argv = process.argv.slice(2);
 const value = (name: string) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
 const RUNS = Number(value("--runs") ?? 5);
 const REPO = value("--repo") ?? "https://github.com/JairoTorregrosa/spinecord";
+/** `--branch <name>`: clone that branch instead of the default one. */
+const BRANCH = value("--branch");
+const branch = BRANCH ? ["--branch", BRANCH] : [];
 
 const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
@@ -50,8 +53,8 @@ const sizes = { git: 0, tree: 0, shallowGit: 0, modules: 0, packages: 0 };
 for (let i = 0; i < RUNS; i++) {
   const root = mkdtempSync(join(tmpdir(), "spinecord-install-"));
   try {
-    out.clone.push(run(["git", "clone", "-q", REPO, "full"], root));
-    out.shallow.push(run(["git", "clone", "-q", "--depth", "1", REPO, "shallow"], root));
+    out.clone.push(run(["git", "clone", "-q", ...branch, REPO, "full"], root));
+    out.shallow.push(run(["git", "clone", "-q", "--depth", "1", ...branch, REPO, "shallow"], root));
     const full = join(root, "full");
     out.install.push(
       run(["bun", "install", "--filter", "@spinecord/local"], full, { BUN_INSTALL_CACHE_DIR: join(root, "cache") }),
