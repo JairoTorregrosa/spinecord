@@ -24,9 +24,9 @@ Sizes are the parts' bounding boxes from BrickLink's catalogue (marked verified 
 
 | Part | Tells | Size |
 |---|---|---|
-| EV3 large motor | Long L-shaped housing, white and dark grey; the round end turns a **red** hub with a cross hole; the cable plugs into a socket at the square end | 11.1 × 5.9 × 4.0 cm ([BrickLink 95658](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95658)) |
-| EV3 medium motor | A compact block, white and grey; the **red** output on its short front face, axle along its length; many pin holes around | 7.2 × 3.1 × 2.4 cm ([BrickLink 99455](https://www.bricklink.com/v2/catalog/catalogitem.page?P=99455)) |
-| NXT motor | The large motor's shape, light grey, an **orange** hub | 10.8 × 5.3 × 4.0 cm ([BrickLink 53787](https://www.bricklink.com/v2/catalog/catalogitem.page?P=53787)) |
+| EV3 large motor (95658) | Long L-shaped housing, white and dark grey; the round end turns a **red** hub with a cross hole; the cable plugs into a socket at the square end | 11.1 × 5.9 × 4.0 cm ([BrickLink 95658](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95658)) |
+| EV3 medium motor (99455) | A compact block, white and grey; the **red** output on its short front face, axle along its length; many pin holes around | 7.2 × 3.1 × 2.4 cm ([BrickLink 99455](https://www.bricklink.com/v2/catalog/catalogitem.page?P=99455)) |
+| NXT motor (53787) | The large motor's shape, light grey, an **orange** hub | 10.8 × 5.3 × 4.0 cm ([BrickLink 53787](https://www.bricklink.com/v2/catalog/catalogitem.page?P=53787)) |
 
 An NXT motor on an EV3 brick works; write it as `"large"` and add a note. A motor whose cable goes nowhere visible still counts: ask which port.
 
@@ -34,16 +34,33 @@ An NXT motor on an EV3 brick works; write it as `"large"` and add a note. A moto
 
 | Part | Tells | Faces | Size |
 |---|---|---|---|
-| EV3 touch | Box with a **red cross-shaped plunger** on one end | where the plunger points | 6 × 3 × 3 studs, 4.4 × 3.1 × 2.4 cm ([BrickLink 95648](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95648)) |
-| EV3 colour | Small dark box, a round window with a lens on one face; the window glows red, blue or white when it is on | where the window points, usually down at the floor | 4.0 × 3.1 × 2.4 cm ([BrickLink 95650](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95650)) |
-| EV3 gyro | The colour sensor's box but **no window**; curved arrows printed on top (the axis it measures) | any; position does not matter | 4.0 × 3.1 × 2.4 cm ([BrickLink 99380](https://www.bricklink.com/v2/catalog/catalogitem.page?P=99380)) |
-| EV3 ultrasonic | **Two round eyes** that stand out, side by side, with a ring around each that glows red when on | where the eyes point | 7 × 6 × 3 studs, 5.8 × 4.8 × 3.2 cm ([BrickLink 95652](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95652)) |
-| EV3 infrared | Same size, but a **flat, dark, glossy** front panel with two lenses behind it, nothing standing out | where the dark panel points | 5.8 × 4.8 × 3.1 cm ([BrickLink 95654](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95654)) |
-| NXT touch | An **orange** plunger, light grey box | | [BrickLink 53793](https://www.bricklink.com/v2/catalog/catalogitem.page?P=53793) |
-| NXT ultrasonic | Two eyes in a grey housing shaped like a head | | [BrickLink 53792](https://www.bricklink.com/v2/catalog/catalogitem.page?P=53792) |
+| EV3 touch (95648) | Box with a **red cross-shaped plunger** on one end | where the plunger points | 6 × 3 × 3 studs, 4.4 × 3.1 × 2.4 cm ([BrickLink 95648](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95648)) |
+| EV3 colour (95650) | Small dark box, a round window with a lens on one face; the window glows red, blue or white when it is on | where the window points, usually down at the floor | 4.0 × 3.1 × 2.4 cm ([BrickLink 95650](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95650)) |
+| EV3 gyro (99380) | The colour sensor's box but **no window**; curved arrows printed on top (the axis it measures) | any; position does not matter | 4.0 × 3.1 × 2.4 cm ([BrickLink 99380](https://www.bricklink.com/v2/catalog/catalogitem.page?P=99380)) |
+| EV3 ultrasonic (95652) | **Two round eyes** that stand out, side by side, with a ring around each that glows red when on | where the eyes point | 7 × 6 × 3 studs, 5.8 × 4.8 × 3.2 cm ([BrickLink 95652](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95652)) |
+| EV3 infrared (95654) | Same size, but a **flat, dark, glossy** front panel with two lenses behind it, nothing standing out | where the dark panel points | 5.8 × 4.8 × 3.1 cm ([BrickLink 95654](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95654)) |
+| NXT touch (53793) | An **orange** plunger, light grey box | | [BrickLink 53793](https://www.bricklink.com/v2/catalog/catalogitem.page?P=53793) |
+| NXT ultrasonic (53792) | Two eyes in a grey housing shaped like a head | | [BrickLink 53792](https://www.bricklink.com/v2/catalog/catalogitem.page?P=53792) |
 | NXT light, colour, sound | A red light or a lens (light, [colour 64892](https://www.bricklink.com/v2/catalog/catalogitem.page?P=64892)), a grille (sound, [55963](https://www.bricklink.com/v2/catalog/catalogitem.page?P=55963)) | | |
 
-Ultrasonic or infrared is the look-alike that matters: eyes that stand out are ultrasonic; a flat dark face is infrared. Gyro or colour: a window is colour. An IR remote or beacon is not on a port.
+Look-alikes, and the one tell that separates them:
+
+- touch or colour: a red cross plunger (touch, 4.4 cm long, at a bumper) or a round lens window (colour, 4.0 cm, usually low and facing the floor);
+- colour or gyro: a window means colour;
+- ultrasonic or infrared: eyes that stand out are ultrasonic, a flat dark face is infrared;
+- large or medium motor: length against the brick (11 cm, about the brick's length, or 7 cm).
+
+When the tell is not in the photo (the part seen from behind or from the side, too small, in shadow), the kind is assumed: keep its port's token and ask "Is the part at <place> a <kind a> or a <kind b>?". Never pick one. An IR remote or beacon is not on a port.
+
+## Official models
+
+When the robot looks like one of these, ask "Is this the <model>, built as in the instructions?" (with its attachment, if one is on it). When `<clone>/docs/lego-parts.md` exists, its builds replace this table.
+
+| Model | Set | Tells | Ports and geometry from |
+|---|---|---|---|
+| Driving Base (Educator Vehicle) | Education core 45544 | two large motors under a flat brick, two 56 mm wheels, a ball caster behind; attachments in front (colour sensor down, ultrasonic ahead, touch bumper, gyro, medium-motor arm) | drive motors B (left) and C (right) ([ev3dev-python Robot Educator](https://sites.google.com/site/ev3devpython/learn-ev3-python/robot-educator)); medium motor A; sensors by convention 1 touch, 2 gyro, 3 colour, 4 ultrasonic or infrared ([EV3 Basic, Robot Educator hardware](https://www.sites.google.com/site/ev3basic/ev3-basic-programming/robot-educator/hardware)). The convention is not a rule: a port is still confirmed only by the person or the brick |
+| Gyro Boy, Puppy, Color Sorter, Robot Arm H25, Stair Climber, Znap, Elephant | Education 45544 / expansion 45560 | as in their instructions | the instructions (education.lego.com, "EV3 building instructions"): ask the person, or the brick |
+| TRACK3R, EV3RSTORM, GRIPP3R, R3PTAR, SPIK3R | Retail 31313 | as in their instructions; TRACK3R: tracks on 57519 sprockets, the infrared sensor ahead | the instructions (LEGO.com/service, "MINDSTORMS building instructions"): ask the person, or the brick |
 
 ## Where a port is
 

@@ -4,11 +4,11 @@ Send every open question in **one** message, numbered, in the person's language,
 
 No ruler? A LEGO beam is one: from the centre of one hole to the centre of the next is 0.8 cm, so "lay a beam along it and count the holes; each hole is 0.8 cm". A 15-hole beam is 12 cm long.
 
-## Intake (SKILL.md state 0)
+## Intake
 
-- **Which robot.** "I see <n> robots: (a) <place, colour, wheels or tracks>, (b) … Which one is yours?"
-- **More photos.** See identify.md "More photos" for which views to ask for.
-- **A drawing or a render.** "This is <an instruction drawing / a render / a slide>. Please send a photo of the robot you built. If you built exactly this model, step for step, tell me its name."
+The messages of SKILL.md state 0, and "Is this the <model>, built as in the instructions?" for an official model.
+
+A part whose kind is unsure: "Is the part at <place> a <kind a> (<its tell>) or a <kind b> (<its tell>)?"
 
 ## The build
 
@@ -25,8 +25,8 @@ No ruler? A LEGO beam is one: from the centre of one hole to the centre of the n
 | 9 | "How far does the robot reach ahead of the wheel axle, behind it (caster, skid, bumper), and how wide is it, in cm?" | three numbers | `footprint` | from the photo with a scale; else the package defaults (leave `twin.body`'s three lengths out) |
 | 10 | "Does the brick lie flat or stand upright? Which end of it has the screen and ports A-D: toward the front or the back?" | flat / upright; front / back | `places` | flat; the end you can see in the photo |
 | 11 | Per sensor: "How far ahead of the wheel axle is it (negative if behind), how far left or right of the middle, how high, and which way does it look (ahead, down, up, sideways, back)?" | numbers; ahead / down / up / left / right / back | `places` | identify.md's default place of that sensor; the way its face points in the photo |
-| 12 | "Is there a sensor or motor the photo does not show (under the brick, behind it)?" | no / yes: what and where | the ports | no |
-| 13 | "Is a phone on the robot? Where does it stand, how high is its bottom edge, which way does its screen face?" | none / numbers, front / back | `places` | none |
-| 14 | "What is your robot called?" | free | none | `mi-robot` |
+| 12 | "Is a phone on the robot? Where does it stand, how high is its bottom edge, which way does its screen face?" | none / numbers, front / back | `places` | none |
+| 13 | "What is your robot called?" | free | none | `mi-robot` |
+| 14 | Always last: "Is there anything the photo does not show: a sensor underneath or inside, another motor, a part behind the brick?" | no / yes: what, where, which port | the ports | the ports you could not see stay listed |
 
 A value assumed here keeps its token in `twin.unconfirmed`. Write the question that would confirm it in the report.
