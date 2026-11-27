@@ -394,7 +394,7 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
             status: "warn",
             check: `footprint ${r.id}`,
             reason: clash,
-            next: "a measured value wins; else a footprint read from the photo wins (axle_track_cm = its width minus one wheel or track width), and a default footprint loses (half_width_cm = half of axle track plus one wheel or track width)",
+            next: "a measured value wins; else a recognised build's axle track wins over a footprint read from the photo unless the wheels are visibly further apart (then axle_track_cm = its width minus one wheel or track width), and a default footprint loses (half_width_cm = half of axle track plus one wheel or track width)",
           });
         if (r.unconfirmed?.length)
           add({
