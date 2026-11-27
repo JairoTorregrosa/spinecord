@@ -780,7 +780,8 @@ function judge(row: Row): Out {
     const tol = e.tol_abs ?? (e.tol_rel ?? 0) * Math.abs(mid);
     const out = row.twin < e.lo - tol ? row.twin - e.lo : row.twin > e.hi + tol ? row.twin - e.hi : 0;
     const rel = (100 * (row.twin - mid)) / Math.abs(mid);
-    err = mid === 0 ? `${r1(out, 2)}` : `${rel > 0 ? "+" : ""}${r1(rel, 1)} %`;
+    // a band from 0 (an error bound) has no meaningful relative error: show how far past it, in its unit
+    err = e.lo === 0 ? `${out > 0 ? "+" : ""}${r1(out, 2)} ${e.unit}` : `${rel > 0 ? "+" : ""}${r1(rel, 1)} %`;
     verdict = out === 0 ? "ok" : e.kind === "estimate" ? "SUSPECT" : "OFF";
   }
   return { ...row, real, src, err, verdict };
