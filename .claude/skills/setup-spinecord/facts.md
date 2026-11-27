@@ -16,17 +16,20 @@ Read this file only when a step and the computer disagree. Then check the source
 | A profile keeps its organization for later logins. For another organization, log in with a new profile name | https://platform.claude.com/docs/en/cli-sdks-libraries/cli/authentication | 2026-11-24 |
 | `ant auth status` exits 0 with no login, and the docs say not to script against its exit code. `ant --profile <p> models list` exits 1 with `401` when the profile has no login | `ant` 2.14.0 in `ubuntu:24.04`, the authentication page | 2026-11-27 |
 | `ant auth status` prints `Logged in to <organization> as <email>`, the `Config dir:` path and the first characters of the token | `ant` 2.12.1 on macOS | 2026-11-24 |
+| After a token refresh, `ant auth status` prints no organization name and no email. It still prints the line `Profile organization_id` | `ant` 2.14.0 on macOS, a profile before and after `ant models list` refreshed its token | 2026-11-27 |
 | The profiles live in `ANTHROPIC_CONFIG_DIR`, else `~/.config/anthropic` (macOS, Linux), else `%APPDATA%\Anthropic` (Windows) | https://platform.claude.com/docs/en/manage-claude/wif-reference | 2026-11-24 |
 | `ANTHROPIC_PROFILE` in the environment makes Claude Code use that profile, above a claude.ai login | https://code.claude.com/docs/en/authentication | 2026-11-24 |
 | With no `ANTHROPIC_PROFILE`, a claude.ai login pays ahead of the active profile | https://code.claude.com/docs/en/authentication | 2026-11-24 |
 | A profile name that does not exist makes Claude Code use the claude.ai login, with no error | Claude Code 2.1.331 on macOS | 2026-11-24 |
 | `ANTHROPIC_PROFILE` in the `env` of `.claude/settings.json` or `.claude/settings.local.json` does not change who pays | Claude Code 2.1.331 on macOS, `/status` | 2026-11-24 |
-| `claude auth status --text` prints `Profile: ... profile <name>` and `Organization: <name> · <id>` when a profile pays, and `Login method:` for a claude.ai login | Claude Code 2.1.331 on macOS | 2026-11-24 |
+| `claude auth status --text` prints `Profile: ... profile <name>` when a profile pays, and `Login method:` for a claude.ai login. It prints `Organization: <name> · <id>` only until the first token refresh of the profile. Then `setup` asks `ant` | Claude Code 2.1.332 on macOS, a profile before and after a refresh | 2026-11-27 |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` and the cloud switches (`CLAUDE_CODE_USE_BEDROCK` and others) pay ahead of a profile | `examples/assistant/setup.ts` (`paysBeforeProfile`), https://code.claude.com/docs/en/authentication | 2026-11-24 |
 | `claude -p` ignores the `permissions.allow` of a folder that the person has not trusted. `--allowedTools mcp__spinecord` gives the tools | Claude Code 2.1.331 on macOS (PR #51) | 2026-11-24 |
+| The first start of Claude Code 2.1.332 with `ANTHROPIC_PROFILE` set and no other login asks no login. It shows the color theme, then security notes with "Press Enter to continue", then the trust question. Its first option is "No, exit", or in `~/mi-robot` "No, continue without these permissions" | macOS 27.2, a new home folder, `tmux` | 2026-11-27 |
 | `claude -p` takes `--max-budget-usd <amount>` and `--output-format json` | `claude --help` 2.1.332 | 2026-11-27 |
 | Claude Code: `curl -fsSL https://claude.ai/install.sh \| bash` (macOS, Linux), `irm https://claude.ai/install.ps1 \| iex` (PowerShell). It installs to `~/.local/bin` and does not add that folder to `PATH` | https://code.claude.com/docs/en/setup, run in `ubuntu:24.04` | 2026-11-27 |
 | bun: `curl -fsSL https://bun.com/install \| bash` (macOS, Linux, needs `unzip`), `powershell -c "irm bun.sh/install.ps1\|iex"` (Windows). The script installs to `~/.bun/bin` and adds it to `~/.bashrc` | https://bun.sh/docs/installation, run in `ubuntu:24.04` | 2026-11-27 |
+| On macOS with no `~/.zshrc`, the bun installer adds no `PATH` line. A new terminal then finds no `bun`, and a registration with a bare `bun` fails to start (`ENOENT`) | bun 1.4.5 install script, macOS 27.2, `claude mcp get spinecord` in a new `zsh -il` | 2026-11-27 |
 | spinecord needs bun 1.3.14 or later, and git | `package.json` `packageManager` of the clone, README.md | 2026-11-27 |
 | git: `brew install git` or `xcode-select --install` (macOS), `winget install --id Git.Git -e --source winget` (Windows) | https://git-scm.com/install/mac, https://git-scm.com/install/windows | 2026-11-24 |
 | The repository is public: the clone and the raw URL of this skill need no login | `gh repo view`, `curl -I` of the raw README | 2026-11-27 |
@@ -36,6 +39,5 @@ Read this file only when a step and the computer disagree. Then check the source
 Not verified:
 
 - The folder where Claude Code reads `ant` profiles on native Windows. fixes.md has the row "No `Profile:` line on Windows".
-- The first start of Claude Code with `ANTHROPIC_PROFILE` set and no other login: which questions come before the trust question.
 - The winget flags `--accept-source-agreements` and `--accept-package-agreements`, and the `PATH` line for PowerShell, were not run on Windows.
 - `open` on macOS, and on Windows the default browser of `ant auth login` and `rundll32.exe url.dll,FileProtocolHandler` of `setup view`.

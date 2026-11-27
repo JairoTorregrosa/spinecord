@@ -62,12 +62,37 @@ export function parseAuth(text: string): { profile?: string; org?: string; login
   return { profile, org, loginMethod };
 }
 
-/** `claude mcp get spinecord`: its scope (lowercase) and its Args line, or nothing when it is not registered. */
-export function parseMcpGet(text: string): { scope?: string; args?: string } {
+/**
+ * `ant --profile <p> auth status`: the organization of the profile. Its name is there after a login and is gone
+ * after a token refresh, its id stays. After that refresh Claude Code 2.1.332 prints no `Organization:` line either.
+ */
+export function parseAntOrg(text: string): { name?: string; id?: string } {
+  const m = text.match(/^\s*organization:\s*(.+?)\s*\(([0-9a-f-]{36})\)\s*$/m);
+  const id = m?.[2] ?? text.match(/\borganization_id\s+([0-9a-f-]{36})\s*$/m)?.[1];
+  return { name: m?.[1], id };
+}
+
+/** `claude mcp get spinecord`: its scope (lowercase), Command and Args lines, or nothing when it is not registered. */
+export function parseMcpGet(text: string): { scope?: string; command?: string; args?: string } {
   return {
     scope: text.match(/^\s*Scope:\s*(\w+)/m)?.[1]?.toLowerCase(),
+    command: text.match(/^\s*Command:\s*(.*)$/m)?.[1]?.trim(),
     args: text.match(/^\s*Args:\s*(.*)$/m)?.[1]?.trim(),
   };
+}
+
+/**
+ * The registration runs this bun by its full path: the person's terminal may not have bun on PATH (the bun
+ * installer writes no PATH line on a Mac without ~/.zshrc), and then Claude Code cannot start the server.
+ */
+export function isRegistered(
+  reg: { scope?: string; command?: string; args?: string },
+  bun: string,
+  args: string[],
+  platform: string = process.platform,
+): boolean {
+  const n = (s: string) => (platform === "win32" ? s.replaceAll("/", "\\").toLowerCase() : s);
+  return reg.scope === "local" && n(reg.command ?? "") === n(bun) && n(reg.args ?? "") === n(args.join(" "));
 }
 
 /** The robot flags of the registration, with every path absolute. */
@@ -111,7 +136,6 @@ const ev3File = (s: State): string | null =>
 const wanted = (s: State): string[] => robotArgs(robots(), ev3File(s));
 /** The smoke test drives the twin only, so its record holds the twin flags, which an EV3 change leaves alone. */
 const twinKey = (): string => robotArgs(robots(), null).join(" ");
-const norm = (s: string) => (process.platform === "win32" ? s.replaceAll("/", "\\").toLowerCase() : s);
 
 interface Ran {
   code: number | null;
@@ -206,30 +230,48 @@ async function checkPays(s: State): Promise<Line[]> {
     ];
   const r = await run(["claude", "auth", "status", "--text"], { ms: 30_000, cwd: cwd(), env: profileEnv(s.profile) });
   const a = parseAuth(r.out);
-  if (a.profile !== s.profile || !a.org)
+  const org = a.profile === s.profile ? await orgOf(s.profile, a.org) : undefined;
+  if (a.profile !== s.profile || !org)
     return [
       {
         status: "fail",
         what: "pays",
-        why: a.loginMethod
-          ? `Claude Code does not use the profile ${s.profile}: another login pays (${a.loginMethod})`
-          : `Claude Code shows no profile ${s.profile} (exit ${r.code})`,
+        why:
+          a.profile === s.profile
+            ? `Claude Code uses the profile ${s.profile}, but neither it nor ant names its organization`
+            : a.loginMethod
+              ? `Claude Code does not use the profile ${s.profile}: another login pays (${a.loginMethod})`
+              : `Claude Code shows no profile ${s.profile} (exit ${r.code})`,
         next: `fixes.md, row "Login method with the profile set"`,
       },
     ];
-  if (s.org !== a.org)
+  if (s.org !== org)
     return [
       {
         status: "todo",
         what: "pays",
-        why: `Claude Code pays with the organization "${a.org}"`,
-        next: `ask the person if "${a.org}" holds the credits; if yes: bun scripts/setup.ts confirm org`,
+        why: org.startsWith("id ")
+          ? `Claude Code pays with the organization of the profile ${s.profile}, ${org}: ant shows no name`
+          : `Claude Code pays with the organization "${org}"`,
+        next: org.startsWith("id ")
+          ? "bun scripts/setup.ts confirm org, without a question: SMOKE shows if the credits pay"
+          : `ask the person if "${org}" holds the credits; if yes: bun scripts/setup.ts confirm org`,
       },
     ];
-  return [{ status: "ok", what: "pays", why: `Claude Code pays with "${a.org}", profile ${s.profile}` }];
+  return [{ status: "ok", what: "pays", why: `Claude Code pays with "${org}", profile ${s.profile}` }];
 }
 
-async function registration(): Promise<{ scope?: string; args?: string }> {
+/** The organization that pays: Claude Code's name for it, else ant's name, else `id <uuid>`, else nothing. */
+async function orgOf(profile: string, fromClaude?: string): Promise<string | undefined> {
+  if (fromClaude) return fromClaude;
+  const env = profileEnv(profile);
+  delete env.ANTHROPIC_PROFILE;
+  const r = await run(["ant", "--profile", profile, "auth", "status"], { ms: 30_000, cwd: cwd(), env });
+  const o = parseAntOrg(r.out + r.err);
+  return o.name ?? (o.id ? `id ${o.id}` : undefined);
+}
+
+async function registration(): Promise<{ scope?: string; command?: string; args?: string }> {
   if (!existsSync(WORKSHOP)) return {};
   const r = await run(["claude", "mcp", "get", "spinecord"], { ms: 30_000 });
   return r.code === 0 ? parseMcpGet(r.out + r.err) : {};
@@ -258,14 +300,15 @@ async function checkWorkshop(s: State): Promise<Line[]> {
         },
   );
   const reg = await registration();
-  const want = [MAIN, ...wanted(s)].join(" ");
   out.push(
-    reg.scope === "local" && norm(reg.args ?? "") === norm(want)
+    isRegistered(reg, process.execPath, [MAIN, ...wanted(s)])
       ? { status: "ok", what: "registration", why: `local scope in ${WORKSHOP}: ${wanted(s).join(" ")}` }
       : {
           status: "todo",
           what: "registration",
-          why: reg.scope ? `${reg.scope} scope, with other robots or another clone` : `none in ${WORKSHOP}`,
+          why: reg.scope
+            ? `${reg.scope} scope, with another bun, other robots or another clone`
+            : `none in ${WORKSHOP}`,
           next: "bun scripts/setup.ts workshop",
         },
   );
@@ -351,13 +394,13 @@ async function workshop(s: State): Promise<Line[]> {
   }
   const reg = await registration();
   const want = [MAIN, ...wanted(s)];
-  if (!(reg.scope === "local" && norm(reg.args ?? "") === norm(want.join(" ")))) {
+  if (!isRegistered(reg, process.execPath, want)) {
     if (reg.scope) {
       const r = await run(["claude", "mcp", "remove", "-s", reg.scope, "spinecord"]);
       if (r.code !== 0)
         return [{ status: "fail", what: "registration", why: `claude mcp remove: ${(r.out + r.err).trim()}` }];
     }
-    const r = await run(["claude", "mcp", "add", "-s", "local", "spinecord", "--", "bun", ...want]);
+    const r = await run(["claude", "mcp", "add", "-s", "local", "spinecord", "--", process.execPath, ...want]);
     if (r.code !== 0)
       return [{ status: "fail", what: "registration", why: `claude mcp add: ${(r.out + r.err).trim()}` }];
   }
@@ -555,8 +598,9 @@ export async function main(argv: string[]): Promise<number> {
           env: profileEnv(s.profile),
         });
         const a = parseAuth(r.out);
-        if (a.profile !== s.profile || !a.org) return print(step, await checkPays(s));
-        s.org = a.org;
+        const org = a.profile === s.profile ? await orgOf(s.profile, a.org) : undefined;
+        if (!org) return print(step, await checkPays(s));
+        s.org = org;
       } else if (what === "moved") s.moved = true;
       else if (what === "forward") s.forward = true;
       else break;
