@@ -12,7 +12,10 @@
 // - meshes_cold: navigation start to the mark `twin:meshes` (every real mesh in place).
 // - wire_cold / wire_reload: bytes the page's loads took on the wire (Chrome's encodedDataLength, headers included).
 // - view_js_wire: bytes of view.js on the wire for a browser's Accept-Encoding.
-// - frame_idle / frame_drive: median and p95 time between frames (rAF) over 4 s, robot still and while `drive` runs.
+// - frame_idle / frame_drive: median and p95 time between frames (rAF), over 4 s with the robot still and over 3 s
+//   of a turn in place that outlasts the window.
+// - busy_idle / busy_drive: the page's main-thread busy time per second over the same windows (TaskDuration).
+//   --shots <dir> also writes screenshots of the page (1280x720 and 1600x1000, default and top, still and turning).
 // Not part of CI: wall-clock numbers. Compare runs taken on the same machine, one after the other.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,6 +29,8 @@ const THROTTLE = Number(value("--throttle") ?? 1);
 const SOFTWARE = argv.includes("--software");
 /** `--profile <file.cpuprofile>`: the page's CPU profile of the first cold load (open it in Chrome's DevTools). */
 const PROFILE = value("--profile");
+/** `--shots <dir>`: screenshots of the page to compare before and after a change. */
+const SHOTS = value("--shots");
 const ROOT = join(import.meta.dir, "..");
 const ROBOT = join(ROOT, "deployments", "orugas", "robots", "orugas.json");
 const WORLD = join(ROOT, "deployments", "orugas", "worlds", "sala.json");
@@ -192,6 +197,7 @@ async function loadTwice(cdp: Cdp, url: string): Promise<{ cold: Load; reload: L
   });
   await s("Network.enable");
   await s("Page.enable");
+  await s("Performance.enable");
   await s("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
   if (THROTTLE > 1) await s("Emulation.setCPUThrottlingRate", { rate: THROTTLE });
   const marks = async (gen: number): Promise<Load> => {
@@ -231,8 +237,17 @@ async function loadTwice(cdp: Cdp, url: string): Promise<{ cold: Load; reload: L
   return { cold, reload, sessionId };
 }
 
-/** rAF intervals over `ms` in the tab of `sessionId`. */
-async function frameTimes(cdp: Cdp, sessionId: string, ms: number): Promise<number[]> {
+/**
+ * Over `ms` in the tab of `sessionId`: the rAF intervals, and the main thread's busy time per second of the window
+ * (CDP Performance.getMetrics TaskDuration): what the page costs a computer for hours, even when every interval
+ * reads one vsync.
+ */
+async function frameWindow(cdp: Cdp, sessionId: string, ms: number): Promise<{ deltas: number[]; busy: number }> {
+  const task = async () =>
+    ((await cdp.send("Performance.getMetrics", {}, sessionId)).metrics as { name: string; value: number }[]).find(
+      (m) => m.name === "TaskDuration",
+    )!.value;
+  const t0 = await task();
   const r = await cdp.send(
     "Runtime.evaluate",
     {
@@ -244,7 +259,63 @@ async function frameTimes(cdp: Cdp, sessionId: string, ms: number): Promise<numb
     },
     sessionId,
   );
-  return r.result.value as number[];
+  const busy = (((await task()) - t0) * 1000) / (ms / 1000);
+  return { deltas: r.result.value as number[], busy };
+}
+
+/** A turn in place that outlasts `ms`: throws when it ended first (frames of a robot standing still). */
+async function whileTurning<T>(server: TestServer, robot_id: string, ms: number, during: () => Promise<T>): Promise<T> {
+  let ended = false;
+  const turn = server.tool("turn", { robot_id, angle_deg: 1080, speed_pct: 30 }).finally(() => (ended = true));
+  await sleep(300);
+  const out = await during();
+  if (ended) throw new Error(`the turn ended before the ${ms} ms window did: lower its speed or widen its angle`);
+  await server.tool("stop", { robot_id });
+  await turn;
+  return out;
+}
+
+/** `--shots <dir>`: the page at 1280x720 and 1600x1000, default and top camera, still and while turning. */
+async function shots(cdp: Cdp, url: string, server: TestServer, robot_id: string, dir: string): Promise<void> {
+  const { browserContextId } = await cdp.send("Target.createBrowserContext", { disposeOnDetach: true });
+  const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank", browserContextId });
+  const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+  const s = (m: string, p: object = {}) => cdp.send(m, p, sessionId);
+  await s("Page.enable");
+  const shot = async (name: string) =>
+    Bun.write(
+      join(dir, `${name}.png`),
+      Buffer.from((await s("Page.captureScreenshot", { format: "png" })).data, "base64"),
+    );
+  const ready = async () => {
+    for (let t0 = performance.now(); performance.now() - t0 < 60_000; await sleep(50)) {
+      const r = await s("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `performance.getEntriesByName("twin:meshes").length > 0`,
+      }).catch(() => null);
+      if (r?.result?.value === true) return sleep(1500); // the follow camera settles
+    }
+    throw new Error("the page drew no robot in 60 s");
+  };
+  for (const [w, h] of [
+    [1280, 720],
+    [1600, 1000],
+  ] as const) {
+    await s("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    for (const q of ["", "?cam=top"]) {
+      await s("Page.navigate", { url: url + q });
+      await ready();
+      await shot(`${w}x${h}${q ? "-top" : ""}-still`);
+    }
+  }
+  await s("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  await s("Page.navigate", { url });
+  await ready();
+  await whileTurning(server, robot_id, 1200, async () => {
+    await sleep(900);
+    await shot("1280x720-turning");
+  });
+  await cdp.send("Target.closeTarget", { targetId });
 }
 
 // ---------------------------------------------------------------- run
@@ -267,7 +338,7 @@ line(
 const port = freePort();
 const server: TestServer = await startServer(["--twin", ROBOT, "--world", WORLD, "--view", "--view-port", `${port}`]);
 const url = `http://127.0.0.1:${port}/`;
-const robot_id = (await server.tool("list_robots")).envelope.data.robots[0].id as string;
+const robot_id = ((await server.tool("list_robots")).envelope as any).data.robots[0].id as string;
 try {
   for (const enc of ["gzip, deflate, br, zstd"]) {
     const res = await fetch(`${url}view.js`, { headers: { "accept-encoding": enc }, decompress: false } as RequestInit);
@@ -279,15 +350,19 @@ try {
     const loads: { cold: Load; reload: Load }[] = [];
     const idle: number[] = [];
     const drive: number[] = [];
+    const idleBusy: number[] = [];
+    const driveBusy: number[] = [];
+    if (SHOTS) await shots(chrome.cdp, url, server, robot_id, SHOTS);
     for (let i = 0; i < RUNS; i++) {
       const l = await loadTwice(chrome.cdp, url);
       loads.push(l);
       await sleep(500);
-      idle.push(...(await frameTimes(chrome.cdp, l.sessionId, 4000)));
-      const moving = server.tool("drive", { robot_id, distance_cm: i % 2 ? -40 : 40, speed_pct: 40 });
-      await sleep(300);
-      drive.push(...(await frameTimes(chrome.cdp, l.sessionId, 3000)));
-      await moving;
+      const still = await frameWindow(chrome.cdp, l.sessionId, 4000);
+      idle.push(...still.deltas);
+      idleBusy.push(still.busy);
+      const moving = await whileTurning(server, robot_id, 3000, () => frameWindow(chrome.cdp, l.sessionId, 3000));
+      drive.push(...moving.deltas);
+      driveBusy.push(moving.busy);
       await chrome.cdp
         .send("Target.closeTarget", {
           targetId: (await chrome.cdp.send("Target.getTargets")).targetInfos.find(
@@ -330,6 +405,8 @@ try {
     console.log(
       `frame_drive median=${median(drive).toFixed(1)} p95=${pct(drive, 0.95).toFixed(1)} n=${drive.length} ms`,
     );
+    line("busy_idle", idleBusy, "ms/s");
+    line("busy_drive", driveBusy, "ms/s");
   } finally {
     await chrome.stop();
   }
