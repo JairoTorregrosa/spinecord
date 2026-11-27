@@ -11,6 +11,8 @@ export interface Dim {
   l: number;
   w: number;
   h: number;
+  /** A Technic part's pin hole, Ø cm. */
+  hole?: number;
   source: string;
 }
 
@@ -70,6 +72,7 @@ export const DIMS = {
     l: MODULE,
     w: 0.72,
     h: 0.72,
+    hole: 0.48,
     source: "pitch 8 mm (LDraw); 7.2 mm thick and holes Ø 4.8 mm are the usual Technic figures, unsourced here",
   },
   stud: { part: null, l: 0.48, w: 0.48, h: 0.17, source: "Ø 4.8 mm × 1.7 mm, the usual LEGO figures, unsourced here" },

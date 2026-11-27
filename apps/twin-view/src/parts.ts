@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { DIMS, MODULE } from "./dims";
 
 /** A point of the robot frame (x ahead, y left, z up) in the group's three.js frame. */
 export const P = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, z, -y);
@@ -71,7 +72,7 @@ export const COL = {
   anthracite: 0x34393e,
 };
 /** One LEGO stud: 0.8 cm between studs, a stud 0.48 across and 0.17 high. */
-export const STUD = 0.8;
+export const STUD = MODULE;
 
 export interface Kit {
   group: THREE.Group;
@@ -184,7 +185,9 @@ export function makeKit(group: THREE.Group): Kit {
       return m;
     },
     studs(nx, ny, x, y, z, mat, parent = group) {
-      const geo = cached("stud", () => new THREE.CylinderGeometry(0.24, 0.24, 0.17, 12).translate(0, 0.085, 0));
+      const geo = cached("stud", () =>
+        new THREE.CylinderGeometry(DIMS.stud.w / 2, DIMS.stud.w / 2, DIMS.stud.h, 12).translate(0, DIMS.stud.h / 2, 0),
+      );
       for (let i = 0; i < nx; i++)
         for (let j = 0; j < ny; j++)
           add(geo, mat, P(x + (i - (nx - 1) / 2) * STUD, y + (j - (ny - 1) / 2) * STUD, z), parent);
@@ -195,12 +198,13 @@ export function makeKit(group: THREE.Group): Kit {
         false,
         "centripetal",
       );
-      // a flat ribbon 0.42 × 0.16 cm, as the EV3's RJ12 cables are
+      // a flat ribbon, as the EV3's RJ12 cables are
+      const [ct, cw] = [DIMS.cable.h / 2, DIMS.cable.w / 2];
       const shape = new THREE.Shape();
-      shape.moveTo(-0.08, -0.21);
-      shape.lineTo(0.08, -0.21);
-      shape.lineTo(0.08, 0.21);
-      shape.lineTo(-0.08, 0.21);
+      shape.moveTo(-ct, -cw);
+      shape.lineTo(ct, -cw);
+      shape.lineTo(ct, cw);
+      shape.lineTo(-ct, cw);
       shape.closePath();
       const geo = keep(new THREE.ExtrudeGeometry(shape, { steps: 64, bevelEnabled: false, extrudePath: curve }));
       add(geo, mats.black, new THREE.Vector3());
@@ -232,7 +236,7 @@ export const mergeKit = (k: Kit): void => (k as Kit & { _merge: () => void })._m
 
 /** A Technic beam: 0.72 cm thick and high, holes 0.8 apart, Ø 0.48, the ends round. Length along X, holes along Z. */
 function beamGeometry(holes: number): THREE.BufferGeometry {
-  const h = 0.36,
+  const h = DIMS.beam.h / 2,
     len = (holes - 1) * STUD;
   const s = new THREE.Shape();
   s.moveTo(-len / 2, -h);
@@ -242,18 +246,18 @@ function beamGeometry(holes: number): THREE.BufferGeometry {
   s.absarc(-len / 2, 0, h, Math.PI / 2, (3 * Math.PI) / 2, false);
   for (let i = 0; i < holes; i++) {
     const hole = new THREE.Path();
-    hole.absarc(-len / 2 + i * STUD, 0, 0.24, 0, Math.PI * 2, true);
+    hole.absarc(-len / 2 + i * STUD, 0, DIMS.beam.hole / 2, 0, Math.PI * 2, true);
     s.holes.push(hole);
   }
   const g = new THREE.ExtrudeGeometry(s, {
-    depth: 0.72 - 0.08,
+    depth: DIMS.beam.w - 0.08,
     bevelEnabled: true,
     bevelThickness: 0.04,
     bevelSize: 0.04,
     bevelSegments: 1,
     curveSegments: 10,
   });
-  g.translate(0, 0, -(0.72 - 0.08) / 2);
+  g.translate(0, 0, -(DIMS.beam.w - 0.08) / 2);
   return g;
 }
 

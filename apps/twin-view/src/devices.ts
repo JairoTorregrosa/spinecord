@@ -124,6 +124,9 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
         { x: -Bk + 2, y: HW - 2, z: dt + 1.3, facing: "up" },
         { x: -Bk + 2, y: -(HW - 2), z: dt + 1.3, facing: "up" },
         { x: m.printTop.x, y: m.printTop.y, z: m.printTop.z + 1.0, facing: "up" },
+        // pinned flat against either side of the brick, so a taken top never leaves it floating
+        { x: cx - 2, y: bb.max.y + 1.25, z: cz, facing: "up" },
+        { x: cx - 2, y: bb.min.y - 1.25, z: cz, facing: "up" },
       ],
     };
     mounts.ir = mounts.ultrasonic;
