@@ -27,6 +27,7 @@ Read this file only when a step and the computer disagree. Then check the source
 | `claude -p` takes `--max-budget-usd <amount>` and `--output-format json` | `claude --help` 2.1.332 | 2026-11-27 |
 | Claude Code: `curl -fsSL https://claude.ai/install.sh \| bash` (macOS, Linux), `irm https://claude.ai/install.ps1 \| iex` (PowerShell). It installs to `~/.local/bin` and does not add that folder to `PATH` | https://code.claude.com/docs/en/setup, run in `ubuntu:24.04` | 2026-11-27 |
 | bun: `curl -fsSL https://bun.com/install \| bash` (macOS, Linux, needs `unzip`), `powershell -c "irm bun.sh/install.ps1\|iex"` (Windows). The script installs to `~/.bun/bin` and adds it to `~/.bashrc` | https://bun.sh/docs/installation, run in `ubuntu:24.04` | 2026-11-27 |
+| On macOS with no `~/.zshrc`, the bun installer adds no `PATH` line. A new terminal then finds no `bun`, and a registration with a bare `bun` fails to start (`ENOENT`) | bun 1.4.5 install script, macOS 27.2, `claude mcp get spinecord` in a new `zsh -il` | 2026-11-27 |
 | spinecord needs bun 1.3.14 or later, and git | `package.json` `packageManager` of the clone, README.md | 2026-11-27 |
 | git: `brew install git` or `xcode-select --install` (macOS), `winget install --id Git.Git -e --source winget` (Windows) | https://git-scm.com/install/mac, https://git-scm.com/install/windows | 2026-11-24 |
 | The repository is public: the clone and the raw URL of this skill need no login | `gh repo view`, `curl -I` of the raw README | 2026-11-27 |

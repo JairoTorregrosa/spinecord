@@ -29,10 +29,11 @@ curl -fsSL -o /tmp/ant.zip "https://github.com/anthropics/anthropic-cli/releases
 unzip -o -q /tmp/ant.zip ant -d ~/.local/bin && rm /tmp/ant.zip
 ```
 
-Make the tools visible in every new terminal. This adds one line to `~/.zshrc`, once:
+Make the tools visible in every new terminal. This adds one line to `~/.zshrc`, once.
+A new Mac has no `~/.zshrc`, and then the bun installer adds no line:
 
 ```sh
-grep -qs 'HOME/.local/bin' ~/.zshrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+grep -qs 'HOME/.bun/bin:' ~/.zshrc || echo 'export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
 ## Linux (bash)
