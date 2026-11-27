@@ -54,7 +54,7 @@ Claude pregunta solo lo que la foto no muestra: qué puerto, qué lado, qué rue
 |---|---|
 | Di "para" | Todos los motores frenan. Esta es la forma de parar |
 | Cierra Claude Code | Los motores se detienen |
-| Desconecta el cable USB | El EV3 se detiene solo en un cuarto de segundo |
+| Desconecta el cable USB | El EV3 se detiene solo |
 
 La primera vez con un robot de verdad, ten una mano cerca.
 

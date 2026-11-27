@@ -576,17 +576,7 @@ async function name(s: State, raw: string): Promise<Line[]> {
   } catch (e) {
     return [{ status: "fail", what: "name", why: (e as Error).message, next: "ask the person for another name" }];
   }
-  const reg = await registration();
-  const ours = [MAIN, ...wanted(s)].join(" ");
-  if (reg.scope && norm(reg.args ?? "") !== norm(ours))
-    return [
-      {
-        status: "fail",
-        what: "name",
-        why: `the registration in ${WORKSHOP} is not this setup's: ${reg.args ?? "?"}`,
-        next: `write "name": ${JSON.stringify(next ?? "")} in the robot file after --twin there (leave it out for no name), then restart Claude Code`,
-      },
-    ];
+  // the workshop step below registers again with the new name, whatever was registered before
   s.name = next;
   saveState(s);
   const said: Line = { status: "ok", what: "name", why: next === undefined ? "no name" : `"${next}"` };
@@ -595,17 +585,21 @@ async function name(s: State, raw: string): Promise<Line[]> {
 }
 
 async function report(s: State): Promise<string> {
+  const reg = await registration();
+  const registered = reg.scope
+    ? `registered with ${reg.scope} scope in ${WORKSHOP}: ${reg.args ?? "?"}`
+    : `not registered in ${WORKSHOP} yet`;
   const v = Object.fromEntries(
     await Promise.all(["git", "ant", "claude"].map(async (c) => [c, (await version(c)) ?? "not found"] as const)),
   );
   return [
     `Installed: git ${v.git}, bun ${Bun.version}, ant ${v.ant}, Claude Code ${v.claude}`,
     `Who pays: Console organization "${s.org ?? "not confirmed"}", ant profile ${s.profile}`,
-    `spinecord: ${REPO}, registered with local scope in ${WORKSHOP}: ${wanted(s).join(" ")}`,
+    `spinecord: ${REPO}, ${registered}`,
     `Robot name: ${s.name ?? "none"}`,
     `Smoke test: ${s.smoke ? `${s.smoke.answer} (USD ${s.smoke.cost_usd})` : "not run"}`,
     `Seen moving: ${s.moved ? "yes" : "no"}`,
-    `EV3: ${!s.ev3 ? "none" : s.forward ? "online and forward" : "not checked"}`,
+    `EV3: ${s.ev3 === undefined ? "not asked" : !s.ev3 ? "none" : s.forward ? "online and forward" : "not checked"}`,
     `3D view: http://127.0.0.1:8769/ while Claude Code runs`,
     `Start Claude Code with: ${launchLine(process.platform, s.profile)}`,
   ].join("\n");
