@@ -57,7 +57,7 @@ A part whose kind is a guess: write the likelier kind on its port, keep the port
 
 ## A robot with no drive (an arm, a crane, a station, a controller)
 
-Delete `pair`, `profile.drivetrain`, the wheel roles, `left_right`, `wheel_diameter` and `axle_track`. Every motor is a device; `drive`, `turn` and `arc` answer `unsupported`. Keep `drive` in `twin.unconfirmed` until you know it does not drive. The origin is the middle of the base on the floor; pick one end as the front and say which in `notes`.
+Delete `pair`, `profile.drivetrain`, the wheel roles, `left_right`, `wheel_diameter` and `axle_track`. Every motor is a device; `drive`, `turn` and `arc` answer `unsupported`. Keep `drive` in `twin.unconfirmed` until you know it does not drive. The origin is the middle of the base on the floor; take the front by questions.md row 2 and say which end in `notes`.
 
 ## Coordinates
 

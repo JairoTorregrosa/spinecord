@@ -47,7 +47,7 @@ Read [reference/identify.md](reference/identify.md), "What the photo shows", "Re
 | The photo shows | Say, then |
 |---|---|
 | A picture of an official model you recognise ("What the photo shows": not a photo) | "This is <an instruction drawing / …> of the <model>, <its attachment or variant>, not a photo of a robot you built. Did you build exactly this, step by step? If yes, I can start from its instructions; either way, a photo of your robot from above and from the side helps." (es: "Esto es <un dibujo de instrucciones / …> del <modelo>, <su accesorio>, no una foto de un robot que tú armaste. ¿Armaste exactamente esto, paso a paso? Si sí, puedo partir de sus instrucciones; en todo caso, me sirve una foto de tu robot desde arriba y de lado.") **stop**, deciding question open |
-| Tells of a photo and of a picture of an official model at once ("What the photo shows") | "Is this a photo of the robot you built, or a picture of the <model> from the box, the instructions or the web?" **stop**, deciding question open; asked once |
+| Tells of a photo and of a studio picture at once ("What the photo shows") | "Is this a photo of the robot you built, or a picture <of the <model>> from the box, the instructions or the web?" **stop**, deciding question open; asked once |
 | Any other picture that is not a photo, or no robot | "This is <a slide / an instruction drawing / …>, not a photo of the robot you built. Please send a photo of your robot, from above and from the side." **stop** |
 | EV3 parts not built into a robot (a brick, loose motors, a wheel), alone or beside another robot | "I see EV3 parts that are not built into a robot yet<, beside a <the other robot>>. When your robot is built, send me a photo of it from above and from the side." **stop** |
 | A non-EV3 brick (identify.md "Not an EV3" decides), and no EV3 | "This robot is built on a <NXT / SPIKE Prime / …> (<the tell you saw>). spinecord drives LEGO EV3 bricks only, so I cannot make its twin. If you also have an EV3 robot, send me a photo of it." (es: "Este robot está armado sobre un <NXT / SPIKE Prime / …> (<la señal que viste>). spinecord solo maneja ladrillos LEGO EV3, así que no puedo hacer su gemelo. Si también tienes un robot EV3, mándame una foto de él.") **stop** |
@@ -63,7 +63,7 @@ Read [reference/identify.md](reference/identify.md), "What the photo shows", "Re
 
 **Official model.** identify.md "Official models" decides between the model, a robot on a model's base, and a custom robot. A yes to "did you build exactly this" or "is it exactly this model" makes the model's build the source of the robot. Otherwise the model's values are assumed, and "Is this the <model>, built as in the instructions, with <attachments>?" goes first in the state 1 message. In state 1 the build gives (identify.md "Reading a build"); on a model's base, only the drive:
 - the ports the photo does not show: every fixed port of the build, the hidden ones too (a gyro inside Gyro Boy is in the file, source "model", its token kept); an `attachment:` port only when that attachment is seen or named. A port read from the photo keeps the photo's part (identify.md "Where a port is"); a port of the build that is visibly empty in the photo is not the model's: the question says so ("The <model> uses B and C; in your photo the cables go into A and B and C is empty. Are the wheels on A and B?");
-- its wheel diameter and axle track, assumed (tokens kept until state 6). An axle track wider than the footprint read from the photo: the photo wins, `axle_track_cm` is the footprint width minus one wheel or track width (the check prints a `footprint` warn until then);
+- its wheel diameter and axle track, assumed (tokens kept until state 6). An axle track wider than the footprint (the check's `footprint` warn): a footprint read from the photo wins, `axle_track_cm` is its width minus one wheel or track width; the default footprint (no `twin.body`) loses, `half_width_cm` is half of the axle track plus one wheel or track width, `footprint` kept;
 - its notes: balancing, steering, walking, no drive.
 A person's yes to the model confirms the ports whose kind the build names and the ports it leaves empty (take their tokens out); the questions then shrink to what the instructions do not fix: the attachment, ports a person may have changed, the name, a phone.
 
@@ -102,7 +102,7 @@ Keep each value with its source: state 7 needs them.
 
 ## 3 CHECK
 
-1. Run the check. A `fail` on `robots` names the field and the fix: fix the file and run it again.
+1. Run the check. A `fail` on `robots` names the field and the fix, a `footprint` warn the fix after `->`: fix the file and run it again.
 2. Compare the `twin <id>-sim` line with state 1: each port and role, the pair, wheel and axle track, the footprint, the look.
 3. **Draft gate.** A `draft <id>-sim` line lists the tokens left. For each one that changes how the robot moves: if a source of its "Confirmed by" is here (the brick, the person) and you have not used it for that token yet, go back to state 1 for it. A token only state 6 can confirm waits for state 6. No token left: the outcome is **twin**. Tokens left: the outcome is **draft twin**; tell the person so now, and with no person go to state 7.
 

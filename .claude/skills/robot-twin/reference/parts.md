@@ -1,6 +1,6 @@
 # LEGO wheels and sprockets: diameters for `wheel_diameter_cm`
 
-Offer the rows as a pick list. The map wins over this table: an official model's `wheel_diameter_mm` in `builds.json` (it is what the model rolls, a little under the tyre's outer size), else the part's `outer_diameter_mm` in `rolling.json`; the numbers here are rolling.json's and serve only parts the map does not have. `wheel_diameter` is confirmed when the person picks a row, reads the size printed on the tire wall (`56 x 28`: diameter 56 mm), or measures; a row you pick from the photo stays assumed. State 6 CALIBRATE replaces it with a measured value.
+Offer the rows as a pick list. The map wins over this table: an official model's `wheel_diameter_mm` in `builds.json` (it is what the model rolls, a little under the tyre's outer size), else the part's `outer_diameter_mm` in `rolling.json`; a row whose part is in rolling.json repeats its number; the other rows are for parts the map does not have. `wheel_diameter` is confirmed when the person picks a row, reads the size printed on the tire wall (`56 x 28`: diameter 56 mm), or measures; a row you pick from the photo stays assumed. State 6 CALIBRATE replaces it with a measured value.
 
 | What you see | Part | Outer diameter | `wheel_diameter_cm` | Source |
 |---|---|---|---|---|

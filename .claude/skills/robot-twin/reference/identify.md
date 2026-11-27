@@ -9,7 +9,7 @@ Read the tells in this order; the first group seen decides.
 | # | Tells | It is |
 |---|---|---|
 | 1 | Print on the image: a step number, a parts call-out box (`1x`, `2x`), an arrow showing where a part goes, a logo or set number, text blocks, a frame, a projector's keystone, a monitor bezel, moiré, other images beside it | not a photo: a drawing, render, box art, slide or screen |
-| 2 | Signs of a real object: cables that sag or bend unevenly, parts slightly out of line, dust or wear, a hard shadow on a floor or table, a hand, a table edge, a mat, a room | a photo, unless group 3 is also seen on an official model you recognise: then it is the "photo and picture at once" row of state 0 |
+| 2 | Signs of a real object: cables that sag or bend unevenly, parts slightly out of line, dust or wear, a hard shadow on a floor or table, a hand, a table edge, a mat, a room | a photo, unless group 3 is also seen: then it is the "photo and picture at once" row of state 0 |
 | 3 | Studio look only: a seamless backdrop curving up behind the robot, soft even light, glossy flawless parts, cables drawn ideal | an official model you recognise: a picture, not a photo. Any other robot: the person's photo, go on |
 | | Several robots: more than one drive base or more than one brick | the "several" rows. A robot in the background, out of focus or cut off, while one robot is the sharp subject in the middle, does not make it several: go on with the subject and say in the report which robot you used |
 
@@ -24,7 +24,7 @@ A robot that hides one of the two is a "not readable" row of state 0, also when 
 
 | Brick | Tells | spinecord |
 |---|---|---|
-| **EV3** | Dark grey and light grey, 11.1 × 7.2 × 5.1 cm ([BrickLink 95646c01](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01)). A grey monochrome screen at one end of the top face; below it six buttons: a centre button inside a ring of four arrow buttons that light green, orange or red, and a back button at the screen's corner. `EV3` printed on it. **Four** output ports `A B C D` on the end beside the screen, **four** input ports `1 2 3 4` on the other end; the USB plug between them on the A-D end | yes |
+| **EV3** | Dark grey and light grey, 11.1 × 7.2 × 5.1 cm ([BrickLink 95646c01](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01)). A grey monochrome screen at one end of the top face; below it six buttons: a centre button inside a ring of four arrow buttons that light green, orange or red, and a back button at the screen's corner. `EV3` printed on it. **Four** output ports `A B C D` on the end beside the screen, **four** input ports `1 2 3 4` on the other end; the mini-USB PC socket beside D | yes |
 | NXT | Light grey and white, an **orange** square button with two grey arrow buttons, `NXT` printed, a smaller screen. **Three** output ports `A B C` on one end, four inputs `1 2 3 4` on the other. Its parts (an ultrasonic with **orange rings**, an **orange** touch plunger, motors with an **orange** hub) also plug into an EV3 | no: stop |
 | SPIKE Prime, Robot Inventor | A square hub, no screen: a **5 × 5 grid of white lights** and one round button; **six** ports `A`-`F` along two sides. SPIKE Prime is yellow and white, Robot Inventor teal, white and black | no: stop |
 | SPIKE Essential, WeDo 2.0, Powered Up | A small hub with two ports and a light, often on a yellow or light-blue base | no: stop |
