@@ -206,7 +206,8 @@ function receive(m: ServerMessage): void {
 }
 
 // ---------------------------------------------------------------- focus: build the world and the robot
-let firstView = true;
+/** The robot and world the camera last framed: another one is framed afresh, the same one keeps the view. */
+let framed = "";
 function setFocus(id: string | null): void {
   focus = robots.find((r) => r.id === id) ?? null;
   if (arena) {
@@ -252,8 +253,9 @@ function setFocus(id: string | null): void {
   sc.updateProjectionMatrix();
   (scene.fog as THREE.Fog).near = size * 3;
   (scene.fog as THREE.Fog).far = size * 9;
-  cams.fitArena(w, firstView);
-  firstView = false;
+  const key = `${focus.id}\n${w.name}`;
+  cams.fitArena(w, key !== framed);
+  framed = key;
 }
 
 /** The cone option names the distance sensor this robot has, and is not offered when it has none. */
