@@ -4,7 +4,7 @@ Habla con un robot LEGO EV3 a través de Claude. ¿No tienes robot? Tienes su ge
 
 [English](README.md)
 
-![El gemelo simulado de un robot EV3 en su sala](docs/img/twin.jpg)
+![El gemelo simulado de un robot EV3 en su sala](docs/images/twin.jpg)
 
 ## Empezar
 

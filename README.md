@@ -4,7 +4,7 @@ Talk to a LEGO EV3 robot through Claude. No robot? You get its twin in 3D, in yo
 
 [Español](README.es.md)
 
-![The simulated twin of an EV3 robot in its room](docs/img/twin.jpg)
+![The simulated twin of an EV3 robot in its room](docs/images/twin.jpg)
 
 ## Start
 
