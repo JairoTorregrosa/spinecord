@@ -16,7 +16,7 @@ import {
 } from "./brick";
 import { BOX_FLOOR_FRICTION, DEFAULT_PUSH_N, World, parseWorld } from "../sim-world/world";
 import { EXAMPLES, config, quietWorld } from "../sim-world/testkit";
-import { rig, DRIVETRAIN, lagged } from "./testkit";
+import { rig, DRIVETRAIN, regulated } from "./testkit";
 import { DRIVE } from "../sim-world/testkit";
 
 const BC = E.OUTPUT_MASK.B | E.OUTPUT_MASK.C;
@@ -133,7 +133,7 @@ describe("motors drive the world", () => {
     await call(E.outputStepSync(BC, 50, 0, 720, true));
     const total = (720 / (rate * 0.5)) * 1000;
     run(total / 2);
-    expect(Math.abs(brick.tacho("B") - lagged(rate * 0.5, total / 2))).toBeLessThanOrEqual(1);
+    expect(Math.abs(brick.tacho("B") - regulated(rate * 0.5, total / 2, rate))).toBeLessThanOrEqual(1);
     expect((await call(E.outputTest(BC, 0), 1)).globals[0]).toBe(1);
     run(total / 2 + MOTOR_TAU_MS + 30);
     expect((await call(E.outputTest(BC, 0), 1)).globals[0]).toBe(0);
@@ -187,9 +187,9 @@ describe("motors drive the world", () => {
     run(2000);
     expect(world.pose.x).toBe(x);
   });
-  test("a speed command reaches 90 % of its speed after 2.3 lag constants (about 0.2 s), and exactly its speed later", async () => {
+  test("a power command reaches 90 % of its speed after 2.3 lag constants (about 0.2 s), and exactly its speed later", async () => {
     const { call, run } = rig();
-    await call(E.outputTimeSpeed(E.OUTPUT_MASK.B, 60, 0, 2000, 0, true));
+    await call(E.outputTimePower(E.OUTPUT_MASK.B, 60, 0, 2000, 0, true));
     const speed = async () => E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0);
     run(MOTOR_TAU_MS);
     expect(Math.abs((await speed()) - 0.63 * 60)).toBeLessThanOrEqual(1);
@@ -198,9 +198,28 @@ describe("motors drive the world", () => {
     run(500);
     expect(await speed()).toBe(60);
   });
+  test("a speed command rises at full power until it reaches its speed: 60 % after tau ln(1 / 0.4), about 70 ms", async () => {
+    const { call, run } = rig();
+    await call(E.outputTimeSpeed(E.OUTPUT_MASK.B, 60, 0, 2000, 0, true));
+    const speed = async () => E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0);
+    run(30);
+    expect(Math.abs((await speed()) - 100 * (1 - Math.exp(-30 / MOTOR_TAU_MS)))).toBeLessThanOrEqual(1); // full power
+    run(MOTOR_TAU_MS * Math.log(1 / 0.4) - 30 + 1);
+    expect(await speed()).toBe(60); // there, and no overshoot
+    run(500);
+    expect(await speed()).toBe(60);
+  });
+  test("a speed lowered under regulation comes down at full reverse power, as fast as it rose", async () => {
+    const { call, run } = rig();
+    await call([...E.outputSpeed(E.OUTPUT_MASK.B, 80), ...E.outputStart(E.OUTPUT_MASK.B)]);
+    run(1000);
+    await call(E.outputSpeed(E.OUTPUT_MASK.B, 20));
+    run(MOTOR_TAU_MS * Math.log(180 / 120) + 1);
+    expect(E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0)).toBe(20);
+  });
   test("the medium motor on A lags by its own constant (MEDIUM_MOTOR_TAU_MS) and runs at its own speed", async () => {
     const { call, run, brick } = rig();
-    await call(E.outputTimeSpeed(E.OUTPUT_MASK.A, 60, 0, 2000, 0, true));
+    await call(E.outputTimePower(E.OUTPUT_MASK.A, 60, 0, 2000, 0, true));
     const speed = async () => E.readI8((await call(E.outputRead(0, 0, 1), 5)).globals, 0);
     run(MEDIUM_MOTOR_TAU_MS);
     expect(Math.abs((await speed()) - 0.63 * 60)).toBeLessThanOrEqual(1);
@@ -216,7 +235,7 @@ describe("motors drive the world", () => {
     expect(brick.busy(BC)).toBe(true);
     run(20);
     expect(brick.busy(BC)).toBe(false);
-    expect(Math.abs(brick.tacho("B") - lagged(0.2 * 1020, 250))).toBeLessThanOrEqual(1); // behind by the lag
+    expect(Math.abs(brick.tacho("B") - regulated(0.2 * 1020, 250, 1020))).toBeLessThanOrEqual(1); // behind by the rise
     const pose = { ...world.pose };
     await call(E.outputStepSpeed(E.OUTPUT_MASK.A, -30, 0, 45, 0, true));
     run(1000);
@@ -229,7 +248,7 @@ describe("motors drive the world", () => {
     run(3000);
     expect(brick.busy(E.OUTPUT_MASK.A)).toBe(true);
     expect(brick.unboundedMoves).toBe(1);
-    expect(Math.abs(brick.tacho("A") - lagged(0.5 * 1560, 3000))).toBeLessThanOrEqual(1);
+    expect(Math.abs(brick.tacho("A") - regulated(0.5 * 1560, 3000, 1560))).toBeLessThanOrEqual(1);
     await call(E.outputStop(E.OUTPUT_MASK.A, false));
     expect(brick.busy()).toBe(false);
   });
@@ -381,7 +400,7 @@ describe("real time by default", () => {
     const deg = brick.tacho("B"),
       elapsed = performance.now() - t0; // 510 deg/s at 50 %
     expect(deg).toBeGreaterThan(5);
-    expect(deg).toBeLessThanOrEqual(Math.ceil(lagged(510, elapsed)) + 1);
+    expect(deg).toBeLessThanOrEqual(Math.ceil(regulated(510, elapsed, 1020)) + 1);
     expect(new VirtualClock().now()).toBe(0);
   });
   test("setWorld re-plugs: motors stop, tachos reset, sensors follow the new port map", async () => {
@@ -526,7 +545,7 @@ describe("time-bounded motion and the end flag (brake or coast)", () => {
     run(1);
     expect(brick.busy(BC)).toBe(false);
     const atBound = brick.tacho("B");
-    expect(Math.abs(atBound - lagged(0.5 * LARGE_DEG_S, 250))).toBeLessThanOrEqual(1);
+    expect(Math.abs(atBound - regulated(0.5 * LARGE_DEG_S, 250, LARGE_DEG_S))).toBeLessThanOrEqual(1);
     const deg = brick.tacho("B");
     expect(brick.tacho("C")).toBe(deg);
     run(1000);
@@ -561,7 +580,7 @@ describe("time-bounded motion and the end flag (brake or coast)", () => {
     run(250);
     await call(E.outputTimeSync(BC, 50, 0, 250, true));
     run(249);
-    expect(Math.abs(brick.tacho("B") - lagged(0.5 * LARGE_DEG_S, 499))).toBeLessThanOrEqual(1); // as one 500 ms move
+    expect(Math.abs(brick.tacho("B") - regulated(0.5 * LARGE_DEG_S, 499, LARGE_DEG_S))).toBeLessThanOrEqual(1); // as one 500 ms move
     run(500);
     expect(brick.busy()).toBe(false);
     await call(E.outputTimeSync(BC, 50, 0, 100, false));

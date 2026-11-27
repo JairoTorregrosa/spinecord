@@ -117,8 +117,16 @@ export interface Ev3ProviderOptions {
   pair?: { left: OutputPort; right: OutputPort };
   /** role -> device id (from the robot profile); copied into DeviceSpec.roles. */
   roles?: Record<string, string>;
-  /** Calibration: motor speed at 100 %, deg/s. Sizes the time bound of degree targets and speed_deg_s. Default 1050. */
+  /**
+   * Calibration: a large motor's speed at 100 %, deg/s. Sizes the time bound of degree targets and speed_deg_s.
+   * Default 1050 (ev3dev's max_speed of lego-ev3-l-motor).
+   */
   degPerSecAt100?: number;
+  /**
+   * The same for a medium motor (type 8), whose 100 % is faster. Default 1560 (ev3dev's max_speed of
+   * lego-ev3-m-motor): read with the large motor's scale, a medium motor's speed would be a third too low.
+   */
+  mediumDegPerSecAt100?: number;
   /** Reply timeout per brick command, ms. Default 300. */
   timeoutMs?: number;
   /** Reply timeout for a command that switches a sensor mode, ms. Default 1000. */
@@ -603,6 +611,7 @@ export class Ev3Provider implements Provider {
     boundMs: number;
     hw: Ev3Hardware;
     degPerSecAt100: number;
+    mediumDegPerSecAt100: number;
     timeoutMs: number;
     modeSwitchTimeoutMs: number;
     stopSettleMs: number;
@@ -613,6 +622,10 @@ export class Ev3Provider implements Provider {
   private readonly roles: Record<string, string>;
   private specs: Map<string, DeviceSpec> | null = null;
   private types: number[] = []; // ports 1-4 then A-D
+  /** deg/s at 100 % of the motor on output index `i`, by the type the brick reports there (8 = medium). */
+  private rateAt100(i: number): number {
+    return this.types[4 + i] === 8 ? this.o.mediumDegPerSecAt100 : this.o.degPerSecAt100;
+  }
   private modes: number[] = [0, 0, 0, 0]; // current mode of sensor ports 1-4
   /** Sensor entries by firmware type id, for this robot's infrared channel. */
   private readonly entries: Record<number, SensorEntry>;
@@ -672,6 +685,7 @@ export class Ev3Provider implements Provider {
         ...(hw.ir_channel === undefined ? {} : { ir_channel: hw.ir_channel }),
       },
       degPerSecAt100: opts.degPerSecAt100 ?? 1050,
+      mediumDegPerSecAt100: opts.mediumDegPerSecAt100 ?? 1560,
       timeoutMs: opts.timeoutMs ?? 300,
       modeSwitchTimeoutMs: opts.modeSwitchTimeoutMs ?? 1000,
       stopSettleMs: opts.stopSettleMs ?? 300,
@@ -686,7 +700,14 @@ export class Ev3Provider implements Provider {
         fail("pair needs two different ports A-D");
       if (left === right) fail("pair needs two different ports A-D");
     }
-    for (const k of ["degPerSecAt100", "timeoutMs", "modeSwitchTimeoutMs", "stopSettleMs", "pollMs"] as const)
+    for (const k of [
+      "degPerSecAt100",
+      "mediumDegPerSecAt100",
+      "timeoutMs",
+      "modeSwitchTimeoutMs",
+      "stopSettleMs",
+      "pollMs",
+    ] as const)
       if (!positive(this.o[k])) fail(`${k} must be > 0`);
     this.stop_worst_ms = Math.ceil(
       Math.max(this.o.timeoutMs, this.o.modeSwitchTimeoutMs) +
@@ -898,9 +919,9 @@ export class Ev3Provider implements Provider {
               name: "speed_deg_s",
               type: "number",
               unit: "deg_s",
-              range: [-o.degPerSecAt100, o.degPerSecAt100],
+              range: [-this.rateAt100(outputIndex(p)), this.rateAt100(outputIndex(p))],
               max_rate_hz: 50,
-              approx: `Derived from the brick's -100..100 speed reading at ${o.degPerSecAt100} deg/s per 100 %; coarse.`,
+              approx: `Derived from the brick's -100..100 speed reading at ${this.rateAt100(outputIndex(p))} deg/s per 100 % (a ${MOTOR_TYPES[type]} motor); coarse.`,
               description: "Current rotation speed.",
             },
             {
@@ -1292,7 +1313,7 @@ export class Ev3Provider implements Provider {
           const g = await this.link.read((b) => outputRead(i, b + 4, b), 5);
           return {
             position_deg: { value: readI32(g, 0) },
-            speed_deg_s: { value: Math.round((readI8(g, 4) / 100) * this.o.degPerSecAt100) },
+            speed_deg_s: { value: Math.round((readI8(g, 4) / 100) * this.rateAt100(i)) },
             stalled: { value: this.stalled[i] },
             power_pct: { value: this.powerNow(i) },
           };
@@ -1469,7 +1490,7 @@ export class Ev3Provider implements Provider {
           }
           const total = Math.abs(degrees);
           const dir = degrees < 0 ? -1 : 1;
-          const rate = (s.v / 100) * o.degPerSecAt100;
+          const rate = (s.v / 100) * this.rateAt100(i);
           const opMs = this.timeFor(total, rate);
           return this.operate(
             {
@@ -1516,8 +1537,8 @@ export class Ev3Provider implements Provider {
               leadDir: v < 0 ? -1 : 1,
               targetDeg: null,
               opMs,
-              expectDeg: ((Math.abs(v) / 100) * o.degPerSecAt100 * opMs) / 1000,
-              rate: (Math.abs(v) / 100) * o.degPerSecAt100,
+              expectDeg: ((Math.abs(v) / 100) * this.rateAt100(i) * opMs) / 1000,
+              rate: (Math.abs(v) / 100) * this.rateAt100(i),
               brake,
               start: outputTimeSpeed(mask, v, 0, opMs, 0, brake),
               measure: (d) => ({ degrees: d[0] }),
@@ -1551,8 +1572,8 @@ export class Ev3Provider implements Provider {
                 leadDir: v < 0 ? -1 : 1,
                 targetDeg: null,
                 opMs,
-                expectDeg: ((Math.abs(v) / 100) * o.degPerSecAt100 * opMs) / 1000,
-                rate: (Math.abs(v) / 100) * o.degPerSecAt100,
+                expectDeg: ((Math.abs(v) / 100) * this.rateAt100(i) * opMs) / 1000,
+                rate: (Math.abs(v) / 100) * this.rateAt100(i),
                 brake: true,
                 start: outputTimePower(mask, v, 0, opMs, 0, true),
                 measure: (d) => ({ degrees: d[0] }),
@@ -1595,7 +1616,7 @@ export class Ev3Provider implements Provider {
           const magnitude = Math.round(100 * (1 - ratio)); // 0..200
           const leadIsLower = (leftLeads ? li : ri) < (leftLeads ? ri : li);
           const turn = leadIsLower ? magnitude : -magnitude;
-          const rate = (s.v / 100) * o.degPerSecAt100;
+          const rate = (s.v / 100) * Math.min(this.rateAt100(li), this.rateAt100(ri));
           const opMs = this.timeFor(total, rate);
           return this.operate(
             {
@@ -2007,7 +2028,7 @@ export class Ev3Provider implements Provider {
         return {
           size: 5,
           bc: (b) => outputRead(i, b + 4, b),
-          value: (g) => Math.round((readI8(g, 4) / 100) * this.o.degPerSecAt100),
+          value: (g) => Math.round((readI8(g, 4) / 100) * this.rateAt100(i)),
         };
       if (r.channel === "stalled") return { ...none, value: () => (this.stalled[i] ? 1 : 0) };
       if (r.channel === "power_pct") return { ...none, value: () => this.powerNow(i) };

@@ -37,15 +37,6 @@ export const LARGE_DEG_S = 1020;
  */
 export const MEDIUM_DEG_S = 1560;
 /**
- * Degrees per second at 100 % of the motors the EV3 provider speaks to: the drive pair's when it has one, else the
- * motors' when they are all of one type; the large motor's otherwise. The provider takes one rate for every motor,
- * so a twin whose wheels are medium motors must say so, or it sizes each move for the slower large motor.
- */
-export function providerRate(ports: BrickPorts, pair?: { left: MotorPort; right: MotorPort }): number {
-  const types = pair ? [ports.motors[pair.left], ports.motors[pair.right]] : Object.values(ports.motors);
-  return types.length > 0 && types.every((t) => t === "medium") ? MEDIUM_DEG_S : LARGE_DEG_S;
-}
-/**
  * Stall torque, N·cm: the most a motor turns against, at zero speed and full power. LEGO gives 40 for the large motor
  * and 12 for the medium (https://robolab.inf.tu-dresden.de/hardware/motors; 0.4 and 0.12 N·m); one measurement found
  * 43 for the large (https://www.eurobricks.com/forum/forums/topic/87670-ev3-large-and-medium-motors-comparison).
@@ -86,10 +77,18 @@ const SETTLE_FRACTION = 0.002;
 /**
  * One motor's speed (deg/s) over `h` ms, integrated exactly so that the result does not depend on how time is cut.
  * `tauMs` is that motor's time constant (MOTOR_TAU_MS, MEDIUM_MOTOR_TAU_MS).
+ *
+ * `run` is the speed the command asks for. A power command (`full` absent) is the motor's own first-order lag to the
+ * speed that power gives. A speed command (`full` = the speed full power reaches now, `rate` unloaded) is regulated:
+ * the firmware's speed loop (lms2012 d_pwm.c, dRegulateSpeed) saturates at full power while the speed is short of
+ * the setpoint, so the shaft rises along the full-power lag and holds the setpoint once there. That is why a
+ * regulated start is faster than an unregulated one. Measured on ev3dev (its own speed regulator, the nearest
+ * measurement there is; docs/twin-fidelity.md, hw-log rows): `run_degrees 90 @20` turned 47 deg in its first 250 ms
+ * and `run_pair @25` 59-60, where a 76 ms lag to the setpoint gives 36 and 45. No stock-firmware trace was found.
  */
 export function motorStep(
   v0: number,
-  how: { run: number } | "brake" | "coast",
+  how: { run: number; full?: number } | "brake" | "coast",
   h: number,
   rate: number,
   tauMs: number = MOTOR_TAU_MS,
@@ -98,11 +97,21 @@ export function motorStep(
     tau = tauMs / 1000,
     f = rate / (COAST_MS_AT_100 / 1000);
   if (typeof how === "object") {
-    // Regulated speed: a first-order lag to the commanded speed.
     const vt = how.run,
       e0 = v0 - vt,
       eps = SETTLE_FRACTION * rate;
     if (Math.abs(e0) <= eps) return { v: vt, d: vt * t };
+    if (how.full !== undefined) {
+      // Saturated: the full-power lag toward vp, until it crosses vt at ts.
+      const vp = -Math.sign(e0) * how.full;
+      if ((vp - vt) * -Math.sign(e0) > eps) {
+        const ts = tau * Math.log((v0 - vp) / (vt - vp));
+        const dAt = (u: number) => vp * u + (v0 - vp) * tau * (1 - Math.exp(-u / tau));
+        if (t <= ts) return { v: vp + (v0 - vp) * Math.exp(-t / tau), d: dAt(t) };
+        return { v: vt, d: dAt(ts) + vt * (t - ts) };
+      }
+      // the setpoint is at (or past) what full power reaches: nothing to saturate toward, the plain lag
+    }
     const ts = tau * Math.log(Math.abs(e0) / eps);
     if (t <= ts) {
       const e = Math.exp(-t / tau);
@@ -211,6 +220,8 @@ interface Motor {
   until: number | null; // stop at this brick time (ms)
   blocked: boolean; // wheel against a wall: busy, tacho frozen
   holdBrake: boolean; // end flag of the running command: true = brake, false = coast
+  regulated: boolean; // the running command holds a speed (the SPEED and SYNC opcodes), not a power
+  setRegulated: boolean; // the level stored by A4/A5 is a speed (A5), not a power (A4)
   vel: number; // deg/s (signed) the shaft really turns at: it lags the command and runs down after it
   braking: boolean; // with no command running: true = the brake slows it, false = it coasts
 }
@@ -415,6 +426,8 @@ export class SimBrick implements Transport, WorldHost {
         until: null,
         blocked: false,
         holdBrake: false,
+        regulated: false,
+        setRegulated: false,
         vel: 0,
         braking: false,
       };
@@ -563,12 +576,13 @@ export class SimBrick implements Transport, WorldHost {
       // A time bound can end the command inside this step: the rest of the step is its brake or run-down.
       const active = m.until !== null ? Math.max(0, Math.min(h, m.until - at)) : h;
       // a load on a drive wheel lowers the speed its motor can reach (its torque-speed line), whatever it was told
-      let vt = (m.speedPct / 100) * m.rate;
+      let vt = (m.speedPct / 100) * m.rate,
+        cap = m.rate;
       if ((i === li || i === ri) && this.loadNcm > 0) {
-        const cap = m.rate * Math.max(0, 1 - this.loadNcm / this.stallNcm(m.plugged ?? "large"));
+        cap = m.rate * Math.max(0, 1 - this.loadNcm / this.stallNcm(m.plugged ?? "large"));
         vt = Math.sign(vt) * Math.min(Math.abs(vt), cap);
       }
-      const run = motorStep(m.vel, { run: vt }, active, m.rate, m.tau);
+      const run = motorStep(m.vel, m.regulated ? { run: vt, full: cap } : { run: vt }, active, m.rate, m.tau);
       let d = run.d,
         v = run.v;
       if (m.until !== null && at + h >= m.until - 1e-9) {
@@ -706,9 +720,10 @@ export class SimBrick implements Transport, WorldHost {
     this.driveState = now;
   }
   /** A new command takes the motor over, also in the middle of a run-down: the shaft goes on from its speed. */
-  private drive(m: Motor, speed: number, brake: boolean): void {
+  private drive(m: Motor, speed: number, brake: boolean, regulated: boolean): void {
     m.speedPct = speed;
     m.holdBrake = brake;
+    m.regulated = regulated;
   }
   /** Speed in percent as OUTPUT_READ reports it: what the shaft really does (it lags the command), 0 if blocked. */
   private speedNow(m: Motor): number {
@@ -722,26 +737,26 @@ export class SimBrick implements Transport, WorldHost {
     if (v < -100 || v > 100) throw new Error(`${what} ${v} outside -100..100`);
     return v;
   }
-  private startStep(m: Motor, speed: number, degrees: number, brake: boolean): void {
+  private startStep(m: Motor, speed: number, degrees: number, brake: boolean, regulated: boolean): void {
     if (degrees < 0) throw new Error(`negative step ${degrees}`);
     if (speed === 0) {
       this.halt(m, true);
       return;
     }
-    this.drive(m, speed, brake);
+    this.drive(m, speed, brake, regulated);
     m.until = null;
     if (degrees === 0) {
       m.target = null;
       this.unboundedMoves++;
     } else m.target = m.pos + Math.sign(speed) * degrees;
   }
-  private startTime(m: Motor, speed: number, ms: number, brake: boolean): void {
+  private startTime(m: Motor, speed: number, ms: number, brake: boolean, regulated: boolean): void {
     if (ms < 0) throw new Error(`negative time ${ms}`);
     if (speed === 0) {
       this.halt(m, true);
       return;
     }
-    this.drive(m, speed, brake);
+    this.drive(m, speed, brake, regulated);
     m.target = null;
     if (ms === 0) {
       m.until = null;
@@ -763,9 +778,10 @@ export class SimBrick implements Transport, WorldHost {
     const speeds = turn >= 0 ? [speed, speed * ratio] : [speed * ratio, speed];
     pair.forEach((m, i) => {
       const s = speeds[i]!;
-      if (byTime) this.startTime(m, s, amount, brake);
+      // c_output.c runs a synchronised pair under speed regulation
+      if (byTime) this.startTime(m, s, amount, brake, true);
       else if (s === 0) this.halt(m, true);
-      else this.startStep(m, s, amount === 0 ? 0 : Math.abs(amount * (s / speed)), brake);
+      else this.startStep(m, s, amount === 0 ? 0 : Math.abs(amount * (s / speed)), brake, true);
     });
   }
 
@@ -869,9 +885,13 @@ export class SimBrick implements Transport, WorldHost {
           // Sets the level; a motor already running changes speed at once, an idle one waits for OUTPUT_START.
           for (const m of ms) {
             m.setPct = v;
+            m.setRegulated = opcode === OP.OUTPUT_SPEED;
             if (m.speedPct !== 0) {
               if (v === 0) this.halt(m, true);
-              else m.speedPct = v;
+              else {
+                m.speedPct = v;
+                m.regulated = m.setRegulated;
+              }
             }
           }
           break;
@@ -880,7 +900,7 @@ export class SimBrick implements Transport, WorldHost {
           layer();
           for (const m of this.masked(num())) {
             if (m.setPct === 0) continue;
-            this.drive(m, m.setPct, true);
+            this.drive(m, m.setPct, true, m.setRegulated);
             m.target = null;
             m.until = null;
             this.unboundedMoves++;
@@ -913,7 +933,8 @@ export class SimBrick implements Transport, WorldHost {
             s3 = num();
           const brake = num() !== 0;
           if (s1 < 0 || s2 < 0 || s3 < 0) throw new Error("negative step");
-          for (const m of ms) this.startStep(m, speed, s1 + s2 + s3, brake); // the ramp is the motor's own lag (MOTOR_TAU_MS), not s1 and s3
+          // the ramp is the motor's own rise (motorStep), not s1 and s3
+          for (const m of ms) this.startStep(m, speed, s1 + s2 + s3, brake, opcode === OP.OUTPUT_STEP_SPEED);
           break;
         }
         case OP.OUTPUT_TIME_POWER:
@@ -926,7 +947,7 @@ export class SimBrick implements Transport, WorldHost {
             t3 = num();
           const brake = num() !== 0;
           if (t1 < 0 || t2 < 0 || t3 < 0) throw new Error("negative time");
-          for (const m of ms) this.startTime(m, speed, t1 + t2 + t3, brake);
+          for (const m of ms) this.startTime(m, speed, t1 + t2 + t3, brake, opcode === OP.OUTPUT_TIME_SPEED);
           break;
         }
         case OP.OUTPUT_STEP_SYNC:

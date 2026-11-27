@@ -5,7 +5,7 @@ import * as E from "../driver-ev3/encode";
 import { EVENT_LOG_MAX, NO_NOISE, World, type WorldEvent } from "../sim-world/world";
 import { SimWorldProvider } from "../sim-world/world-provider";
 import { EXAMPLES, config, quietWorld } from "../sim-world/testkit";
-import { DRIVETRAIN, rig } from "./testkit";
+import { DRIVETRAIN, regulated, rig } from "./testkit";
 
 const BC = E.OUTPUT_MASK.B | E.OUTPUT_MASK.C;
 const idle = new AbortController().signal;
@@ -28,9 +28,10 @@ describe("sim.world events", () => {
     r.run(5000);
     const hit = (await read(sim)).events;
     expect(kinds(hit)).toEqual(["contact_began wall_east", "stall_began", "stall_ended"]);
-    // 69 cm at 50 % of 1020 deg/s on 5.6 cm wheels, after the motors' 76 ms lag
-    const v = (0.5 * 1020 * Math.PI * 5.6) / 360;
-    expect(Math.abs(hit[0]!.t_ms - (69 / v + 0.076) * 1000)).toBeLessThan(5);
+    // 69 cm at 50 % of 1020 deg/s on 5.6 cm wheels, after the time the motors' rise loses
+    const v = (0.5 * 1020 * Math.PI * 5.6) / 360,
+      lost = 1 - regulated(510, 1000, 1020) / 510;
+    expect(Math.abs(hit[0]!.t_ms - (69 / v + lost) * 1000)).toBeLessThan(5);
     const { next } = await read(sim);
     await r.call(E.outputTimeSync(BC, -50, 0, 500, true));
     r.run(1000);

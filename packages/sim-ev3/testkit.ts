@@ -13,11 +13,19 @@ export const DRIVETRAIN: BrickDrivetrain = {
   forward_sign: 1,
 };
 
-/** Degrees a motor starting from rest has turned after `ms` at `degS`, behind its first-order lag (MOTOR_TAU_MS). */
-export const lagged = (degS: number, ms: number): number => {
+/**
+ * Degrees a motor starting from rest has turned after `ms` under a speed command for `degS`: the firmware's speed
+ * loop saturates, so the shaft rises along the full-power lag toward `fullDegS` until it reaches `degS`
+ * (at tau ln(full / (full - degS))), and holds `degS` from then on.
+ */
+export const regulated = (degS: number, ms: number, fullDegS: number, tauMs: number = MOTOR_TAU_MS): number => {
   const t = ms / 1000,
-    tau = MOTOR_TAU_MS / 1000;
-  return degS * (t - tau * (1 - Math.exp(-t / tau)));
+    tau = tauMs / 1000,
+    s = Math.sign(degS),
+    vp = s * fullDegS,
+    at = (u: number) => vp * (u - tau * (1 - Math.exp(-u / tau)));
+  const ts = tau * Math.log(fullDegS / (fullDegS - Math.abs(degS)));
+  return t <= ts ? at(t) : at(ts) + degS * (t - ts);
 };
 export function rig(
   world: World = quietWorld(),

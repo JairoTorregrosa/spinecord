@@ -15,7 +15,13 @@ import type { Clock } from "../../../packages/runtime/clock";
 import { PageHub, type PageHubOptions } from "../../../packages/page-hub/hub";
 import type { Provider } from "../../../packages/protocol/types";
 import { createRuntime, type LocalRuntime } from "../../../packages/runtime/runtime";
-import { SIM_BRICK_LOOP_RATE_HZ, SimBrick, drivetrainFromProfile, providerRate } from "../../../packages/sim-ev3/brick";
+import {
+  LARGE_DEG_S,
+  MEDIUM_DEG_S,
+  SIM_BRICK_LOOP_RATE_HZ,
+  SimBrick,
+  drivetrainFromProfile,
+} from "../../../packages/sim-ev3/brick";
 import { World, parseWorld } from "../../../packages/sim-world/world";
 import { SimWorldProvider } from "../../../packages/sim-world/world-provider";
 import { buildPeripheralPage } from "../../peripheral-page/page-build";
@@ -109,7 +115,9 @@ export function twinRuntime(
           hardware,
           pair,
           roles: profile.roles,
-          degPerSecAt100: providerRate(brick.ports, pair),
+          // the twin's motors, each type at its own speed
+          degPerSecAt100: LARGE_DEG_S,
+          mediumDegPerSecAt100: MEDIUM_DEG_S,
           loopRateHz: SIM_BRICK_LOOP_RATE_HZ,
           ...time,
         }),

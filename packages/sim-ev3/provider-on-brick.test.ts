@@ -9,8 +9,8 @@ import type { CommandResult } from "../protocol/types";
 import { World } from "../sim-world/world";
 import { SimWorldProvider } from "../sim-world/world-provider";
 import { quietWorld, EXAMPLES, config, DRIVE } from "../sim-world/testkit";
-import { SimBrick, LARGE_DEG_S, type BrickDrivetrain } from "./brick";
-import { DRIVETRAIN, lagged } from "./testkit";
+import { SimBrick, LARGE_DEG_S, MEDIUM_DEG_S, type BrickDrivetrain } from "./brick";
+import { DRIVETRAIN, regulated } from "./testkit";
 
 // Kept low on purpose: the provider's polls ride on real timers, whose granularity (about 15 ms on Windows)
 // times this factor is how late the provider can see a target.
@@ -25,6 +25,7 @@ function twin(world: World = quietWorld(), drivetrain: BrickDrivetrain | null = 
     // the robot file's pair: the same ports the brick's drivetrain rolls on, and none for a robot without one
     ...(drivetrain ? { pair: { left: drivetrain.left, right: drivetrain.right } } : {}),
     degPerSecAt100: LARGE_DEG_S,
+    mediumDegPerSecAt100: MEDIUM_DEG_S,
     pollMs: 2,
     now,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms / SPEEDUP)),
@@ -115,7 +116,7 @@ describe("Ev3Provider on SimBrick", () => {
     expect(op.reason).toBe("timeout");
     expect(op.measured.time_limited).toBe(true);
     const deg = op.measured.left_deg as number;
-    expect(Math.abs(deg - lagged(0.5 * LARGE_DEG_S, 250))).toBeLessThan(8); // a start from rest lags
+    expect(Math.abs(deg - regulated(0.5 * LARGE_DEG_S, 250, LARGE_DEG_S))).toBeLessThan(8); // a start from rest rises
     expect(world.pose.x - 43).toBeCloseTo(deg / DEG_PER_CM, 1);
     expect(brick.busy()).toBe(false);
     expectClean(brick);
@@ -143,6 +144,27 @@ describe("Ev3Provider on SimBrick", () => {
     expect(Math.abs((world.pose.th * 180) / Math.PI - 0.8 * byEncoders)).toBeLessThan(0.5);
     expect(Math.abs((world.pose.th * 180) / Math.PI - 72)).toBeLessThan(4);
   }, 15000);
+
+  test("a medium motor's speed_deg_s is read at the medium motor's scale, a large one's at the large one's", async () => {
+    const { ev3, brick } = twin(); // line-oval: a medium motor on A, large ones on B and C
+    await ev3.devices();
+    // both motors started at 50 % on the brick itself, then read through the provider once up to speed
+    await brick.send(
+      E.frame(E.outputTimeSpeed(E.OUTPUT_MASK.A | E.OUTPUT_MASK.B, 50, 0, 2000, 0, true), { counter: 1, globals: 0 }),
+    );
+    await new Promise((r) => setTimeout(r, 400 / SPEEDUP));
+    expect(Math.abs(((await value(ev3, "ev3.A", "speed_deg_s")) as number) - 0.5 * MEDIUM_DEG_S)).toBeLessThan(25);
+    expect(Math.abs(((await value(ev3, "ev3.B", "speed_deg_s")) as number) - 0.5 * LARGE_DEG_S)).toBeLessThan(25);
+    // and a robot's provider with no calibration reads a medium motor at ev3dev's 1560 deg/s per 100 %
+    const plain = new Ev3Provider(new SimBrick({ world: quietWorld(), drivetrain: DRIVETRAIN, now }), {
+      limits: { max_speed_pct: 60, max_command_ms: 15000 },
+      hardware: EXAMPLE_EV3_HARDWARE,
+    });
+    const specs = await plain.devices();
+    const range = (id: string) => specs.find((d) => d.id === id)!.channels.find((c) => c.name === "speed_deg_s")!.range;
+    expect(range("ev3.A")).toEqual([-1560, 1560]);
+    expect(range("ev3.B")).toEqual([-1050, 1050]);
+  });
 
   test("chained operations drive the simulated robot the commanded distance", async () => {
     const { ev3, brick, world } = twin(new World(config(), 4, DRIVE)); // default noise
