@@ -29,15 +29,13 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
       view = serveView(twins, config.view.port, { page: await buildViewPage(), log });
     } catch (e) {
       await fleet.shutdown();
-      process.stderr.write(`spinecord: ${(e as Error).message}
-`);
+      process.stderr.write(`spinecord: ${(e as Error).message}\n`);
       process.exit(1);
     }
   }
   for (const r of fleet.robots) log("robot", r.listing());
   if (view) {
-    process.stderr.write(`spinecord: the 3D view of the twins is on ${view.url}: open it in a browser
-`);
+    process.stderr.write(`spinecord: the 3D view of the twins is on ${view.url}: open it in a browser\n`);
     log("view", { url: view.url });
   }
   if (fleet.bridge)
