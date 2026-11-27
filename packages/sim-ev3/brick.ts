@@ -15,15 +15,7 @@ import {
   readParam,
 } from "../driver-ev3/encode";
 import type { Transport } from "../driver-ev3/transport";
-import {
-  World,
-  DT_MS,
-  COLOR_RGB,
-  IR_FULL_SCALE_CM,
-  REFLECT_BY_COLOR,
-  ULTRASONIC_MAX_CM,
-  ULTRASONIC_MIN_CM,
-} from "../sim-world/world";
+import { World, DT_MS, COLOR_RGB, IR_FULL_SCALE_CM, ULTRASONIC_MAX_CM, ULTRASONIC_MIN_CM } from "../sim-world/world";
 import type { WorldHost } from "../sim-world/world-provider";
 import type { RobotProfile } from "../protocol/types";
 import {
@@ -410,7 +402,7 @@ export class SimBrick implements Transport, WorldHost {
       case "touch":
         return s.mode === 0 ? [w.senseTouch()] : s.mode === 1 ? [this.bumps] : [];
       case "color":
-        if (s.mode === 0) return [REFLECT_BY_COLOR[w.senseColorId()]!];
+        if (s.mode === 0) return [Math.round(Math.min(100, Math.max(0, w.reflectSpot())))];
         if (s.mode === 1) return [5];
         if (s.mode === 2) return [w.senseColorId()];
         if (s.mode === 4) return COLOR_RGB[w.senseColorId()]!.map((c) => Math.round((c / 255) * 400));

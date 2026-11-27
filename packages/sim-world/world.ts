@@ -72,7 +72,7 @@ export interface DriveGeometry {
 }
 
 export interface NoiseConfig {
-  /** Relative standard deviation, per physics step, of each wheel's real travel. */
+  /** Relative standard deviation, per MOTION_NOISE_MS of world time, of each wheel's real travel. */
   motor: number;
   /** Mean fraction of wheel rotation lost to slip. */
   slip: number;
@@ -137,6 +137,12 @@ export const NO_NOISE: NoiseConfig = {
 
 /** Physics step (ms of simulated time). */
 export const DT_MS = 20;
+/**
+ * Motion noise is one draw per wheel for each slice this long of world time, made from the seed and the slice's
+ * index: a step that spans slices takes from each its share. How time is cut into steps (a viewer that ticks the
+ * physics every frame) therefore changes neither the noise drawn nor the path, beyond float rounding.
+ */
+export const MOTION_NOISE_MS = DT_MS;
 export const ULTRASONIC_MIN_CM = 3;
 export const ULTRASONIC_MAX_CM = 250;
 /** Half angle of the ultrasonic cone (an approximation: the real one is around +-10..20 deg). */
@@ -182,6 +188,17 @@ export class Rng {
     this.spare = r * Math.sin(a);
     return r * Math.cos(a);
   }
+}
+
+/** Two 32-bit integers to one well-mixed seed (murmur3's finaliser), so that neighbouring slices get unrelated streams. */
+function mixSeed(a: number, b: number): number {
+  let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul((b + 0x632be5ab) | 0, 0xc2b2ae35);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
 }
 
 // ---------- Geometry helpers ----------
@@ -620,42 +637,83 @@ export class World {
       throw new Error(
         "world: this body has no drivetrain geometry (set World.drive from the robot profile before rolling the wheels)",
       );
-    const nz = this.cfg.noise;
-    const tl = dl_cm * this.gainL * (1 + nz.motor * this.motionRng.gauss()) * (1 - nz.slip * 2 * this.motionRng.next());
-    const tr = dr_cm * this.gainR * (1 + nz.motor * this.motionRng.gauss()) * (1 - nz.slip * 2 * this.motionRng.next());
-    const full = (tl + tr) / 2,
-      fullTh = ((tr - tl) / this.drive.axle_track_cm) * (1 - nz.turn_scrub);
-    const at = (f: number): Pose => {
-      const d = full * f,
-        dth = fullTh * f,
-        mid = this.pose.th + dth / 2;
-      return { x: this.pose.x + d * Math.cos(mid), y: this.pose.y + d * Math.sin(mid), th: this.pose.th + dth };
+    const nz = this.cfg.noise,
+      axle = this.drive.axle_track_cm;
+    // Each slice of motion noise is its own arc, so the path does not depend on where steps begin and end.
+    const arcs = this.wheelNoise(this.t_ms - dt_ms, dt_ms).map(({ w, l, r }) => {
+      const tl = dl_cm * w * this.gainL * l,
+        tr = dr_cm * w * this.gainR * r;
+      return { w, tl, tr, d: (tl + tr) / 2, th: ((tr - tl) / axle) * (1 - nz.turn_scrub) };
+    });
+    /** The pose after fraction `f` of this step's time, and the turn and travel done until then. */
+    const at = (f: number): { pose: Pose; d: number; th: number; wheels: number } => {
+      let { x, y, th } = this.pose,
+        c = 0,
+        d = 0,
+        turned = 0,
+        wheels = 0;
+      for (const a of arcs) {
+        const q = Math.min(1, Math.max(0, (f - c) / a.w));
+        c += a.w;
+        if (q === 0) break;
+        const sd = a.d * q,
+          sth = a.th * q;
+        // The exact arc of constant curvature, not its midpoint approximation.
+        const chord = Math.abs(sth) > 1e-9 ? ((2 * sd) / sth) * Math.sin(sth / 2) : sd;
+        x += chord * Math.cos(th + sth / 2);
+        y += chord * Math.sin(th + sth / 2);
+        th += sth;
+        d += sd;
+        turned += sth;
+        wheels += (q * (Math.abs(a.tl) + Math.abs(a.tr))) / 2;
+      }
+      return { pose: { x, y, th }, d, th: turned, wheels };
     };
     let f = 1,
-      np = at(1);
-    const blocked = this.collides(np);
+      end = at(1);
+    const blocked = this.collides(end.pose);
     if (blocked) {
       // Bisect to the last free fraction: the body stops against the obstacle, not up to a step short of it.
       let lo = 0,
         hi = 1;
       for (let i = 0; i < CONTACT_BISECTIONS; i++) {
         const m = (lo + hi) / 2;
-        if (this.collides(at(m))) hi = m;
+        if (this.collides(at(m).pose)) hi = m;
         else lo = m;
       }
       f = lo;
-      np = at(lo);
+      end = at(lo);
     }
-    const d = full * f,
-      dth = fullTh * f;
     this.last_step_fraction = f;
-    this.pose = np;
+    this.pose = end.pose;
     this.last_stalled = blocked;
-    this.rate_deg_s = dt_ms > 0 ? ((dth * 180) / Math.PI / dt_ms) * 1000 : 0;
+    this.rate_deg_s = dt_ms > 0 ? ((end.th * 180) / Math.PI / dt_ms) * 1000 : 0;
     // A spin in place only wobbles the axle centre (wheel noise): that is not travel.
-    if (Math.abs(d) > (0.1 * f * (Math.abs(tl) + Math.abs(tr))) / 2) this.odometer_cm += Math.abs(d);
+    if (Math.abs(end.d) > 0.1 * end.wheels) this.odometer_cm += Math.abs(end.d);
     if (this.segs.length > 0) this.followLine();
     return blocked;
+  }
+
+  /** The slices of motion noise that [t0, t0 + dt] of world time spans: each one's share of the time and wheel factors. */
+  private wheelNoise(t0: number, dt: number): { w: number; l: number; r: number }[] {
+    const nz = this.cfg.noise;
+    if (nz.motor === 0 && nz.slip === 0) return [{ w: 1, l: 1, r: 1 }];
+    const draw = (k: number, w: number) => {
+      const g = new Rng(mixSeed(this.seed, k));
+      const l = (1 + nz.motor * g.gauss()) * (1 - nz.slip * 2 * g.next());
+      return { w, l, r: (1 + nz.motor * g.gauss()) * (1 - nz.slip * 2 * g.next()) };
+    };
+    if (!(dt > 0)) return [draw(Math.floor(t0 / MOTION_NOISE_MS), 1)];
+    const out: { w: number; l: number; r: number }[] = [];
+    const end = t0 + dt;
+    let a = t0;
+    while (end - a > 1e-9) {
+      const k = Math.floor(a / MOTION_NOISE_MS + 1e-9),
+        b = Math.min(end, (k + 1) * MOTION_NOISE_MS);
+      out.push(draw(k, (b - a) / dt));
+      a = b;
+    }
+    return out;
   }
 
   private followLine(): void {
@@ -754,6 +812,11 @@ export class World {
   // ----- sensors (every read spends noise from the sensor generator, never from the motion one) -----
   /** Reflected light 0..100 %: the average of the spot under the sensor, so the edge of a line reads in between. */
   senseReflect(): number {
+    const v = this.reflectSpot() + this.cfg.noise.reflect_pct * this.sensorRng.gauss();
+    return Math.round(Math.min(100, Math.max(0, v)));
+  }
+  /** What senseReflect reads without noise and not rounded (a display): it spends nothing of the sensor generator. */
+  reflectSpot(): number {
     const g = this.cfg.body;
     const [sx, sy] = this.pointAhead(g.color_sensor_x_cm);
     let sum = REFLECT_BY_COLOR[this.floorColorAt(sx, sy)]!,
@@ -766,8 +829,7 @@ export class World {
         n++;
       }
     }
-    const v = sum / n + this.cfg.noise.reflect_pct * this.sensorRng.gauss();
-    return Math.round(Math.min(100, Math.max(0, v)));
+    return sum / n;
   }
 
   /** Colour id 0..7 of the floor right under the centre of the sensor. */
