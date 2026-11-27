@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { buildArena, toScene, type Arena } from "./arena";
+import { applyLink, frameStats, placeCamera } from "./deeplink";
 import { Sound } from "./audio";
 import * as hud from "./hud";
 import { lookOf } from "./look";
@@ -21,24 +22,32 @@ const HELPERS = 1; // layer of what only the person sees: rays, trail, ghosts
 
 // ---------------------------------------------------------------- renderer, scene, lights
 const canvas = $<HTMLCanvasElement>("scene");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+// 1.5 device pixels per CSS pixel: past that an integrated GPU pays in fill rate for detail nobody sees
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+// Neutral keeps LEGO's saturated colours and white plastic white, where ACES turns them grey and yellow
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x14171c);
-scene.fog = new THREE.Fog(0x14171c, 500, 2000);
+// a bright room around the arena, the fog melting the far floor into it
+const ROOM = 0xc9c6bf;
+scene.background = new THREE.Color(ROOM);
+scene.fog = new THREE.Fog(ROOM, 500, 2000);
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.5;
-scene.add(new THREE.HemisphereLight(0xe2ebff, 0x3b322a, 0.85));
-const sun = new THREE.DirectionalLight(0xfff3e2, 2.3);
+scene.environmentIntensity = 0.55;
+pmrem.dispose();
+scene.add(new THREE.HemisphereLight(0xeef2ff, 0x5a5048, 0.9));
+// the window's light: warm, from high up at a slant, with soft shadows
+const sun = new THREE.DirectionalLight(0xfff1de, 2.2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.bias = -0.0003;
-sun.shadow.normalBias = 0.03;
+sun.shadow.radius = 3;
+sun.shadow.blurSamples = 12;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.5, 8000);
@@ -270,7 +279,7 @@ function setFocus(id: string | null): void {
   const look = lookOf(focus);
   model = buildRobot(focus, look);
   robotRoot.add(model.group);
-  arena = buildArena(focus.world, model.height);
+  arena = buildArena(focus.world, model.height, renderer.capabilities.getMaxAnisotropy());
   scene.add(arena.group);
   setGhostShape(focus);
   coneGroup.visible = model.rayOrigin !== null && $<HTMLInputElement>("opt-cone").checked;
@@ -293,15 +302,16 @@ function setFocus(id: string | null): void {
   sc.near = 1;
   sc.far = size * 4;
   sc.updateProjectionMatrix();
-  (scene.fog as THREE.Fog).near = size * 3;
-  (scene.fog as THREE.Fog).far = size * 9;
+  (scene.fog as THREE.Fog).near = size * 1.5;
+  (scene.fog as THREE.Fog).far = size * 4.5;
   controls.maxDistance = size * 3;
   if (firstView) {
     firstView = false;
     const s = toScene(w.start.x, w.start.y);
     controls.target.copy(s);
     const h = w.start.heading_deg * DEG;
-    camera.position.set(s.x - Math.cos(h) * 70 + Math.sin(h) * 45, 62, s.z + Math.sin(h) * 70 + Math.cos(h) * 45);
+    camera.position.set(s.x - Math.cos(h) * 42 + Math.sin(h) * 26, 36, s.z + Math.sin(h) * 42 + Math.cos(h) * 26);
+    placeCamera(camera, controls.target, h);
     controls.update();
   }
 }
@@ -678,9 +688,13 @@ function frame(now: number): void {
     eyeCam.lookAt(tmpB.copy(model.eye.look).applyMatrix4(robotRoot.matrixWorld));
   }
   if (camMode === "eye" && model && s) {
+    camera.layers.disable(HELPERS); // the robot's camera sees what the robot sees, never the helpers
     camera.position.copy(eyeCam.position);
     camera.quaternion.copy(eyeCam.quaternion);
-  } else controls.update();
+  } else {
+    camera.layers.enable(HELPERS);
+    controls.update();
+  }
 
   // the bubble over the robot
   const bubble = $("bubble");
@@ -716,8 +730,10 @@ function frame(now: number): void {
     renderer.render(scene, eyeCam);
     renderer.setScissorTest(false);
   }
+  frameStats(renderer, now);
 }
 
 setMode("look");
+applyLink();
 connect();
 requestAnimationFrame(frame);

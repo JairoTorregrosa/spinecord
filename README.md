@@ -158,6 +158,8 @@ bun apps/local/main.ts --print-add --twin --view
 
 How a twin looks comes from its world file: `extensions.view` says tracks or wheels, where the brick, a phone and each sensor sit, a bumper and a label ([`apps/twin-view/src/look.ts`](apps/twin-view/src/look.ts)); without it the page draws an educator base. [`deployments/orugas`](deployments/orugas) is a tracked EV3 with a phone at the front and its room.
 
+The page's address can choose the view: `http://127.0.0.1:8769/?cam=follow&az=150&el=15&dist=45&hud=0` opens the follow camera in front of the robot, 15° above the floor and 45 cm away, without the panels (`cam` is `free`, `follow`, `robot` or `top`; `az` turns around the robot from behind it, 90 its left side). `stats=1` adds the draw calls, triangles and frame time of the picture.
+
 ### Peripheral pages: devices lent by a browser
 
 A *peripheral page* is a browser page that joins a robot of the server and lends it devices of the computer or the phone it runs on: a camera, a microphone, a speaker, a screen, touch buttons. The page declares each device as a manifest, and the model reads and commands it with the same tools as a motor or a sensor: `describe_robot` lists the page under `pages`, `read_device` returns a camera frame as an image, `command_device` runs a speaker's `speak` or a microphone's `listen`, and a pushed touch button can end a `drive … until` or a `wait_until`. No tool is added. A page never moves the robot, and the person at the page can pause it at any moment: its devices then answer `device_offline`, and a move guarded by one of its channels is braked.
