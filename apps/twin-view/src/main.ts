@@ -10,6 +10,7 @@ import { Cameras, CAMS, type Cam } from "./camera";
 import { ChatPanel } from "./chat";
 import { Hand, MODES, heading, type Mode } from "./hand";
 import * as hud from "./hud";
+import { SensorRayView } from "./rays";
 import { Link, type LinkState } from "./link";
 import { lookOf } from "./look";
 import type { RobotMeta, RobotState, ServerMessage } from "./messages";
@@ -105,32 +106,10 @@ const chat = new ChatPanel({
   setVoice: (v) => (sound.voice = v),
 });
 
-// ---------------------------------------------------------------- the distance sensor's cone
-const conePos = new Float32Array(4 * 3);
-const coneGeo = new THREE.BufferGeometry();
-coneGeo.setAttribute("position", new THREE.BufferAttribute(conePos, 3));
-coneGeo.setIndex([0, 1, 2, 0, 2, 3]);
-const coneMat = new THREE.MeshBasicMaterial({
-  color: 0x3ccf7a,
-  transparent: true,
-  opacity: 0.16,
-  side: THREE.DoubleSide,
-  depthWrite: false,
-});
-const cone = new THREE.Mesh(coneGeo, coneMat);
-const rayPos = new Float32Array(6 * 3);
-const rayGeo = new THREE.BufferGeometry();
-rayGeo.setAttribute("position", new THREE.BufferAttribute(rayPos, 3));
-const rays = new THREE.LineSegments(
-  rayGeo,
-  new THREE.LineBasicMaterial({ color: 0x3ccf7a, transparent: true, opacity: 0.7 }),
-);
-const hitGeo = new THREE.SphereGeometry(0.9, 14, 10);
-const hits = [0, 1, 2].map(() => new THREE.Mesh(hitGeo, new THREE.MeshBasicMaterial({ color: 0x3ccf7a })));
-const coneGroup = new THREE.Group();
-coneGroup.add(cone, rays, ...hits);
+// ---------------------------------------------------------------- the sensors' rays, as the physics casts them
+const sensorRays = new SensorRayView();
+const coneGroup = sensorRays.group;
 robotRoot.add(coneGroup);
-cone.frustumCulled = rays.frustumCulled = false;
 
 // ---------------------------------------------------------------- trail
 const TRAIL_MAX = 6000;
@@ -311,7 +290,7 @@ function setFocus(id: string | null): void {
   robotRoot.add(model.group);
   arena = buildArena(focus.world, model.height, renderer.capabilities.getMaxAnisotropy());
   scene.add(arena.group);
-  coneGroup.visible = model.rayOrigin !== null && $<HTMLInputElement>("opt-cone").checked;
+  coneGroup.visible = hasRays(focus) && $<HTMLInputElement>("opt-cone").checked;
   roles = {};
   if (focus.drivetrain) {
     const what = look.drive === "tracks" ? "oruga" : "rueda";
@@ -352,11 +331,14 @@ function setFocus(id: string | null): void {
   framed = key;
 }
 
-/** The cone option names the distance sensor this robot has, and is not offered when it has none. */
+/** Does this robot have a sensor whose rays the page draws (ultrasonic, infrared, colour)? */
+function hasRays(m: RobotMeta | null): boolean {
+  return m !== null && Object.values(m.ports.sensors).some((k) => k === "ultrasonic" || k === "ir" || k === "color");
+}
+/** The rays option is offered only to a robot that has such a sensor. */
 function showConeOption(): void {
-  const kind = focus ? Object.values(focus.ports.sensors).find((k) => k === "ultrasonic" || k === "ir") : undefined;
-  $("opt-cone-row").hidden = kind === undefined;
-  $("opt-cone-label").textContent = kind ? hud.CONE[kind]! : "";
+  $("opt-cone-row").hidden = !hasRays(focus);
+  $("opt-cone-label").textContent = "Rayos de los sensores";
 }
 
 function onState(st: RobotState): void {
@@ -500,7 +482,7 @@ $("restore").addEventListener("click", () => {
 $("trail-clear").addEventListener("click", () => trailReset());
 $<HTMLSelectElement>("robot").addEventListener("change", (e) => setFocus((e.target as HTMLSelectElement).value));
 $<HTMLInputElement>("opt-cone").addEventListener("change", (e) => {
-  coneGroup.visible = (e.target as HTMLInputElement).checked && model?.rayOrigin != null;
+  coneGroup.visible = (e.target as HTMLInputElement).checked && hasRays(focus);
 });
 $<HTMLInputElement>("opt-trail").addEventListener(
   "change",
@@ -658,31 +640,8 @@ function resize(): void {
     camera.updateProjectionMatrix();
   }
 }
-const rayColour = new THREE.Color();
 function updateCone(st: RobotState): void {
-  if (!model?.rayOrigin || !coneGroup.visible) return;
-  const o = model.rayOrigin;
-  const a = 12 * DEG;
-  const dist = st.sensors.find((s) => s.kind === "ultrasonic" || s.kind === "ir");
-  const reading = dist?.values[0];
-  const near = typeof reading === "number" && dist?.kind === "ultrasonic" ? reading : Math.min(...st.rays_cm);
-  rayColour.setHSL(Math.min(0.36, Math.max(0, (near - 5) / 120) * 0.36), 0.85, 0.5);
-  coneMat.color.copy(rayColour);
-  (rays.material as THREE.LineBasicMaterial).color.copy(rayColour);
-  conePos.set([o.x, o.y, o.z], 0);
-  [-a, 0, a].forEach((off, i) => {
-    const L = Math.min(255, st.rays_cm[i]!);
-    const x = o.x + Math.cos(off) * L,
-      z = o.z - Math.sin(off) * L;
-    conePos.set([x, o.y, z], (i + 1) * 3);
-    rayPos.set([o.x, o.y, o.z, x, o.y, z], i * 6);
-    hits[i]!.position.set(x, o.y, z);
-    hits[i]!.visible = st.rays_cm[i]! <= 250;
-    (hits[i]!.material as THREE.MeshBasicMaterial).color.copy(rayColour);
-  });
-  coneGeo.attributes.position!.needsUpdate = true;
-  rayGeo.attributes.position!.needsUpdate = true;
-  coneGeo.computeBoundingSphere();
+  if (coneGroup.visible) sensorRays.update(st.rays);
 }
 
 function frame(now: number): void {

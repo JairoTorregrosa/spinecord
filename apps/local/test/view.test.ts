@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { World } from "../../../packages/sim-world/world";
+import { IR_RAYS, NO_NOISE, ULTRASONIC_RAYS, World } from "../../../packages/sim-world/world";
 import { loadWorldFile } from "../../../packages/sim-world/world-file";
 import { fit } from "../../twin-view/src/fit";
 import type { ServerMessage } from "../../twin-view/src/messages";
@@ -15,7 +15,7 @@ import { DEFAULT_VIEW_PORT, loadConfig } from "../src/config";
 import { buildFleet, type Fleet } from "../src/sources";
 import { callTool } from "../src/tools";
 import { cutText } from "../src/mcp";
-import { VIEW_ACTIONS_PER_S, VIEW_MESSAGE_MAX, serveView, type ViewServer } from "../src/view";
+import { VIEW_ACTIONS_PER_S, VIEW_MESSAGE_MAX, sensorRays, serveView, type ViewServer } from "../src/view";
 import { startServer, until, type TestServer } from "./client";
 
 describe("--view flags", () => {
@@ -259,6 +259,79 @@ describe("the view listener", () => {
     expect(await a.act({ t: "box_remove", id: "r1-sim", box: "cup" })).toMatchObject({ ok: true });
     await a.next((m) => m.t === "boxes" && m.boxes.length === 0, 0);
     await b.next((m) => m.t === "boxes" && m.boxes.length === 0, 0);
+  });
+
+  test("the rays are the physics' own; on a world without noise every sensor the page shows reads what the tools read", async () => {
+    const { connect, tool, fleet } = await rig();
+    const world = JSON.parse(await Bun.file(join(import.meta.dir, "..", "examples", "room.json")).text());
+    world.name = "room-quiet";
+    world.noise = { ...NO_NOISE };
+    world.obstacles = [
+      { id: "post", x: 95, y: 58, w: 4, h: 4 },
+      { id: "low", x: 20, y: 90, w: 30, h: 8, height_cm: 4 },
+    ];
+    const loaded = await tool("command_device", {
+      device: "sim.world",
+      command: "load_world",
+      args: { world: JSON.stringify(world) },
+    });
+    expect(loaded.ok).toBe(true);
+    const p = await connect();
+    const w = fleet.bricks.get("r1-sim")!.world;
+    const ports: Record<string, [string, string]> = {
+      "1": ["ev3.S1", "pressed"],
+      "2": ["ev3.S2", "angle_deg"],
+      "3": ["ev3.S3", "reflected_pct"],
+      "4": ["ev3.S4", "distance_cm"],
+    };
+    for (const pose of [
+      { x: 60, y: 60, heading_deg: 0 },
+      { x: 40, y: 40, heading_deg: 90 },
+      { x: 30, y: 30, heading_deg: 30 },
+      { x: 100, y: 100, heading_deg: 45 },
+    ]) {
+      expect(await p.act({ t: "carry", id: "r1-sim", ...pose })).toMatchObject({ ok: true });
+      const from = p.got.length;
+      const st = await p
+        .next<Extract<ServerMessage, { t: "state" }>>((m) => m.t === "state", from)
+        .then((m) => m.robots[0]!);
+      for (const s of st.sensors) {
+        const [device, channel] = ports[s.port]!;
+        const r = await tool("read_device", { device, channels: [channel] });
+        const v = r.data.readings[0].value;
+        expect([s.port, s.values[0]]).toEqual([s.port, typeof v === "boolean" ? Number(v) : v]);
+      }
+      // the ultrasonic's mark is where its reading comes from: the echo's length is the reading (or none at 255)
+      const us = st.rays.ultrasonic!;
+      const reading = st.sensors.find((s) => s.kind === "ultrasonic")!.values[0]!;
+      if (reading === 255) expect(us.echo).toBeNull();
+      else expect(Math.abs(Math.max(3, us.echo!.cm) - reading)).toBeLessThanOrEqual(0.1);
+      expect(us.rays).toHaveLength(ULTRASONIC_RAYS);
+      expect(st.rays.ir).toBeNull(); // no infrared on this robot: no rays invented for it
+      expect(st.rays.color).toEqual({ ahead_cm: w.cfg.body.color_sensor_x_cm, r_cm: w.cfg.body.color_spot_radius_cm });
+      expect(st.rays.from).toEqual({
+        ahead_cm: w.cfg.body.distance_sensor_x_cm,
+        z_cm: w.cfg.body.distance_sensor_z_cm,
+      });
+    }
+  });
+
+  test("sensorRays: the infrared's rays share out its light, and an echo beyond range is none", async () => {
+    const w = new World({
+      ...(await loadWorldFile(join(import.meta.dir, "..", "examples", "room.json"))),
+      noise: NO_NOISE,
+    });
+    w.addObstacle({ id: "near", x: 80, y: 50, w: 10, h: 20 });
+    const r = sensorRays(w, ["ir", "ultrasonic"]);
+    expect(r.ir!.rays).toHaveLength(IR_RAYS);
+    expect(r.ir!.rays.reduce((a, b) => a + b.share, 0)).toBeCloseTo(1, 2);
+    expect(r.ir!.rays[(IR_RAYS - 1) / 2]!.deg).toBe(0);
+    expect(r.ultrasonic!.echo!.cm).toBeCloseTo(w.ultrasonicCm(), 0);
+    expect(r.color).toBeNull();
+    w.removeObstacle("near");
+    w.setPose({ x: 60, y: 60, th: Math.PI / 4 }); // square on to nothing near: a corner far away
+    const far = sensorRays(w, ["ultrasonic"]);
+    expect(far.ultrasonic!.echo === null).toBe(w.ultrasonicCm() === 255);
   });
 
   test("restore right after load_world, before any frame, brings that world's own boxes back", async () => {

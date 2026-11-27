@@ -77,7 +77,10 @@ export interface SensorState {
   port: "1" | "2" | "3" | "4";
   kind: "touch" | "color" | "ultrasonic" | "gyro" | "ir" | null;
   mode: number;
-  /** SI values of the current mode without noise; [] for an empty or silent port. */
+  /**
+   * SI values of the current mode without noise, as the tools read them (a gyro counter-clockwise positive); []
+   * for an empty or silent port.
+   */
   values: number[];
 }
 export interface RobotState {
@@ -94,11 +97,31 @@ export interface RobotState {
   battery_v: number;
   battery_pct: number;
   buttons: number[];
-  /** True length of the three rays of the distance sensor's cone (right, centre, left), cm, not clamped. */
-  rays_cm: [number, number, number];
+  /** What the simulated sensors cast now, as the physics casts it (absent sensors: null). */
+  rays: SensorRays;
   /** Simulated time of the world, ms. */
   t_ms: number;
 }
+
+/**
+ * The rays of the simulated sensors, in the robot's frame: bearings in degrees from its heading (counter-clockwise,
+ * left positive), lengths in cm from the distance sensor (capped at RAY_MAX_CM).
+ */
+export interface SensorRays {
+  /** Where the distance sensor sits: cm ahead of the axle centre, cm above the floor (the physics' place). */
+  from: { ahead_cm: number; z_cm: number };
+  /**
+   * The ultrasonic's cone: its even rays (`echo`: that ray meets a surface square enough to send sound back), and
+   * the echo the reading comes from, null when none comes back (the sensor reads 255).
+   */
+  ultrasonic: { rays: { deg: number; cm: number; echo: boolean }[]; echo: { deg: number; cm: number } | null } | null;
+  /** The infrared's beam: each ray with its share of the light that comes back (the shares sum to 1). */
+  ir: { rays: { deg: number; cm: number; share: number }[] } | null;
+  /** The colour sensor's spot on the mat: cm ahead of the axle centre, its radius. */
+  color: { ahead_cm: number; r_cm: number } | null;
+}
+/** Longest ray a page is sent (cm): past the ultrasonic's 255 nothing reads. */
+export const RAY_MAX_CM = 300;
 
 export interface CallStart {
   t: "call_start";

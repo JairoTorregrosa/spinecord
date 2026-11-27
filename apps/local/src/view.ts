@@ -8,7 +8,14 @@
 // resolve to this computer gets 403), and only the page served here may open the socket (any site a browser has
 // open can reach 127.0.0.1).
 import type { SimBrick } from "../../../packages/sim-ev3/brick";
-import { CONE_HALF_DEG, ObstacleError, type World } from "../../../packages/sim-world/world";
+import {
+  CONE_HALF_DEG,
+  ObstacleError,
+  ULTRASONIC_ECHO_DEG,
+  ULTRASONIC_MAX_CM,
+  ULTRASONIC_RAYS,
+  type World,
+} from "../../../packages/sim-world/world";
 import type { SimWorldProvider } from "../../../packages/sim-world/world-provider";
 import type {
   Box,
@@ -18,9 +25,11 @@ import type {
   RefusalCode,
   RobotMeta,
   RobotState,
+  SensorRays,
   ServerMessage,
   WorldShape,
 } from "../../twin-view/src/messages";
+import { RAY_MAX_CM } from "../../twin-view/src/messages";
 import type { ViewPageFiles } from "../../twin-view/view-build";
 import type { ViewChat } from "./chat";
 import type { CallWatcher } from "./mcp";
@@ -117,11 +126,39 @@ function meta(t: ViewTwin): RobotMeta {
   };
 }
 
+/** The rays the twin's sensors cast now, for the sensors it has (src/messages.ts SensorRays). Spends no noise. */
+export function sensorRays(w: World, kinds: readonly string[]): SensorRays {
+  const b = w.cfg.body;
+  const cm = (d: number) => r1(Math.min(RAY_MAX_CM, d));
+  let ultrasonic: SensorRays["ultrasonic"] = null;
+  if (kinds.includes("ultrasonic")) {
+    const half = CONE_HALF_DEG / DEG,
+      minCos = Math.cos(ULTRASONIC_ECHO_DEG / DEG);
+    const rays = Array.from({ length: ULTRASONIC_RAYS }, (_, i) => {
+      const off = ((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * half;
+      const h = w.rayHit(w.pose, off);
+      return { deg: r1(off * DEG), cm: cm(h.d), echo: h.cos >= minCos - 1e-12 && h.d <= ULTRASONIC_MAX_CM };
+    });
+    // the reading's own rule (ultrasonicCm): an echo beyond the range, or none, reads 255
+    const e = w.coneEcho();
+    ultrasonic = { rays, echo: e.d <= ULTRASONIC_MAX_CM ? { deg: r1(e.off * DEG), cm: r1(e.d) } : null };
+  }
+  const ir = kinds.includes("ir")
+    ? {
+        rays: w.irBeam().rays.map((r) => ({
+          deg: r1(r.off * DEG),
+          cm: cm(r.d),
+          share: Math.round(r.share * 1000) / 1000,
+        })),
+      }
+    : null;
+  const color = kinds.includes("color") ? { ahead_cm: b.color_sensor_x_cm, r_cm: b.color_spot_radius_cm } : null;
+  return { from: { ahead_cm: b.distance_sensor_x_cm, z_cm: b.distance_sensor_z_cm }, ultrasonic, ir, color };
+}
+
 function state(t: ViewTwin): RobotState {
   const p = t.brick.peek(); // runs the physics up to now
   const w = t.brick.world;
-  const a = CONE_HALF_DEG / DEG;
-  const ray = (off: number) => r1(Math.min(9999, w.rayDistance(w.pose, off)));
   const v = t.robot.view();
   return {
     id: t.id,
@@ -130,13 +167,19 @@ function state(t: ViewTwin): RobotState {
     link: v.link,
     activity: v.activity,
     motors: p.motors.map((m) => ({ ...m, tacho_deg: r1(m.tacho_deg), speed_pct: r1(m.speed_pct) })),
-    sensors: p.sensors.map((s) => ({ port: s.port, kind: s.kind, mode: s.mode, values: s.values })),
+    // as the tools read them: the EV3 gyro counts clockwise, the contract counter-clockwise (driver-ev3's ccw)
+    sensors: p.sensors.map((s) => ({
+      port: s.port,
+      kind: s.kind,
+      mode: s.mode,
+      values: s.kind === "gyro" ? s.values.map((v) => (v === 0 ? 0 : -v)) : s.values,
+    })),
     led: p.led,
     lcd: p.lcd,
     battery_v: p.battery_v,
     battery_pct: p.battery_pct,
     buttons: p.buttons,
-    rays_cm: [ray(-a), ray(0), ray(a)],
+    rays: sensorRays(w, Object.values(t.brick.ports.sensors) as string[]),
     t_ms: Math.round(w.t_ms),
   };
 }
