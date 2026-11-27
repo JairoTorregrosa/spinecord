@@ -51,7 +51,7 @@ What runs where, with Spanish. "Measured here" is this board, through the real c
 | faster-whisper tiny | 50.7 % | 46 % / 56 % | "¡Beren!", "¡Verdad!" | 8.6 s | 3.8 | 38.5 s | 75 MB |
 | faster-whisper base (the model already on this board) | 40.0 % | 39 % / 41 % | "¡Buenos días!", "¡Déjame!" | 15.9 s | 7.0 | 6.8 s | 145 MB |
 | **Parakeet TDT 0.6B v3, sherpa-onnx** | **13.6 %** | 10 % / 17 % | "Bana.", "Yeah." | **1.7 s** | **0.73** | 16.6 s | 487 MB archive |
-| faster-whisper small | WHISPER_SMALL | | | | | | 480 MB |
+| faster-whisper small | not measured here: `earlyoom` killed it on every try (host memory) | | | | | | 480 MB |
 
 The host had a load of 12–20 from other agents' builds during every run, and `earlyoom` killed each model several times before one run finished. The times are upper bounds, several times slower than an idle Orin Nano. Even so, Parakeet ran faster than real time on the CPU alone, and Whisper did not. The error rates do not depend on load. Parakeet's errors were mostly in the Mexican voice, and it guesses the language by itself: two short clips came back in Portuguese ("Não, ele tá completa") and English ("Yeah"). Whisper can be forced to Spanish; Parakeet cannot. **No model reliably heard a lone "para"**, which is why the stop button, `P` and Esc are the stop that always works, and a spoken "para" is the extra one. The browser's recognizer, with its live partial text, could not be measured here.
 
