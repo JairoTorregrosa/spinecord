@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CONFIRM,
+  ev3DraftWarn,
   isRegistered,
   launchLine,
   parseAntOrg,
@@ -213,6 +214,20 @@ test("setup.ts name ends with the restart the person must do, and runs no doctor
   const doctorAt = src.indexOf('"--doctor"');
   const runsDoctor = fns.filter((f) => f.at < doctorAt).at(-1)!.name;
   expect(nameStep).not.toContain(`${runsDoctor}(`);
+});
+
+test("setup.ts warns when the person's robot file drives the EV3 with guesses that change how it moves", () => {
+  const file = "/home/a/mi-robot/robot.json";
+  expect(ev3DraftWarn(file, undefined)).toBeNull();
+  expect(ev3DraftWarn(file, [])).toBeNull();
+  // the footprint and where the sensors sit change only the twin
+  expect(ev3DraftWarn(file, ["footprint", "places"])).toBeNull();
+  const w = ev3DraftWarn(file, ["footprint", "wheel_diameter", "S4"])!;
+  expect(w.status).toBe("warn");
+  expect(w.why).toBe(
+    `${file} drives the real EV3 too, and nobody confirmed wheel_diameter, S4 (twin.unconfirmed): its moves are planned from guesses`,
+  );
+  expect(w.next).toContain("CALIBRATE");
 });
 
 test("setup.ts keeps the robot's name across runs, and a new name changes only the name", () => {

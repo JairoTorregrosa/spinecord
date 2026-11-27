@@ -2,12 +2,13 @@
 // git, bun, ant, Claude Code and this clone exist. Every step is idempotent: it checks first, acts only when the
 // check fails, and checks again. `status` acts never and names the next step, so an agent resumes from any state.
 // The robots come from the skill's robots.json; what no command can detect (the person's answers, the smoke
-// test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|todo|fail  <what>  <why>  ->  <next>`, the
+// test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|warn|todo|fail  <what>  <why>  ->  <next>`, the
 // last line `setup <step>: ok` (exit 0) or `setup <step>: not done` (exit 1). Nothing here prints a secret.
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { parseRobotName } from "../apps/local/src/config";
+import { MOVES } from "../apps/local/src/twin-build";
 import { paysBeforeProfile, type Env } from "../examples/assistant/setup";
 
 const REPO = join(import.meta.dir, "..");
@@ -50,7 +51,8 @@ export interface State {
   /** The EV3 drove forward when asked to. */
   forward?: boolean;
 }
-export type Status = "ok" | "todo" | "fail";
+/** `warn`: done, with something the person must know; the step still ends `ok`. */
+export type Status = "ok" | "warn" | "todo" | "fail";
 
 // ---- pure parts (setup-skill.test.ts) ----
 
@@ -136,6 +138,22 @@ export function launchLine(platform: string, profile: string): string {
   return platform === "win32"
     ? `cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "${profile}"; claude --model sonnet`
     : `cd ~/mi-robot && ANTHROPIC_PROFILE=${profile} claude --model sonnet`;
+}
+
+/**
+ * The person's own robot file is the EV3's too: what nobody confirmed in it that changes how the robot moves (a
+ * port, the front, a wheel size read from a photo) plans the real robot's moves until state 6 CALIBRATE of the
+ * robot-twin skill. One warn line, or none.
+ */
+export function ev3DraftWarn(file: string, unconfirmed: readonly string[] | undefined): Line | null {
+  const moves = (unconfirmed ?? []).filter((u) => (MOVES as readonly string[]).includes(u));
+  if (moves.length === 0) return null;
+  return {
+    status: "warn",
+    what: "ev3 draft",
+    why: `${file} drives the real EV3 too, and nobody confirmed ${moves.join(", ")} (twin.unconfirmed): its moves are planned from guesses`,
+    next: "robot-twin skill, state 6 CALIBRATE, before any other move of the real robot",
+  };
 }
 
 // ---- probes ----
@@ -478,6 +496,12 @@ async function workshop(s: State): Promise<Line[]> {
           next: "its fix after ->, then this step again",
         },
   );
+  // after the doctor: a robot file it cannot read is its `robots` fail, not a throw here
+  const own = ownRobot();
+  if (own !== null && ev3File(s) === own && !/^fail\s+robots\b/m.test(d.out)) {
+    const warn = ev3DraftWarn(own, readJson<{ twin?: { unconfirmed?: string[] } }>(own).twin?.unconfirmed);
+    if (warn) lines.push(warn);
+  }
   return lines;
 }
 
@@ -629,7 +653,7 @@ function print(step: string, lines: Line[]): 0 | 1 {
   const w = Math.max(...lines.map((l) => l.what.length));
   for (const l of lines)
     console.log(`${l.status.padEnd(4)}  ${l.what.padEnd(w)}  ${l.why}${l.next ? `  ->  ${l.next}` : ""}`);
-  const done = lines.every((l) => l.status === "ok");
+  const done = lines.every((l) => l.status === "ok" || l.status === "warn");
   console.log(`setup ${step}: ${done ? "ok" : "not done"}`);
   return done ? 0 : 1;
 }

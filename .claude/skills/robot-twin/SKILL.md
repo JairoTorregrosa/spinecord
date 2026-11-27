@@ -123,7 +123,7 @@ Keep each value's source for state 7.
 
 ## 6 CALIBRATE (human step)
 
-Needs state 5, a new session, the EV3 `online`, and the person saying the floor is clear. Skip every move that is unsafe or meaningless for the build, and say so: a robot that balances on two wheels (it falls when driven without its balance program), a build with no drive, a stair climber off its stairs.
+Needs state 5, a new session, the EV3 `online`, and the person saying the floor is clear. With an EV3, the robot file plans the real robot's moves from state 5 on, guesses included: do this state before any other move of the real robot. `setup workshop` says so in an `ev3 draft` `warn` line. Skip every move that is unsafe or meaningless for the build, and say so: a robot that balances on two wheels (it falls when driven without its balance program), a build with no drive, a stair climber off its stairs.
 
 1. Front and sides: "Put the robot on the floor with free space ahead." Call `drive` 5 cm. Backward: set `forward_sign` to -1. Then `turn` 90°: it must turn left (counter-clockwise from above). It turned right: swap `pair.left` and `pair.right`. Take `front` and `left_right` out of `twin.unconfirmed`. Do state 5 step 4 again.
 2. Distance: `drive` 50 cm; "How far did it go, in cm?" `wheel_diameter_cm` = old × measured ÷ 50, round to 0.01.
