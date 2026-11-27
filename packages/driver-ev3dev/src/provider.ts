@@ -466,7 +466,7 @@ function sensorEntries(ir: IrChannel): Record<string, SensorEntry> {
           range: [0, 100],
           noise: 3,
           max_rate_hz: 20,
-          approx: `Not a distance: roughly 0.7 cm per unit, depends strongly on surface color; 100 means nothing in range (~70 cm). ${MODE_NOTE}`,
+          approx: `Not a distance: roughly 1 cm per unit against a large light wall square on, farther for dark, slanted or narrow things; depends strongly on surface colour; 100 means nothing in range (beyond about 95 cm). ${MODE_NOTE}`,
           description: "Proximity of the nearest object, 0 touching to 100 far.",
         },
         {

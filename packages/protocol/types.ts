@@ -28,7 +28,7 @@ export interface ChannelSpec {
   // `absent: true`. A condition takes that reading as "not met" and never as condition_unreadable; a null
   // without `absent` is a failed read on this channel too (CONTRACT §2.2).
   null_when_absent?: boolean;
-  approx?: string; // honest note on accuracy, e.g. "IR proximity is ~0.7 cm per unit"
+  approx?: string; // honest note on accuracy, e.g. "IR proximity is ~1 cm per unit"
   // How far two readings of a scene that did not change can lie apart, in the channel's unit (number channels,
   // and each component of a numeric vector). A condition's `changed` takes a difference up to this as no change
   // (CONTRACT §4). Absent = the channel is exact: every difference is a change.
