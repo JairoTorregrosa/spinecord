@@ -577,8 +577,10 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#pad button")) {
   const press = (d: boolean) => {
     if (!focus || down === d) return;
     down = d;
+    b.classList.toggle("down", d); // lit at once; the next state says what the brick holds
     void link.request({ t: "button", id: focus.id, button: btn, down: d }).then((r) => {
       if (!r.ok && d) hud.toast(`Botón: ${hud.REFUSAL[r.code]}`);
+      else if (d) hud.activity("🖐", `botón ${b.textContent!.trim() || "●"}`, $("clock").textContent ?? "", b.title);
     });
   };
   b.addEventListener("pointerdown", (e) => {

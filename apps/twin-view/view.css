@@ -382,7 +382,7 @@ body:has(#pip:not([hidden])) .tools {
   border-color: #0000;
 }
 .pad button.down {
-  background: #9ea3a8;
+  background: #ffc94d;
   transform: translateY(1px);
 }
 .b-back {
