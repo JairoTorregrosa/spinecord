@@ -7,7 +7,7 @@ description: Make the spinecord twin match the LEGO EV3 robot a person built. Fr
 
 You are a coding agent on the computer of a person who built a LEGO EV3 robot. spinecord is set up (skill `setup-spinecord`).
 You write one robot file, so that the twin `<id>-sim` is that robot: its ports, drive, footprint and look. What nobody confirmed stays listed in the file as unconfirmed, never passed off as known.
-Talk to the person in the language the person uses. Each message in quotes here is the English source: say it in the person's language, keep its meaning and its question marks, never add a second question. Keep commands, file names and JSON keys as written here. Write `<clone>` and `~/mi-robot` as full paths of this computer.
+Talk to the person in the language the person uses. Each message in quotes here is the English source: say it in the person's language, keep its meaning and its question marks, never add a question; state 1's one message is the exception. Keep commands, file names and JSON keys as written here. Write `<clone>` and `~/mi-robot` as full paths of this computer.
 
 | Word | What it is |
 |---|---|
@@ -21,7 +21,7 @@ Talk to the person in the language the person uses. Each message in quotes here 
 
 ## Outcomes
 
-- **stop**: no file is written; you tell the person why and what you need (state 0). A stop keeps its question open: it is never answered by an assumption.
+- **stop**: no file is written; you tell the person why and what you need (state 0).
 - **draft twin**: a valid file whose `twin.unconfirmed` is not empty. The 3D page shows it as the chip `borrador`, with its tokens under `Sin confirmar`. Tell the person: "This is a draft twin: <the draft line of the check> are guesses. Answer these questions or connect the brick, and I will confirm them." with the questions.
 - **twin**: a valid file with `twin.unconfirmed` empty or absent.
 
@@ -35,8 +35,8 @@ Start at the first state whose exit check fails. If `~/mi-robot/robot.json` exis
 | 1 GATHER | Every row of the table "Confirm" has a value and a source (brick, photo, person, model or assumed; model counts as assumed unless the person said yes to the model) |
 | 2 WRITE | The robot file exists, and `twin.unconfirmed` lists exactly the tokens whose source is assumed |
 | 3 CHECK | The check prints `twin <id>-sim` matching state 1, and the draft gate below passes |
-| 4 SHOW | The person says the 3D twin matches, or the differences left are in "What a twin cannot have"; skipped with no person |
-| 5 REGISTER | `claude mcp get spinecord` in the workshop folder shows bun's full path and `--twin` with the robot file; skipped with no person |
+| 4 SHOW | The person says the 3D twin matches, or to use it as it is; skipped with no person |
+| 5 REGISTER | After state 4's yes: `claude mcp get spinecord` in the workshop folder shows bun's full path and `--twin` with the robot file; skipped with no person |
 | 6 CALIBRATE | `profile.notes` has a line that starts with `Calibrated`, or there is no real robot to drive |
 | 7 REPORT | The person has the report |
 
@@ -108,11 +108,11 @@ Keep each value's source for state 7.
 
 ## 4 SHOW (human step)
 
-1. Ask the person to run, in a new terminal: `bun <clone>/apps/local/main.ts --twin ~/mi-robot/robot.json --view --view-port 8770`
+1. Run in the background, 30-minute timeout: `tail -f /dev/null | bun <clone>/apps/local/main.ts --twin ~/mi-robot/robot.json --view --view-port 8770`. Else the person runs it in a new terminal.
 2. "Open http://127.0.0.1:8770/. Tell me what differs from your robot: wheels or tracks, where the parts are, the size."
-3. Fix each difference, run the check, ask the person to restart the line (Ctrl+C) and reload.
-4. A difference the file cannot show (robot-file.md "What a twin cannot have"): a note, and one line to the person.
-5. When done, the person stops the line.
+3. Fix each difference, run the check, restart the preview, ask the person to reload.
+4. A difference the file cannot show (robot-file.md "What a twin cannot have"): a note, one line to the person.
+5. When the person answered, stop the preview.
 
 ## 5 REGISTER
 
@@ -149,5 +149,5 @@ Registered: <robot flags> / not yet
 
 - The brick beats a photo, a photo beats an assumption, and an assumption is always a token in `twin.unconfirmed`.
 - You write only `~/mi-robot/robot.json`, never files in the clone; `setup.ts` writes its own files in `~/mi-robot`.
-- Never run a long-lived server yourself: the person runs state 4's line.
+- Run a server only as state 4 says: background, bounded, stopped.
 - The real robot moves only after the person says the floor is clear.
