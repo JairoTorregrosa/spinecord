@@ -103,8 +103,14 @@ for (const unit of units) {
         if (!to || to === unit) return;
         const [kind, name] = to.split("/");
         // the 3D view reads the LEGO parts map in one module only, as a Bun macro that runs at build time, so the page
-        // gets the numbers and never the loader (node:fs) or the map's data
-        if (unit === "apps/twin-view" && to === "packages/lego-parts" && rel !== "apps/twin-view/src/lego.ts")
+        // gets the numbers and never the loader (node:fs) or the map's data; its tests, which never reach the page, may
+        // check against the map
+        if (
+          unit === "apps/twin-view" &&
+          to === "packages/lego-parts" &&
+          rel !== "apps/twin-view/src/lego.ts" &&
+          !rel.endsWith(".test.ts")
+        )
           problems.push(`${rel}:${i + 1}: apps/twin-view reads packages/lego-parts only in src/lego.ts (${spec})`);
         else if (unit.startsWith("packages/") && kind === "apps")
           problems.push(`${rel}:${i + 1}: ${unit} must not import an app (${spec})`);
