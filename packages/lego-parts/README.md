@@ -74,12 +74,7 @@ What the simplifications do:
 
 A robot of one brick, two large motors, one medium motor, three sensors and two wheels (tyre plus rim) comes to about 100,000 triangles at full detail. On the Jetson's software WebGL the brick and the large motor loaded and drew in 1.4–1.7 s.
 
-Shots (prototype outside the repo, three.js `LDrawLoader`, headless Chrome on the Jetson):
-
-- `/home/jairo/.t3/userdata/attachments/twinview/H/ldraw-brick-largemotor-full.png`
-- `/home/jairo/.t3/userdata/attachments/twinview/H/ldraw-brick-largemotor-lowres-plain.png`
-- `/home/jairo/.t3/userdata/attachments/twinview/H/ldraw-brick-top-ports.png`
-- `/home/jairo/.t3/userdata/attachments/twinview/H/ldraw-brick-sensor-end.png`: the motor-port end, labels `PC D C B A`. This confirms the port order in `electronics.json`.
+Shots of a prototype outside the repository (three.js `LDrawLoader`, headless Chrome on the Jetson), not kept: the brick and the large motor at full detail and low-res plain, the brick's top, and its motor-port end with the labels `PC D C B A`, which confirms the port order in `electronics.json`.
 
 The shots show the white shell tinted yellow. A part loaded on its own takes LDraw colour 16, the "main colour", so give each part its colour (15 white, 71 light grey) when placing it.
 
@@ -98,3 +93,5 @@ Draw the twin from procedural shapes built from this map's exact numbers, and us
 3. **Large and medium motors: either option.** As LDraw meshes they cost 24 + 16 KB gzip and 12.8k + 6.8k triangles. Procedurally they are a box with the output hub at the exact feature position. Choose procedural if the page's triangle budget is tight (the twin may show several robots).
 
 Load meshes lazily, after the scene first draws. Ship a generated `ATTRIBUTION.md` with the bundle.
+
+What shipped: real meshes for the brick (both battery covers), both motors and the five sensors, loaded after the scene first draws, with a generated attribution ([`apps/twin-view/meshes`](../../apps/twin-view/meshes/ATTRIBUTION.md), `scripts/ldraw-meshes.ts`); everything else is procedural.

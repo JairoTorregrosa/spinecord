@@ -22,7 +22,7 @@ Talk to the person in the language the person uses. Each message in quotes here 
 ## Outcomes
 
 - **stop**: no file is written; you tell the person why and what you need (state 0). A stop keeps its question open: it is never answered by an assumption.
-- **draft twin**: a valid file whose `twin.unconfirmed` is not empty. Tell the person: "This is a draft twin: <the draft line of the check> are guesses. Answer these questions or connect the brick, and I will confirm them." with the questions.
+- **draft twin**: a valid file whose `twin.unconfirmed` is not empty. The 3D page shows it as the chip `borrador`, with its tokens under `Sin confirmar`. Tell the person: "This is a draft twin: <the draft line of the check> are guesses. Answer these questions or connect the brick, and I will confirm them." with the questions.
 - **twin**: a valid file with `twin.unconfirmed` empty or absent.
 
 ## States
@@ -115,9 +115,9 @@ Keep each value with its source: state 7 needs them.
 
 ## 5 REGISTER
 
-1. In the workshop folder, `claude mcp get spinecord`: keep its `Args` after `apps/local/main.ts` (the setup's `--world`, `--view`, `--pages --lan`). Replace the path after `--twin` with the robot file (add `--twin <file>` when there is none); with an EV3 on USB, the same for `--ev3`.
-2. `bun <clone>/apps/local/main.ts --print-add <those args>`. Take its first line, change `-s user` to `-s local`, and replace the word `bun` after `--` with bun's full path, in double quotes: `bun -e "console.log(process.execPath)"` prints it (a new terminal may not have bun on its PATH).
-3. Run `claude mcp remove -s local spinecord` ("not found" is fine), then that line. `claude mcp get spinecord` shows that full path and `--twin` with the robot file.
+1. `cd <clone>; bun scripts/setup.ts workshop`. Once the robot file exists, the setup registers it after `--twin` (with an EV3, after `--ev3` too), with bun's full path and local scope, and keeps its world and `--view`. A line `ev3 todo` means the setup is not done: do skill `setup-spinecord` first. A doctor `port` fail that names this session's ports is expected until the restart.
+2. The registration's `--name` wins over the file's `name`. When `bun scripts/setup.ts report` shows a `Robot name:` other than the file's `name`, run `bun scripts/setup.ts name "<the file's name>"`, or `name none` when the file has none.
+3. `claude mcp get spinecord` shows bun's full path and `--twin` with the robot file.
 4. "Close Claude Code and start it again in the workshop folder. Your robot is `<id>-sim` in the simulation, `<id>` with the EV3 connected. The 3D view is at http://127.0.0.1:8769/."
 
 ## 6 CALIBRATE (human step)

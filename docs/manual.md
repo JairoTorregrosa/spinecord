@@ -24,12 +24,14 @@ flowchart LR
 | [`sim-world`](../packages/sim-world) | JSON worlds, 2D physics, sensor models, declarative training |
 | [`sim-ev3`](../packages/sim-ev3) | byte-level EV3 firmware emulator: the twin runs the real driver |
 | [`runtime`](../packages/runtime) | runs tools next to the hardware: chunking, conditions, programs |
+| [`page-hub`](../packages/page-hub) | the peripheral pages of one robot, as a provider |
+| [`lego-parts`](../packages/lego-parts) | the real LEGO parts as data: sizes, ports, official builds ([docs](lego-parts.md)) |
 
 | App | Does |
 |---|---|
 | [`local`](../apps/local) | the server: MCP over stdio, the runtime and the robots (twin, ev3dev, stock EV3) in one bun process |
 | [`robot-page`](../apps/robot-page) | the bridge page a person opens in Chrome or Edge to lend a stock EV3 over USB; `local` serves it on `127.0.0.1` |
-| [`twin-view`](../apps/twin-view) | the 3D page a person opens to watch the twins move with the MCP calls, and to move the robot, set boxes down and press the brick's buttons; `local --view` serves it on `127.0.0.1` |
+| [`twin-view`](../apps/twin-view) | the 3D page a person opens to watch the twins move with the MCP calls, and to move the robot, set boxes down and press the brick's buttons; `local --view` serves it on `127.0.0.1`, and with `--chat` a chat with Claude in it ([docs](chat-voice.md)) |
 | [`peripheral-page`](../apps/peripheral-page) | the page a person opens to lend a robot this computer's camera, microphone, speaker, screen and buttons; `local --pages` serves it on `127.0.0.1` ([docs](peripheral-pages.md)) |
 
 | Example | Does |
@@ -50,7 +52,7 @@ Read https://raw.githubusercontent.com/JairoTorregrosa/spinecord/main/.claude/sk
 
 You act only at these moments:
 
-1. Say if you have an EV3, and say yes to the whole plan, in one answer.
+1. Say if you have an EV3, give the robot a name if you want, and say yes to the whole plan, in one answer.
 2. Sign in on the platform.claude.com page that opens, pick the organization with the credits, and click Authorize.
 3. Say yes when the agent names the organization that pays.
 4. Paste the launch line it gives you into a new terminal, and choose Yes when Claude Code asks if you trust the folder.
@@ -72,7 +74,7 @@ cd spinecord
 bun install --filter @spinecord/local
 ```
 
-`--filter @spinecord/local` installs what the server needs and nothing of the development toolchain: 6 packages, 16 MB. Measured on a fresh clone with an empty cache: 0.7 s on macOS (Apple M1 Pro), 1.1 s on a Windows CI runner. A plain `bun install` adds the development toolchain and the Claude Agent SDK of the [example assistant](../examples/assistant): 202 packages, 456 MB on the same Mac.
+`--filter @spinecord/local` installs what the server needs and nothing of the development toolchain. That includes the Claude Agent SDK of `--chat`, with its own Claude Code, which is most of it: 113 packages, 744 MB on Linux arm64, 5.7 s with an empty cache (2026-11-27). A plain `bun install` adds the development toolchain and the [example assistant](../examples/assistant).
 
 ### 2. Register it with Claude Code
 
@@ -140,6 +142,7 @@ Without arguments the server runs a simulated twin of the example robot (`r1-sim
 | devices lent by browser pages, beside the twin | `--twin --pages` ([Peripheral pages](#peripheral-pages-devices-lent-by-a-browser)) |
 | any of these, and the twins in 3D in a browser | add `--view` ([3D view](#3d-view-of-the-twins)) |
 | several robots of a kind | `--config <file.json>` |
+| any of these, with the name the person gave the robot | add `--name <text>` (CONTRACT §3): Claude speaks as it, the 3D page and the brick's screen show it |
 
 The registration holds the arguments. To switch robots, remove it and add it again, then start Claude Code again:
 
@@ -152,19 +155,19 @@ and run the line it prints.
 
 `--twin`, `--ev3` and `--ev3dev` without a file use the example robot, [`deployments/example/robots/r1.json`](../deployments/example/robots/r1.json): the LEGO EV3 educator base, large motors on B and C driven as one pair, heading from its gyro. The other example, [`deployments/example/robots/arm.json`](../deployments/example/robots/arm.json), declares no `pair` and no `drivetrain`: its motors are devices for `command_device`, and `drive`, `turn` and `arc` answer `unsupported`. A relative path is taken from the clone, never from the folder Claude Code runs in; a file that is not there ends the start with its full path. Worlds: [`apps/local/examples`](../apps/local/examples), [`packages/sim-world/examples`](../packages/sim-world/examples). Every option: `bun apps/local/main.ts --help`. Behavior: [`CONTRACT.md`](../CONTRACT.md). The server logs on stderr (`claude --debug` shows it); `--log-file <path>` keeps the log in a file ([Troubleshooting](#troubleshooting)).
 
-**Your own robot, one file.** However a robot was built (wheels or tracks, which motor or sensor on which port, a phone on it or not), its robot file can carry that build for its twin under `twin`: `twin.ev3` is what is plugged into each port, `twin.body` its footprint and where its colour and distance sensors sit, `twin.view` how it looks in 3D (CONTRACT.md §3). A robot file with `twin` is that robot in any world; a world then only gives the room. A role or `pair` on a port where the twin has nothing plugged in ends the start with the field and the fix, and `bun apps/local/main.ts --doctor --twin <robot.json> --world <world.json>` prints what the twin will have without starting it. To write the file from a photo of the robot, start Claude Code in your workshop folder and say "Read ~/spinecord/.claude/skills/robot-twin/SKILL.md and follow it: match the twin to my robot" (with the path of your clone), then give it the photos: the [`robot-twin`](../.claude/skills/robot-twin/SKILL.md) skill asks only what the photos and the brick do not show, writes `~/mi-robot/robot.json`, shows the twin and calibrates it on the real robot, and [`deployments/orugas/robots/orugas.json`](../deployments/orugas/robots/orugas.json) is a tracked build with a phone.
+**Your own robot, one file.** However a robot was built (wheels or tracks, which motor or sensor on which port, a phone on it or not), its robot file can carry that build for its twin under `twin`: `twin.ev3` is what is plugged into each port, `twin.body` its footprint and where its colour and distance sensors sit, `twin.view` how it looks in 3D (CONTRACT.md §3). A robot file with `twin` is that robot in any world; a world then only gives the room. A role or `pair` on a port where the twin has nothing plugged in ends the start with the field and the fix, and `bun apps/local/main.ts --doctor --twin <robot.json> --world <world.json>` prints what the twin will have without starting it. To write the file from a photo of the robot, start Claude Code in `~/mi-robot` (the setup copies the skill there) and say "This is my robot, make the twin match it", with the photos: the [`robot-twin`](../.claude/skills/robot-twin/SKILL.md) skill asks only what the photos and the brick do not show, writes `~/mi-robot/robot.json`, shows the twin and calibrates it on the real robot, and [`deployments/orugas/robots/orugas.json`](../deployments/orugas/robots/orugas.json) is a tracked build with a phone.
 
 ### 3D view of the twins
 
 `--view` serves a 3D view of every twin on `http://127.0.0.1:8769/` (`--view-port <n>` for another port): open it in a browser while a model drives the twin. The robot moves as the tools move it, its tracks or wheels and motor hubs turn with the tachos, the brick shows its LED and screen, the distance sensor draws its rays, and every call appears as it begins and ends with its summary. Each call shows its arguments, its time while it runs, and how it ended (an error with its code, a move that stalled or was cut short marked apart); a click opens it whole, and the list keeps its place while you read. The page plays the brick's tones and says `sim.speaker`'s phrases once its sound button is pressed (browsers play nothing before a click), and the button says when the robot made a sound nobody heard.
 
-The person there can act on the twin as on a robot on the floor, in the hand modes of the left panel (keys 1 to 5): drag the robot to pick it up and set it down, turning it on the way with Q / E or the wheel (a ghost shows where it lands, red with the reason when it would hit a wall or a box; a gyro feels the turn, a robot without one does not know it moved); set boxes down by dragging a rectangle, move them, take them away; restore the room; hold the brick's buttons; and measure on the floor (distance, angle, Δx, Δy, from the robot's axle centre when the measure starts on it). Cameras: follow, free, top (north up, for measuring) and the robot's own. The pose is shown as the tools give it (cm, heading from −180 to 180), with the floor point under the pointer. The page joins again by itself when the server restarts or the computer wakes, with a fresh state; any number of tabs may watch, and with several twins a menu picks one. `?` lists the shortcuts. What the page shows carries no noise and changes nothing the robot reads.
+The person there can act on the twin as on a robot on the floor, in the hand modes of the left panel (keys 1 to 5): drag the robot to pick it up and set it down, turning it on the way with Q / E or the wheel (a ghost shows where it lands, red with the reason when it would hit a wall or a box; a gyro feels the turn, a robot without one does not know it moved); set boxes down by dragging a rectangle, move them, take them away; restore the room; hold the brick's buttons; and measure on the floor (distance, angle, Δx, Δy, from the robot's axle centre when the measure starts on it). Cameras: follow, free, top (north up, for measuring) and the robot's own. The title is the robot's name. A draft twin (CONTRACT §3, `twin.unconfirmed`) shows the chip "borrador", which lists what nobody confirmed. What happens in the world (a push, a contact, a box set down or taken away, a stall) appears among the calls. The pose is shown as the tools give it (cm, heading from −180 to 180), with the floor point under the pointer. The page joins again by itself when the server restarts or the computer wakes, with a fresh state; any number of tabs may watch, and with several twins a menu picks one. `?` lists the shortcuts. What the page shows carries no noise and changes nothing the robot reads.
 
 ```sh
 bun apps/local/main.ts --print-add --twin --view
 ```
 
-How a twin looks comes from its robot and world files: the parts from the ports and the drivetrain, and how they are assembled from the world's `extensions.view`: tracks, wheels or no drive, the brick lying or standing, where each motor and sensor sits and which way it faces, what a motor that does not drive moves (an arm, a lift, a turntable, a gripper), a phone whose screen is a face, a bumper and a label ([`apps/twin-view/src/look.ts`](../apps/twin-view/src/look.ts) lists every field). Every field is optional: a part with no place takes a default mount that touches nothing else, and without the section the page draws an educator base. [`deployments/orugas`](../deployments/orugas) is a tracked EV3 with a phone at the front and its room.
+How a twin looks comes from its robot and world files: the parts from the ports and the drivetrain, and how they are assembled from the robot file's `twin.view` (else the world's `extensions.view`): tracks, wheels or no drive, the brick lying or standing, where each motor and sensor sits and which way it faces, what a motor that does not drive moves (an arm, a lift, a turntable, a gripper), a phone whose screen is a face, a bumper and a label ([`apps/twin-view/src/look.ts`](../apps/twin-view/src/look.ts) lists every field). Every field is optional: a part with no place takes a default mount that touches nothing else, and without either the page draws an educator base. [`deployments/orugas`](../deployments/orugas) is a tracked EV3 with a phone at the front and its room.
 
 The page's address can choose the view: `http://127.0.0.1:8769/?cam=follow&az=150&el=15&dist=45&hud=0` opens the follow camera in front of the robot, 15° above the floor and 45 cm away, without the panels (`cam` is `free`, `follow`, `robot` or `top`; `az` turns around the robot from behind it, 90 its left side). `stats=1` adds the draw calls, triangles and frame time of the picture.
 
@@ -253,7 +256,7 @@ Sense → act loops in one model turn (Claude Code Code Mode): [`docs/code-mode.
 | programs | `run_program` (the program inline, as data) |
 | loops | `run_loop` `supervise_loop` (a control law at a fixed rate next to the hardware, which the model supervises: [`docs/loops.md`](loops.md)) |
 
-Full descriptions and schemas: [`packages/protocol/tools.ts`](../packages/protocol/tools.ts). Behavior: [`CONTRACT.md`](../CONTRACT.md). Boundaries: [`ARCHITECTURE.md`](../ARCHITECTURE.md).
+Full descriptions and schemas: [`packages/protocol/tools.ts`](../packages/protocol/tools.ts). What is shipped and what is missing: [`docs/primitives.md`](primitives.md). Behavior: [`CONTRACT.md`](../CONTRACT.md). Boundaries: [`ARCHITECTURE.md`](../ARCHITECTURE.md).
 
 ## Develop
 
