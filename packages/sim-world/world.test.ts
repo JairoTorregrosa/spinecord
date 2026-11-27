@@ -248,6 +248,10 @@ describe("sensors", () => {
       return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length);
     };
     expect(spread(70)).toBeGreaterThan(1.5 * spread(20));
+    // with nothing within reach it reads 100 every time, noise or not
+    const far = room(7);
+    aim(far, 150);
+    expect(new Set(Array.from({ length: 200 }, () => far.senseIrProximity()))).toEqual(new Set([100]));
   });
   test("ultrasonic: a wall square on echoes, one slanted 20 deg still does, one at 60 deg gives no echo (255)", () => {
     const w = room();

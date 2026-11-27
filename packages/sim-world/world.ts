@@ -989,6 +989,10 @@ export class World {
    * large wall square on, farther for a wall at a slant or an object that fills only part of the beam.
    */
   irProximity(): number {
+    return Math.min(100, this.irUncapped());
+  }
+  /** irProximity before the sensor's 100 % cap: noise goes on this, so far from everything it still reads 100. */
+  private irUncapped(): number {
     let sum = 0,
       full = 0;
     for (let i = 0; i < IR_RAYS; i++) {
@@ -1000,12 +1004,12 @@ export class World {
       sum += (w * h.cos) / (d * d);
       full += w * Math.cos(off) ** 3; // a square wall at distance 1
     }
-    return Math.min(100, IR_PCT_PER_CM * Math.sqrt(full / sum));
+    return IR_PCT_PER_CM * Math.sqrt(full / sum);
   }
   /** Infrared proximity in % (0 touching, 100 far), with noise that grows with the reading. */
   senseIrProximity(): number {
-    const p = this.irProximity(),
-      v = p + ((this.cfg.noise.ir_pct * p) / 40) * this.sensorRng.gauss();
+    const p = this.irUncapped(),
+      v = p + ((this.cfg.noise.ir_pct * Math.min(100, p)) / 40) * this.sensorRng.gauss();
     return Math.round(Math.min(100, Math.max(0, v)));
   }
 
