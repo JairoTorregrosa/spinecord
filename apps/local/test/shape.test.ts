@@ -52,8 +52,8 @@ describe("the arm example: no pair, no drivetrain", () => {
     try {
       expect(fleet.robots.map((r) => r.id)).toEqual(["arm-sim"]);
       const tool = toolsOf(fleet.robots, "arm-sim");
-      // the default room plugs motors into A, B and C: without a pair, B and C are two motors
-      await armWorks(tool, ["ev3.A", "ev3.B", "ev3.C"]);
+      // the file's twin plugs a medium motor into A and a large one into B, not the room's A, B and C
+      await armWorks(tool, ["ev3.A", "ev3.B"]);
       // the twin's body stays where the world put it, whatever its motors do
       const pose = (await tool("read_device", { device: "sim.world", channels: ["pose"] })).data.readings[0].value;
       expect(pose).toEqual([60, 60, 0]);

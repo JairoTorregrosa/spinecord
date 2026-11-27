@@ -10,6 +10,7 @@ import { join, posix, win32 } from "node:path";
 import { paysBeforeProfile, type Env } from "../../../examples/assistant/setup";
 import { loadConfig, REPO, type LocalConfig } from "./config";
 import { chooseInterface, defaultRouteAddress } from "./lan";
+import { describeTwin } from "./twin-build";
 
 export type Status = "ok" | "warn" | "fail";
 export interface Line {
@@ -372,6 +373,10 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
       check: "robots",
       reason: config.robots.map((r) => `${r.source} ${r.id}`).join(", "),
     });
+    // what each twin will have, so that a person can compare it with the robot on the table
+    for (const r of config.robots)
+      if (r.source === "twin")
+        add({ status: "ok", check: `twin ${r.id}`, reason: describeTwin(r.robot, r.world, r.ownBuild === true) });
   } catch (e) {
     add({
       status: "fail",

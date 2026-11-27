@@ -56,6 +56,7 @@ describe("--doctor", () => {
     expect(lines.map((l) => [l.check, l.status])).toEqual([
       ["bun", "ok"],
       ["robots", "ok"],
+      ["twin r1-sim", "ok"],
       ["browser", "ok"],
       ["ports", "ok"],
       ["claude code", "ok"],
