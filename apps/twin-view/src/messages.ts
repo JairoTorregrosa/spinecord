@@ -36,6 +36,8 @@ export interface WorldShape {
 
 export interface RobotMeta {
   id: string;
+  /** The name the person gave the robot (its robot file's `name`, or --name); null when none. */
+  name: string | null;
   drivetrain: {
     left: string;
     right: string;

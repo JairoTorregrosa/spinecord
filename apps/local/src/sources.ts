@@ -27,6 +27,26 @@ import { servePages, type PagesServer, type PageTimes } from "./pages";
 import { LocalRobot, type LoopEndLine } from "./robot";
 
 export type Log = (ev: string, fields?: Record<string, unknown>) => void;
+
+/** The screen of an EV3 brick, where a robot with a name shows it once it is online. */
+const SCREEN = "ev3.display";
+/**
+ * A robot the person named shows its name on its brick's screen when it comes online, through the same call a
+ * model makes (so its state machine sees it). A robot without a name or without that screen is left alone, and a
+ * screen that refuses (the robot came online in fault) is logged and changes nothing else.
+ */
+export async function greet(robot: LocalRobot, log: Log): Promise<void> {
+  const screen = robot
+    .runtime()
+    ?.devices()
+    .find((d) => d.id === SCREEN);
+  if (robot.name === null || !screen?.commands.some((c) => c.name === "text")) return;
+  try {
+    await robot.call("command_device", { device: SCREEN, command: "text", args: { lines: [robot.name] } });
+  } catch (e) {
+    log("greet_failed", { robot_id: robot.id, error: (e as Error).message });
+  }
+}
 export interface Fleet {
   robots: LocalRobot[];
   /** Simulated bricks by robot id (tests read their motors, the 3D view shows them). */
@@ -200,6 +220,7 @@ export function keepAttached(
       return;
     }
     live = link;
+    await greet(robot, o.log);
   };
   return {
     connect,
@@ -255,6 +276,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     if (s.source === "pages") {
       const robot = new LocalRobot({
         id: s.id,
+        name: s.name,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
         onLoopEnd: loopEnds,
@@ -266,6 +288,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
     } else if (s.source === "twin") {
       const robot = new LocalRobot({
         id: s.id,
+        name: s.name,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
         onLoopEnd: loopEnds,
@@ -274,12 +297,14 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
       });
       const { runtime, brick, sim } = twinRuntime(s, o.clock, hubs.get(s.id));
       await robot.attach(runtime);
+      await greet(robot, o.log);
       bricks.set(s.id, brick);
       sims.set(s.id, sim);
       robots.push(robot);
     } else if (s.source === "ev3dev") {
       const robot = new LocalRobot({
         id: s.id,
+        name: s.name,
         connect: `Check that the brick is on and that "ssh ${s.ssh.user}@${s.ssh.host}" connects from this computer without asking for a password or about the host key; this server keeps trying by itself.`,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
@@ -331,6 +356,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
             try {
               await robot.attach(ev3Runtime(s, transport, hubs.get(s.id)));
               o.log("ev3_ready", { robot_id: s.id, ...info });
+              await greet(robot, o.log);
             } catch (e) {
               o.log("ev3_attach_failed", { robot_id: s.id, error: (e as Error).message });
             }
@@ -346,6 +372,7 @@ export async function buildFleet(config: LocalConfig, o: FleetOptions): Promise<
       const b = bridge;
       robot = new LocalRobot({
         id: s.id,
+        name: s.name,
         connect: `Ask the person at this computer to open ${b.url} in Chrome or Edge, plug the EV3 in over USB, turn it on and press "Connect EV3".`,
         onTransition: transitions(s.id),
         onCancel: cancels(s.id),
