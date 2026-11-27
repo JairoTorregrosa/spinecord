@@ -142,14 +142,15 @@ function setHtml(id: string, html: string): void {
 const LED_CSS = ["#222", "#27e063", "#ff3b2f", "#ffa126"];
 const LED_NAMES = ["apagado", "verde", "rojo", "naranja"];
 /** The LED of the button pad, animated like the brick's (flashing 4-6, pulsing 7-9). */
-export function led(pattern: number, timeS: number, still: boolean): void {
+const still = matchMedia("(prefers-reduced-motion: reduce)");
+export function led(pattern: number, timeS: number): void {
   const el = $("led");
   const colour = pattern === 0 ? 0 : ((pattern - 1) % 3) + 1;
   // reduced motion: the colour, steady, with the pattern named in the title
   const level =
     pattern === 0
       ? 0
-      : pattern <= 3 || still
+      : pattern <= 3 || still.matches
         ? 1
         : pattern <= 6
           ? (timeS * 2) % 1 < 0.5

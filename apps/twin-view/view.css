@@ -306,6 +306,11 @@ kbd {
   accent-color: var(--accent);
 }
 
+/* the robot's camera sits under the tools: the panel stops above it and scrolls (short laptop windows) */
+body:has(#pip:not([hidden])) .tools {
+  max-height: calc(100% - var(--top) - var(--calls-h) - 24px);
+}
+
 /* right: the brick */
 .brick {
   top: var(--top);

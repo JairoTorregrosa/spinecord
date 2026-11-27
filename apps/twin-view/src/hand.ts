@@ -145,6 +145,16 @@ export class Hand {
     if (m) this.shapeGhost(m);
   }
 
+  /**
+   * The boxes changed (another tab, or this one's last action): a box held by index may now be another one,
+   * so the hand lets go of it rather than move the wrong box.
+   */
+  boxesChanged(): void {
+    if (this.drag?.kind !== "move") return;
+    this.cancel();
+    hud.toast("Las cajas cambiaron mientras movías una (otra pestaña): tómala otra vez");
+  }
+
   setMode(m: Mode): void {
     this.cancel();
     this.mode = m;

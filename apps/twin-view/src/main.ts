@@ -125,7 +125,6 @@ const trailAdd = (x: number, y: number) => {
 };
 
 for (const o of [coneGroup, trail]) o.traverse((c) => c.layers.set(HELPERS));
-const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
 // ---------------------------------------------------------------- the socket
 const link = new Link(`ws://${location.host}/ws`, (m) => receive(m), linkChanged);
@@ -176,7 +175,10 @@ function receive(m: ServerMessage): void {
     case "boxes": {
       const r = robots.find((x) => x.id === m.id);
       if (r) r.world.boxes = m.boxes;
-      if (focus?.id === m.id && arena) arena.setBoxes(m.boxes);
+      if (focus?.id === m.id && arena) {
+        arena.setBoxes(m.boxes);
+        hand.boxesChanged();
+      }
       break;
     }
     case "state": {
@@ -474,21 +476,26 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("[data-fold]")) {
   const set = (folded: boolean) => {
     panel.classList.toggle("folded", folded);
     b.setAttribute("aria-expanded", String(!folded));
-    try {
-      localStorage.setItem(key, folded ? "1" : "0");
-    } catch {
-      // storage blocked: the fold works, it is only not remembered
-    }
   };
   let stored: string | null = null;
   try {
     stored = localStorage.getItem(key);
   } catch {
-    // see above
+    // storage blocked: the fold works, it is only not remembered
   }
-  set(stored === null ? narrow.matches : stored === "1");
-  b.addEventListener("click", () => set(!panel.classList.contains("folded")));
-  // a window made narrow folds the side panels, so they do not cover the robot; widened, they open again
+  // a narrow window folds the side panels whatever was chosen on a wide one; only a click is remembered
+  const side = b.dataset.fold !== "callpanel";
+  set((side && narrow.matches) || stored === "1");
+  b.addEventListener("click", () => {
+    const folded = !panel.classList.contains("folded");
+    set(folded);
+    stored = folded ? "1" : "0";
+    try {
+      localStorage.setItem(key, stored);
+    } catch {
+      // see above
+    }
+  });
   if (b.dataset.fold !== "callpanel") narrow.addEventListener("change", () => set(narrow.matches));
 }
 
@@ -591,7 +598,7 @@ function frame(now: number): void {
     model.update(cur, s.tachos, t);
     updateCone(cur);
     if (trail.visible) trailAdd(s.x, s.y);
-    hud.led(cur.led, t, reducedMotion.matches);
+    hud.led(cur.led, t);
   } else robotRoot.visible = false;
 
   // the robot's camera
