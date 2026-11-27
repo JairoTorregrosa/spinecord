@@ -168,7 +168,9 @@ The person there can act on the twin as on a robot on the floor, in the hand mod
 bun apps/local/main.ts --print-add --twin --view
 ```
 
-How a twin looks comes from its world file: `extensions.view` says tracks or wheels, where the brick, a phone and each sensor sit, a bumper and a label ([`apps/twin-view/src/look.ts`](apps/twin-view/src/look.ts)); without it the page draws an educator base. [`deployments/orugas`](deployments/orugas) is a tracked EV3 with a phone at the front and its room.
+How a twin looks comes from its robot and world files: the parts from the ports and the drivetrain, and how they are assembled from the world's `extensions.view`: tracks, wheels or no drive, the brick lying or standing, where each motor and sensor sits and which way it faces, what a motor that does not drive moves (an arm, a lift, a turntable, a gripper), a phone whose screen is a face, a bumper and a label ([`apps/twin-view/src/look.ts`](apps/twin-view/src/look.ts) lists every field). Every field is optional: a part with no place takes a default mount that touches nothing else, and without the section the page draws an educator base. [`deployments/orugas`](deployments/orugas) is a tracked EV3 with a phone at the front and its room.
+
+The page's address can choose the view: `http://127.0.0.1:8769/?cam=follow&az=150&el=15&dist=45&hud=0` opens the follow camera in front of the robot, 15° above the floor and 45 cm away, without the panels (`cam` is `free`, `follow`, `robot` or `top`; `az` turns around the robot from behind it, 90 its left side). `stats=1` adds the draw calls, triangles and frame time of the picture.
 
 ### Peripheral pages: devices lent by a browser
 

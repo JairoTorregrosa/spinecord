@@ -9,7 +9,7 @@ import { parseBrickPorts, type BrickPorts } from "../../../packages/sim-ev3/port
 import { parseWorld, type BodyShape } from "../../../packages/sim-world/world";
 
 /** The top-level keys of a robot file; anything else is a typo that would otherwise go unnoticed. */
-const FILE_KEYS = ["description", "hardware", "profile", "pair", "twin"];
+const FILE_KEYS = ["description", "name", "hardware", "profile", "pair", "twin"];
 const TWIN_KEYS = ["body", "ev3", "view", "drive", "unconfirmed"];
 const DRIVE_KEYS = ["wheel_diameter_cm", "axle_track_cm", "turn_scrub", "mass_g", "grip"] as const;
 

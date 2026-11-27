@@ -1,0 +1,889 @@
+{
+  "track3r": {
+    "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+    "license": "Redistributable under CCAL version 2.0 : see CAreadme.txt",
+    "section": "31313 - track3r.ldr",
+    "frame": "the LDraw frame of the section \"31313 - track3r.ldr\": LDU, -Y up",
+    "bbox_ldu": {
+      "min": [-365, -211.88, -350],
+      "max": [310, 55, 190]
+    },
+    "size_mm": [270, 106.75, 216],
+    "placements": [
+      {
+        "part": "2780",
+        "position_ldu": [-50, 0, -40],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-50, 0, 0],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-50, 0, -120],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-50, 0, -160],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [50, 0, 0],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [50, 0, -40],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [50, 0, -120],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [50, 0, -160],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-120, -10, -40],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-120, -10, -120],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [120, -10, -40],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [120, -10, -120],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [50, -100, 40],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [50, -100, 80],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [140, -120, 30],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [100, -120, 30],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [50, -100, -200],
+        "rotation": [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [50, -100, -240],
+        "rotation": [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [140, -120, -190],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [100, -120, -190],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-196, -118, -140],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-196, -118, -20],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-216, -118, -140],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-216, -118, -20],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-152, -76, -190],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-152, -76, 30],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-345, -148, 80],
+        "rotation": [-1, 0, 0, 0, 0, 1, 0, 1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-345, -148, -240],
+        "rotation": [-1, 0, 0, 0, 0, 1, 0, 1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [60, 0, -330],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-140, 0, -330],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [20, 0, -270],
+        "rotation": [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-20, 0, -250],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [60, 0, 170],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-140, 0, 170],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [20, 0, 110],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "2780",
+        "position_ldu": [-20, 0, 90],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32009",
+        "position_ldu": [-275, -148, -260],
+        "rotation": [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "32009",
+        "position_ldu": [-275, -148, 100],
+        "rotation": [-1, 0, 0, 0, -1, 0, 0, 0, 1],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "32034",
+        "position_ldu": [-196, -108, -20],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32034",
+        "position_ldu": [-196, -108, -140],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32034",
+        "position_ldu": [-216, -108, -20],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32034",
+        "position_ldu": [-216, -108, -140],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32054",
+        "position_ldu": [20, 0, 40],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "32054",
+        "position_ldu": [-20, 0, 40],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "32054",
+        "position_ldu": [20, 0, -200],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "32054",
+        "position_ldu": [-20, 0, -200],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "32054",
+        "position_ldu": [-120, -60, -220],
+        "rotation": [0, 0.99, 0.16, 0, -0.16, 0.99, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "32054",
+        "position_ldu": [-120, -60, 60],
+        "rotation": [0, -0.99, -0.16, 0, -0.16, 0.99, -1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "32054",
+        "position_ldu": [160, 0, -120],
+        "rotation": [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "32054",
+        "position_ldu": [160, 0, -40],
+        "rotation": [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "32062",
+        "position_ldu": [-355, -148, 100],
+        "rotation": [0, 1, 0, -1, 0, 0, 0, 0, 1],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "32062",
+        "position_ldu": [-355, -148, -260],
+        "rotation": [0, 1, 0, -1, 0, 0, 0, 0, 1],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "32073",
+        "position_ldu": [-216, -108, -80],
+        "rotation": [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32073",
+        "position_ldu": [160, -40, -80],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "32073",
+        "position_ldu": [-60, 0, -300],
+        "rotation": [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32073",
+        "position_ldu": [80, 0, -300],
+        "rotation": [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32073",
+        "position_ldu": [-60, 0, 140],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32073",
+        "position_ldu": [80, 0, 140],
+        "rotation": [0, 0, 1, 0, -1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32123b",
+        "position_ldu": [-160, 0, -275],
+        "rotation": [0, 1, 0, 1, 0, 0, 0, 0, -1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32123b",
+        "position_ldu": [80, 0, -275],
+        "rotation": [0, 1, 0, 1, 0, 0, 0, 0, -1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32123b",
+        "position_ldu": [-160, 0, 115],
+        "rotation": [0, 1, 0, -1, 0, 0, 0, 0, 1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32123b",
+        "position_ldu": [80, 0, 115],
+        "rotation": [0, 1, 0, -1, 0, 0, 0, 0, 1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32140",
+        "position_ldu": [220, -60, -60],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "32140",
+        "position_ldu": [220, -60, -100],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "32184",
+        "position_ldu": [-275, -128, -80],
+        "rotation": [0, 0, 1, 1, 0, 0, 0, 1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "32184",
+        "position_ldu": [-275, -168, -80],
+        "rotation": [0, 0, 1, 1, 0, 0, 0, 1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "32348",
+        "position_ldu": [-236, -108, -180],
+        "rotation": [0, 0, 1, 1, 0, 0, 0, 1, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32348",
+        "position_ldu": [-236, -108, 20],
+        "rotation": [0, 0, 1, 1, 0, 0, 0, 1, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32348",
+        "position_ldu": [-80, -60, -200],
+        "rotation": [0, 0, -1, -1, 0, 0, 0, 1, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32348",
+        "position_ldu": [-80, -60, 40],
+        "rotation": [0, 0, -1, -1, 0, 0, 0, 1, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "32523",
+        "position_ldu": [80, 0, -320],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32523",
+        "position_ldu": [-160, 0, -320],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32523",
+        "position_ldu": [80, 0, 160],
+        "rotation": [0, 0, -1, -1, 0, 0, 0, 1, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32523",
+        "position_ldu": [-160, 0, 160],
+        "rotation": [0, 0, -1, -1, 0, 0, 0, 1, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "32526",
+        "position_ldu": [140, -120, 20],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": ""
+      },
+      {
+        "part": "32526",
+        "position_ldu": [140, -120, -180],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": ""
+      },
+      {
+        "part": "3713",
+        "position_ldu": [-80, -60, -240],
+        "rotation": [0, 1, 0, -1, 0, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "3713",
+        "position_ldu": [-80, -60, 80],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": ""
+      },
+      {
+        "part": "3713",
+        "position_ldu": [-236, -108, -120],
+        "rotation": [-1, 0, 0, 0, 1, 0, 0, 0, -1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "3713",
+        "position_ldu": [-236, -108, -40],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "3713",
+        "position_ldu": [-60, 0, -300],
+        "rotation": [0, -1, 0, -1, 0, 0, 0, 0, -1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "3713",
+        "position_ldu": [-60, 0, 140],
+        "rotation": [0, -1, 0, 1, 0, 0, 0, 0, 1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "41239",
+        "position_ldu": [-40, 0, -340],
+        "rotation": [0, 0, -1, -1, 0, 0, 0, 1, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "41239",
+        "position_ldu": [-40, 0, -260],
+        "rotation": [0, 0, -1, -1, 0, 0, 0, 1, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "41239",
+        "position_ldu": [-40, 0, 180],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "41239",
+        "position_ldu": [-40, 0, 100],
+        "rotation": [0, 0, -1, 1, 0, 0, 0, -1, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "42003",
+        "position_ldu": [160, -20, -40],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "42003",
+        "position_ldu": [160, -20, -120],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [50, -120, 40],
+        "rotation": [-1, 0, 0, 0, -0.16, -0.99, 0, -0.99, 0.16],
+        "path": ""
+      },
+      {
+        "part": "43093",
+        "position_ldu": [50, -120, -200],
+        "rotation": [-1, 0, 0, 0, -0.16, 0.99, 0, 0.99, 0.16],
+        "path": ""
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-196, -108, -50],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-196, -108, -110],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-196, -108, 10],
+        "rotation": [0, 1, 0, 0, 0, -1, -1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-196, -108, -170],
+        "rotation": [0, 1, 0, 0, 0, 1, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-216, -108, 10],
+        "rotation": [0, 1, 0, 0, 0, -1, -1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-216, -108, -170],
+        "rotation": [0, 1, 0, 0, 0, 1, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-176, -108, -190],
+        "rotation": [0, 0.8, -0.6, 0, -0.6, -0.8, -1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-176, -108, 30],
+        "rotation": [0, 0.8, 0.6, 0, -0.6, 0.8, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-285, -168, -80],
+        "rotation": [-1, 0, 0, 0, 0, 1, 0, 1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "43093",
+        "position_ldu": [-285, -128, -80],
+        "rotation": [-1, 0, 0, 0, 0, 1, 0, 1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "44294",
+        "position_ldu": [-236, -108, -80],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "4519",
+        "position_ldu": [-236, -108, -180],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "4519",
+        "position_ldu": [-236, -108, 20],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "4519",
+        "position_ldu": [220, -60, -80],
+        "rotation": [0, -1, 0, 0, 0, 1, -1, 0, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "4519",
+        "position_ldu": [-275, -148, -100],
+        "rotation": [0, 0, 1, 1, 0, 0, 0, 1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "4519",
+        "position_ldu": [-275, -148, -60],
+        "rotation": [0, 0, 1, 1, 0, 0, 0, 1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "48989",
+        "position_ldu": [0, 0, -80],
+        "rotation": [0, -1, 0, 1, 0, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "48989",
+        "position_ldu": [100, 0, -40],
+        "rotation": [0, -1, 0, 1, 0, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "48989",
+        "position_ldu": [100, 0, -120],
+        "rotation": [0, -1, 0, 1, 0, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "48989",
+        "position_ldu": [-100, 0, -40],
+        "rotation": [0, -1, 0, 1, 0, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "48989",
+        "position_ldu": [-100, 0, -120],
+        "rotation": [0, -1, 0, 1, 0, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "55013",
+        "position_ldu": [-160, 0, -270],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "55013",
+        "position_ldu": [0, 0, -270],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "55013",
+        "position_ldu": [-160, 0, 110],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "55013",
+        "position_ldu": [0, 0, 110],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "56145",
+        "position_ldu": [-160, 0, -300],
+        "rotation": [0, 1, 0, 1, 0, 0, 0, 0, -1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "56145",
+        "position_ldu": [80, 0, -300],
+        "rotation": [0, 1, 0, 1, 0, 0, 0, 0, -1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "56145",
+        "position_ldu": [-160, 0, 140],
+        "rotation": [0, 1, 0, -1, 0, 0, 0, 0, 1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "56145",
+        "position_ldu": [80, 0, 140],
+        "rotation": [0, 1, 0, -1, 0, 0, 0, 0, 1],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "59443",
+        "position_ldu": [-236, -108, -150],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "59443",
+        "position_ldu": [-236, -108, -10],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": "31313 - 3rdmotor.ldr"
+      },
+      {
+        "part": "64178",
+        "position_ldu": [100, 0, -80],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "64178",
+        "position_ldu": [-100, 0, -80],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "64179",
+        "position_ldu": [0, 0, 0],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "64179",
+        "position_ldu": [0, 0, -160],
+        "rotation": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        "path": ""
+      },
+      {
+        "part": "6558",
+        "position_ldu": [200, -60, -80],
+        "rotation": [0, -1, 0, 0, 0, 1, -1, 0, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "6558",
+        "position_ldu": [160, -60, -80],
+        "rotation": [0, -1, 0, 0, 0, 1, -1, 0, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "6558",
+        "position_ldu": [20, 0, -320],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "6558",
+        "position_ldu": [20, 0, 160],
+        "rotation": [0, 0, -1, 0, -1, 0, -1, 0, 0],
+        "path": "31313 - track.ldr"
+      },
+      {
+        "part": "6587",
+        "position_ldu": [-80, -60, -222],
+        "rotation": [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "6587",
+        "position_ldu": [-80, -60, 62],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "6587",
+        "position_ldu": [-277, -148, -80],
+        "rotation": [-1, 0, 0, 0, 0, -1, 0, -1, 0],
+        "path": "31313 - rotor.ldr"
+      },
+      {
+        "part": "95646c01",
+        "position_ldu": [0, -100, -80],
+        "rotation": [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "95654",
+        "position_ldu": [220, -60, -80],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": "31313 - distsensor.ldr"
+      },
+      {
+        "part": "95658",
+        "position_ldu": [-160, 0, 60],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "95658",
+        "position_ldu": [-160, 0, -220],
+        "rotation": [0, 0, -1, 0, 1, 0, 1, 0, 0],
+        "path": ""
+      },
+      {
+        "part": "99455",
+        "position_ldu": [-266, -148, -80],
+        "rotation": [0, 0, 1, 0, 1, 0, -1, 0, 0],
+        "path": "31313 - 3rdmotor.ldr"
+      }
+    ],
+    "cable_plugs": [
+      {
+        "position_ldu": [68, -58, -220],
+        "path": "31313 - ev3cable-studio-3.ldr"
+      },
+      {
+        "position_ldu": [128, -81, -51],
+        "path": "31313 - ev3cable-studio-3.ldr"
+      },
+      {
+        "position_ldu": [68, -58, 60],
+        "path": "31313 - ev3cable-studio-4.ldr"
+      },
+      {
+        "position_ldu": [128, -81, -81],
+        "path": "31313 - ev3cable-studio-4.ldr"
+      },
+      {
+        "position_ldu": [-96, -149, -80],
+        "path": "31313 - ev3cable-studio-1.ldr"
+      },
+      {
+        "position_ldu": [128, -81, -23],
+        "path": "31313 - ev3cable-studio-1.ldr"
+      },
+      {
+        "position_ldu": [202, -105, -80],
+        "path": "31313 - ev3cable-studio-2.ldr"
+      },
+      {
+        "position_ldu": [-128, -81, -137],
+        "path": "31313 - ev3cable-studio-2.ldr"
+      }
+    ],
+    "other_parts": {
+      "932": 4920,
+      "6575": 2,
+      "32498": 4,
+      "41669": 4,
+      "64391": 1,
+      "64393": 1,
+      "64681": 1,
+      "64683": 1,
+      "74695": 7,
+      "92907": 2,
+      "98347": 4,
+      "box5": 48,
+      "box5-4a": 24,
+      "rect": 96,
+      "rect2p": 264,
+      "rect3": 96
+    }
+  }
+}

@@ -1,0 +1,1037 @@
+{
+  "note": "Structural parts that set a build's size, from the three sets' inventories. length_modules: holes for beams, units for axles and pins.",
+  "parts": [
+    {
+      "key": "beam_2",
+      "name": "Technic beam 1 x 2 thick",
+      "kind": "beam",
+      "ids": {
+        "design": "43857",
+        "bricklink": "43857",
+        "rebrickable": "43857",
+        "ldraw": "43857",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/43857.dat"
+      }
+    },
+    {
+      "key": "beam_3",
+      "name": "Technic beam 1 x 3 thick",
+      "kind": "beam",
+      "ids": {
+        "design": "32523",
+        "bricklink": "32523",
+        "rebrickable": "32523",
+        "ldraw": "32523",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32523.dat"
+      }
+    },
+    {
+      "key": "beam_5",
+      "name": "Technic beam 1 x 5 thick",
+      "kind": "beam",
+      "ids": {
+        "design": "32316",
+        "bricklink": "32316",
+        "rebrickable": "32316",
+        "ldraw": "32316",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 5,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32316.dat"
+      }
+    },
+    {
+      "key": "beam_7",
+      "name": "Technic beam 1 x 7 thick",
+      "kind": "beam",
+      "ids": {
+        "design": "32524",
+        "bricklink": "32524",
+        "rebrickable": "32524",
+        "ldraw": "32524",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 7,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32524.dat"
+      }
+    },
+    {
+      "key": "beam_9",
+      "name": "Technic beam 1 x 9 thick",
+      "kind": "beam",
+      "ids": {
+        "design": "40490",
+        "bricklink": "40490",
+        "rebrickable": "40490",
+        "ldraw": "40490",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 9,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/40490.dat"
+      }
+    },
+    {
+      "key": "beam_11",
+      "name": "Technic beam 1 x 11 thick",
+      "kind": "beam",
+      "ids": {
+        "design": "32525",
+        "bricklink": "32525",
+        "rebrickable": "32525",
+        "ldraw": "32525",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 11,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32525.dat"
+      }
+    },
+    {
+      "key": "beam_13",
+      "name": "Technic beam 1 x 13 thick",
+      "kind": "beam",
+      "ids": {
+        "design": "41239",
+        "bricklink": "41239",
+        "rebrickable": "41239",
+        "ldraw": "41239",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 13,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/41239.dat"
+      }
+    },
+    {
+      "key": "beam_15",
+      "name": "Technic beam 1 x 15 thick",
+      "kind": "beam",
+      "ids": {
+        "design": "32278",
+        "bricklink": "32278",
+        "rebrickable": "32278",
+        "ldraw": "32278",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 15,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32278.dat"
+      }
+    },
+    {
+      "key": "beam_2_axle",
+      "name": "Technic beam 1 x 2 thick with pin hole and axle hole",
+      "kind": "beam",
+      "ids": {
+        "design": "60483",
+        "bricklink": "60483",
+        "rebrickable": "60483",
+        "ldraw": "60483",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/60483.dat"
+      }
+    },
+    {
+      "key": "thin_beam_2",
+      "name": "Technic beam 1 x 2 thin",
+      "kind": "thin_beam",
+      "ids": {
+        "design": "41677",
+        "bricklink": "41677",
+        "rebrickable": "41677",
+        "ldraw": "41677",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/41677.dat"
+      }
+    },
+    {
+      "key": "thin_beam_3",
+      "name": "Technic beam 1 x 3 thin",
+      "kind": "thin_beam",
+      "ids": {
+        "design": "6632",
+        "bricklink": "6632",
+        "rebrickable": "6632",
+        "ldraw": "6632",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/6632.dat"
+      }
+    },
+    {
+      "key": "thin_beam_4",
+      "name": "Technic beam 1 x 4 thin",
+      "kind": "thin_beam",
+      "ids": {
+        "design": "32449",
+        "bricklink": "32449",
+        "rebrickable": "32449",
+        "ldraw": "32449",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 4,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32449.dat"
+      }
+    },
+    {
+      "key": "thin_beam_5_axle",
+      "name": "Technic beam 1 x 5 thin with axle holes on ends",
+      "kind": "thin_beam",
+      "ids": {
+        "design": "11478",
+        "bricklink": "11478",
+        "rebrickable": "11478",
+        "ldraw": "11478",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 5,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/11478.dat"
+      }
+    },
+    {
+      "key": "beam_l_2x4",
+      "name": "Technic beam 2 x 4 L-shape thick",
+      "kind": "bent_beam",
+      "ids": {
+        "design": "32140",
+        "bricklink": "32140",
+        "rebrickable": "32140",
+        "ldraw": "32140",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 5,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32140.dat"
+      }
+    },
+    {
+      "key": "beam_l_3x5",
+      "name": "Technic beam 3 x 5 L-shape thick",
+      "kind": "bent_beam",
+      "ids": {
+        "design": "32526",
+        "bricklink": "32526",
+        "rebrickable": "32526",
+        "ldraw": "32526",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 7,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32526.dat"
+      }
+    },
+    {
+      "key": "beam_bent_4_4",
+      "name": "Technic beam 1 x 7 bent (4 - 4) thick",
+      "kind": "bent_beam",
+      "ids": {
+        "design": "32348",
+        "bricklink": "32348",
+        "rebrickable": "32348",
+        "ldraw": "32348",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 7,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32348.dat"
+      }
+    },
+    {
+      "key": "beam_bent_7_3",
+      "name": "Technic beam 1 x 9 bent (7 - 3) thick",
+      "kind": "bent_beam",
+      "ids": {
+        "design": "32271",
+        "bricklink": "32271",
+        "rebrickable": "32271",
+        "ldraw": "32271",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 9,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32271.dat"
+      }
+    },
+    {
+      "key": "beam_bent_6_4",
+      "name": "Technic beam 1 x 9 bent (6 - 4) thick",
+      "kind": "bent_beam",
+      "ids": {
+        "design": "6629",
+        "bricklink": "6629",
+        "rebrickable": "6629",
+        "ldraw": "6629",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 9,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/6629.dat"
+      }
+    },
+    {
+      "key": "beam_double_bent",
+      "name": "Technic beam 1 x 11.5 double bent thick",
+      "kind": "bent_beam",
+      "ids": {
+        "design": "32009",
+        "bricklink": "32009",
+        "rebrickable": "32009",
+        "ldraw": "32009",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 11,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32009.dat"
+      }
+    },
+    {
+      "key": "beam_t_3x3",
+      "name": "Technic beam 3 x 3 T-shape thick",
+      "kind": "bent_beam",
+      "ids": {
+        "design": "60484",
+        "bricklink": "60484",
+        "rebrickable": "60484",
+        "ldraw": "60484",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 5,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/60484.dat"
+      }
+    },
+    {
+      "key": "beam_triangle",
+      "name": "Technic beam triangle thin",
+      "kind": "thin_beam",
+      "ids": {
+        "design": "99773",
+        "bricklink": "99773",
+        "rebrickable": "99773",
+        "ldraw": "99773",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "unknown": true,
+        "reason": "not a straight part: no single length"
+      }
+    },
+    {
+      "key": "frame_5x7",
+      "name": "Technic frame 5 x 7 with 3 x 5 opening, thick",
+      "kind": "frame",
+      "ids": {
+        "design": "64179",
+        "bricklink": "64179",
+        "rebrickable": "64179",
+        "ldraw": "64179",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 7,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/64179.dat"
+      }
+    },
+    {
+      "key": "frame_5x11",
+      "name": "Technic frame 5 x 11 with 3 x 5 opening, thick",
+      "kind": "frame",
+      "ids": {
+        "design": "64178",
+        "bricklink": "64178",
+        "rebrickable": "64178",
+        "ldraw": "64178",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 11,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/64178.dat"
+      }
+    },
+    {
+      "key": "axle_2",
+      "name": "Technic axle 2 notched",
+      "kind": "axle",
+      "ids": {
+        "design": "32062",
+        "bricklink": "32062",
+        "rebrickable": "32062",
+        "ldraw": "32062",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32062.dat"
+      }
+    },
+    {
+      "key": "axle_3",
+      "name": "Technic axle 3",
+      "kind": "axle",
+      "ids": {
+        "design": "4519",
+        "bricklink": "4519",
+        "rebrickable": "4519",
+        "ldraw": "4519",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/4519.dat"
+      }
+    },
+    {
+      "key": "axle_4",
+      "name": "Technic axle 4",
+      "kind": "axle",
+      "ids": {
+        "design": "3705",
+        "bricklink": "3705",
+        "rebrickable": "3705",
+        "ldraw": "3705",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 4,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/3705.dat"
+      }
+    },
+    {
+      "key": "axle_5",
+      "name": "Technic axle 5",
+      "kind": "axle",
+      "ids": {
+        "design": "32073",
+        "bricklink": "32073",
+        "rebrickable": "32073",
+        "ldraw": "32073",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 5,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32073.dat"
+      }
+    },
+    {
+      "key": "axle_6",
+      "name": "Technic axle 6",
+      "kind": "axle",
+      "ids": {
+        "design": "3706",
+        "bricklink": "3706",
+        "rebrickable": "3706",
+        "ldraw": "3706",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 6,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/3706.dat"
+      }
+    },
+    {
+      "key": "axle_7",
+      "name": "Technic axle 7",
+      "kind": "axle",
+      "ids": {
+        "design": "44294",
+        "bricklink": "44294",
+        "rebrickable": "44294",
+        "ldraw": "44294",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 7,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/44294.dat"
+      }
+    },
+    {
+      "key": "axle_8",
+      "name": "Technic axle 8",
+      "kind": "axle",
+      "ids": {
+        "design": "3707",
+        "bricklink": "3707",
+        "rebrickable": "3707",
+        "ldraw": "3707",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 8,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/3707.dat"
+      }
+    },
+    {
+      "key": "axle_9",
+      "name": "Technic axle 9",
+      "kind": "axle",
+      "ids": {
+        "design": "60485",
+        "bricklink": "60485",
+        "rebrickable": "60485",
+        "ldraw": "60485",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 9,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/60485.dat"
+      }
+    },
+    {
+      "key": "axle_10",
+      "name": "Technic axle 10",
+      "kind": "axle",
+      "ids": {
+        "design": "3737",
+        "bricklink": "3737",
+        "rebrickable": "3737",
+        "ldraw": "3737",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 10,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/3737.dat"
+      }
+    },
+    {
+      "key": "axle_12",
+      "name": "Technic axle 12",
+      "kind": "axle",
+      "ids": {
+        "design": "3708",
+        "bricklink": "3708",
+        "rebrickable": "3708",
+        "ldraw": "3708",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 12,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/3708.dat"
+      }
+    },
+    {
+      "key": "axle_3_stud",
+      "name": "Technic axle 3 with stud",
+      "kind": "axle",
+      "ids": {
+        "design": "6587",
+        "bricklink": "6587",
+        "rebrickable": "6587",
+        "ldraw": "6587",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/6587.dat"
+      }
+    },
+    {
+      "key": "axle_4_stop",
+      "name": "Technic axle 4 with stop",
+      "kind": "axle",
+      "ids": {
+        "design": "87083",
+        "bricklink": "87083",
+        "rebrickable": "87083",
+        "ldraw": "87083",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 4,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/87083.dat"
+      }
+    },
+    {
+      "key": "axle_5_5_stop",
+      "name": "Technic axle 5.5 with stop",
+      "kind": "axle",
+      "ids": {
+        "design": "59426",
+        "bricklink": "59426",
+        "rebrickable": "59426",
+        "ldraw": "59426",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 5.5,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/59426.dat"
+      }
+    },
+    {
+      "key": "axle_8_stop",
+      "name": "Technic axle 8 with stop",
+      "kind": "axle",
+      "ids": {
+        "design": "55013",
+        "bricklink": "55013",
+        "rebrickable": "55013",
+        "ldraw": "55013",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 8,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/55013.dat"
+      }
+    },
+    {
+      "key": "axle_4_mid",
+      "name": "Technic axle 4 with centre stop",
+      "kind": "axle",
+      "ids": {
+        "design": "99008",
+        "bricklink": "99008",
+        "rebrickable": "99008",
+        "ldraw": "99008",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 4,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/99008.dat"
+      }
+    },
+    {
+      "key": "pin_friction",
+      "name": "Technic pin with friction ridges",
+      "kind": "pin",
+      "ids": {
+        "design": "2780",
+        "bricklink": "2780",
+        "rebrickable": "2780",
+        "ldraw": "2780",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/2780.dat"
+      }
+    },
+    {
+      "key": "pin",
+      "name": "Technic pin without friction ridges",
+      "kind": "pin",
+      "ids": {
+        "design": "3673",
+        "bricklink": "3673",
+        "rebrickable": "3673",
+        "ldraw": "3673",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/3673.dat"
+      }
+    },
+    {
+      "key": "pin_long_friction",
+      "name": "Technic pin long (3) with friction ridges",
+      "kind": "pin",
+      "ids": {
+        "design": "6558",
+        "bricklink": "6558",
+        "rebrickable": "6558",
+        "ldraw": "6558",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/6558.dat"
+      }
+    },
+    {
+      "key": "pin_long",
+      "name": "Technic pin long (3) without friction ridges",
+      "kind": "pin",
+      "ids": {
+        "design": "32556",
+        "bricklink": "32556",
+        "rebrickable": "32556",
+        "ldraw": "32556a",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "LDraw moved 32556 to 32556a."
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32556a.dat"
+      }
+    },
+    {
+      "key": "axle_pin_friction",
+      "name": "Technic axle pin with friction ridges",
+      "kind": "pin",
+      "ids": {
+        "design": "43093",
+        "bricklink": "43093",
+        "rebrickable": "43093",
+        "ldraw": "43093",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/43093.dat"
+      }
+    },
+    {
+      "key": "axle_pin",
+      "name": "Technic axle pin without friction ridges",
+      "kind": "pin",
+      "ids": {
+        "design": "3749",
+        "bricklink": "3749",
+        "rebrickable": "3749",
+        "ldraw": "3749",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/3749.dat"
+      }
+    },
+    {
+      "key": "pin_long_stop_bush",
+      "name": "Technic pin long with friction ridges and stop bush",
+      "kind": "pin",
+      "ids": {
+        "design": "32054",
+        "bricklink": "32054",
+        "rebrickable": "32054",
+        "ldraw": "32054",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32054.dat"
+      }
+    },
+    {
+      "key": "pin_3_4",
+      "name": "Technic pin 3/4",
+      "kind": "pin",
+      "ids": {
+        "design": "32002",
+        "bricklink": "32002",
+        "rebrickable": "32002",
+        "ldraw": "32002",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 1.5,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32002.dat"
+      }
+    },
+    {
+      "key": "pin_double_axle_hole",
+      "name": "Technic pin double with axle hole",
+      "kind": "pin",
+      "ids": {
+        "design": "32138",
+        "bricklink": "32138",
+        "rebrickable": "32138",
+        "ldraw": "32138",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "unknown": true,
+        "reason": "not a straight part: no single length"
+      }
+    },
+    {
+      "key": "conn_perp",
+      "name": "Technic axle and pin connector perpendicular",
+      "kind": "connector",
+      "ids": {
+        "design": "6536",
+        "bricklink": "6536",
+        "rebrickable": "6536",
+        "ldraw": "6536",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "unknown": true,
+        "reason": "not a straight part: no single length"
+      }
+    },
+    {
+      "key": "conn_perp_3l_centre",
+      "name": "Technic connector perpendicular 3L with centre pin hole",
+      "kind": "connector",
+      "ids": {
+        "design": "32184",
+        "bricklink": "32184",
+        "rebrickable": "32184",
+        "ldraw": "32184",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32184.dat"
+      }
+    },
+    {
+      "key": "conn_perp_3l_2holes",
+      "name": "Technic connector perpendicular 3L with 2 pin holes",
+      "kind": "connector",
+      "ids": {
+        "design": "42003",
+        "bricklink": "42003",
+        "rebrickable": "42003",
+        "ldraw": "42003",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/42003.dat"
+      }
+    },
+    {
+      "key": "conn_perp_triple",
+      "name": "Technic connector perpendicular triple",
+      "kind": "connector",
+      "ids": {
+        "design": "63869",
+        "bricklink": "63869",
+        "rebrickable": "63869",
+        "ldraw": "63869",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/63869.dat"
+      }
+    },
+    {
+      "key": "conn_hub_4_pins",
+      "name": "Technic pin connector hub perpendicular 3L with 4 pins",
+      "kind": "connector",
+      "ids": {
+        "design": "48989",
+        "bricklink": "48989",
+        "rebrickable": "48989",
+        "ldraw": "48989",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/48989.dat"
+      }
+    },
+    {
+      "key": "conn_hub_bent_4_pins",
+      "name": "Technic pin connector hub perpendicular 3 x 3 bent with 4 pins",
+      "kind": "connector",
+      "ids": {
+        "design": "55615",
+        "bricklink": "55615",
+        "rebrickable": "55615",
+        "ldraw": "55615",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 3,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/55615.dat"
+      }
+    },
+    {
+      "key": "conn_axle_axlehole",
+      "name": "Technic axle connector with axle hole",
+      "kind": "connector",
+      "ids": {
+        "design": "32039",
+        "bricklink": "32039",
+        "rebrickable": "32039",
+        "ldraw": "32039",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32039.dat"
+      }
+    },
+    {
+      "key": "conn_axle_smooth",
+      "name": "Technic axle connector smooth",
+      "kind": "connector",
+      "ids": {
+        "design": "59443",
+        "bricklink": "59443",
+        "rebrickable": "59443",
+        "ldraw": "59443",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/59443.dat"
+      }
+    },
+    {
+      "key": "conn_angled_1",
+      "name": "Technic axle and pin connector angled #1",
+      "kind": "connector",
+      "ids": {
+        "design": "32013",
+        "bricklink": "32013",
+        "rebrickable": "32013",
+        "ldraw": "32013",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "unknown": true,
+        "reason": "not a straight part: no single length"
+      }
+    },
+    {
+      "key": "conn_angled_2",
+      "name": "Technic axle and pin connector angled #2 (180\u00b0)",
+      "kind": "connector",
+      "ids": {
+        "design": "32034",
+        "bricklink": "32034",
+        "rebrickable": "32034",
+        "ldraw": "32034",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "unknown": true,
+        "reason": "not a straight part: no single length"
+      }
+    },
+    {
+      "key": "conn_angled_6",
+      "name": "Technic axle and pin connector angled #6 (90\u00b0)",
+      "kind": "connector",
+      "ids": {
+        "design": "32014",
+        "bricklink": "32014",
+        "rebrickable": "32014",
+        "ldraw": "32014",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "unknown": true,
+        "reason": "not a straight part: no single length"
+      }
+    },
+    {
+      "key": "bush",
+      "name": "Technic bush",
+      "kind": "connector",
+      "ids": {
+        "design": "3713",
+        "bricklink": "3713",
+        "rebrickable": "3713",
+        "ldraw": "3713",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 1,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/3713.dat"
+      }
+    },
+    {
+      "key": "bush_half",
+      "name": "Technic bush 1/2 smooth",
+      "kind": "connector",
+      "ids": {
+        "design": "32123b",
+        "bricklink": "32123b",
+        "rebrickable": "32123b",
+        "ldraw": "32123b",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 0.5,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/32123b.dat"
+      }
+    },
+    {
+      "key": "conn_hub_2_pins",
+      "name": "Technic pin connector hub with 2 pins",
+      "kind": "connector",
+      "ids": {
+        "design": "87082",
+        "bricklink": "87082",
+        "rebrickable": "87082",
+        "ldraw": "87082",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "length_modules": {
+        "value": 2,
+        "unit": "module",
+        "source": "https://library.ldraw.org/library/official/parts/87082.dat"
+      }
+    }
+  ]
+}

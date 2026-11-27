@@ -88,6 +88,7 @@ describe("a loop on an ev3dev brick", () => {
         port: 0,
         robots: [
           {
+            name: null,
             source: "ev3dev",
             id: "dev",
             robot,

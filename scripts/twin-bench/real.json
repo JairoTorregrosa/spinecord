@@ -1,0 +1,622 @@
+{
+  "about": "What a real LEGO EV3 (stock firmware unless a row says otherwise) does, one entry per benchmark row, with where the number comes from. kind: measured (someone measured it on hardware), spec (LEGO's published figure), derived (computed from a primary source: firmware code or a measurement, the derivation in `how`), estimate (first-principles physics from measured constants, not measured itself: a suspicion to check), none (no real measurement found: measure this on a robot first). lo/hi is the real band; tol widens it by an absolute amount (tol_abs) or a fraction of the band's middle (tol_rel) before the verdict. Read by scripts/twin-bench.ts; the table in docs/twin-fidelity.md is its output.",
+  "sources": {
+    "philo": {
+      "url": "https://www.philohome.com/motors/motorcomp.htm",
+      "what": "Philo's motor comparison: no-load speed and current at a 9 V lab supply (EV3 large 175 rpm, 60 mA; medium 260 rpm, 80 mA), stall torque and current at 9 V (large 43 N.cm, 1.8 A; medium 15 N.cm, 0.78 A), loaded speed vs supply voltage (large at 17.3 N.cm: 78 rpm at 7.5 V, 105 rpm at 9 V; medium at 6.64 N.cm: 120 rpm at 7.5 V, 165 rpm at 9 V)."
+    },
+    "lego_ug": {
+      "url": "https://www.ub.uzh.ch/dam/jcr:5ca1d1a6-aad5-479e-8946-d868d1c12ee2/ev3-user-guide-EN.pdf",
+      "what": "LEGO MINDSTORMS Education EV3 User Guide (LEGO, 2013): large motor 160-170 rpm, medium 240-250 rpm; ultrasonic 3-250 cm with +-1 cm, 255 = nothing detected; infrared proximity 0-100 detects objects up to 70 cm; gyro up to 440 deg/s, +-3 deg on a 90 deg turn; colour sensor sample rate 1 kHz."
+    },
+    "lms2012": {
+      "url": "https://github.com/mindboards/ev3sources/blob/master/lms2012/d_pwm/Linuxmod_AM1808/d_pwm.c",
+      "what": "The stock firmware's motor driver. Speed scale (comment above dCalculateSpeed, COUNTS_PER_PULSE_LM 12800 / _MM 8100 on a 33 MHz/256 timer): speed 100 = 128 timer ticks per encoder count for a large motor = 1007 deg/s, 81 ticks for a medium motor = 1591 deg/s. Brake (BrakeMotor, state BRAKED): power = -TachoCnt * 400, saturating at full reverse 25 counts past the stop point."
+    },
+    "thingsdaq": {
+      "url": "https://thingsdaq.org/2022/08/26/dc-motor-characterization-2-of-2/",
+      "what": "Things DAQ: four EV3 large motors driven by duty cycle (unregulated) at 40-100 %, bare shaft: median first-order time constant 76 ms; 86 and 98 ms with 0.00023 and 0.00045 kg m2 added; effective shaft inertia 0.0014 kg m2."
+    },
+    "ev3dev": {
+      "url": "https://docs.ev3dev.org/projects/lego-linux-drivers/en/ev3dev-stretch/sensor_data.html",
+      "what": "ev3dev sensor appendix: US-DIST-CM 0-2550 with 1 decimal (0.1 cm); IR-PROX 0-100, '100% is approximately 70cm'; GYRO-RATE -440..440, clockwise positive; COL-REFLECT/COL-AMBIENT 0-100; RGB-RAW 0-1020."
+    },
+    "issue518": {
+      "url": "https://github.com/ev3dev/ev3dev-lang-python/issues/518",
+      "what": "EV3-G (stock firmware) infrared proximity with a white wall at 38 cm: always 40 or 41; with black on the wall: 88-90."
+    },
+    "jj": {
+      "url": "https://github.com/jamesjackson/ev3-localization/blob/master/overview.md",
+      "what": "An EV3 ultrasonic localization project: the sensor needs to be within +-25 deg of square to the wall; maximum 255 cm but readings above 200 cm unreliable."
+    },
+    "ev3basic_gyro": {
+      "url": "https://www.sites.google.com/site/ev3basic/ev3-basic-programming/using-sensors/gyro-sensor-accuracy",
+      "what": "About 40 hand rotations of one EV3 gyro on a turntable: fast 360 deg clockwise read 351-355 (mean 353), counter-clockwise 359-363 (mean 361); slow rotations read worse (326-353 clockwise); rate is rounded to whole deg/s; once it began wandering at -0.5 deg/s after a slow turn; a robot turning back and forth 10 x 360 deg ended 80-360 deg off, worse at low speed."
+    },
+    "hwlog": {
+      "url": "docs/hardware-log.md",
+      "what": "This repository's runs on a real EV3 (robot R: large motors B and C, 5.6 cm wheels, IR on S4, no gyro) on ev3dev, not stock firmware: ev3dev's own speed regulator and a 600 ms (2026-11-21) or 21-149 ms (2026-11-22) link. Battery 8.06 and 8.27 V."
+    },
+    "first_principles": {
+      "url": "scripts/twin-bench/real.json (this entry's `how`)",
+      "what": "Physics from the measured constants above; each row says how. Not a measurement: what to measure first."
+    }
+  },
+  "rows": {
+    "large_speed_25": {
+      "lo": 252,
+      "hi": 252,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_rel": 0.05,
+      "how": "25 % of the firmware's speed scale, 1007 deg/s per 100 %"
+    },
+    "large_speed_50": {
+      "lo": 504,
+      "hi": 504,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_rel": 0.05,
+      "how": "50 % x 1007"
+    },
+    "large_speed_75": {
+      "lo": 755,
+      "hi": 755,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_rel": 0.05,
+      "how": "75 % x 1007"
+    },
+    "large_speed_100": {
+      "lo": 888,
+      "hi": 1020,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "philo",
+      "tol_rel": 0.03,
+      "how": "100 % asks for 1007 deg/s, more than a battery gives: no-load speed at 7.5-8.3 V scaled from Philo's 175 rpm at 9 V with his loaded slope (18 rpm/V): 148-162 rpm = 888-974 deg/s, before H-bridge loss and robot load; top of band LEGO's 170 rpm"
+    },
+    "medium_speed_25": {
+      "lo": 398,
+      "hi": 398,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_rel": 0.05,
+      "how": "25 % of 1591 deg/s per 100 %"
+    },
+    "medium_speed_50": {
+      "lo": 796,
+      "hi": 796,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_rel": 0.05,
+      "how": "50 % x 1591"
+    },
+    "medium_speed_75": {
+      "lo": 1193,
+      "hi": 1193,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_rel": 0.05,
+      "how": "75 % x 1591"
+    },
+    "medium_speed_100": {
+      "lo": 1290,
+      "hi": 1500,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "philo",
+      "tol_rel": 0.03,
+      "how": "no-load at 7.5-8.3 V from Philo's 260 rpm at 9 V with his loaded slope (30 rpm/V): 215-239 rpm = 1290-1434 deg/s; top of band LEGO's 250 rpm"
+    },
+    "large_report_50": {
+      "lo": 504,
+      "hi": 504,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_rel": 0.05,
+      "how": "what the shaft does at 50 %; the row's twin value is what speed_deg_s reports on the twin"
+    },
+    "medium_report_50": {
+      "lo": 796,
+      "hi": 796,
+      "unit": "deg/s",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_rel": 0.05,
+      "how": "what a medium shaft does at 50 %; the twin value is what speed_deg_s reports (one deg/s-per-% factor for every motor)"
+    },
+    "power_t63": {
+      "lo": 76,
+      "hi": 98,
+      "unit": "ms",
+      "kind": "measured",
+      "src": "thingsdaq",
+      "tol_rel": 0.15,
+      "how": "open-loop time constant, bare shaft 76 ms, loaded 86-98 ms"
+    },
+    "power_t90": {
+      "lo": 175,
+      "hi": 225,
+      "unit": "ms",
+      "kind": "derived",
+      "src": "thingsdaq",
+      "tol_rel": 0.15,
+      "how": "2.3 x the time constant"
+    },
+    "power_50_speed": {
+      "lo": 444,
+      "hi": 487,
+      "unit": "deg/s",
+      "kind": "estimate",
+      "src": "philo",
+      "tol_rel": 0.05,
+      "how": "unregulated 50 % duty: half the battery-limited no-load speed (888-974 deg/s at 7.5-8.3 V); less under load"
+    },
+    "speed_t63": {
+      "unit": "ms",
+      "kind": "none",
+      "src": "thingsdaq",
+      "how": "the regulated loop (lms2012 dRegulateSpeed PID) on a step was never measured; the twin applies the open-loop 76 ms to it"
+    },
+    "hw_run_degrees_90_20": {
+      "lo": 47,
+      "hi": 47,
+      "unit": "deg",
+      "kind": "measured",
+      "src": "hwlog",
+      "tol_rel": 0.15,
+      "how": "ev3.B run_degrees 90 @20: 47 deg inside the 250 ms bound (ev3dev, 2026-11-21)"
+    },
+    "hw_run_pair_180_25": {
+      "lo": 59,
+      "hi": 60,
+      "unit": "deg",
+      "kind": "measured",
+      "src": "hwlog",
+      "tol_rel": 0.15,
+      "how": "ev3.pair run_pair 180/180 @25: 59/60 deg in 250 ms (ev3dev)"
+    },
+    "hw_drive5_overshoot": {
+      "lo": 13,
+      "hi": 20,
+      "unit": "deg",
+      "kind": "measured",
+      "src": "hwlog",
+      "tol_abs": 3,
+      "how": "drive 5 cm @25: encoders 115/122 deg against 102 (ev3dev, WiFi 21-149 ms)"
+    },
+    "hw_square_side": {
+      "lo": 15.7,
+      "hi": 16.1,
+      "unit": "cm",
+      "kind": "measured",
+      "src": "hwlog",
+      "tol_abs": 0.2,
+      "how": "drive 15 cm @30 four times: encoder sides 15.7-16.1 (ev3dev, WiFi 21-149 ms)"
+    },
+    "hw_square_turn": {
+      "lo": 91.5,
+      "hi": 99.6,
+      "unit": "deg",
+      "kind": "measured",
+      "src": "hwlog",
+      "tol_abs": 1,
+      "how": "turn 90 four times, heading by encoders: 91.5-99.6 (ev3dev, WiFi 21-149 ms)"
+    },
+    "brake_overshoot_25": {
+      "lo": 2,
+      "hi": 6,
+      "unit": "deg",
+      "kind": "estimate",
+      "src": "first_principles",
+      "tol_abs": 1,
+      "how": "full reverse from v0 with the 76 ms constant: tau*v0 - tau*vmax*ln(1+v0/vmax), vmax 1007; the firmware's brake ramps up over 25 counts, so more; then it returns to the stop point"
+    },
+    "brake_overshoot_50": {
+      "lo": 7,
+      "hi": 15,
+      "unit": "deg",
+      "kind": "estimate",
+      "src": "first_principles",
+      "tol_abs": 1,
+      "how": "as above at 504 deg/s"
+    },
+    "brake_overshoot_75": {
+      "lo": 14,
+      "hi": 25,
+      "unit": "deg",
+      "kind": "estimate",
+      "src": "first_principles",
+      "tol_abs": 1,
+      "how": "as above at 755 deg/s"
+    },
+    "brake_overshoot_100": {
+      "lo": 23,
+      "hi": 35,
+      "unit": "deg",
+      "kind": "estimate",
+      "src": "first_principles",
+      "tol_abs": 1,
+      "how": "as above at 1007 deg/s"
+    },
+    "coast_ms_100": {
+      "lo": 1100,
+      "hi": 1700,
+      "unit": "ms",
+      "kind": "estimate",
+      "src": "first_principles",
+      "tol_rel": 0.3,
+      "how": "float: friction alone. Coulomb torque = no-load current x torque constant = 0.06 A x (0.43 N m / 1.8 A) = 0.014 N m; t = J w / T with J 0.0009-0.0014 kg m2 (Things DAQ; tau x k^2/R from Philo's stall figures) and w = 17.6 rad/s"
+    },
+    "coast_deg_100": {
+      "lo": 550,
+      "hi": 860,
+      "unit": "deg",
+      "kind": "estimate",
+      "src": "first_principles",
+      "tol_rel": 0.3,
+      "how": "constant deceleration over that time: w t / 2"
+    },
+    "coast_deg_50": {
+      "lo": 140,
+      "hi": 215,
+      "unit": "deg",
+      "kind": "estimate",
+      "src": "first_principles",
+      "tol_rel": 0.3,
+      "how": "a quarter of the 100 % figure (distance grows with the square of speed)"
+    },
+    "blocked_tacho": {
+      "unit": "deg",
+      "kind": "estimate",
+      "src": "first_principles",
+      "how": "a wheel against a wall: 0.4 N m of stall torque against a tyre's grip of about mu N r = 0.8 x 3 N x 0.028 m = 0.07 N m on a 0.7 kg base; the wheel slips and its encoder keeps counting, the regulator holds the speed, no stall. Held by hand, the shaft stops. Measure: drive into a wall"
+    },
+    "us_5": {
+      "lo": 5,
+      "hi": 5,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "lego_ug",
+      "tol_abs": 1,
+      "how": "3-250 cm, +-1 cm"
+    },
+    "us_10": { "lo": 10, "hi": 10, "unit": "cm", "kind": "spec", "src": "lego_ug", "tol_abs": 1, "how": "+-1 cm" },
+    "us_30": { "lo": 30, "hi": 30, "unit": "cm", "kind": "spec", "src": "lego_ug", "tol_abs": 1, "how": "+-1 cm" },
+    "us_100": { "lo": 100, "hi": 100, "unit": "cm", "kind": "spec", "src": "lego_ug", "tol_abs": 1, "how": "+-1 cm" },
+    "us_200": {
+      "lo": 200,
+      "hi": 200,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "lego_ug",
+      "tol_abs": 1,
+      "how": "+-1 cm (jj: above 200 cm unreliable)"
+    },
+    "us_250": {
+      "lo": 250,
+      "hi": 250,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "lego_ug",
+      "tol_abs": 1,
+      "how": "the edge of the range (jj: unreliable here)"
+    },
+    "us_300": {
+      "lo": 255,
+      "hi": 255,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "lego_ug",
+      "tol_abs": 0,
+      "how": "255 = nothing detected"
+    },
+    "us_noise": {
+      "lo": 0,
+      "hi": 1,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "lego_ug",
+      "tol_abs": 0,
+      "how": "LEGO's +-1 cm accuracy bounds the spread of a still reading; no measured spread found (jj modelled 10-15 cm for robustness, not as a measurement)"
+    },
+    "us_min_2": {
+      "unit": "cm",
+      "kind": "none",
+      "src": "lego_ug",
+      "how": "LEGO's range starts at 3 cm; what it reads closer is unpublished (ev3dev's range starts at 0)"
+    },
+    "us_angle_0": {
+      "lo": 50,
+      "hi": 50,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "jj",
+      "tol_abs": 1,
+      "how": "square on: the distance"
+    },
+    "us_angle_15": {
+      "lo": 50,
+      "hi": 52,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "jj",
+      "tol_abs": 1,
+      "how": "within +-25 deg it works; along the axis the slanted wall is 51.8 cm away"
+    },
+    "us_angle_30": {
+      "unit": "cm",
+      "kind": "measured",
+      "src": "jj",
+      "text": "no reliable echo (outside +-25 deg)",
+      "how": "beyond +-25 deg it does not operate"
+    },
+    "us_angle_45": {
+      "unit": "cm",
+      "kind": "measured",
+      "src": "jj",
+      "text": "no reliable echo",
+      "how": "beyond +-25 deg"
+    },
+    "us_angle_60": {
+      "unit": "cm",
+      "kind": "measured",
+      "src": "jj",
+      "text": "no reliable echo",
+      "how": "beyond +-25 deg"
+    },
+    "us_post": {
+      "unit": "cm",
+      "kind": "none",
+      "src": "lego_ug",
+      "how": "LEGO only says an object can be too small to detect; no measured width/range"
+    },
+    "us_post_blind": {
+      "unit": "cm",
+      "kind": "estimate",
+      "src": "first_principles",
+      "text": "seen wherever it sits inside the cone",
+      "how": "a real sensor's beam is continuous: an object inside it returns some echo; whether a 5 cm post at 2 m is above its threshold is unmeasured"
+    },
+    "us_inner_corner": {
+      "unit": "cm",
+      "kind": "estimate",
+      "src": "first_principles",
+      "text": "echo at the corner's distance",
+      "how": "two walls at 90 deg send a ray back along itself (a corner reflector) whatever the angle: a room corner seen at 45 deg echoes strongly"
+    },
+    "us_box_corner": {
+      "unit": "cm",
+      "kind": "none",
+      "src": "lego_ug",
+      "how": "a convex corner at 45 deg: specular faces send the sound away, the edge diffracts a little; unmeasured"
+    },
+    "ir_38": {
+      "lo": 40,
+      "hi": 41,
+      "unit": "pct",
+      "kind": "measured",
+      "src": "issue518",
+      "tol_abs": 2,
+      "how": "white wall at 38 cm, EV3-G"
+    },
+    "ir_38_black": {
+      "lo": 88,
+      "hi": 90,
+      "unit": "pct",
+      "kind": "measured",
+      "src": "issue518",
+      "tol_abs": 3,
+      "how": "black surface at 38 cm, EV3-G"
+    },
+    "ir_70": {
+      "lo": 75,
+      "hi": 100,
+      "unit": "pct",
+      "kind": "spec",
+      "src": "lego_ug",
+      "tol_abs": 0,
+      "how": "sources disagree: linear from the 38 cm point gives 75; LEGO 'detects up to 70 cm' and ev3dev '100% is approximately 70cm' give 100"
+    },
+    "ir_100_at": {
+      "lo": 70,
+      "hi": 94,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "ev3dev",
+      "tol_abs": 2,
+      "how": "first distance that reads 100: 70 cm (LEGO, ev3dev) or 94 (linear from issue518's point)"
+    },
+    "ir_noise_38": {
+      "lo": 0.3,
+      "hi": 0.6,
+      "unit": "pct",
+      "kind": "measured",
+      "src": "issue518",
+      "tol_abs": 0.2,
+      "how": "EV3-G read 'always 40 or 41': a standard deviation of about 0.5"
+    },
+    "gyro_turn90": {
+      "lo": 0,
+      "hi": 3,
+      "unit": "deg",
+      "kind": "spec",
+      "src": "lego_ug",
+      "tol_abs": 0,
+      "how": "|gyro - true| on a 90 deg turn, LEGO's +-3 deg; the twin value is the 95th percentile over 30 seeds"
+    },
+    "gyro_cw360": {
+      "lo": 351,
+      "hi": 355,
+      "unit": "deg",
+      "kind": "measured",
+      "src": "ev3basic_gyro",
+      "tol_abs": 1,
+      "how": "one sensor, fast clockwise 360 by hand (reading as a clockwise magnitude); the twin value is the mean over 30 seeds"
+    },
+    "gyro_ccw360": {
+      "lo": 359,
+      "hi": 363,
+      "unit": "deg",
+      "kind": "measured",
+      "src": "ev3basic_gyro",
+      "tol_abs": 1,
+      "how": "the same sensor counter-clockwise"
+    },
+    "gyro_slow360": {
+      "lo": 326,
+      "hi": 353,
+      "unit": "deg",
+      "kind": "measured",
+      "src": "ev3basic_gyro",
+      "tol_abs": 1,
+      "how": "the same sensor, slow (10 s) clockwise 360; the twin turns at 5 %"
+    },
+    "gyro_rest_60s": {
+      "lo": 0,
+      "hi": 1,
+      "unit": "deg",
+      "kind": "measured",
+      "src": "ev3basic_gyro",
+      "tol_abs": 0,
+      "how": "'a steady reading in port view when the robot was still' after a still power-up; the same unit once wandered -0.5 deg/s (30 deg/min)"
+    },
+    "gyro_rate_max": {
+      "lo": 440,
+      "hi": 440,
+      "unit": "deg/s",
+      "kind": "spec",
+      "src": "lego_ug",
+      "tol_abs": 0,
+      "how": "the sensor measures up to 440 deg/s; the twin value is what rate_deg_s reads spinning at 100 %"
+    },
+    "gyro_reset_moving": {
+      "unit": "deg/s",
+      "kind": "none",
+      "src": "ev3basic_gyro",
+      "how": "what a reset while turning does on the real sensor is unmeasured"
+    },
+    "color_edge_width": {
+      "unit": "cm",
+      "kind": "none",
+      "src": "lego_ug",
+      "how": "the reflected profile across a line edge versus height is unpublished; robolab recommends 8-12 mm"
+    },
+    "color_id_edge": {
+      "unit": "id",
+      "kind": "none",
+      "src": "ev3dev",
+      "how": "what colour mode reports while the spot straddles a black-white edge: unmeasured (often reported as blue or green; not a measurement)"
+    },
+    "color_rgb_white": {
+      "unit": "count",
+      "kind": "none",
+      "src": "ev3dev",
+      "how": "RGB-RAW on white paper: unmeasured; ev3dev lists 0-1020"
+    },
+    "color_ambient": {
+      "unit": "pct",
+      "kind": "none",
+      "src": "ev3dev",
+      "how": "depends on the room's light; the twin has none"
+    },
+    "color_white_black": {
+      "unit": "pct",
+      "kind": "none",
+      "src": "ev3dev",
+      "how": "reflected % of the workshop's floor and tape: measure"
+    },
+    "touch_travel": {
+      "unit": "cm",
+      "kind": "none",
+      "src": "lego_ug",
+      "how": "plunger travel before it reads pressed: unpublished"
+    },
+    "rate_us": {
+      "unit": "Hz",
+      "kind": "none",
+      "src": "ev3dev",
+      "how": "how often the ultrasonic value changes in continuous mode: unpublished"
+    },
+    "battery_v": {
+      "lo": 8.06,
+      "hi": 8.27,
+      "unit": "V",
+      "kind": "measured",
+      "src": "hwlog",
+      "tol_abs": 0.3,
+      "how": "robot R's battery on the two days it ran; a fresh 6 x AA reads near 9 V, a low one near 6.5"
+    },
+    "battery_sag": {
+      "unit": "V",
+      "kind": "none",
+      "src": "hwlog",
+      "how": "voltage with two motors at full speed: unmeasured"
+    },
+    "rtt_usb": {
+      "unit": "ms",
+      "kind": "none",
+      "src": "hwlog",
+      "how": "a direct command's round trip over USB HID through the bridge page: unmeasured (docs/hardware-log.md: not run)"
+    },
+    "tone_call_ms": {
+      "lo": 0,
+      "hi": 30,
+      "unit": "ms",
+      "kind": "derived",
+      "src": "lms2012",
+      "tol_abs": 0,
+      "how": "SOUND TONE starts the tone and the direct command returns at once (c_sound.c); the call does not wait for the tone"
+    },
+    "tacho_target": {
+      "unit": "deg",
+      "kind": "none",
+      "src": "lms2012",
+      "how": "a host-stopped degree target on stock firmware: the stop lands one round trip plus the brake's overshoot late; unmeasured"
+    },
+    "none_drive": {
+      "unit": "cm",
+      "kind": "none",
+      "src": "hwlog",
+      "how": "a 50 cm drive on stock firmware over USB, measured with a ruler: not run"
+    },
+    "none_turn": {
+      "unit": "deg",
+      "kind": "none",
+      "src": "hwlog",
+      "how": "a turn measured with a protractor (wheels with gyro; tracks by encoders): not run; for tracks the twin's turn_scrub 0.2 comes from a 4-wheel P3-AT (Wang et al., ICR 1.47, https://www.mdpi.com/1424-8220/15/5/9681), not an EV3"
+    },
+    "none_drift": {
+      "unit": "cm",
+      "kind": "none",
+      "src": "hwlog",
+      "how": "straight-line drift over 2 m: not measured on any EV3"
+    },
+    "read_changes_path": {
+      "lo": 0,
+      "hi": 0,
+      "unit": "cm",
+      "kind": "spec",
+      "src": "first_principles",
+      "tol_abs": 0.01,
+      "how": "reading a sensor does not move a robot"
+    },
+    "time_ratio": {
+      "lo": 1,
+      "hi": 1,
+      "unit": "x",
+      "kind": "spec",
+      "src": "first_principles",
+      "tol_rel": 0.01,
+      "how": "a real robot's second is a second"
+    }
+  }
+}

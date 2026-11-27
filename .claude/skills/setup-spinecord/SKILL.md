@@ -38,14 +38,15 @@ Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next
 - If the same step fails 2 times, stop. Show the error line and the row of fixes.md, in the person's language.
 - On Windows, use PowerShell for all commands.
 
-## Start: one question and one approval
+## Start: two questions and one approval
 
 1. Do the detect step of TOOLS. If the clone exists, also run `setup status`.
-2. Send the person one message with these two parts. Then wait for the answer.
+2. Send the person one message with these three parts. Then wait for the answer.
    - "Do you have a LEGO EV3 robot with you? Without one, Claude drives a robot on the screen."
+   - "What is the name of your robot? This is optional. Without a name, the robot has no name."
    - The plan: the missing tools by name, the folders `~/spinecord` and `~/mi-robot`, one sign-in in the browser. Ask for one yes.
    - On macOS and Linux, the plan also names one line in `~/.zshrc` or `~/.bashrc` for new terminals.
-3. Remember the EV3 answer. State WORKSHOP needs it.
+3. Remember the EV3 answer and the name. State WORKSHOP needs them.
 4. After each state, show the person the progress list. Mark the states that are done:
 
 ```text
@@ -91,11 +92,13 @@ Exit check: `setup login: ok`. Else use fixes.md.
 Run `setup status`. Read the line `PAYS`.
 If it says `todo` with an organization name, ask the person: "Claude will use the credits of "<name>". Is that the organization with your credits?"
 If yes, run `setup confirm org`. If no, use the row "Wrong Console organization" of fixes.md.
+If it says `todo` with only an organization id, run `setup confirm org` and ask nothing. State SMOKE shows if the credits pay.
 If it says `fail`, use the row of fixes.md that it names after `->`.
 
 ### 5 WORKSHOP
 
 Run `setup workshop --ev3 yes` or `setup workshop --ev3 no`, from the answer of the start.
+If the person gave a name, add `--name "<name>"` to that command. The name stays when you run the step again.
 It makes `~/mi-robot`, allows the spinecord tools there, registers spinecord there with local scope, and runs the doctor.
 A doctor `warn` line does not stop this state. For a `fail` line, use fixes.md, then run the same command again.
 
@@ -109,7 +112,8 @@ Show the person the answer and the cost from the `smoke` line.
 1. Run `setup report`. Take the launch line from its last line `Start Claude Code with:`.
 2. Say this, with the launch line, in the person's language:
    - "Open a new terminal window. Paste this line and press Enter: <launch line>"
-   - "If Claude Code asks for a color theme, press Enter. If it asks if you trust the folder, choose Yes."
+   - "Claude Code shows a color theme, then security notes. Press Enter at each."
+   - "Then it asks if you trust the folder. Press the down arrow to Yes, I trust this folder, then Enter."
 3. Then, at once, run `setup view`. When the person's Claude Code runs, it opens the 3D page in the browser.
 4. If `setup view` ends `not done`, ask what the terminal shows, use fixes.md, and run it again.
 5. Say: "In the browser you see the robot in a room. In the new Claude Code, type: Drive forward 30 cm, then turn left 90 degrees."
@@ -132,3 +136,10 @@ Skip this state if the person has no EV3. The person keeps the Claude Code of st
 
 Run `setup report`. Give the person its lines, in their language. Add what the person must still do, if anything.
 Running the skill again changes nothing and ends here.
+
+## Later: a new name for the robot
+
+The person asks for a new name, for example "ponle Rayo a mi robot".
+1. Run `setup name "<name>"`. To remove the name, run `setup name none`.
+2. If its line is `fail`, do the action after `->`.
+3. Say: "Type /exit in Claude Code. Then paste the launch line again." The next start shows the new name.

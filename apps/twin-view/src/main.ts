@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { buildArena, toScene, type Arena } from "./arena";
+import { applyLink, frameStats, placeCamera } from "./deeplink";
 import { Sound } from "./audio";
 import { Cameras, CAMS, type Cam } from "./camera";
 import { Hand, MODES, heading, type Mode } from "./hand";
@@ -23,24 +24,34 @@ const HELPERS = 1; // layer of what only the person sees: rays, trail, ghosts
 
 // ---------------------------------------------------------------- renderer, scene, lights
 const canvas = $<HTMLCanvasElement>("scene");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+// 1.5 device pixels per CSS pixel: past that an integrated GPU pays in fill rate for detail nobody sees
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+// the sun's shadow does not depend on the camera: drawn once a frame and shared by the robot's camera
+renderer.shadowMap.autoUpdate = false;
+// Neutral keeps LEGO's saturated colours and white plastic white, where ACES turns them grey and yellow
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x14171c);
-scene.fog = new THREE.Fog(0x14171c, 500, 2000);
+// a bright room around the arena, the fog melting the far floor into it
+const ROOM = 0xc9c6bf;
+scene.background = new THREE.Color(ROOM);
+scene.fog = new THREE.Fog(ROOM, 500, 2000);
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.5;
-scene.add(new THREE.HemisphereLight(0xe2ebff, 0x3b322a, 0.85));
-const sun = new THREE.DirectionalLight(0xfff3e2, 2.3);
+scene.environmentIntensity = 0.55;
+pmrem.dispose();
+scene.add(new THREE.HemisphereLight(0xeef2ff, 0x5a5048, 0.9));
+// the window's light: warm, from high up at a slant, with soft shadows
+const sun = new THREE.DirectionalLight(0xfff1de, 2.2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.bias = -0.0003;
-sun.shadow.normalBias = 0.03;
+sun.shadow.radius = 3;
+sun.shadow.blurSamples = 12;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.5, 8000);
@@ -158,7 +169,7 @@ function receive(m: ServerMessage): void {
       robots = m.robots;
       interval = 1000 / m.rate_hz;
       const sel = $<HTMLSelectElement>("robot");
-      sel.replaceChildren(...robots.map((r) => new Option(r.id, r.id)));
+      sel.replaceChildren(...robots.map((r) => new Option(r.name ? `${r.name} · ${r.id}` : r.id, r.id)));
       sel.hidden = robots.length < 2;
       const keepId = focus && robots.some((r) => r.id === focus!.id) ? focus.id : robots[0]?.id;
       sel.value = keepId ?? "";
@@ -208,8 +219,33 @@ function receive(m: ServerMessage): void {
 }
 
 // ---------------------------------------------------------------- focus: build the world and the robot
+/** The robot's name is the page's title, its id beside it; without a name, the page's own title. */
+function showTitle(r: RobotMeta | null): void {
+  const title = $("title");
+  if (!r?.name) {
+    title.innerHTML = "EV3 <b>gemelo 3D</b>";
+    document.title = "EV3 · gemelo 3D";
+    return;
+  }
+  const name = document.createElement("b"),
+    id = document.createElement("span");
+  name.textContent = r.name;
+  id.className = "dim";
+  id.textContent = r.id;
+  title.replaceChildren(name, " ", id);
+  document.title = `${r.name} · gemelo 3D`;
+}
+
 /** The robot and world the camera last framed: another one is framed afresh, the same one keeps the view. */
 let framed = "";
+/** Fog hides where the floor ends at eye level. From straight above the camera stands far off: there it would hide the arena. */
+function fitFog(): void {
+  if (!focus) return;
+  const size = Math.max(focus.world.width, focus.world.height);
+  const far = cams.mode === "top" ? 40 : 4.5;
+  (scene.fog as THREE.Fog).near = (size * far) / 3;
+  (scene.fog as THREE.Fog).far = size * far;
+}
 function setFocus(id: string | null): void {
   focus = robots.find((r) => r.id === id) ?? null;
   if (arena) {
@@ -227,11 +263,12 @@ function setFocus(id: string | null): void {
   trailReset();
   hand.reset(focus);
   showConeOption();
+  showTitle(focus);
   if (!focus) return;
   const look = lookOf(focus);
   model = buildRobot(focus, look);
   robotRoot.add(model.group);
-  arena = buildArena(focus.world, model.height);
+  arena = buildArena(focus.world, model.height, renderer.capabilities.getMaxAnisotropy());
   scene.add(arena.group);
   coneGroup.visible = model.rayOrigin !== null && $<HTMLInputElement>("opt-cone").checked;
   roles = {};
@@ -253,10 +290,24 @@ function setFocus(id: string | null): void {
   sc.near = 1;
   sc.far = size * 4;
   sc.updateProjectionMatrix();
-  (scene.fog as THREE.Fog).near = size * 3;
-  (scene.fog as THREE.Fog).far = size * 9;
+  fitFog();
   const key = `${focus.id}\n${w.name}`;
-  cams.fitArena(w, key !== framed);
+  const first = key !== framed;
+  cams.fitArena(w, first);
+  if (first && cams.mode === "follow") {
+    // Close enough to see the robot's parts without touching the camera: behind it and to its right, or from the
+    // front when a phone looks ahead, where its face reads. A deep link's angle wins.
+    const s = toScene(w.start.x, w.start.y);
+    const h = w.start.heading_deg * DEG;
+    const az = (look.phone && Math.cos(look.phone.yaw * DEG) > 0.5 ? -135 : -32) * DEG;
+    const a = h + Math.PI - az,
+      d = 58,
+      el = 38 * DEG;
+    cams.controls.target.copy(s);
+    camera.position.set(s.x + Math.cos(a) * Math.cos(el) * d, Math.sin(el) * d, s.z - Math.sin(a) * Math.cos(el) * d);
+    placeCamera(camera, cams.controls.target, h);
+    cams.controls.update();
+  }
   framed = key;
 }
 
@@ -349,6 +400,7 @@ const cams = new Cameras(
       b.classList.toggle("on", on);
       b.setAttribute("aria-checked", String(on));
     }
+    fitFog();
     $("pip").hidden = m === "eye" || !$<HTMLInputElement>("opt-pip").checked;
     canvas.dataset.cam = m;
     hand.refreshHint();
@@ -609,6 +661,9 @@ function frame(now: number): void {
   }
   cams.update(s, model && s ? eyeCam : null);
   hand.frame();
+  // the robot's camera sees what the robot sees, never the helpers
+  if (cams.mode === "eye" && model && s) camera.layers.disable(HELPERS);
+  else camera.layers.enable(HELPERS);
 
   // the bubble over the robot
   const bubble = $("bubble");
@@ -629,6 +684,7 @@ function frame(now: number): void {
     h = canvas.clientHeight;
   renderer.setScissorTest(false);
   renderer.setViewport(0, 0, w, h);
+  renderer.shadowMap.needsUpdate = true;
   renderer.render(scene, camera);
   const pip = $("pip");
   if (!pip.hidden && model && s) {
@@ -641,10 +697,16 @@ function frame(now: number): void {
     renderer.setScissorTest(true);
     renderer.setScissor(x, y, r.width, r.height);
     renderer.setViewport(x, y, r.width, r.height);
+    // the phone's camera does not see the robot it stands on, and skipping the body halves this pass's cost
+    const shown = model.group.visible;
+    model.group.visible = false;
     renderer.render(scene, eyeCam);
+    model.group.visible = shown;
     renderer.setScissorTest(false);
   }
+  frameStats(renderer, now);
 }
 
 hand.setMode("look");
+applyLink(setCam);
 requestAnimationFrame(frame);

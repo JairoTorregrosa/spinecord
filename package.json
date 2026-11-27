@@ -23,7 +23,8 @@
     "test": "bun scripts/test-shards.ts",
     "test:record": "bun scripts/test-shards.ts --record",
     "ci": "bun scripts/ci.ts",
-    "bench": "bun bench/run.ts"
+    "bench": "bun bench/run.ts",
+    "twin-bench": "bun scripts/twin-bench.ts"
   },
   "devDependencies": {
     "bun-types": "1.3.14",

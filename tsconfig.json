@@ -18,6 +18,7 @@
     "packages/sim-ev3/**/*.ts",
     "packages/driver-ev3dev/**/*.ts",
     "packages/page-hub/**/*.ts",
+    "packages/lego-parts/**/*.ts",
     "scripts/**/*.ts",
     "bench/**/*.ts",
     "apps/**/*.ts",
