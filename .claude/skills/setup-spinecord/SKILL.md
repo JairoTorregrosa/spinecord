@@ -139,7 +139,7 @@ Running the skill again changes nothing and ends here.
 
 ## Later asks
 
-The person asks for one of these after the setup, often in the robot's Claude Code in `~/mi-robot`. There, this session's spinecord holds its ports: a `port` `fail` that names them is expected until the restart. A registration change is read only at start. Then say: "Type /exit in Claude Code. Then paste the launch line again."
+The person asks for one of these after the setup, often in the robot's Claude Code in `~/mi-robot`. There, this session's spinecord holds its ports: while `list_robots` answers, a `port` `fail` that names them is expected. Do not tell the person about it. A registration change is read only at start. Then say: "Type /exit in Claude Code. Then paste the launch line again."
 
 | The person says | Do | Done when | Restart |
 |---|---|---|---|
