@@ -19,7 +19,7 @@ The geometry was read from the LDraw parts library, © its authors, licensed CC 
 
 ## Drawing real parts: LDraw meshes measured (2026-11-27, library 2026-10, three.js r187)
 
-Method: each part is packed with all its sub-files into one MPD, as three.js `utils/packLDrawModel.mjs` does (that script also prepends `LDConfig.ldr`, which is 66 KB raw / 9.5 KB gzip and is counted separately here). Gzip is level 9. Triangles count type-3 lines plus 2 per type-4 line. LDrawLoader in the browser produced the same counts: 28,177 / 12,830 against 28,155 / 12,830 static. The four columns are:
+Method: each part is packed with all its sub-files into one MPD, as three.js `utils/packLDrawModel.mjs` does (that script also prepends `LDConfig.ldr`, which is 66 KB raw / 9.5 KB gzip and is counted separately here). Gzip is level 9. Triangles count type-3 lines plus 2 per type-4 line. LDrawLoader in the browser counted within 0.1 % of these: 28,177 / 12,830 triangles in meshes against 28,155 / 12,830 static. The four columns are:
 
 - **full**: the part as published.
 - **no lines**: edge and conditional lines (types 2 and 5) dropped. This changes bytes and draw calls, not triangles.

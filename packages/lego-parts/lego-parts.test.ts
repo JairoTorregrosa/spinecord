@@ -103,6 +103,21 @@ describe("geometry", () => {
     }
   });
 
+  test("no two parallel holes overlap (a pin hole is 12 LDU across)", () => {
+    for (const g of Object.values(parts.geometry.parts))
+      g.holes.forEach((a, i) =>
+        g.holes.slice(i + 1).forEach((b) => {
+          if (!near(a.axis, b.axis)) return;
+          const d = a.center_ldu.map((x, k) => x - b.center_ldu[k]!);
+          const t = d.reduce((s, x, k) => s + x * a.axis[k]!, 0);
+          expect(
+            Math.hypot(...d.map((x, k) => x - t * a.axis[k]!)),
+            `${g.ldraw} ${a.center_ldu} ${b.center_ldu}`,
+          ).toBeGreaterThanOrEqual(12);
+        }),
+      );
+  });
+
   test("beams are 8 n - 0.8 mm long and their holes sit one module apart", () => {
     for (const p of parts.structural.filter((s) => s.kind === "beam" && !isUnknown(s.length_modules))) {
       const g = geometryOf(parts, p.ids.ldraw!);

@@ -120,7 +120,7 @@
           "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
         },
         "side_pin_holes": {
-          "value": "through pin holes along X at y = 0 (z = \u00b140, \u00b150, \u00b160, \u00b170, \u00b180 LDU) and at y = 20, 40 (z = \u00b180): see holes in ldraw-geometry.json",
+          "value": "through pin holes along X at y = 0 (z = ±40, ±60, ±80 LDU) and at y = 20, 40 (z = ±80): see holes in ldraw-geometry.json",
           "source": "https://library.ldraw.org/library/official/parts/95646.dat"
         }
       }

@@ -30,7 +30,7 @@ Sizes are length × width × height, read from the LDraw bounding box. The full 
 | Rechargeable battery | 95656 / 45501 | under the brick | 131.3 g | A light grey tray that replaces the brick's white bottom. It adds 7.2 mm of height. |
 | Cables 25 / 35 / 50 cm | 11145, 55805 (11146), 55806 (11147) | flat, black | 10–13 g | Flat black cables with a plug at each end. Which sets hold them: 31313 and 45544 have 4 × 25, 2 × 35 and 1 × 50 each. |
 
-Which sets hold which electronics: the home set 31313 has the IR sensor and the beacon. The Education core set 45544 has the ultrasonic, the gyro, the battery, and two touch sensors. Both have the brick, two large motors, one medium motor and a colour sensor. The Expansion set 45560 has no electronics.
+Which sets hold which electronics: the home set 31313 has the IR sensor and the beacon. The Education core set 45544 has the ultrasonic, the gyro and the battery. Both have the brick, two large motors, one medium motor, a colour sensor and a touch sensor (45544 has two). The Expansion set 45560 has no electronics.
 
 ## What rolls
 
