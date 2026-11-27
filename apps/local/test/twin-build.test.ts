@@ -430,6 +430,33 @@ describe("twin.drive: the drivetrain as it physically is, apart from what the pr
     );
   });
 
+  test("twin.drive.tread names the tread's grip (TREAD_GRIP): with the weight it decides slip or stall at a wall", async () => {
+    const withDrive = (drive: object) => ({
+      ...orugas,
+      twin: { ...orugas.twin, drive: { ...orugas.twin.drive, ...drive } },
+    });
+    expect(twinOf(withDrive({ tread: "tracks", mass_g: 900 })).build?.drive).toMatchObject({ grip: 0.25, mass_g: 900 });
+    expect(twinOf(withDrive({ tread: "tyres", mass_g: 900 })).build?.drive).toMatchObject({ grip: 1, mass_g: 900 });
+    expect(fails(withDrive({ tread: "wheels", mass_g: 900 }))).toThrow("twin.drive.tread must be one of tyres, tracks");
+    expect(fails(withDrive({ tread: "tracks", grip: 0.3, mass_g: 900 }))).toThrow("give tread or grip, not both");
+    expect(fails(withDrive({ tread: "tracks" }))).toThrow("mass_g and grip (or tread) go together");
+    // orugas on its plastic tracks, 900 g, driven into sala's wall: the tracks slip, the encoders keep counting
+    const fleet = await buildFleet(
+      loadConfig(["--twin", file("orugas-tracks.json", withDrive({ tread: "tracks", mass_g: 900 })), "--world", SALA]),
+      { log: () => {} },
+    );
+    try {
+      const w = fleet.bricks.get("orugas-sim")!.world;
+      w.setPose({ x: w.cfg.width - w.cfg.body.front_cm - 3, y: w.cfg.height / 2, th: 0 });
+      const r = await toolsOf(fleet.robots, "orugas-sim")("drive", { distance_cm: 20, speed_pct: 40 });
+      expect(r.ok).toBe(true);
+      expect(r.data.reason).toBe("completed"); // the encoders say 20 cm; the body stopped at the wall
+      expect(w.eventsSince(0).events.map((e) => e.kind)).toContain("slip_began");
+    } finally {
+      await fleet.shutdown();
+    }
+  }, 30_000);
+
   test("--doctor shows what the twin physically has where it is not what the profile believes", () => {
     const robot = {
       ...orugas,

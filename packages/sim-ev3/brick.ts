@@ -43,6 +43,15 @@ export const MEDIUM_DEG_S = 1560;
  * Between no load and that, the speed a motor can reach falls in a straight line (a DC motor's torque-speed line).
  */
 export const LARGE_STALL_NCM = 40;
+/**
+ * The friction coefficient of a tread on a classroom floor, by kind (a robot file's `twin.drive.tread`): LEGO rubber
+ * tyres measured 1.0-1.2 on wood, plastic EV3 track links about 0.25 (CONTRACT §4 Twin cites both); the low end of
+ * the tyres' range. With the robot's weight it decides whether a wheel against a wall slips or stalls: an EV3 of 1 kg
+ * on 5.6 cm wheels grips with 9.8 N (tyres) or 2.5 N (tracks) against the 29 N its two large motors push, so both
+ * slip. Not measured on a robot.
+ */
+export const TREAD_GRIP = { tyres: 1.0, tracks: 0.25 } as const;
+export type Tread = keyof typeof TREAD_GRIP;
 export const MEDIUM_STALL_NCM = 12;
 /** Standard gravity, m/s2. */
 const G = 9.81;

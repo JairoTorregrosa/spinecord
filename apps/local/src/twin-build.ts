@@ -4,14 +4,15 @@
 // here, before anything is built: the brick, the physics, `load_world` by name and the 3D view then all see the
 // robot's own build. Pure: no I/O.
 import type { RobotFile } from "../../../packages/driver-ev3/robot-file";
-import type { PhysicalDrive } from "../../../packages/sim-ev3/brick";
+import { TREAD_GRIP, type PhysicalDrive, type Tread } from "../../../packages/sim-ev3/brick";
 import { parseBrickPorts, type BrickPorts } from "../../../packages/sim-ev3/ports";
 import { parseWorld, type BodyShape } from "../../../packages/sim-world/world";
 
 /** The top-level keys of a robot file; anything else is a typo that would otherwise go unnoticed. */
 const FILE_KEYS = ["description", "name", "hardware", "profile", "pair", "twin"];
 const TWIN_KEYS = ["body", "ev3", "view", "drive", "unconfirmed"];
-const DRIVE_KEYS = ["wheel_diameter_cm", "axle_track_cm", "turn_scrub", "mass_g", "grip"] as const;
+const DRIVE_KEYS = ["wheel_diameter_cm", "axle_track_cm", "turn_scrub", "mass_g", "grip", "tread"] as const;
+const NUMERIC_DRIVE_KEYS = ["wheel_diameter_cm", "axle_track_cm", "turn_scrub", "mass_g", "grip"] as const;
 
 /** What of a build nobody confirmed (CONTRACT §3, `twin.unconfirmed`). The ones that change how the robot moves first. */
 export const MOVES = [
@@ -97,6 +98,15 @@ function readDrive(v: unknown, where: string, hasDrivetrain: boolean): PhysicalD
   for (const [k, x] of Object.entries(v)) {
     if (!(DRIVE_KEYS as readonly string[]).includes(k))
       throw new Error(`${at}.${k} is not a part of twin.drive (${DRIVE_KEYS.join(", ")})`);
+    if (k === "tread") {
+      // the kind of tread names its grip (TREAD_GRIP); a measured grip says it more precisely, so not both
+      if (typeof x !== "string" || !(x in TREAD_GRIP))
+        throw new Error(`${at}.tread must be one of ${Object.keys(TREAD_GRIP).join(", ")}, got ${JSON.stringify(x)}`);
+      if ("grip" in v)
+        throw new Error(`${at}: give tread or grip, not both (tread ${x} means grip ${TREAD_GRIP[x as Tread]})`);
+      out.grip = TREAD_GRIP[x as Tread];
+      continue;
+    }
     const scrub = k === "turn_scrub";
     const what = scrub
       ? "a number from 0 up to (not including) 1, the share of a turn lost"
@@ -107,11 +117,11 @@ function readDrive(v: unknown, where: string, hasDrivetrain: boolean): PhysicalD
           : "a number > 0 (cm)";
     if (typeof x !== "number" || !Number.isFinite(x) || (scrub ? !(x >= 0 && x < 1) : !(x > 0)))
       throw new Error(`${at}.${k} must be ${what}, got ${JSON.stringify(x)}`);
-    out[k as (typeof DRIVE_KEYS)[number]] = x;
+    out[k as (typeof NUMERIC_DRIVE_KEYS)[number]] = x;
   }
   if ((out.mass_g === undefined) !== (out.grip === undefined))
     throw new Error(
-      `${at}: mass_g and grip go together (the tread's traction is grip x weight): give both, or neither for the default push and no slip`,
+      `${at}: mass_g and grip (or tread) go together (the tread's traction is grip x weight): give both, or neither for the default push and no slip`,
     );
   return out;
 }
