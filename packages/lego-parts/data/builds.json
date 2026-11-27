@@ -1,0 +1,245 @@
+{
+  "note": "Official builds as reference geometry. Positions are in each build's stated frame; ports per the cited program or model.",
+  "builds": [
+    {
+      "key": "educator_driving_base",
+      "name": "Robot Educator driving base",
+      "set": "45544-1",
+      "instructions": {
+        "value": "https://le-www-live-s.legocdn.com/sc/media/lessons/mindstorms-ev3/building-instructions/ev3-rem-driving-base-79bebfc16bd491186ea9c9069842155e.pdf",
+        "source": "https://pybricks.com/ev3-micropython/_sources/examples/robot_educator_basic.rst.txt"
+      },
+      "frame": "none: no placements are sourced",
+      "wheel_diameter_mm": {
+        "value": 55.5,
+        "unit": "mm",
+        "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_basic/main.py",
+        "note": "Pybricks' official-model program; the 56 x 28 tyre (41897) on rim 56908, 56 mm by LDraw, rolls a little under its outer diameter.",
+        "alt": [
+          {
+            "value": 56,
+            "source": "https://klutzybubbles.github.io/lego-micropython-docs/examples/robot_educator.html",
+            "note": "the EV3 MicroPython 1.0 example program."
+          }
+        ]
+      },
+      "axle_track_mm": {
+        "value": 104,
+        "unit": "mm",
+        "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_basic/main.py",
+        "note": "Pybricks taken: it is the maintained official-model program; 114 is the older example's value. Neither says how it was measured; calibrate.",
+        "alt": [
+          {
+            "value": 114,
+            "source": "https://klutzybubbles.github.io/lego-micropython-docs/examples/robot_educator.html",
+            "note": "the EV3 MicroPython 1.0 example program."
+          }
+        ]
+      },
+      "footprint_mm": {
+        "unknown": true,
+        "reason": "No LDraw model found: LDraw's OMR and Philo's set models (forums.ldraw.org/printthread.php?tid=23742) have TRACK3R, SPIK3R and the 45544+45560 Elephant, not this build. Placements would have to be read off the PDF instructions by hand; not done."
+      },
+      "ports": {
+        "B": {
+          "value": "large motor, left wheel",
+          "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_basic/main.py"
+        },
+        "C": {
+          "value": "large motor, right wheel",
+          "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_basic/main.py"
+        },
+        "3": {
+          "value": "color sensor, the line-follower attachment",
+          "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_line/main.py"
+        },
+        "4": {
+          "value": "ultrasonic sensor, the obstacle attachment",
+          "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_ultrasonic/main.py"
+        },
+        "1": {
+          "value": "touch sensor (default port; the attachment's port is not in a sourced program)",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "2": {
+          "value": "gyro sensor (default port; the attachment's port is not in a sourced program)",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        }
+      },
+      "placements": {
+        "unknown": true,
+        "reason": "No LDraw model found: LDraw's OMR and Philo's set models (forums.ldraw.org/printthread.php?tid=23742) have TRACK3R, SPIK3R and the 45544+45560 Elephant, not this build. Placements would have to be read off the PDF instructions by hand; not done."
+      },
+      "ldraw_model": {
+        "unknown": true,
+        "reason": "No LDraw model found: LDraw's OMR and Philo's set models (forums.ldraw.org/printthread.php?tid=23742) have TRACK3R, SPIK3R and the 45544+45560 Elephant, not this build. Placements would have to be read off the PDF instructions by hand; not done."
+      },
+      "note": "Caster: the 45544 inventory holds one 18 mm steel ball (99948) and one ball receptacle (92911), the parts of the driving base's rear caster; their placement is not sourced."
+    },
+    {
+      "key": "track3r",
+      "name": "TRACK3R",
+      "set": "31313-1",
+      "instructions": {
+        "unknown": true,
+        "reason": "LEGO's 31313 building instructions are in the EV3 home app, not at a stable URL found here."
+      },
+      "frame": "the LDraw frame of Philo's sub-model '31313 - track3r.ldr' (LDU, -Y up): forward is +X (the way the IR sensor looks), right is -Z, the tracks' centrelines are at Z = -80 \u00b1 220",
+      "wheel_diameter_mm": {
+        "value": 36.8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/53992-f1.dat",
+        "note": "Over the rubber track (53992) on the 30.4 mm rims (56145) the model uses. A track slips; calibrate."
+      },
+      "axle_track_mm": {
+        "value": 176,
+        "unit": "mm",
+        "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+        "note": "Rims at Z = -300 and Z = 140 LDU (440 LDU): track centreline to centreline. A tracked base turns with slip, so the calibrated value comes out larger."
+      },
+      "footprint_mm": {
+        "value": [270, 216, 106.75],
+        "unit": "mm (length along X, width along Z, height)",
+        "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+        "note": "Bounding box of every triangle in the sub-model, read by tools/extract-ldraw.ts (ldraw-models.json)."
+      },
+      "ports": {
+        "A": {
+          "value": "medium motor, the front spinner",
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+          "note": "Read from the model's cable routing: each cable sub-model's two plugs sit at a brick socket and a device socket (ldraw-models.json#track3r)."
+        },
+        "B": {
+          "value": "large motor, right track (Z = -220)",
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd"
+        },
+        "C": {
+          "value": "large motor, left track (Z = 60)",
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd"
+        },
+        "4": {
+          "value": "infrared sensor, looking forward",
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd"
+        }
+      },
+      "placements": [
+        {
+          "part": "95646c01",
+          "position_ldu": [0, -100, -80],
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+          "note": "Brick rotated so its motor-port end (+Z of the brick) points forward (+X); screen up. The model fits the rechargeable battery (95646c01) although the 31313 set ships the brick with the AA cover (95646)."
+        },
+        {
+          "part": "95658",
+          "position_ldu": [-160, 0, -220],
+          "port": "B",
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+          "note": "Output axis along Z; drives the rear rim at X = -160."
+        },
+        {
+          "part": "95658",
+          "position_ldu": [-160, 0, 60],
+          "port": "C",
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd"
+        },
+        {
+          "part": "99455",
+          "position_ldu": [-266, -148, -80],
+          "port": "A",
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd"
+        },
+        {
+          "part": "95654",
+          "position_ldu": [220, -60, -80],
+          "port": "4",
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd"
+        },
+        {
+          "part": "56145",
+          "position_ldu": [-160, 0, -300],
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+          "note": "Rear right, driven."
+        },
+        {
+          "part": "56145",
+          "position_ldu": [-160, 0, 140],
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+          "note": "Rear left, driven."
+        },
+        {
+          "part": "56145",
+          "position_ldu": [80, 0, -300],
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+          "note": "Front right, idler; 96 mm ahead of the driven rim."
+        },
+        {
+          "part": "56145",
+          "position_ldu": [80, 0, 140],
+          "source": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+          "note": "Front left, idler."
+        }
+      ],
+      "ldraw_model": {
+        "value": "http://www.brickshelf.com/gallery/Philo/SetModels/Set31313/31313_-_mindstorms_ev3_-_track3r.mpd",
+        "source": "https://forums.ldraw.org/printthread.php?tid=23742",
+        "note": "By Philippe Hurbain, 'OMR compliant', licensed CCAL 2.0 (CC BY 2.0): attribute him when using these placements."
+      },
+      "note": "Every catalogue part of the sub-model with its placement is in ldraw-models.json; this list keeps the electronics and the wheels."
+    },
+    {
+      "key": "tank_bot",
+      "name": "Tank Bot",
+      "set": "45544-1 + 45560-1",
+      "instructions": {
+        "value": "https://le-www-live-s.legocdn.com/sc/media/lessons/mindstorms-ev3/building-instructions/model-expansion-set/ev3-model-expansion-set-tank-bot-006a7f22d89c631c1d49fa27eccaf290.pdf",
+        "source": "https://pybricks.com/ev3-micropython/_sources/examples/tank_bot.rst.txt"
+      },
+      "frame": "none: no placements are sourced",
+      "wheel_diameter_mm": {
+        "value": 54,
+        "unit": "mm",
+        "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-expansion/tank_bot/main.py",
+        "note": "'about 54 mm': the plastic tread on the 10-tooth sprocket.",
+        "alt": [
+          {
+            "value": 55.2,
+            "source": "rolling.json#sprocket_10t",
+            "note": "derived from the LDraw link geometry."
+          }
+        ]
+      },
+      "axle_track_mm": {
+        "value": 200,
+        "unit": "mm",
+        "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-expansion/tank_bot/main.py",
+        "note": "'about 200 mm'."
+      },
+      "footprint_mm": {
+        "unknown": true,
+        "reason": "No LDraw model found: LDraw's OMR and Philo's set models (forums.ldraw.org/printthread.php?tid=23742) have TRACK3R, SPIK3R and the 45544+45560 Elephant, not this build. Placements would have to be read off the PDF instructions by hand; not done."
+      },
+      "ports": {
+        "B": {
+          "value": "large motor, left track (Direction.COUNTERCLOCKWISE)",
+          "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-expansion/tank_bot/main.py"
+        },
+        "C": {
+          "value": "large motor, right track (Direction.COUNTERCLOCKWISE)",
+          "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-expansion/tank_bot/main.py"
+        },
+        "4": {
+          "value": "gyro sensor",
+          "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-expansion/tank_bot/main.py"
+        }
+      },
+      "placements": {
+        "unknown": true,
+        "reason": "No LDraw model found: LDraw's OMR and Philo's set models (forums.ldraw.org/printthread.php?tid=23742) have TRACK3R, SPIK3R and the 45544+45560 Elephant, not this build. Placements would have to be read off the PDF instructions by hand; not done."
+      },
+      "ldraw_model": {
+        "unknown": true,
+        "reason": "No LDraw model found: LDraw's OMR and Philo's set models (forums.ldraw.org/printthread.php?tid=23742) have TRACK3R, SPIK3R and the 45544+45560 Elephant, not this build. Placements would have to be read off the PDF instructions by hand; not done."
+      }
+    }
+  ]
+}

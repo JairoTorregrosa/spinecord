@@ -1,0 +1,825 @@
+{
+  "note": "EV3 electronic parts. Geometry (size, holes, sub-parts) is in ldraw-geometry.json under ids.ldraw; features are positions in that part's LDraw frame (LDU, -Y up).",
+  "parts": [
+    {
+      "key": "brick",
+      "name": "EV3 Intelligent Brick (AA battery cover fitted)",
+      "kind": "brick",
+      "ids": {
+        "design": "95646",
+        "product": "45500",
+        "elements": ["6009996", "6187080", "6261688"],
+        "bricklink": "95646c01",
+        "rebrickable": "95646c01",
+        "ldraw": "95646",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "The same design number names two LDraw files: 95646 (brick with the AA battery cover 99143) and 95646c01 (brick with the rechargeable battery 95656). Rebrickable and BrickLink use 95646c01 for the complete brick as sold in 45500 and 31313, which is LDraw's 95646."
+      },
+      "mass_g": {
+        "value": 180,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01",
+        "note": "BrickLink's catalogue weight of the complete brick; whether AA cells are included is not stated."
+      },
+      "colour": "white case, dark grey (Dark Bluish Gray) front buttons frame, black screen frame",
+      "recognise": "The largest part: a white box about 7 x 11 modules with a black screen at one end, a dark grey button pad with a light grey centre button below it, four cable sockets on each short end.",
+      "features": {
+        "port_A": {
+          "position_ldu": [-57, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11035",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat",
+          "note": "Motor ports A-D share one moulded quad socket at the screen end. Order: the PC port (11033) is at +x and the EV3 user guide says the PC port is next to port D, so A is at -x. Viewed from above with the screen end away from you, +x is to the right."
+        },
+        "port_B": {
+          "position_ldu": [-29, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11035",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat"
+        },
+        "port_C": {
+          "position_ldu": [-1, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11035",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat"
+        },
+        "port_D": {
+          "position_ldu": [27, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11035",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat"
+        },
+        "pc_usb": {
+          "position_ldu": [58, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11033",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat",
+          "note": "Mini-USB 'PC' port, next to port D (EV3 user guide)."
+        },
+        "port_1": {
+          "position_ldu": [-57, 35, -139],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat",
+          "note": "Sensor ports 1-4: four single sockets at the button end. 1 is at -x (left, viewed from above with the screen end away), read from the port labels printed on 11025p01."
+        },
+        "port_2": {
+          "position_ldu": [-19, 35, -139],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat"
+        },
+        "port_3": {
+          "position_ldu": [19, 35, -139],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat"
+        },
+        "port_4": {
+          "position_ldu": [57, 35, -139],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat"
+        },
+        "screen": {
+          "position_ldu": [0, -15, 78],
+          "direction": [0, -1, 0],
+          "ldraw_subpart": "11036",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat",
+          "note": "LCD, 178 x 128 pixels black and white (EV3 user guide); faces -Y (up)."
+        },
+        "buttons": {
+          "position_ldu": [0, -9, -40],
+          "direction": [0, -1, 0],
+          "ldraw_subpart": "11026",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat",
+          "note": "Button pad centre (the square centre button 99146); up/down arrows at z=-26.8/-53.2, left/right at x=\u221340, back button 11030 at (-50, -9, -0.3). The brick status light surrounds the buttons (EV3 user guide)."
+        },
+        "usb_host": {
+          "position_ldu": [-87, 35, 40],
+          "direction": [-1, 0, 0],
+          "ldraw_subpart": "11032",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat",
+          "note": "USB-A host port on the -x side."
+        },
+        "sd_card": {
+          "position_ldu": [-87, 35, -10],
+          "direction": [-1, 0, 0],
+          "ldraw_subpart": "11034",
+          "source": "https://library.ldraw.org/library/official/parts/99141c01.dat",
+          "note": "microSD slot on the -x side."
+        }
+      },
+      "specs": {
+        "speaker": {
+          "unknown": true,
+          "reason": "LDraw does not model the speaker grille as a sub-part and no source found gives its position; the EV3 user guide only names it."
+        },
+        "screen_px": {
+          "value": "178 x 128",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "side_pin_holes": {
+          "value": "through pin holes along X at y = 0 (z = \u00b140, \u00b150, \u00b160, \u00b170, \u00b180 LDU) and at y = 20, 40 (z = \u00b180): see holes in ldraw-geometry.json",
+          "source": "https://library.ldraw.org/library/official/parts/95646.dat"
+        }
+      }
+    },
+    {
+      "key": "brick_rechargeable",
+      "name": "EV3 Intelligent Brick with the rechargeable battery fitted",
+      "kind": "brick",
+      "ids": {
+        "design": "95646",
+        "bricklink": "95646c01",
+        "rebrickable": "95646c01",
+        "ldraw": "95646c01",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "LDraw 95646c01 is the brick with 95656 in place of the AA cover; Rebrickable and BrickLink have no separate number for this combination."
+      },
+      "mass_g": {
+        "unknown": true,
+        "reason": "No source weighs the combination; BrickLink gives 180 g (brick as sold) and 131.3 g (battery) separately, and the AA cover it replaces (99143, 12.6 g) is part of the 180 g only if BrickLink weighed it fitted."
+      },
+      "colour": "white case; the battery is light grey (Light Bluish Gray) under the brick",
+      "recognise": "As the brick, but the underside is a light grey battery pack instead of the white AA cover, and the brick stands higher.",
+      "features": {
+        "port_A": {
+          "position_ldu": [-57, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11035",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat",
+          "note": "Motor ports A-D share one moulded quad socket at the screen end. Order: the PC port (11033) is at +x and the EV3 user guide says the PC port is next to port D, so A is at -x. Viewed from above with the screen end away from you, +x is to the right."
+        },
+        "port_B": {
+          "position_ldu": [-29, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11035",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat"
+        },
+        "port_C": {
+          "position_ldu": [-1, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11035",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat"
+        },
+        "port_D": {
+          "position_ldu": [27, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11035",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat"
+        },
+        "pc_usb": {
+          "position_ldu": [58, 35, 139],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "11033",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat",
+          "note": "Mini-USB 'PC' port, next to port D (EV3 user guide)."
+        },
+        "port_1": {
+          "position_ldu": [-57, 35, -139],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat",
+          "note": "Sensor ports 1-4: four single sockets at the button end. 1 is at -x (left, viewed from above with the screen end away), read from the port labels printed on 11025p01."
+        },
+        "port_2": {
+          "position_ldu": [-19, 35, -139],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat"
+        },
+        "port_3": {
+          "position_ldu": [19, 35, -139],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat"
+        },
+        "port_4": {
+          "position_ldu": [57, 35, -139],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat"
+        },
+        "screen": {
+          "position_ldu": [0, -15, 78],
+          "direction": [0, -1, 0],
+          "ldraw_subpart": "11036",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat",
+          "note": "LCD, 178 x 128 pixels black and white (EV3 user guide); faces -Y (up)."
+        },
+        "buttons": {
+          "position_ldu": [0, -9, -40],
+          "direction": [0, -1, 0],
+          "ldraw_subpart": "11026",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat",
+          "note": "Button pad centre (the square centre button 99146); up/down arrows at z=-26.8/-53.2, left/right at x=\u221340, back button 11030 at (-50, -9, -0.3). The brick status light surrounds the buttons (EV3 user guide)."
+        },
+        "usb_host": {
+          "position_ldu": [-87, 35, 40],
+          "direction": [-1, 0, 0],
+          "ldraw_subpart": "11032",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat",
+          "note": "USB-A host port on the -x side."
+        },
+        "sd_card": {
+          "position_ldu": [-87, 35, -10],
+          "direction": [-1, 0, 0],
+          "ldraw_subpart": "11034",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat",
+          "note": "microSD slot on the -x side."
+        }
+      },
+      "specs": {
+        "added_height_mm": {
+          "value": 7.2,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/95646c01.dat",
+          "note": "LDraw bbox height 50.8 mm with the battery against 43.6 mm with the AA cover (95646): the battery adds 18 LDU below the brick."
+        }
+      }
+    },
+    {
+      "key": "battery",
+      "name": "EV3 Rechargeable DC Battery",
+      "kind": "battery",
+      "ids": {
+        "design": "95656",
+        "product": "45501",
+        "elements": ["6012820", "6083365", "6096416"],
+        "bricklink": "95656",
+        "rebrickable": "95656",
+        "ldraw": "95656",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 131.3,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=95656"
+      },
+      "colour": "light grey (Light Bluish Gray)",
+      "recognise": "A light grey tray the size of the brick's underside with a DC socket and two small LEDs at one end; only seen as the brick's bottom.",
+      "features": {
+        "dc_input": {
+          "position_ldu": [0, -13, -109],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "11186",
+          "source": "https://library.ldraw.org/library/official/parts/95656.dat",
+          "note": "Charger socket at the brick's sensor-port end."
+        },
+        "power_led": {
+          "position_ldu": [24, 9, -94],
+          "ldraw_subpart": "11177",
+          "source": "https://library.ldraw.org/library/official/parts/95656.dat"
+        },
+        "charge_led": {
+          "position_ldu": [37, 9, -94],
+          "ldraw_subpart": "11178",
+          "source": "https://library.ldraw.org/library/official/parts/95656.dat"
+        }
+      }
+    },
+    {
+      "key": "large_motor",
+      "name": "EV3 Large Servo Motor",
+      "kind": "motor",
+      "ids": {
+        "design": "95658",
+        "product": "45502",
+        "elements": ["6009430", "6057952", "6148278", "6219427"],
+        "bricklink": "95658",
+        "rebrickable": "95658",
+        "ldraw": "95658",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 80.7,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=95658",
+        "note": "BrickLink taken: the catalogue weighs the part alone.",
+        "alt": [
+          {
+            "value": 82,
+            "source": "https://www.philohome.com/motors/motorcomp.htm",
+            "note": "Philo's weight table as scraped has 11 values under 12 motor headers; 82 g is the EV3 Large column if the values align from the left."
+          },
+          {
+            "value": 76,
+            "source": "https://www.oreilly.com/library/view/learning-lego-mindstorms/9781783985029/ch02s02.html",
+            "note": "Learning LEGO MINDSTORMS EV3 (Packt), as quoted by a search summary; not read first-hand."
+          }
+        ]
+      },
+      "colour": "white body, light grey (Light Bluish Gray) top, red output hub",
+      "recognise": "A long light grey and white body (about 5 x 13 modules) shaped like a boot, with a red round hub at the front end turning about a horizontal axle hole and a cable socket at the back.",
+      "specs": {
+        "speed_rpm": {
+          "value": "160-170",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "running_torque_ncm": {
+          "value": 20,
+          "unit": "N cm",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "stall_torque_ncm": {
+          "value": 40,
+          "unit": "N cm",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "encoder_resolution_deg": {
+          "value": 1,
+          "unit": "degree",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        }
+      },
+      "features": {
+        "output": {
+          "position_ldu": [0, 0, 0],
+          "direction": [1, 0, 0],
+          "ldraw_subpart": "99617c01",
+          "source": "https://library.ldraw.org/library/official/parts/95658.dat",
+          "note": "The red hub turns about X at the part origin; its axle hole goes through (depth 60 LDU = 3 modules)."
+        },
+        "socket": {
+          "position_ldu": [0, -42, -239],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/99550c01.dat",
+          "note": "Cable socket at the back end."
+        }
+      }
+    },
+    {
+      "key": "medium_motor",
+      "name": "EV3 Medium Servo Motor",
+      "kind": "motor",
+      "ids": {
+        "design": "99455",
+        "product": "45503",
+        "elements": ["6008577", "6148292", "6230508"],
+        "bricklink": "99455",
+        "rebrickable": "99455",
+        "ldraw": "99455",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 38.3,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=99455",
+        "note": "BrickLink taken: the catalogue weighs the part alone.",
+        "alt": [
+          {
+            "value": 39,
+            "source": "https://www.philohome.com/motors/motorcomp.htm",
+            "note": "Philo's weight table, same alignment caveat as the large motor."
+          },
+          {
+            "value": 36,
+            "source": "https://www.oreilly.com/library/view/learning-lego-mindstorms/9781783985029/ch02s02.html",
+            "note": "As quoted by a search summary; not read first-hand."
+          }
+        ]
+      },
+      "colour": "white body, light grey (Light Bluish Gray) end, red output",
+      "recognise": "A white and light grey box about 3 x 4 x 9 modules with a red axle-hole output on one small end face and pin holes around it; the cable socket is at the opposite end.",
+      "specs": {
+        "speed_rpm": {
+          "value": "240-250",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "running_torque_ncm": {
+          "value": 8,
+          "unit": "N cm",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "stall_torque_ncm": {
+          "value": 12,
+          "unit": "N cm",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "encoder_resolution_deg": {
+          "value": 1,
+          "unit": "degree",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        }
+      },
+      "features": {
+        "output": {
+          "position_ldu": [0, 0, 0],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "99543",
+          "source": "https://library.ldraw.org/library/official/parts/99455.dat",
+          "note": "Axle-hole output on the front face (z=0) turning about Z; four pin holes around it at (\u00b120, 0) and (0, \u00b120)."
+        },
+        "socket": {
+          "position_ldu": [0, 15, 181],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/99535c01.dat",
+          "note": "Cable socket on the back end."
+        }
+      }
+    },
+    {
+      "key": "touch_sensor",
+      "name": "EV3 Touch Sensor",
+      "kind": "sensor",
+      "ids": {
+        "design": "95648",
+        "product": "45507",
+        "elements": ["6008472", "6138404", "6227941"],
+        "bricklink": "95648",
+        "rebrickable": "95648",
+        "ldraw": "95648",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 14.9,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=95648"
+      },
+      "colour": "white and light grey body, red cross-axle button",
+      "recognise": "The smallest sensor: a short body with a red button on its front that has a cross (axle) hole.",
+      "specs": {
+        "states": {
+          "value": "pressed, released, bumped",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        }
+      },
+      "features": {
+        "socket": {
+          "position_ldu": [0, -29, 29],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/95648.dat",
+          "note": "Cable socket on the back; the body's axle hole at the origin runs along X with pin holes at z = \u00b120."
+        },
+        "button": {
+          "position_ldu": [0, -40, -80],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "99386",
+          "source": "https://library.ldraw.org/library/official/parts/95648.dat",
+          "note": "Red button on the front face; it is pushed in along +Z and has a cross axle hole."
+        }
+      }
+    },
+    {
+      "key": "color_sensor",
+      "name": "EV3 Color Sensor",
+      "kind": "sensor",
+      "ids": {
+        "design": "95650",
+        "product": "45506",
+        "elements": ["6008919", "6128869", "6239012"],
+        "bricklink": "95650",
+        "rebrickable": "95650",
+        "ldraw": "95650",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 13.7,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=95650"
+      },
+      "colour": "white and light grey body, black front with a red-edged round lens",
+      "recognise": "A small body (3 x 5 modules) with one round lens in a black face, usually pointed straight down a few millimetres above the floor.",
+      "specs": {
+        "colours": {
+          "value": "black, blue, green, yellow, red, white, brown, no colour",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "use": {
+          "value": "held at a right angle, close to but not touching the surface",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        }
+      },
+      "features": {
+        "socket": {
+          "position_ldu": [0, -29, 29],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/95650.dat",
+          "note": "Cable socket on the back; the body's axle hole at the origin runs along X with pin holes at z = \u00b120."
+        },
+        "lens": {
+          "position_ldu": [0, -46.5, -70],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "11014p01",
+          "source": "https://library.ldraw.org/library/official/parts/95650.dat",
+          "note": "Opto support with the red edge on the front face; the RGB lamp 11013 sits behind it at z=-52 and the phototransistor 99396 at (0, -33.5, -56). Looks along -Z."
+        }
+      }
+    },
+    {
+      "key": "ultrasonic_sensor",
+      "name": "EV3 Ultrasonic Sensor",
+      "kind": "sensor",
+      "ids": {
+        "design": "95652",
+        "product": "45504",
+        "elements": ["6008924", "6063629", "6138403", "6310609"],
+        "bricklink": "95652",
+        "rebrickable": "95652",
+        "ldraw": "95652",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 24,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=95652"
+      },
+      "colour": "white and light grey body, two red-rimmed black 'eyes'",
+      "recognise": "Two big round eyes side by side (the transducers, 32 mm apart) in a 7-module-wide face.",
+      "specs": {
+        "range_cm": {
+          "value": "3-250",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "accuracy_cm": {
+          "value": 1,
+          "unit": "cm",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "no_object_cm": {
+          "value": 255,
+          "unit": "cm",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        }
+      },
+      "features": {
+        "socket": {
+          "position_ldu": [0, -29, 29],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/95652.dat",
+          "note": "Cable socket on the back; the body's axle hole at the origin runs along X with pin holes at z = \u00b120."
+        },
+        "transducer_left": {
+          "position_ldu": [-40, -40, -71],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "99957",
+          "source": "https://library.ldraw.org/library/official/parts/95652.dat",
+          "note": "One of the two transducers; which one sends and which one receives is not in LDraw."
+        },
+        "transducer_right": {
+          "position_ldu": [40, -40, -71],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "99957",
+          "source": "https://library.ldraw.org/library/official/parts/95652.dat"
+        },
+        "beam_centre": {
+          "position_ldu": [0, -40, -89.55],
+          "direction": [0, 0, -1],
+          "source": "https://library.ldraw.org/library/official/parts/95652.dat",
+          "note": "Midpoint between the eyes on the front face (bbox min Z). Looks along -Z."
+        }
+      }
+    },
+    {
+      "key": "gyro_sensor",
+      "name": "EV3 Gyro Sensor",
+      "kind": "sensor",
+      "ids": {
+        "design": "99380",
+        "product": "45505",
+        "elements": ["6008916", "6138411", "6227055"],
+        "bricklink": "99380",
+        "rebrickable": "99380",
+        "ldraw": "99380",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 12.6,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=99380"
+      },
+      "colour": "white and light grey body, two red arrows printed on top",
+      "recognise": "A small sensor like the colour sensor but with no lens: a flat top with two curved red arrows showing the axis it measures.",
+      "specs": {
+        "max_rate_dps": {
+          "value": 440,
+          "unit": "degree/s",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "accuracy_deg_per_90": {
+          "value": 3,
+          "unit": "degree",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        }
+      },
+      "features": {
+        "socket": {
+          "position_ldu": [0, -29, 29],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/99380.dat",
+          "note": "Cable socket on the back; the body's axle hole at the origin runs along X with pin holes at z = \u00b120."
+        },
+        "measured_axis": {
+          "position_ldu": [0, -65, 0],
+          "direction": [0, 1, 0],
+          "source": "https://library.ldraw.org/library/official/parts/99377p01.dat",
+          "note": "The red arrows (printed on sub-part 99377p01) are printed on the face at y=-65; the EV3 user guide says the sensor measures rotation in the direction of the arrows, so the axis is perpendicular to that face: LDraw Y."
+        }
+      }
+    },
+    {
+      "key": "infrared_sensor",
+      "name": "EV3 Infrared Sensor",
+      "kind": "sensor",
+      "ids": {
+        "design": "95654",
+        "product": "45509",
+        "elements": ["6009811", "6132629", "6227940"],
+        "bricklink": "95654",
+        "rebrickable": "95654",
+        "ldraw": "95654",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 19.4,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=95654"
+      },
+      "colour": "white and light grey body, dark red translucent front",
+      "recognise": "Like the ultrasonic sensor in size, but its face is two flat dark red windows instead of round eyes.",
+      "specs": {
+        "proximity_range_cm": {
+          "value": 70,
+          "unit": "cm",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "beacon_range_cm": {
+          "value": 200,
+          "unit": "cm",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "proximity_units": {
+          "value": "0 (very close) to 100 (far), not centimetres",
+          "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        }
+      },
+      "features": {
+        "socket": {
+          "position_ldu": [0, -29, 29],
+          "direction": [0, 0, 1],
+          "ldraw_subpart": "54732b",
+          "source": "https://library.ldraw.org/library/official/parts/95654.dat",
+          "note": "Cable socket on the back; the body's axle hole at the origin runs along X with pin holes at z = \u00b120."
+        },
+        "photoelement": {
+          "position_ldu": [0, -60, -76],
+          "direction": [0, 0, -1],
+          "ldraw_subpart": "99961",
+          "source": "https://library.ldraw.org/library/official/parts/95654.dat",
+          "note": "Receiver behind the red front window; looks along -Z. The emitters are not modelled."
+        },
+        "front_face": {
+          "position_ldu": [0, -40, -90],
+          "direction": [0, 0, -1],
+          "source": "https://library.ldraw.org/library/official/parts/95654.dat",
+          "note": "Front face at bbox min Z."
+        }
+      }
+    },
+    {
+      "key": "ir_beacon",
+      "name": "EV3 Infrared Beacon / Remote",
+      "kind": "beacon",
+      "ids": {
+        "design": "72156",
+        "product": "45508",
+        "elements": ["6014051", "6093253", "6127283"],
+        "bricklink": "72156",
+        "rebrickable": "72156",
+        "ldraw": "72156",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "value": 26.7,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=72156",
+        "note": "Whether the two AAA cells are included is not stated."
+      },
+      "colour": "white body, dark grey buttons, red channel slider",
+      "recognise": "A handheld remote (not cabled): white, with four grey buttons, a large top button and a red channel slider.",
+      "features": {
+        "channel_slider": {
+          "position_ldu": [0, -5, 0],
+          "ldraw_subpart": "11237",
+          "source": "https://library.ldraw.org/library/official/parts/72156.dat"
+        },
+        "beacon_button": {
+          "position_ldu": [0, -9, -40],
+          "direction": [0, -1, 0],
+          "ldraw_subpart": "11236",
+          "source": "https://library.ldraw.org/library/official/parts/72156.dat"
+        }
+      },
+      "specs": {
+        "emitter_position": {
+          "unknown": true,
+          "reason": "LDraw 72156 does not model the IR LEDs as a sub-part."
+        }
+      }
+    },
+    {
+      "key": "cable_25",
+      "name": "EV3 connector cable 25 cm",
+      "kind": "cable",
+      "ids": {
+        "design": "11145",
+        "elements": ["6024581", "6178438"],
+        "bricklink": "11145",
+        "rebrickable": "11145",
+        "ldraw": "11145",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "mass_g": {
+        "unknown": true,
+        "reason": "BrickLink's page for 11145 answered with a human-verification page; not retried."
+      },
+      "colour": "black flat cable",
+      "recognise": "Flat black cable with a plug at each end; the shortest of the three.",
+      "length_cm": {
+        "value": 25,
+        "unit": "cm",
+        "source": "https://library.ldraw.org/library/official/parts/11145.dat"
+      },
+      "features": {},
+      "specs": {
+        "shape": {
+          "value": "LDraw models the cable as one coiled shape; its bounding box is not a dimension of the part.",
+          "source": "https://library.ldraw.org/library/official/parts/11145.dat"
+        }
+      }
+    },
+    {
+      "key": "cable_35",
+      "name": "EV3 connector cable 35 cm",
+      "kind": "cable",
+      "ids": {
+        "design": "11146",
+        "elements": ["4297188", "6024583", "6089560", "6178439"],
+        "bricklink": "55805",
+        "rebrickable": "55805",
+        "ldraw": "11146",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "Rebrickable and BrickLink file it as 55805 (named for NXT); Rebrickable's elements.csv lists 11146 as a design id of the same elements, the number LDraw uses."
+      },
+      "mass_g": {
+        "value": 10,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=55805"
+      },
+      "colour": "black flat cable",
+      "recognise": "Flat black cable, middle length.",
+      "length_cm": {
+        "value": 35,
+        "unit": "cm",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=55805"
+      },
+      "features": {},
+      "specs": {
+        "shape": {
+          "value": "LDraw models the cable as one coiled shape; its bounding box is not a dimension of the part.",
+          "source": "https://library.ldraw.org/library/official/parts/11146.dat"
+        }
+      }
+    },
+    {
+      "key": "cable_50",
+      "name": "EV3 connector cable 50 cm",
+      "kind": "cable",
+      "ids": {
+        "design": "11147",
+        "elements": ["4297185", "6024585", "6089559", "6178448"],
+        "bricklink": "55806",
+        "rebrickable": "55806",
+        "ldraw": "11147",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "As cable_35: 55806 in Rebrickable and BrickLink, 11147 in LDraw and in Rebrickable's design ids."
+      },
+      "mass_g": {
+        "value": 13,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=55806"
+      },
+      "colour": "black flat cable",
+      "recognise": "Flat black cable, the longest.",
+      "length_cm": {
+        "value": 50,
+        "unit": "cm",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=55806"
+      },
+      "features": {},
+      "specs": {
+        "shape": {
+          "value": "LDraw models the cable as one coiled shape; its bounding box is not a dimension of the part.",
+          "source": "https://library.ldraw.org/library/official/parts/11147.dat"
+        }
+      }
+    }
+  ]
+}
