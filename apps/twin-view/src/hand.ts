@@ -170,7 +170,7 @@ export class Hand {
     if (d?.kind !== "move") return;
     if (this.c.focus()?.world.boxes.some((b) => b.id === d.id)) return;
     this.cancel();
-    hud.toast("Las cajas cambiaron mientras movías una (otra pestaña): tómala otra vez");
+    hud.toast("Las cajas cambiaron mientras movías una: tómala otra vez");
   }
 
   setMode(m: Mode): void {
@@ -466,9 +466,13 @@ export class Hand {
     if (turned < 1 && moved < 1) return;
     const gyro = Object.values(f.ports.sensors).includes("gyro");
     hud.toast(
-      gyro
-        ? `Robot movido ${fmt(moved)} cm y girado ${Math.round(turned)}°: el giroscopio sintió el giro; los encoders no se enteran.`
-        : `Robot movido ${fmt(moved)} cm y girado ${Math.round(turned)}°. Sin giroscopio, el robot no lo sabe: su rumbo y su distancia salen de los encoders.`,
+      !gyro
+        ? "El robot no sabe que lo moviste: no tiene giroscopio."
+        : turned < 1
+          ? "El robot no sabe que lo moviste."
+          : moved < 1
+            ? "El robot sintió el giro con su giroscopio."
+            : "El robot sintió el giro con su giroscopio, pero no sabe que lo moviste.",
       "info",
     );
   }
