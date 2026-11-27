@@ -48,9 +48,12 @@ Add each one the robot has, on its confirmed port. A port nobody confirmed: the 
 | Colour | `"sensors": {"<n>": "color"}` | `"color": "ev3.S<n>"` | `twin.body.color_sensor_x_cm`, `color_spot_radius_cm` |
 | Ultrasonic or infrared | `"sensors": {"<n>": "ultrasonic"}` or `"ir"` | `"distance": "ev3.S<n>"` | `twin.body.distance_sensor_x_cm` |
 | Gyro | `"sensors": {"<n>": "gyro"}` | `"gyro": "ev3.S<n>"` | `"heading": {"device": "gyro", "channel": "angle_deg"}` in the drivetrain, only when the port is confirmed. Its place changes nothing in the physics |
+| The brick (always) | none | none | `twin.view.brick`: `"pose"` `"flat"` or `"standing"`, `"screen"` `"front"` or `"back"` (flat: where ports A-D point; standing: where the screen faces), as the photo shows. A leaning brick: the closer pose and a note "the brick leans <n>° toward <the front / the back>" |
 | Phone | none | none | `twin.view.phone`; a note "A phone stands at the front with its screen facing forward; it joins as a page and lends its camera, screen and speaker." (README "Peripheral pages on a phone") |
 
 `twin.view.sensors.<n>` (`x_cm`, `y_cm`, `z_cm`) places a sensor in the 3D look only. Leave out the body fields of a sensor the robot does not have.
+
+A part whose kind is a guess: write the likeliest kind on its port, keep the port's token, and add a note "<port>: <kind a> or <kind b>, not confirmed". Something plugged into a port whose kind you cannot even guess: a motor is `"large"` if it drives, else `"medium"`; a sensor gets no entry in `twin.ev3.sensors` and no role (the file has no "sensor of unknown kind"), the port's token, and a note "S<n>: a sensor is plugged in here, kind unknown". A part of an official model that the photo does not show is written like a seen one, with its token and a note "<part> on <port>: from the <model>'s build, not seen in the photo".
 
 ## A robot with no drive (an arm, a crane, a station, a controller)
 
@@ -93,7 +96,7 @@ For each row the robot hits: write the note, tell the person the line in their l
 | An NXT motor | `"large"`; a note | "The twin uses an EV3 large motor for the NXT motor." |
 | An attachment: an arm, claw, lifter, scoop, frame, bumper bar, wings | the motor's role and a note on what it does and its range | "The 3D twin does not draw the <attachment>; its motor turns." |
 | A shell, decoration or a tall body (a humanoid, an animal) | a note | "The 3D twin shows the bare base, not the <shell>." |
-| A brick standing upright | `view.brick.x_cm` only; a note | "The 3D twin shows the brick lying flat." |
+| A brick leaning, neither flat nor upright | the closer `view.brick.pose`; a note | "The 3D twin shows the brick <flat / upright>." |
 | No drive | as "A robot with no drive" | "The 3D twin still draws wheels; it does not drive." |
 | Four or six wheels, two sides driven (or chained) | `differential`; the footprint covers every wheel; a note | "The twin drives as two sides; it draws two wheels." |
 | A caster, ball or skid | `back_cm` (or `front_cm`) reaches it | none |

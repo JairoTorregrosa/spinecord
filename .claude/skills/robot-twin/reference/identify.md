@@ -12,6 +12,13 @@ Sizes are the parts' bounding boxes from BrickLink's catalogue (marked verified 
 | A slide, poster or screen | A frame, text blocks, a projector's keystone, a monitor bezel, moiré, other images beside it |
 | Several robots | More than one drive base or more than one brick |
 
+## Readable
+
+The gate of state 0 counts the brick and the drive as readable only when the photo shows:
+- **the brick**: its body, not only an edge or a cable, and at least one of its own signs that only an EV3 has: the screen with the dark grey button cross below it, or one port end with its row of four sockets. A brick covered by parts, seen only from below, or too blurred to tell the screen from the buttons is not readable. Tilted or standing upright is fine: say so in the file;
+- **the drive**: what touches the floor on at least one side (wheels, tracks, legs, a fixed base), and that side's motor or the axle it drives.
+A robot that hides one of the two is the "not readable" row of state 0, also when everything else is sharp.
+
 | Brick | Tells | spinecord |
 |---|---|---|
 | **EV3** | Dark grey and light grey, 11.1 × 7.2 × 5.1 cm ([BrickLink 95646c01](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01)). A grey monochrome screen at one end of the top face; below it six buttons: a centre button inside a ring of four arrow buttons that light green, orange or red, and a back button at the screen's corner. `EV3` printed on it. **Four** output ports `A B C D` on the end beside the screen, **four** input ports `1 2 3 4` on the other end; the USB plug between them on the A-D end | yes |
@@ -55,31 +62,54 @@ When the tell is not in the photo (the part seen from behind or from the side, t
 
 ## Official models
 
-When the robot looks like one of these, ask "Is this the <model>, built as in the instructions?" (with its attachment, if one is on it). When `<clone>/docs/lego-parts.md` exists, its builds replace this table.
+When the robot looks like one of these, name it (state 0). The tells are what a photo shows; the ports and numbers are in the map's `builds.json` under the key, never here.
 
-| Model | Set | Tells | Ports and geometry from |
-|---|---|---|---|
-| Driving Base (Educator Vehicle) | Education core 45544 | two large motors under a flat brick, two 56 mm wheels, a ball caster behind; attachments in front (colour sensor down, ultrasonic ahead, touch bumper, gyro, medium-motor arm) | drive motors B (left) and C (right) ([ev3dev-python Robot Educator](https://sites.google.com/site/ev3devpython/learn-ev3-python/robot-educator)); medium motor A; sensors by convention 1 touch, 2 gyro, 3 colour, 4 ultrasonic or infrared ([EV3 Basic, Robot Educator hardware](https://www.sites.google.com/site/ev3basic/ev3-basic-programming/robot-educator/hardware)). The convention is not a rule: a port is still confirmed only by the person or the brick |
-| Gyro Boy, Puppy, Color Sorter, Robot Arm H25, Stair Climber, Znap, Elephant | Education 45544 / expansion 45560 | as in their instructions | the instructions (education.lego.com, "EV3 building instructions"): ask the person, or the brick |
-| TRACK3R, EV3RSTORM, GRIPP3R, R3PTAR, SPIK3R | Retail 31313 | as in their instructions; TRACK3R: tracks on 57519 sprockets, the infrared sensor ahead | the instructions (LEGO.com/service, "MINDSTORMS building instructions"): ask the person, or the brick |
+| Model (set) | `builds.json` key | Tells |
+|---|---|---|
+| Driving Base, Robot Educator (45544) | `educator_driving_base` | Brick flat on two large motors, two 56 mm wheels, a steel ball caster behind; attachments in front: colour sensor down, ultrasonic ahead, touch bumper, gyro, a medium-motor arm |
+| Gyro Boy (45544) | `gyro_boy` | Brick standing upright on two 56 mm wheels and no caster; ultrasonic eyes on top, two arms; it balances |
+| Puppy (45544) | `puppy` | Four legs, the brick as the body, a head on a neck |
+| Color Sorter (45544) | `color_sorter` | A station: a belt and a feeder tray, the colour sensor over the belt, no wheels |
+| Robot Arm H25 (45544) | `robot_arm_h25` | A crane-like arm on a turntable base, a gripper at its end, no wheels |
+| Tank Bot (45544 + 45560) | `tank_bot` | Brick flat on a long body with black plastic tread-link tracks over 10-tooth sprockets on each side |
+| Stair Climber (45544 + 45560) | `stair_climber` | Four big wheels front and back, a lifting frame under the body for climbing a step |
+| Znap (45544 + 45560) | `znap` | A long low body on two wheels, a snapping jaw head with the ultrasonic sensor |
+| Elephant (45544 + 45560) | `elephant` | Four legs, a long trunk, a big head |
+| TRACK3R (31313) | `track3r` | Brick flat over two rubber tracks on small rims, the infrared sensor ahead, a tool in front (spinner, hammer, claw or bazooka) |
+| EV3RSTORM (31313) | `ev3rstorm` | A humanoid on rubber tracks, the brick upright as the chest, the infrared sensor as the head, a bazooka arm |
+| GRIPP3R (31313) | `gripp3r` | Rubber tracks and a large two-claw gripper in front, the infrared sensor on top |
+| R3PTAR (31313) | `r3ptar` | A snake standing up, the infrared sensor as the head |
+| SPIK3R (31313) | `spik3r` | A scorpion on legs, a claw in front and a tail over the back |
+
+A model not in this table (the 31313 bonus models, a community build) is a custom robot: no build data.
+
+## Reading a build
+
+Open `<clone>/packages/lego-parts/data/builds.json` and take the entry whose `key` is the model's.
+- `ports`: keys `A`-`D` are motor ports, `1`-`4` the sensor ports `S1`-`S4`. Each `value` reads `<kind>, <role>`. `large motor` and `medium motor` are kinds; a bare `motor` means the build does not say: the kind comes from the photo (length against the brick, "Look-alikes"), else the one rule of questions.md row 4, and its token stays. Its `note` says why.
+- A port's `alt` lists sources that say something else. When an `alt` names another side or port, keep `left_right` (or that port's token) whatever the person says about the model.
+- `wheel_diameter_mm.value` and `axle_track_mm.value` ÷ 10 are `wheel_diameter_cm` and `axle_track_cm`, assumed; `{"unknown": true}` means parts.md and the photo decide.
+- `footprint_mm` (length, width, height), when it has a value, gives the footprint, assumed; else "Scale".
+- `note`: balancing, steering, walking, no drive. Each one is a row of robot-file.md "What a twin cannot have".
+- A port that is not in `ports` is empty on that model.
 
 ## Where a port is
 
 On an EV3 lying flat, screen up, with the screen end away from you, the output ports from left to right are `A B C D` (with the USB plug between B and C), and on the near end the inputs from left to right are `1 2 3 4`. A plug is confirmed only when you can read the letter beside it or count its place in the row and follow its cable to a part.
 
+A port is **visibly empty** only when you see the socket's open dark slot, with nothing in it and no cable in front of it, and can place it in its row. A row seen at a slant where cables cover the sockets, or a port end out of the frame, is not read: its ports keep their tokens.
+
 ## Scale
 
-With no ruler, measure against the parts:
+With no ruler, the brick is the ruler. Keep every length assumed (`footprint`, `places`) unless it was measured.
 
-- the EV3 brick: 11.1 cm from port end to port end, 7.2 cm across ([BrickLink 95646c01](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01));
-- a large motor: about 11 cm long;
-- a LEGO hole or stud: 0.8 cm from centre to centre ([LUGNET, measured 7.986 mm](https://www.lugnet.com/~330/FAQ/Build/dimensions)), so a beam of n holes is 0.8 × n cm long.
-
-A length read this way is still `footprint` or `places`, assumed, unless it was measured.
+1. Find the brick's long side in the photo (111.2 mm port end to port end, 72 mm across: the map's `electronics.json`, part 95646) and divide its length in pixels by 11.12: that is pixels per cm. In a photo at a slant, use a length that lies in the same plane as the one you measure.
+2. Measure each length in pixels and divide; where a beam lies along it, count its holes instead: n holes are 0.8 × n cm.
+3. Take wheel and tyre diameters from parts.md by what the part is, never by scaling; check the footprint against them (a 56 mm wheel is half the brick's length).
 
 ## More photos
 
-Ask for what is missing, at most three:
+Ask for the views that are missing, at most three of these four:
 
 - the brick's two port ends, close enough to read `A B C D` and `1 2 3 4`;
 - from above, the whole robot;
