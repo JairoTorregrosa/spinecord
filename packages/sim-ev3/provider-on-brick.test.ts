@@ -6,7 +6,7 @@ import { test, expect, describe } from "bun:test";
 import { Ev3Provider, EXAMPLE_EV3_HARDWARE } from "../driver-ev3/provider";
 import * as E from "../driver-ev3/encode";
 import type { CommandResult } from "../protocol/types";
-import { World } from "../sim-world/world";
+import { NO_NOISE, World } from "../sim-world/world";
 import { SimWorldProvider } from "../sim-world/world-provider";
 import { quietWorld, EXAMPLES, config, DRIVE } from "../sim-world/testkit";
 import { SimBrick, LARGE_DEG_S, type BrickDrivetrain } from "./brick";
@@ -120,6 +120,30 @@ describe("Ev3Provider on SimBrick", () => {
     expect(brick.busy()).toBe(false);
     expectClean(brick);
   });
+
+  test("a tracked base with noise off: 50 cm by its encoders ends within 1 cm of 50, a 90 deg encoder turn turns about 72", async () => {
+    const tracks: BrickDrivetrain = { ...DRIVETRAIN, wheel_diameter_cm: 3.5, axle_track_cm: 13.5 };
+    const world = quietWorld(EXAMPLES.lineOval, { noise: { ...NO_NOISE, turn_scrub: 0.2 } });
+    world.drive = { axle_track_cm: 13.5 };
+    const { ev3, brick } = twin(world, tracks);
+    await ev3.devices();
+    const perCm = 360 / (Math.PI * 3.5);
+    const deg = Math.round(50 * perCm);
+    const t0 = performance.now();
+    const go = await pairMove(ev3, deg, deg, 60);
+    expect(go.reason).toBe("completed");
+    expect(Math.abs(world.pose.x - 43 - 50)).toBeLessThan(1);
+    expect(Math.abs(world.pose.x - 43 - brick.tacho("B") / perCm)).toBeLessThan(0.05); // what the encoders say
+    expect(((performance.now() - t0) * SPEEDUP) / 1000).toBeGreaterThan(50 / ((0.6 * LARGE_DEG_S) / perCm));
+    const arc = Math.round((((Math.PI / 2) * 13.5) / 2) * perCm);
+    const [b0, c0] = [brick.tacho("B"), brick.tacho("C")];
+    const turn = await pairMove(ev3, -arc, arc, 40);
+    expect(turn.reason).toBe("completed");
+    const spun = (brick.tacho("C") - c0 - (brick.tacho("B") - b0)) / 2;
+    const byEncoders = ((spun / perCm / (13.5 / 2)) * 180) / Math.PI;
+    expect(Math.abs((world.pose.th * 180) / Math.PI - 0.8 * byEncoders)).toBeLessThan(0.5);
+    expect(Math.abs((world.pose.th * 180) / Math.PI - 72)).toBeLessThan(4);
+  }, 15000);
 
   test("chained operations drive the simulated robot the commanded distance", async () => {
     const { ev3, brick, world } = twin(new World(config(), 4, DRIVE)); // default noise
