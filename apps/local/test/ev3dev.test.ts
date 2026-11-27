@@ -62,6 +62,7 @@ describe("an ev3dev brick over ssh", () => {
         port: 0,
         robots: [
           {
+            name: null,
             source: "ev3dev",
             id: "dev",
             robot,
@@ -109,6 +110,7 @@ describe("an ev3dev brick over ssh", () => {
         port: 0,
         robots: [
           {
+            name: null,
             source: "ev3dev",
             id: "dev",
             robot,
@@ -222,6 +224,7 @@ describe("an ev3dev brick over ssh", () => {
         port: 0,
         robots: [
           {
+            name: null,
             source: "ev3dev",
             id: "dev",
             robot,
@@ -298,6 +301,7 @@ describe("an ev3dev brick over ssh", () => {
           port: 0,
           robots: [
             {
+              name: null,
               source: "ev3dev",
               id: "dev",
               robot,
@@ -439,6 +443,7 @@ describe("the arm example on an ev3dev brick: no pair, no drivetrain", () => {
           port: 0,
           robots: [
             {
+              name: null,
               source: "ev3dev",
               id: "arm",
               robot: await file(ARM),

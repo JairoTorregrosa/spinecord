@@ -38,14 +38,15 @@ Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next
 - If the same step fails 2 times, stop. Show the error line and the row of fixes.md, in the person's language.
 - On Windows, use PowerShell for all commands.
 
-## Start: one question and one approval
+## Start: two questions and one approval
 
 1. Do the detect step of TOOLS. If the clone exists, also run `setup status`.
-2. Send the person one message with these two parts. Then wait for the answer.
+2. Send the person one message with these three parts. Then wait for the answer.
    - "Do you have a LEGO EV3 robot with you? Without one, Claude drives a robot on the screen."
+   - "What is the name of your robot? This is optional. Without a name, the robot has no name."
    - The plan: the missing tools by name, the folders `~/spinecord` and `~/mi-robot`, one sign-in in the browser. Ask for one yes.
    - On macOS and Linux, the plan also names one line in `~/.zshrc` or `~/.bashrc` for new terminals.
-3. Remember the EV3 answer. State WORKSHOP needs it.
+3. Remember the EV3 answer and the name. State WORKSHOP needs them.
 4. After each state, show the person the progress list. Mark the states that are done:
 
 ```text
@@ -97,6 +98,7 @@ If it says `fail`, use the row of fixes.md that it names after `->`.
 ### 5 WORKSHOP
 
 Run `setup workshop --ev3 yes` or `setup workshop --ev3 no`, from the answer of the start.
+If the person gave a name, add `--name "<name>"` to that command. The name stays when you run the step again.
 It makes `~/mi-robot`, allows the spinecord tools there, registers spinecord there with local scope, and runs the doctor.
 A doctor `warn` line does not stop this state. For a `fail` line, use fixes.md, then run the same command again.
 
@@ -134,3 +136,10 @@ Skip this state if the person has no EV3. The person keeps the Claude Code of st
 
 Run `setup report`. Give the person its lines, in their language. Add what the person must still do, if anything.
 Running the skill again changes nothing and ends here.
+
+## Later: a new name for the robot
+
+The person asks for a new name, for example "ponle Rayo a mi robot".
+1. Run `setup name "<name>"`. To remove the name, run `setup name none`.
+2. If its line is `fail`, do the action after `->`.
+3. Say: "Type /exit in Claude Code. Then paste the launch line again." The next start shows the new name.

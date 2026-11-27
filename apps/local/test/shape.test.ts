@@ -69,7 +69,7 @@ describe("the arm example: no pair, no drivetrain", () => {
     };
     const brick = new SimBrick({ world: new World(parseWorld(world), 1), drivetrain: null });
     const robot = new LocalRobot({ id: "arm" });
-    await robot.attach(ev3Runtime({ source: "ev3", id: "arm", robot: await file(ARM) }, brick));
+    await robot.attach(ev3Runtime({ name: null, source: "ev3", id: "arm", robot: await file(ARM) }, brick));
     try {
       await armWorks(toolsOf([robot], "arm"), ["ev3.A", "ev3.B"]);
     } finally {
@@ -82,7 +82,7 @@ describe("the heading of the base example", () => {
   const turn = async (robot: RobotFile) => {
     const world = await Bun.file(EXAMPLE.world).json();
     const fleet = await buildFleet(
-      { port: 0, robots: [{ source: "twin", id: "base-sim", robot, world, seed: 1 }] },
+      { port: 0, robots: [{ name: null, source: "twin", id: "base-sim", robot, world, seed: 1 }] },
       { log: () => {} },
     );
     try {

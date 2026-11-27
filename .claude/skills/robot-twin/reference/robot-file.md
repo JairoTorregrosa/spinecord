@@ -65,6 +65,7 @@ Every length is in cm from the centre of the drive axle, on the floor: `x` ahead
 | Field | Allowed values | Default | What it is |
 |---|---|---|---|
 | `description` | text | none | for people only |
+| `name` | 1-22 letters (accents too), digits, spaces, `'`, `.`, `-` | none: no name | what the person calls the robot: Claude speaks as it, the 3D page shows it as its title, the brick shows it on its screen. Only the person chooses it. To change it later, edit it here and restart Claude Code |
 | `pair.left`, `pair.right` | two different ports of `A`-`D` | no `pair`: no drive | the drive motors, left and right seen from behind |
 | `hardware.low_battery_v`, `max_tone_ms`, `tone_volume_pct` | number > 0 | required | 6.5, 5000, 50 fit the EV3 |
 | `hardware.speech_volume_pct` | 1 to 100 | required on ev3dev | |

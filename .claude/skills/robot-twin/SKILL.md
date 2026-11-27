@@ -86,7 +86,7 @@ Keep each value with its source: state 7 needs them.
 2. Copy the template. It arrives with every token in `twin.unconfirmed`. Fill each value from state 1; take a token out only when its row of "Confirm" has a source other than assumed.
 3. Add each sensor and actuator from robot-file.md "Parts". Delete what the robot does not have.
 4. In `profile.notes`: what each actuator does and its range, where each sensor looks, what the phone is for, and one line per row of "What a twin cannot have" that this robot hits. Tell the person those rows now, before any twin is shown (a balancer, a stair climber, an arm that the 3D view draws on wheels).
-5. `profile.id`: the name the person gave the robot, lowercase; with no name, `mi-robot`.
+5. `name`: the name the person gave the robot (questions.md row 13), as they wrote it; with no name, leave `name` out. Never make one up. `profile.id`: that name in lowercase, accents dropped, spaces as `-`; with no name, `mi-robot`.
 
 ## 3 CHECK
 

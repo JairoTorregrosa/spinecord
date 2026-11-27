@@ -169,7 +169,7 @@ function receive(m: ServerMessage): void {
       robots = m.robots;
       interval = 1000 / m.rate_hz;
       const sel = $<HTMLSelectElement>("robot");
-      sel.replaceChildren(...robots.map((r) => new Option(r.id, r.id)));
+      sel.replaceChildren(...robots.map((r) => new Option(r.name ? `${r.name} · ${r.id}` : r.id, r.id)));
       sel.hidden = robots.length < 2;
       const keepId = focus && robots.some((r) => r.id === focus!.id) ? focus.id : robots[0]?.id;
       sel.value = keepId ?? "";
@@ -219,6 +219,23 @@ function receive(m: ServerMessage): void {
 }
 
 // ---------------------------------------------------------------- focus: build the world and the robot
+/** The robot's name is the page's title, its id beside it; without a name, the page's own title. */
+function showTitle(r: RobotMeta | null): void {
+  const title = $("title");
+  if (!r?.name) {
+    title.innerHTML = "EV3 <b>gemelo 3D</b>";
+    document.title = "EV3 · gemelo 3D";
+    return;
+  }
+  const name = document.createElement("b"),
+    id = document.createElement("span");
+  name.textContent = r.name;
+  id.className = "dim";
+  id.textContent = r.id;
+  title.replaceChildren(name, " ", id);
+  document.title = `${r.name} · gemelo 3D`;
+}
+
 /** The robot and world the camera last framed: another one is framed afresh, the same one keeps the view. */
 let framed = "";
 /** Fog hides where the floor ends at eye level. From straight above the camera stands far off: there it would hide the arena. */
@@ -246,6 +263,7 @@ function setFocus(id: string | null): void {
   trailReset();
   hand.reset(focus);
   showConeOption();
+  showTitle(focus);
   if (!focus) return;
   const look = lookOf(focus);
   model = buildRobot(focus, look);

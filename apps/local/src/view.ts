@@ -100,6 +100,7 @@ function meta(t: ViewTwin): RobotMeta {
   const d = t.brick.drivetrain;
   return {
     id: t.id,
+    name: t.robot.name,
     drivetrain: d ? { ...d } : null,
     ports: { motors: { ...t.brick.ports.motors }, sensors: { ...t.brick.ports.sensors } },
     world: shape(t.brick.world),
