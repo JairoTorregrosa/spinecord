@@ -308,7 +308,7 @@ describe("Ev3Provider on SimBrick", () => {
     expect(refreshed.length).toBe(1);
     await refreshed[0];
     expect(kinds["ev3.S4"]).toBe("infrared");
-    expect(await value(ev3, "ev3.S4", "proximity_pct")).toBe(100);
+    expect(await value(ev3, "ev3.S4", "proximity_pct")).toBeGreaterThan(77); // the far wall, 77 cm ahead
     expectClean(brick);
   });
 });

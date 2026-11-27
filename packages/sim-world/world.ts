@@ -84,6 +84,8 @@ export interface NoiseConfig {
    */
   turn_scrub: number;
   ultrasonic_cm: number;
+  /** Std dev of infrared proximity at 40 %, in %; it grows in proportion to the reading (a weaker return is noisier). */
+  ir_pct: number;
   reflect_pct: number;
   gyro_deg: number;
   gyro_drift_deg_s: number;
@@ -120,6 +122,7 @@ export const DEFAULT_NOISE: NoiseConfig = {
   wheel_bias: 0.003,
   turn_scrub: 0,
   ultrasonic_cm: 0.3,
+  ir_pct: 0.5,
   reflect_pct: 1,
   gyro_deg: 0.3,
   gyro_drift_deg_s: 0,
@@ -130,6 +133,7 @@ export const NO_NOISE: NoiseConfig = {
   wheel_bias: 0,
   turn_scrub: 0,
   ultrasonic_cm: 0,
+  ir_pct: 0,
   reflect_pct: 0,
   gyro_deg: 0,
   gyro_drift_deg_s: 0,
@@ -143,12 +147,39 @@ export const DT_MS = 20;
  * physics every frame) therefore changes neither the noise drawn nor the path, beyond float rounding.
  */
 export const MOTION_NOISE_MS = DT_MS;
+/** The EV3 ultrasonic sensor (45504) measures 3..250 cm (LEGO); with no echo it reads 255 (LEGO's EV3 user guide). */
 export const ULTRASONIC_MIN_CM = 3;
 export const ULTRASONIC_MAX_CM = 250;
+export const ULTRASONIC_NO_ECHO_CM = 255;
 /** Half angle of the ultrasonic cone (an approximation: the real one is around +-10..20 deg). */
 export const CONE_HALF_DEG = 12;
-/** Infrared proximity is a percentage, not cm: here 100 % is about 70 cm, linear. */
-export const IR_FULL_SCALE_CM = 70;
+/** Rays across the ultrasonic cone, evenly from -CONE_HALF_DEG to +CONE_HALF_DEG. */
+export const ULTRASONIC_RAYS = 9;
+/**
+ * A ray echoes off a surface it meets within this angle of square, so a flat wall stops echoing when the sensor
+ * looks more than CONE_HALF_DEG + this (25 deg) off its normal. 25 is what one EV3 project measured ("the sensors
+ * need to be within a +/- 25 deg angle to the wall to operate",
+ * https://github.com/jamesjackson/ev3-localization/blob/master/overview.md); others quote 40-45 deg. The stricter
+ * number: a strategy that works with it also works where the sensor is more forgiving.
+ */
+export const ULTRASONIC_ECHO_DEG = 13;
+/**
+ * Infrared proximity (45509) per cm of a large light surface square on: the stock firmware (EV3-G) read 40-41 % with
+ * a white wall at 38 cm, 88-90 % with black on it (https://github.com/ev3dev/ev3dev-lang-python/issues/518); ev3dev's
+ * guide: "for large white objects the proximity value is VERY roughly equal to the distance in cm". 100 % with
+ * nothing in range.
+ */
+export const IR_PCT_PER_CM = 40.5 / 38;
+/** Half angle of the infrared beam. No measurement found: an estimate, wider than the ultrasonic cone. */
+export const IR_CONE_HALF_DEG = 25;
+/** Rays across the infrared beam. */
+export const IR_RAYS = 11;
+
+/** The value the ultrasonic sensor gives for an echo at `d` cm (Infinity: none): tenths of a cm, 255 out of range. */
+function ultrasonicReading(d: number): number {
+  if (!(d <= ULTRASONIC_MAX_CM)) return ULTRASONIC_NO_ECHO_CM;
+  return Math.round(Math.max(ULTRASONIC_MIN_CM, d) * 10) / 10;
+}
 /** Halvings of a blocked step: the body comes to rest within 2^-12 of a step's travel from the obstacle. */
 const CONTACT_BISECTIONS = 12;
 /** The trip meter follows a line only while the axle centre is within this distance of it. */
@@ -840,19 +871,34 @@ export class World {
 
   /** True distance (no noise, no clamp) of one ray from the distance sensor to a wall or obstacle. */
   rayDistance(p: Pose = this.pose, offset_rad = 0): number {
+    return this.rayHit(p, offset_rad).d;
+  }
+  /**
+   * One ray from the distance sensor: how far it goes (cm, no noise, no clamp) and the cosine of the angle between
+   * it and the normal of the surface it hits (1 = square on).
+   */
+  rayHit(p: Pose = this.pose, offset_rad = 0): { d: number; cos: number } {
     const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
     const dx = Math.cos(p.th + offset_rad),
       dy = Math.sin(p.th + offset_rad);
     const { width, height, boxes } = this.cfg;
-    if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return 0;
-    let best = Infinity;
-    if (dx > 1e-12) best = Math.min(best, (width - ox) / dx);
-    else if (dx < -1e-12) best = Math.min(best, -ox / dx);
-    if (dy > 1e-12) best = Math.min(best, (height - oy) / dy);
-    else if (dy < -1e-12) best = Math.min(best, -oy / dy);
+    if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return { d: 0, cos: 1 };
+    let best = Infinity,
+      cos = 1;
+    const take = (t: number, c: number): void => {
+      if (t < best) {
+        best = t;
+        cos = c;
+      }
+    };
+    if (dx > 1e-12) take((width - ox) / dx, Math.abs(dx));
+    else if (dx < -1e-12) take(-ox / dx, Math.abs(dx));
+    if (dy > 1e-12) take((height - oy) / dy, Math.abs(dy));
+    else if (dy < -1e-12) take(-oy / dy, Math.abs(dy));
     for (const b of boxes) {
       let t0 = 0,
         t1 = Infinity,
+        c0 = 1,
         hit = true;
       for (const [o, d, lo, hi] of [
         [ox, dx, b.x, b.x + b.w],
@@ -872,34 +918,73 @@ export class World {
           a = c;
           c = t;
         }
-        if (a > t0) t0 = a;
+        if (a > t0) {
+          t0 = a;
+          c0 = Math.abs(d); // the ray enters through a face across this axis
+        }
         if (c < t1) t1 = c;
         if (t0 > t1) {
           hit = false;
           break;
         }
       }
-      if (hit && t0 < best) best = t0;
+      if (hit) take(t0, c0);
+    }
+    return { d: best, cos };
+  }
+
+  /**
+   * What the ultrasonic sensor measures without noise, unclamped: the nearest echo across its cone, or Infinity when
+   * no surface sends one back. A hard flat surface reflects like a mirror, so a ray echoes only off a surface it
+   * meets within ULTRASONIC_ECHO_DEG of square: a wall slanted more than CONE_HALF_DEG + ULTRASONIC_ECHO_DEG gives
+   * nothing back (the sensor then reads 255).
+   */
+  coneDistance(p: Pose = this.pose): number {
+    const minCos = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
+    let best = Infinity;
+    for (let i = 0; i < ULTRASONIC_RAYS; i++) {
+      const off = (((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * CONE_HALF_DEG * Math.PI) / 180;
+      const h = this.rayHit(p, off);
+      if (h.cos >= minCos - 1e-12 && h.d < best) best = h.d;
     }
     return best;
   }
-
-  /** A real ultrasonic sensor sees a cone, not a ray: here the nearest echo of three rays (0 and +-CONE_HALF_DEG). */
-  coneDistance(p: Pose = this.pose): number {
-    const a = (CONE_HALF_DEG * Math.PI) / 180;
-    return Math.min(this.rayDistance(p, -a), this.rayDistance(p, 0), this.rayDistance(p, a));
+  /** What the ultrasonic sensor reads without noise (a display): 3..250 cm, 255 with no echo in range. */
+  ultrasonicCm(): number {
+    return ultrasonicReading(this.coneDistance());
   }
-
-  /** Ultrasonic distance in cm, with noise, clamped to 3..250 like the real sensor. */
+  /** Ultrasonic distance in cm, with noise: 3..250 like the real sensor, 255 when no echo comes back. */
   senseUltrasonic(): number {
-    const d = this.coneDistance() + this.cfg.noise.ultrasonic_cm * this.sensorRng.gauss();
-    return Math.round(Math.min(ULTRASONIC_MAX_CM, Math.max(ULTRASONIC_MIN_CM, d)) * 10) / 10;
+    const d = this.coneDistance();
+    return ultrasonicReading(Number.isFinite(d) ? d + this.cfg.noise.ultrasonic_cm * this.sensorRng.gauss() : d);
   }
 
-  /** Infrared proximity in % (0 touching, 100 far). Approximate: the real one depends on the material. */
+  /**
+   * What the infrared sensor reads without noise and not rounded (a display): 0..100 %. It measures the intensity of
+   * its own light reflected back. Each ray of its beam (weighted by the beam's brightness) returns light falling
+   * with the square of the distance and with the cosine of incidence (a matte surface), and the reading is the
+   * distance at which a square, beam-filling surface would return that much, times IR_PCT_PER_CM: linear for a
+   * large wall square on, farther for a wall at a slant or an object that fills only part of the beam.
+   */
+  irProximity(): number {
+    let sum = 0,
+      full = 0;
+    for (let i = 0; i < IR_RAYS; i++) {
+      const u = (2 * i) / (IR_RAYS - 1) - 1,
+        off = (u * IR_CONE_HALF_DEG * Math.PI) / 180,
+        w = Math.cos((u * Math.PI) / 2) ** 2;
+      const h = this.rayHit(this.pose, off),
+        d = Math.max(h.d, 0.1);
+      sum += (w * h.cos) / (d * d);
+      full += w * Math.cos(off) ** 3; // a square wall at distance 1
+    }
+    return Math.min(100, IR_PCT_PER_CM * Math.sqrt(full / sum));
+  }
+  /** Infrared proximity in % (0 touching, 100 far), with noise that grows with the reading. */
   senseIrProximity(): number {
-    const d = this.rayDistance() + this.cfg.noise.ultrasonic_cm * 2 * this.sensorRng.gauss();
-    return Math.round(Math.min(100, Math.max(0, (d / IR_FULL_SCALE_CM) * 100)));
+    const p = this.irProximity(),
+      v = p + ((this.cfg.noise.ir_pct * p) / 40) * this.sensorRng.gauss();
+    return Math.round(Math.min(100, Math.max(0, v)));
   }
 
   /** Front bumper: 1 if a wall or obstacle is less than 0.7 cm ahead. */

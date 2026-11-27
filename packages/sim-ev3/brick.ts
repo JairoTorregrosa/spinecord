@@ -15,7 +15,7 @@ import {
   readParam,
 } from "../driver-ev3/encode";
 import type { Transport } from "../driver-ev3/transport";
-import { World, DT_MS, COLOR_RGB, IR_FULL_SCALE_CM, ULTRASONIC_MAX_CM, ULTRASONIC_MIN_CM } from "../sim-world/world";
+import { World, DT_MS, COLOR_RGB } from "../sim-world/world";
 import type { WorldHost } from "../sim-world/world-provider";
 import type { RobotProfile } from "../protocol/types";
 import {
@@ -397,7 +397,6 @@ export class SimBrick implements Transport, WorldHost {
   /** sensorValues without noise (see peek); [] for a mode the emulator does not have. */
   private peekValues(s: Sensor): number[] {
     const w = this.world;
-    const cm = (d: number) => Math.round(Math.min(ULTRASONIC_MAX_CM, Math.max(ULTRASONIC_MIN_CM, d)) * 10) / 10;
     switch (s.kind) {
       case "touch":
         return s.mode === 0 ? [w.senseTouch()] : s.mode === 1 ? [this.bumps] : [];
@@ -408,8 +407,8 @@ export class SimBrick implements Transport, WorldHost {
         if (s.mode === 4) return COLOR_RGB[w.senseColorId()]!.map((c) => Math.round((c / 255) * 400));
         return [];
       case "ultrasonic":
-        if (s.mode === 0) return [cm(w.coneDistance())];
-        if (s.mode === 1) return [Math.round((cm(w.coneDistance()) / 2.54) * 10) / 10];
+        if (s.mode === 0) return [w.ultrasonicCm()];
+        if (s.mode === 1) return [Math.round((w.ultrasonicCm() / 2.54) * 10) / 10];
         return s.mode === 2 ? [0] : [];
       case "gyro": {
         const angle = -Math.round(w.peekGyroDeg()) + 0,
@@ -417,7 +416,7 @@ export class SimBrick implements Transport, WorldHost {
         return s.mode === 0 ? [angle] : s.mode === 1 ? [rate] : s.mode === 3 ? [angle, rate] : [];
       }
       case "ir":
-        return s.mode === 0 ? [Math.round(Math.min(100, Math.max(0, (w.rayDistance() / IR_FULL_SCALE_CM) * 100)))] : [];
+        return s.mode === 0 ? [Math.round(w.irProximity())] : [];
     }
   }
   pressButton(button: number, down = true): void {

@@ -182,7 +182,7 @@ describe("conditions over the twin's channels", () => {
     expect(readSensorChannel(w, "touch", "pressed")).toBe(false);
     w.advance(-4.71, 4.71, 10); // a left turn of about 45 degrees
     expect(readSensorChannel(w, "gyro", "angle_deg")).toBe(45);
-    expect(readSensorChannel(w, "infrared", "proximity_pct")).toBe(19);
+    expect(readSensorChannel(w, "infrared", "proximity_pct")).toBe(17);
     expect(() => readSensorChannel(w, "gyro", "heading")).toThrow(
       /no channel "heading"; channels: angle_deg, rate_deg_s/,
     );

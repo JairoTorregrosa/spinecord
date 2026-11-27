@@ -202,10 +202,63 @@ describe("sensors", () => {
     expect(w.rayDistance()).toBeCloseTo(120 - 38, 1);
     expect(w.senseUltrasonic()).toBeLessThan(25);
   });
-  test("IR proximity is a percentage of about 70 cm", () => {
-    const w = quietWorld();
-    w.setPose({ x: 77, y: 20, th: 0 }); // 35 cm to the wall
-    expect(w.senseIrProximity()).toBe(50);
+  // A 300 x 300 cm room with one wall the tests aim at (x 300): nothing else falls in the infrared beam.
+  const room = (seed?: number) => {
+    const json = { ...EXAMPLES.lineOval, arena: { width_cm: 300, height_cm: 300 }, obstacles: [] };
+    return seed === undefined ? quietWorld(json) : new World(config(json), seed, DRIVE);
+  };
+  /** Sensor `cm` from the wall at x 300 along its axis, the axis `deg` off the wall's normal. */
+  const aim = (w: World, cm: number, deg = 0) => {
+    const th = (deg * Math.PI) / 180,
+      ahead = w.cfg.body.distance_sensor_x_cm;
+    w.setPose({ x: 300 - (ahead + cm) * Math.cos(th), y: 150 - (ahead + cm) * Math.sin(th), th });
+  };
+  test("IR proximity of a large wall square on reads about its distance in cm: 41 at 38 cm, 100 with nothing in range", () => {
+    const w = room();
+    const at = (cm: number) => (aim(w, cm), w.senseIrProximity());
+    expect(at(38)).toBe(41); // EV3-G read 40-41 at 38 cm from a white wall
+    expect(at(10)).toBe(11);
+    expect(at(30)).toBe(32);
+    expect(at(60)).toBe(64);
+    expect(at(100)).toBe(100);
+  });
+  test("IR proximity is not linear in distance: a slanted wall or an object smaller than the beam reads farther", () => {
+    const w = room();
+    aim(w, 30);
+    const square = w.irProximity();
+    aim(w, 30, 40);
+    expect(w.rayDistance()).toBeCloseTo(30, 6);
+    expect(w.irProximity()).toBeGreaterThan(square + 2); // about 11 % farther at 40 deg
+    // a 10 cm box 20 cm ahead fills only part of the beam
+    const b = quietWorld({
+      ...EXAMPLES.lineOval,
+      arena: { width_cm: 300, height_cm: 300 },
+      obstacles: [{ x: 150, y: 145, w: 10, h: 10 }],
+    });
+    b.setPose({ x: 150 - 20 - 8, y: 150, th: 0 });
+    expect(b.rayDistance()).toBeCloseTo(20, 6);
+    expect(b.irProximity()).toBeGreaterThan(20 * (40.5 / 38) + 1); // about 10 % farther than a wall at 20 cm
+  });
+  test("IR noise grows with the reading", () => {
+    const spread = (cm: number) => {
+      const w = room(7);
+      aim(w, cm);
+      const v = Array.from({ length: 400 }, () => w.senseIrProximity());
+      const m = v.reduce((a, b) => a + b, 0) / v.length;
+      return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length);
+    };
+    expect(spread(70)).toBeGreaterThan(1.5 * spread(20));
+  });
+  test("ultrasonic: a wall square on echoes, one slanted 20 deg still does, one at 60 deg gives no echo (255)", () => {
+    const w = room();
+    const look = (deg: number) => (aim(w, 40, deg), w.senseUltrasonic());
+    expect(look(0)).toBeCloseTo(40, 1);
+    expect(look(20)).toBeLessThan(45);
+    expect(look(30)).toBe(255);
+    expect(look(60)).toBe(255);
+    // and nothing in range reads 255 too: the far wall 292 cm away
+    w.setPose({ x: 0 + 10.5, y: 150, th: 0 });
+    expect(w.senseUltrasonic()).toBe(255);
   });
   test("sensor noise is seeded and does not disturb the motion", () => {
     const a = new World(config(), 5, DRIVE),

@@ -308,7 +308,7 @@ describe("sensors on ports come from the world", () => {
     const { call } = rig(world);
     const v = E.readF32((await call(E.inputReadySi(3, E.SENSOR_TYPE.ir, 0, 1, 0), 4)).globals, 0);
     expect(v).toBe(world.senseIrProximity());
-    expect(v).toBe(100); // 77 cm of free space ahead: beyond the 70 cm full scale
+    expect(v).toBeGreaterThan(77); // 77 cm of free space ahead: the far wall, read about 1 % per cm
   });
   test("99 0A clears sensor state: the gyro angle goes back to 0", async () => {
     const { call, run } = rig();
