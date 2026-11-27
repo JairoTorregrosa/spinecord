@@ -330,7 +330,10 @@ describe("--doctor", () => {
       const wide = join(dir, "wide.json");
       const drivetrain = { ...r1.profile.drivetrain, axle_track_cm: 20 };
       const body = { ...r1.twin?.body, half_width_cm: 9 };
-      writeFileSync(wide, JSON.stringify({ ...r1, profile: { ...r1.profile, drivetrain }, twin: { ...r1.twin, body } }));
+      writeFileSync(
+        wide,
+        JSON.stringify({ ...r1, profile: { ...r1.profile, drivetrain }, twin: { ...r1.twin, body } }),
+      );
       const quiet = probes({ which: () => null, portFree: async () => false });
       const only = await doctor({ robotArgs: ["--twin", wide], assistant: false, filesOnly: true }, quiet);
       expect(line(only.lines, "footprint r1-sim")).toMatchObject({
@@ -339,11 +342,18 @@ describe("--doctor", () => {
       });
       expect(only.code).toBe(0);
       const fine = await doctor(
-        { robotArgs: ["--twin", join(REPO, "deployments", "example", "robots", "r1.json")], assistant: false, filesOnly: true },
+        {
+          robotArgs: ["--twin", join(REPO, "deployments", "example", "robots", "r1.json")],
+          assistant: false,
+          filesOnly: true,
+        },
         quiet,
       );
       expect(fine.lines.some((l) => l.check.startsWith("footprint"))).toBe(false);
-      const cli = Bun.spawnSync(["bun", MAIN, "--doctor", "--files-only", "--twin", wide], { cwd: REPO, stdout: "pipe" });
+      const cli = Bun.spawnSync(["bun", MAIN, "--doctor", "--files-only", "--twin", wide], {
+        cwd: REPO,
+        stdout: "pipe",
+      });
       expect(cli.stdout.toString()).toMatch(/^warn {2}footprint r1-sim {2}axle track 20 cm/m);
       expect(cli.stdout.toString().trimEnd().split("\n").at(-1)).toBe("doctor: ok");
       expect(cli.exitCode).toBe(0);
