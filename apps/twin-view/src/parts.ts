@@ -10,6 +10,56 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 /** A point of the robot frame (x ahead, y left, z up) in the group's three.js frame. */
 export const P = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, z, -y);
 
+/** The robot-frame direction of a facing, turned by `yawDeg` about the vertical. */
+export function facingDir(f: "forward" | "back" | "left" | "right" | "up" | "down", yawDeg = 0): THREE.Vector3 {
+  const v = {
+    forward: [1, 0, 0],
+    back: [-1, 0, 0],
+    left: [0, 1, 0],
+    right: [0, -1, 0],
+    up: [0, 0, 1],
+    down: [0, 0, -1],
+  }[f];
+  return new THREE.Vector3(v[0], v[1], v[2]).applyAxisAngle(new THREE.Vector3(0, 0, 1), (yawDeg * Math.PI) / 180);
+}
+
+/** The "up" of a part that faces `dir`: the sky, or for a part that faces up or down, its back or its front. */
+export function upFor(dir: THREE.Vector3, yawDeg = 0): THREE.Vector3 {
+  if (Math.abs(dir.z) < 0.9) return new THREE.Vector3(0, 0, 1);
+  return new THREE.Vector3(dir.z > 0 ? -1 : 1, 0, 0).applyAxisAngle(
+    new THREE.Vector3(0, 0, 1),
+    (yawDeg * Math.PI) / 180,
+  );
+}
+
+/** The rotation (three.js frame) that turns a part built along +x with its top at +z (robot frame) to point along
+ *  `dir` with its top toward `up`. */
+export function orient(dir: THREE.Vector3, up: THREE.Vector3): THREE.Quaternion {
+  const ex = dir.clone().normalize();
+  const ez = up.clone().addScaledVector(ex, -up.dot(ex)).normalize();
+  const ey = new THREE.Vector3().crossVectors(ez, ex);
+  const m = new THREE.Matrix4().makeBasis(P(ex.x, ex.y, ex.z), P(ez.x, ez.y, ez.z), P(ey.x, ey.y, ey.z).negate());
+  return new THREE.Quaternion().setFromRotationMatrix(m);
+}
+
+/** The robot-frame box of a part whose own box (robot-style axes) is `min`..`max`, turned by `q` and moved to `at`. */
+export function boxOf(min: THREE.Vector3, max: THREE.Vector3, q: THREE.Quaternion, at: THREE.Vector3): THREE.Box3 {
+  const b = new THREE.Box3();
+  const v = new THREE.Vector3();
+  for (let i = 0; i < 8; i++) {
+    v.set(i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z);
+    const t = P(v.x, v.y, v.z).applyQuaternion(q);
+    b.expandByPoint(v.set(t.x + at.x, -t.z + at.y, t.y + at.z));
+  }
+  return b;
+}
+
+/** A robot-frame point of a part turned by `q` at `at`. */
+export function pointOf(local: THREE.Vector3, q: THREE.Quaternion, at: THREE.Vector3): THREE.Vector3 {
+  const t = P(local.x, local.y, local.z).applyQuaternion(q);
+  return new THREE.Vector3(t.x + at.x, -t.z + at.y, t.y + at.z);
+}
+
 /** LEGO's own colours (sRGB): white, light and dark bluish grey, black, red, and the rubber of a tread. */
 export const COL = {
   white: 0xf2f3f2,
@@ -27,6 +77,8 @@ export interface Kit {
   group: THREE.Group;
   mats: Record<"white" | "light" | "dark" | "black" | "red" | "rubber" | "anthracite" | "metal", THREE.Material>;
   keep<T extends { dispose(): void }>(x: T): T;
+  /** One geometry per key for the whole robot, made on first use and disposed with the robot. */
+  cached(key: string, make: () => THREE.BufferGeometry): THREE.BufferGeometry;
   /** Marks an object that moves or a material that changes: never merged. */
   live<T extends THREE.Object3D | THREE.Material>(x: T): T;
   add(geo: THREE.BufferGeometry, mat: THREE.Material, at: THREE.Vector3, parent?: THREE.Object3D): THREE.Mesh;
@@ -105,6 +157,7 @@ export function makeKit(group: THREE.Group): Kit {
     group,
     mats,
     keep,
+    cached,
     live(x) {
       liveSet.add(x);
       return x;

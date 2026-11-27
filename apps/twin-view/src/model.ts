@@ -1,17 +1,21 @@
-// The 3D body of a twin: an EV3 brick on a frame of beams over two large motors, tracks or wheels, its sensors
-// where the look puts them, and what the look adds (a phone, a bumper, a label). Built in cm from the real parts'
-// sizes; every moving part follows the twin's state: tread links and sprockets from the drive motors' tachos,
-// motor hubs from every tacho, the touch plunger, the colour sensor's light, the ultrasonic eye, the brick's LED
-// and screen. Parts are in drive.ts, brick.ts and sensors.ts; parts.ts holds the kit they share.
+// The 3D body of a twin, composed from a catalogue of parts placed by data: the drive from the profile's
+// drivetrain (drive.ts), the brick (brick.ts) on a frame of beams, every other motor and every sensor on its own
+// port (devices.ts) with its cable to that port, what the look adds (accessories.ts). Where each goes comes from
+// the world's `extensions.view` (look.ts) or a default mount that keeps clear of what is placed (layout.ts).
+// Every moving part follows the twin's state: tread links and sprockets or wheels from the drive motors' tachos,
+// every motor's hub from its tacho, the touch plunger, the colour sensor's light, the ultrasonic eye, the
+// brick's LED, buttons and screen.
 //
 // Robot frame: x ahead, y to the left, z up. three.js inside the robot group: X ahead, Y up, Z to the right.
 import * as THREE from "three";
+import { buildAccessories } from "./accessories";
 import { BRICK, buildBrick } from "./brick";
+import { buildDevices, cableTo, type BrickMount } from "./devices";
 import { buildDrive } from "./drive";
+import { Occupancy } from "./layout";
 import type { Look } from "./look";
 import type { RobotMeta, RobotState } from "./messages";
-import { disposeKit, makeKit, mergeKit, P } from "./parts";
-import { buildExtras } from "./sensors";
+import { boxOf, disposeKit, makeKit, mergeKit, orient, P, pointOf } from "./parts";
 
 export { P };
 
@@ -27,56 +31,69 @@ export interface RobotModel {
   dispose(): void;
 }
 
+const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
 export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
   const group = new THREE.Group();
   group.name = `robot ${meta.id}`;
   const kit = makeKit(group);
   const { mats } = kit;
   const body = meta.world.body;
+  const occ = new Occupancy();
 
   const drive = buildDrive(kit, meta, look);
+  for (const b of drive.boxes) occ.add(b);
 
-  // the brick on a frame of beams that rests on the motors
+  // ---------------------------------------------------------------- the brick, on a frame of beams
+  // flat: its screen up, the screen's top edge (ports A-D) to the front or the back; standing: upright, ports
+  // A-D on top, the screen facing the front or the back
+  const lb = look.brick;
+  const towards = lb.screen === "front" ? 1 : -1;
+  const q = lb.pose === "flat" ? orient(v3(towards, 0, 0), v3(0, 0, 1)) : orient(v3(0, 0, 1), v3(towards, 0, 0));
+  const lmin = v3(-BRICK.L / 2, -BRICK.W / 2, 0),
+    lmax = v3(BRICK.L / 2, BRICK.W / 2, BRICK.H);
+  const at0 = boxOf(lmin, lmax, q, v3(0, 0, 0));
+  const bx = lb.x ?? (body.front_cm - body.back_cm) / 2 - 1;
+  // two layers of beams under it
+  const bz = lb.z ?? drive.top + 1.5;
+  const origin = v3(bx - (at0.min.x + at0.max.x) / 2, lb.y - (at0.min.y + at0.max.y) / 2, bz - at0.min.z);
   const brick = buildBrick(kit);
-  const bx = look.brick.x;
-  const brickZ = drive.top + 1.5;
-  brick.group.position.copy(P(bx, 0, brickZ));
-  const flip = look.brick.screen === "back" ? -1 : 1;
-  if (flip < 0) brick.group.rotation.y = Math.PI;
+  brick.group.position.copy(P(origin.x, origin.y, origin.z));
+  brick.group.quaternion.copy(q);
   group.add(brick.group);
-  const holes = Math.round((BRICK.L + 1.6) / 0.8) + 1;
-  for (const y of [BRICK.W / 2 - 0.6, -BRICK.W / 2 + 0.6]) kit.beam(holes, bx, y, brickZ - 0.38, mats.dark);
-  for (const x of [bx - 4.4, bx + 4.4]) {
-    const n = Math.round((2 * drive.socket.y + 2.4) / 0.8) + 1;
-    kit.beam(n, x, 0, drive.top + 0.37, mats.dark).rotation.y = Math.PI / 2;
-  }
-  // red pins where the beams meet the brick's pin holes
+  // red pins in the pin holes of its sides
   for (const x of [-4.0, 4.0])
     for (const side of [1, -1])
-      kit.axleCyl(0.3, 0.3, bx + x, side * (BRICK.W / 2 + 0.12), brickZ + BRICK.H * 0.3, mats.red, group, 14);
-  const brickTop = brickZ + BRICK.H;
-  const port = (p: string) => {
-    const l = brick.portAt(p);
-    return { at: new THREE.Vector3(bx + flip * l.x, flip * l.y, brickZ + l.z), out: Math.sign(flip * l.x) };
+      kit.axleCyl(0.3, 0.3, x, side * (BRICK.W / 2 + 0.12), BRICK.H * 0.3, mats.red, brick.group, 14);
+  const box = boxOf(lmin, lmax, q, origin);
+  const frameZ = box.min.z;
+  // beams along the brick at its sides, and across under them at its ends, as wide as the drive's motors
+  const span = Math.max(box.max.x - box.min.x + 1.6, 4);
+  const along = Math.max(3, Math.round(span / 0.8) + 1);
+  for (const y of [box.max.y - 0.6, box.min.y + 0.6])
+    kit.beam(along, (box.min.x + box.max.x) / 2, y, frameZ - 0.38, mats.dark);
+  const reach = Math.max(box.max.y - lb.y, ...drive.motors.map((mo) => Math.max(mo.box.max.y, -mo.box.min.y)));
+  const across = Math.max(3, Math.round((2 * reach) / 0.8) + 1);
+  for (const x of [box.min.x + 0.6, box.max.x - 0.6])
+    kit.beam(across, x, 0, frameZ - 1.14, mats.dark).rotation.y = Math.PI / 2;
+  occ.add(box.clone().expandByPoint(v3(box.min.x, box.min.y, frameZ - 1.5)));
+
+  const mount: BrickMount = {
+    port(p) {
+      const local = brick.portAt(p);
+      return {
+        at: pointOf(local, q, origin),
+        out: pointOf(v3(Math.sign(local.x), 0, 0), q, v3(0, 0, 0)),
+      };
+    },
+    box,
+    driveTop: drive.top,
   };
+  for (const mo of drive.motors) cableTo(kit, mount, mo.socket.at, mo.socket.dir, mo.port);
 
-  // the drive motors' cables to their ports
-  const d = meta.drivetrain;
-  for (const [p, side] of [
-    [d?.left ?? "B", 1],
-    [d?.right ?? "C", -1],
-  ] as const) {
-    const s = drive.socket;
-    const from = new THREE.Vector3(s.x, side * s.y, s.z);
-    const { at, out } = port(p);
-    // out of the motor's socket, then up in one S-bend into the port
-    const a = from.clone().add(new THREE.Vector3(s.dir * 0.8, 0, 0.4));
-    const b = at.clone().add(new THREE.Vector3(out * 0.9, 0, 0));
-    const c = new THREE.Vector3((a.x + b.x) / 2 + out * 1.2, (a.y + b.y) / 2, (a.z + b.z) / 2);
-    kit.cable([from, a, c, b, at]);
-  }
-
-  const extras = buildExtras(kit, meta, look, { port, brickTop, brickHalfW: BRICK.W / 2, brickX: bx, brickZ });
+  const acc = buildAccessories(kit, meta, look, mount);
+  for (const b of acc.boxes) occ.add(b);
+  const devices = buildDevices(kit, meta, look, mount, occ);
 
   // a soft contact shadow under the body: the sun's shadow alone leaves the robot floating
   const shadowTex = kit.keep(contactShadowTexture());
@@ -106,15 +123,17 @@ export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
 
   mergeKit(kit);
 
+  const ray = devices.rayOrigin;
   return {
     group,
-    eye: extras.eye,
-    rayOrigin: extras.rayOrigin,
-    height: Math.max(extras.height, brickTop + 1),
+    eye: acc.eye,
+    rayOrigin: ray ? P(ray.x, ray.y, ray.z) : null,
+    height: Math.max(acc.height, devices.height, box.max.z + 1),
     update(s, tachos, timeS) {
       drive.update(tachos);
       brick.update(s, timeS);
-      extras.update(s, timeS, tachos);
+      acc.update(s, timeS);
+      devices.update(s, timeS, tachos);
     },
     dispose() {
       group.traverse((o) => (o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).dispose());

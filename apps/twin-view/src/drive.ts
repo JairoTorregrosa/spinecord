@@ -9,16 +9,16 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { Look } from "./look";
 import type { RobotMeta } from "./messages";
+import { largeMotor, type MotorPart } from "./motors";
 import { P, type Kit } from "./parts";
 
 export interface Drive {
-  /** Top of the drive and its motors, cm: where the brick's frame can rest. */
+  /** Top of the drive and its motors, cm: where the brick's frame can rest. 0 without a drive. */
   top: number;
-  /** The rear and front ends of the drive, robot x. */
-  rear: number;
-  front: number;
-  /** Where each drive motor's cable leaves it (robot frame, y of the left one), and which way it points (±x). */
-  socket: { x: number; y: number; z: number; dir: number };
+  /** The drive motors, their hubs on the drive's axles. */
+  motors: MotorPart[];
+  /** What the drive takes up, robot frame: parts placed later keep out of it. */
+  boxes: THREE.Box3[];
   update(tachos: Record<string, number>): void;
 }
 
@@ -30,19 +30,21 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
   const { mats, keep, group } = kit;
   const body = meta.world.body;
   const d = meta.drivetrain;
-  const D = d?.wheel_diameter_cm ?? 5.6;
+  if (look.drive === "none" || !d) return { top: 0, motors: [], boxes: [], update() {} };
+  const D = d.wheel_diameter_cm;
   const Rp = D / 2;
-  const track = d?.axle_track_cm ?? 2 * body.half_width_cm - 2;
-  const sign = d?.forward_sign ?? 1;
-  const ports = [
-    { port: d?.left ?? "B", y: track / 2, out: 1 },
-    { port: d?.right ?? "C", y: -track / 2, out: -1 },
+  const sign = d.forward_sign;
+  const sides = [
+    { port: d.left, y: d.axle_track_cm / 2, out: 1 },
+    { port: d.right, y: -d.axle_track_cm / 2, out: -1 },
   ];
   const spinners: { port: string; obj: THREE.Object3D }[] = [];
   const treads: { port: string; place: (travel: number) => void }[] = [];
+  const boxes: THREE.Box3[] = [];
   const cmPerDeg = (sign * Math.PI * D) / 360;
+  const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
-  let top: number, rear: number, front: number, hubX: number, hubZ: number, motorDir: number, motorY: number;
+  let hubX: number, hubZ: number, bodyDir: number, motorY: number;
   if (look.drive === "tracks") {
     // ten teeth per turn of the sprocket, so one link per tooth
     const pitch = (2 * Math.PI * Rp) / 10;
@@ -58,11 +60,11 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
     const linkGeo = keep(treadLinkGeometry(pitch));
     const sprocketGeo = keep(sprocketGeometry(Rp));
     const q = new THREE.Quaternion(),
-      zAxis = new THREE.Vector3(0, 0, 1),
-      one = new THREE.Vector3(1, 1, 1),
-      v = new THREE.Vector3(),
+      zAxis = v3(0, 0, 1),
+      one = v3(1, 1, 1),
+      v = v3(0, 0, 0),
       m4 = new THREE.Matrix4();
-    for (const dr of ports) {
+    for (const dr of sides) {
       const mesh = kit.live(new THREE.InstancedMesh(linkGeo, mats.rubber, N));
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.frustumCulled = false; // the instances move; the geometry's own bounds are one link's
@@ -93,7 +95,7 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
         const wheel = kit.live(new THREE.Group());
         wheel.position.copy(P(sx, dr.y, zc));
         group.add(wheel);
-        kit.add(sprocketGeo, mats.light, new THREE.Vector3(), wheel);
+        kit.add(sprocketGeo, mats.light, v3(0, 0, 0), wheel);
         spinners.push({ port: dr.port, obj: wheel });
         // the axle through it, and a red bush holding it on the outside
         kit.axleCyl(0.24, TRACK_W + 1.6, sx, dr.y - dr.out * 0.4, zc, mats.dark, group, 12);
@@ -102,79 +104,69 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
       // the frame on the inside of the track: a beam that holds the front sprocket's axle
       const holes = Math.max(3, Math.round(Ls / 0.8) + 1);
       kit.beam(holes, xc, dr.y - dr.out * (TRACK_W / 2 + 0.55), zc, mats.dark);
+      const yIn = dr.y - dr.out * (TRACK_W / 2 + 1),
+        yOut = dr.y + dr.out * (TRACK_W / 2 + 0.6);
+      boxes.push(new THREE.Box3(v3(xr - zc, Math.min(yIn, yOut), 0), v3(xf + zc, Math.max(yIn, yOut), 2 * zc)));
     }
-    top = zc + Rp + 0.5;
-    rear = xr - Rp - 0.8;
-    front = xf + Rp + 0.8;
     hubX = xr;
     hubZ = zc;
-    motorDir = 1;
-    motorY = track / 2 - TRACK_W / 2 - 0.9 - 1.2;
+    bodyDir = 1;
+    motorY = d.axle_track_cm / 2 - TRACK_W / 2 - 0.9 - 1.2;
   } else {
     const tyreW = 2.6;
-    const tyre = keep(tyreGeometry(Rp, tyreW));
-    const rim = keep(rimGeometry(Rp * 0.62, tyreW - 0.2));
-    for (const dr of ports) {
+    const tyre = kit.cached(`tyre ${Rp} ${tyreW}`, () => tyreGeometry(Rp, tyreW));
+    const rim = kit.cached(`rim ${Rp} ${tyreW}`, () => rimGeometry(Rp * 0.62, tyreW - 0.2));
+    for (const dr of sides) {
       const wheel = kit.live(new THREE.Group());
       wheel.position.copy(P(0, dr.y, Rp));
       group.add(wheel);
-      kit.add(tyre, mats.rubber, new THREE.Vector3(), wheel);
-      kit.add(rim, mats.light, new THREE.Vector3(), wheel);
+      kit.add(tyre, mats.rubber, v3(0, 0, 0), wheel);
+      kit.add(rim, mats.light, v3(0, 0, 0), wheel);
       spinners.push({ port: dr.port, obj: wheel });
+      boxes.push(new THREE.Box3(v3(-Rp, dr.y - tyreW / 2 - 0.3, 0), v3(Rp, dr.y + tyreW / 2 + 0.3, D)));
     }
-    // the ball caster at the back: a steel ball in a dark grey cage on a beam
-    const bx = -body.back_cm + 2.4;
-    const ball = kit.add(keep(new THREE.SphereGeometry(1.1, 24, 16)), mats.metal, P(bx, 0, 1.1));
-    ball.castShadow = true;
-    kit.box(2.9, 2.9, 1.6, bx, 0, 2.4, mats.dark, 0.5);
-    kit.box(1.6, 1.6, 0.8, bx, 0, 3.6, mats.dark, 0.2);
-    kit.beam(7, bx + 2.4, 0, 4.0, mats.dark, "z");
-    top = D + 0.2;
-    rear = -body.back_cm;
-    front = Rp + 1;
+    if (look.caster) {
+      // the ball caster at the back: a steel ball in a dark grey cage, on a beam up to the frame
+      const bx = -body.back_cm + 2.4;
+      kit.add(
+        kit.cached("ball", () => new THREE.SphereGeometry(1.1, 24, 16)),
+        mats.metal,
+        P(bx, 0, 1.1),
+      );
+      kit.box(2.9, 2.9, 1.6, bx, 0, 2.4, mats.dark, 0.5);
+      kit.box(1.6, 1.6, 0.8, bx, 0, 3.6, mats.dark, 0.2);
+      kit.beam(7, bx + 2.4, 0, 4.0, mats.dark, "z");
+      boxes.push(new THREE.Box3(v3(bx - 1.5, -1.5, 0), v3(bx + 5, 1.5, 4.4)));
+    }
     hubX = 0;
     hubZ = Rp;
-    motorDir = -1;
-    motorY = track / 2 - tyreW / 2 - 0.5 - 1.2;
+    bodyDir = -1;
+    motorY = d.axle_track_cm / 2 - tyreW / 2 - 0.5 - 1.2;
   }
 
-  // the large motors, their hubs on the drive's axles, their bodies along the robot
-  const motorGeo = largeMotorGeometry();
-  keep(motorGeo.white);
-  keep(motorGeo.grey);
-  const hubs: { port: string; obj: THREE.Object3D }[] = [];
-  for (const dr of ports) {
-    const y = dr.out * Math.max(1.4, motorY);
-    const m = new THREE.Group();
-    m.position.copy(P(hubX, y, hubZ));
-    if (motorDir < 0) m.rotation.y = Math.PI;
-    group.add(m);
-    kit.add(motorGeo.white, mats.white, new THREE.Vector3(), m);
-    kit.add(motorGeo.grey, mats.light, new THREE.Vector3(), m);
-    // the output: a red hub with a cross hole, turning with the tacho, on the outer face
-    const hub = kit.live(new THREE.Group());
-    hub.position.copy(P(hubX, y + dr.out * 1.3, hubZ));
-    group.add(hub);
-    kit.axleCyl(1.0, 0.32, 0, 0, 0, mats.red, hub, 24);
-    kit.box(0.95, 0.06, 0.22, 0, dr.out * 0.17, 0, mats.black, 0, hub);
-    kit.box(0.22, 0.06, 0.95, 0, dr.out * 0.17, 0, mats.black, 0, hub);
-    for (const a of [0, 1, 2, 3]) {
-      const ang = (a * Math.PI) / 2 + Math.PI / 4;
-      kit.axleCyl(0.2, 0.06, Math.cos(ang) * 0.68, dr.out * 0.17, Math.sin(ang) * 0.68, mats.black, hub, 10);
-    }
-    hubs.push({ port: dr.port, obj: hub });
-  }
-  top = Math.max(top, hubZ + 2.1);
+  // the large motors (drive motors are large whatever the ports say: a medium one could not carry the robot),
+  // their hubs on the drive's axles, their bodies along the robot
+  const motors = sides.map((dr) =>
+    largeMotor(
+      kit,
+      dr.port,
+      v3(hubX, dr.out * Math.max(1.4, motorY), hubZ),
+      v3(0, dr.out, 0),
+      v3(bodyDir, 0, 0),
+      v3(0, -1, 0),
+    ),
+  );
+  for (const m of motors) boxes.push(m.box);
+  const top = Math.max(look.drive === "tracks" ? hubZ + Rp + 0.5 : D + 0.2, ...motors.map((m) => m.box.max.z));
 
   return {
     top,
-    rear,
-    front,
-    socket: { x: hubX + motorDir * 9.3, y: Math.max(1.4, motorY), z: hubZ - 0.2, dir: motorDir },
+    motors,
+    boxes,
     update(tachos) {
       for (const t of treads) t.place((tachos[t.port] ?? 0) * cmPerDeg);
       for (const sp of spinners) sp.obj.rotation.z = -((tachos[sp.port] ?? 0) * cmPerDeg) / Rp;
-      for (const h of hubs) h.obj.rotation.z = -((tachos[h.port] ?? 0) * sign * Math.PI) / 180;
+      for (const m of motors) m.turn((tachos[m.port] ?? 0) * sign);
     },
   };
 }
@@ -295,41 +287,4 @@ function rimGeometry(r: number, w: number): THREE.BufferGeometry {
   });
   g.translate(0, 0, -(w - 0.2) / 2);
   return g;
-}
-
-/** The large motor's shell, its hub at the origin and its body running along +X: a round head Ø 4.2 around the
- *  output, a body that narrows toward the cable socket at the back, 11.2 cm in all. White above, grey below. */
-function largeMotorGeometry(): { white: THREE.BufferGeometry; grey: THREE.BufferGeometry } {
-  const side = (up: boolean): THREE.Shape => {
-    // the silhouette seen from the side (x along the motor, y up), cut at the seam between the two shells
-    const s = new THREE.Shape();
-    const R = 2.1;
-    if (up) {
-      s.moveTo(-R, 0);
-      s.absarc(0, 0, R, Math.PI, Math.PI / 2 - 0.2, true);
-      s.bezierCurveTo(2.6, 1.9, 5.0, 1.55, 7.4, 1.25);
-      s.quadraticCurveTo(9.1, 1.05, 9.1, 0);
-    } else {
-      s.moveTo(-R, 0);
-      s.absarc(0, 0, R, Math.PI, Math.PI * 1.5, false);
-      s.lineTo(5.5, -R);
-      s.bezierCurveTo(7.8, -R, 9.1, -1.6, 9.1, -0.8);
-      s.lineTo(9.1, 0);
-    }
-    s.closePath();
-    return s;
-  };
-  const extrude = (shape: THREE.Shape, w: number) => {
-    const g = new THREE.ExtrudeGeometry(shape, {
-      depth: w - 0.3,
-      bevelEnabled: true,
-      bevelThickness: 0.15,
-      bevelSize: 0.15,
-      bevelSegments: 2,
-      curveSegments: 18,
-    });
-    g.translate(0, 0, -(w - 0.3) / 2);
-    return g;
-  };
-  return { white: extrude(side(true), 2.3), grey: extrude(side(false), 2.4) };
 }
