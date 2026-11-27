@@ -482,6 +482,8 @@ function print(step: string, lines: Line[]): 0 | 1 {
   return done ? 0 : 1;
 }
 
+export const STEPS = ["status", "login", "confirm", "workshop", "smoke", "view", "flip", "report"];
+export const CONFIRM = ["org", "moved", "forward"];
 const USAGE = `usage: bun scripts/setup.ts <step>
   status                 every state, done or not, and the next one; changes nothing
   login [--profile <p>]  log the ant profile in (the browser opens); skipped when it is logged in
