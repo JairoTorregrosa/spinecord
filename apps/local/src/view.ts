@@ -8,7 +8,7 @@
 // resolve to this computer gets 403), and only the page served here may open the socket (any site a browser has
 // open can reach 127.0.0.1).
 import type { SimBrick } from "../../../packages/sim-ev3/brick";
-import { CONE_HALF_DEG, type World } from "../../../packages/sim-world/world";
+import { CONE_HALF_DEG, ObstacleError, type World } from "../../../packages/sim-world/world";
 import type { SimWorldProvider } from "../../../packages/sim-world/world-provider";
 import type {
   Box,
@@ -148,12 +148,13 @@ function boxOf(msg: Record<string, unknown>, w: World): Box {
   return r;
 }
 
-/** Sets box `r` down, or refuses when it would sit on the robot. */
-function setDown(w: World, r: Box): void {
+/** Does `change` to the world's boxes, or refuses with the world's reason. */
+function boxChange(change: () => void): void {
   try {
-    w.addObstacle(r);
+    change();
   } catch (e) {
-    throw new Refused("box_on_robot", (e as Error).message);
+    if (!(e instanceof ObstacleError)) throw e;
+    throw new Refused(e.code === "on_robot" ? "box_on_robot" : e.code === "id_taken" ? "invalid" : e.code, e.message);
   }
 }
 
@@ -290,36 +291,27 @@ export function serveView(
         w.carry(p);
         break;
       }
-      case "box_add":
-        setDown(w, boxOf(msg, w));
-        break;
-      case "box_remove":
-        w.removeObstacle(boxIndex());
-        break;
-      case "box_move": {
-        const i = boxIndex();
+      case "box_add": {
         const r = boxOf(msg, w);
-        const before = w.cfg.boxes;
-        w.removeObstacle(i);
-        try {
-          setDown(w, r);
-        } catch (e) {
-          w.cfg.boxes = before; // the box stays where it was
-          throw e;
-        }
+        boxChange(() => w.addObstacle(r));
+        break;
+      }
+      case "box_remove": {
+        const id = w.cfg.boxes[boxIndex()]!.id;
+        boxChange(() => w.removeObstacle(id));
+        break;
+      }
+      case "box_move": {
+        const id = w.cfg.boxes[boxIndex()]!.id;
+        const r = boxOf(msg, w);
+        boxChange(() => w.moveObstacle(id, r)); // refused, the box stays where it was
         break;
       }
       case "restore": {
         const own = original.get(w);
         if (!own) throw new Error(`the view never saw world "${w.cfg.name}" arrive: it cannot know its own boxes`);
-        const before = w.cfg.boxes;
-        w.cfg.boxes = own.map((b) => ({ ...b }));
-        try {
-          w.setPose({ ...w.cfg.start }); // free: the World checked its own boxes against its start when it was made
-        } catch (e) {
-          w.cfg.boxes = before;
-          throw e;
-        }
+        // free: the World checked its own boxes against its start when it was made
+        w.setObstacles(own, { ...w.cfg.start });
         break;
       }
       case "button": {

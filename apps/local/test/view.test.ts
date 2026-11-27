@@ -179,7 +179,7 @@ describe("the view listener", () => {
     const far = await reading("distance", "distance_cm");
     expect(await p.act({ t: "box_add", id: "r1-sim", x: 85, y: 50, w: 10, h: 20 })).toMatchObject({ ok: true });
     const boxes = await p.next<Extract<ServerMessage, { t: "boxes" }>>((m) => m.t === "boxes", 0);
-    expect(boxes.boxes).toEqual([{ x: 85, y: 50, w: 10, h: 20 }]);
+    expect(boxes.boxes).toEqual([{ id: "box1", x: 85, y: 50, w: 10, h: 20 }] as never);
     expect(Math.abs((await reading("distance", "distance_cm")) - 17)).toBeLessThan(3);
     expect(await p.act({ t: "box_add", id: "r1-sim", x: 55, y: 55, w: 10, h: 10 })).toMatchObject({
       ok: false,
@@ -236,9 +236,9 @@ describe("the view listener", () => {
     expect(loaded.ok).toBe(true);
     const w = fleet.bricks.get("r1-sim")!.world;
     expect(w.cfg.name).toBe("room-with-box");
-    w.cfg.boxes = []; // what a page's "take it away" leaves
+    w.setObstacles([]); // what a page's "take it away" leaves
     expect(await p.act({ t: "restore", id: "r1-sim" })).toMatchObject({ ok: true });
-    expect(w.cfg.boxes).toEqual([{ x: 10, y: 10, w: 12, h: 12 }]);
+    expect(w.cfg.boxes).toEqual([{ id: "box1", x: 10, y: 10, w: 12, h: 12 }]);
   });
 
   test("a button held on the page is pressed for the tools until the page lets go or goes away", async () => {
@@ -364,12 +364,14 @@ test("call arguments are cut for the page without splitting a character in two",
 });
 
 test("the page's preview of where the robot fits agrees with the world's own rule", async () => {
-  const cfg = await loadWorldFile(join(import.meta.dir, "..", "examples", "room.json"));
-  cfg.boxes = [
-    { x: 20, y: 20, w: 15, h: 30 },
-    { x: 80, y: 70, w: 25, h: 10 },
-    { x: 50, y: 95, w: 10, h: 10 },
-  ];
+  const cfg = {
+    ...(await loadWorldFile(join(import.meta.dir, "..", "examples", "room.json"))),
+    boxes: [
+      { id: "a", x: 20, y: 20, w: 15, h: 30 },
+      { id: "b", x: 80, y: 70, w: 25, h: 10 },
+      { id: "c", x: 50, y: 95, w: 10, h: 10 },
+    ],
+  };
   const w = new World(cfg);
   const shape = { width: cfg.width, height: cfg.height, body: cfg.body } as Parameters<typeof fit>[0];
   let seed = 7;

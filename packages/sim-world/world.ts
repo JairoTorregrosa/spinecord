@@ -37,6 +37,25 @@ export const COLOR_RGB: readonly (readonly [number, number, number])[] = [
   [140, 95, 60],
 ];
 
+/** A box on the floor. `id` names it for as long as it exists: a page and the event log refer to it by that. */
+export interface Obstacle extends Rect {
+  id: string;
+}
+/** A box as it is handed to the world: without `id` the world gives it the next free `box<n>`. */
+export type ObstacleInput = Rect & { id?: string };
+/** Why the world refused to change its obstacles (it then changed nothing). */
+export type ObstacleErrorCode = "invalid" | "outside" | "on_robot" | "no_such_box" | "id_taken";
+export class ObstacleError extends Error {
+  constructor(
+    readonly code: ObstacleErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+/** Obstacle ids: letters, digits, _ and - (they appear in events and in a page's messages). */
+const OBSTACLE_ID = /^[A-Za-z0-9_-]{1,32}$/;
+
 export interface Zone extends Rect {
   color: ColorId;
   label?: string;
@@ -107,7 +126,11 @@ export interface WorldConfig {
   extensions: Record<string, unknown>;
   width: number;
   height: number;
-  boxes: Rect[];
+  /**
+   * The obstacles, each with its id. Read-only: the world replaces the list on every change (a person's, a push),
+   * so clones keep theirs and `World.obstacles_rev` counts the changes. Change it through World's methods.
+   */
+  readonly boxes: readonly Obstacle[];
   zones: Zone[];
   lines: Line[];
   points: NamedPoint[];
@@ -351,7 +374,18 @@ export function parseWorld(json: unknown): WorldConfig {
     extensions: root.extensions === undefined ? {} : { ...obj(root.extensions, "extensions") },
     width: num(arena.width_cm, "arena.width_cm", 1),
     height: num(arena.height_cm, "arena.height_cm", 1),
-    boxes: arr(root.obstacles, "obstacles").map((b, i) => rect(b, `obstacles[${i}]`)),
+    boxes: withIds(
+      arr(root.obstacles, "obstacles").map((b, i) => {
+        const o = obj(b, `obstacles[${i}]`);
+        for (const k of Object.keys(o))
+          if (!["x", "y", "w", "h", "id"].includes(k))
+            fail(`obstacles[${i}].${k}`, "is not a known field (x, y, w, h, id)");
+        if (o.id !== undefined && (typeof o.id !== "string" || !OBSTACLE_ID.test(o.id)))
+          fail(`obstacles[${i}].id`, `must be 1 to 32 letters, digits, _ or -, got ${JSON.stringify(o.id)}`);
+        return { ...rect(b, `obstacles[${i}]`), ...(o.id === undefined ? {} : { id: o.id as string }) };
+      }),
+      (i, why) => fail(`obstacles[${i}].id`, why),
+    ),
     zones: arr(root.zones, "zones").map((z, i) => {
       const o = obj(z, `zones[${i}]`);
       const color = COLOR_NAMES.indexOf(o.color as (typeof COLOR_NAMES)[number]);
@@ -409,6 +443,25 @@ export function checkDrive(d: DriveGeometry): void {
     throw new Error(`world: drive.turn_scrub must be 0 or more and below 1 (the share of a turn lost), got ${s}`);
 }
 
+/** Gives each box without an id the next free `box<n>` (n from 1, in list order). `fail` names a repeated id. */
+function withIds(list: readonly ObstacleInput[], fail: (i: number, why: string) => never): Obstacle[] {
+  const taken = new Set<string>();
+  list.forEach((b, i) => {
+    if (b.id === undefined) return;
+    if (taken.has(b.id)) fail(i, `"${b.id}" is repeated`);
+    taken.add(b.id);
+  });
+  let n = 0;
+  return list.map((b) => {
+    if (b.id !== undefined) return { id: b.id, x: b.x, y: b.y, w: b.w, h: b.h };
+    let id: string;
+    do id = `box${++n}`;
+    while (taken.has(id));
+    taken.add(id);
+    return { id, x: b.x, y: b.y, w: b.w, h: b.h };
+  });
+}
+
 export interface AdvanceResult {
   /** Wheel travel that actually happened before a stall, as commanded cm of wheel (not what was asked). */
   left_cm: number;
@@ -461,6 +514,10 @@ export class World {
   private segs: Seg[] = [];
   private trackLine = -1;
   private trackS = 0;
+  /** Counts every change of the obstacles (a person's, a push): a viewer that saw another number shows them again. */
+  obstacles_rev = 0;
+  /** The highest n of the `box<n>` ids so far: a box set down later never takes an id one had before. */
+  private lastBoxN = 0;
   /** Length of each line (cm), in file order. */
   readonly line_lengths_cm: number[] = [];
 
@@ -491,6 +548,10 @@ export class World {
       }
       this.line_lengths_cm.push(s);
     });
+    for (const b of cfg.boxes) {
+      const m = /^box(\d+)$/.exec(b.id);
+      if (m) this.lastBoxN = Math.max(this.lastBoxN, Number(m[1]));
+    }
     this.pose = { ...cfg.start };
     this.gyroZeroTh = this.pose.th;
     if (this.collides(this.pose))
@@ -545,28 +606,97 @@ export class World {
     }
   }
 
-  /**
-   * A person sets a box down (a viewer). Fails, changing nothing, if it is not a box of positive size or if it
-   * would overlap the robot. Returns its index in `cfg.boxes`. The array is replaced, never changed in place:
-   * clones of this world keep theirs.
-   */
-  addObstacle(r: Rect): number {
-    if (![r.x, r.y, r.w, r.h].every(Number.isFinite) || !(r.w > 0 && r.h > 0))
-      throw new Error("addObstacle: x, y, w, h must be finite numbers, with w and h > 0");
-    const before = this.cfg.boxes;
-    this.cfg.boxes = [...before, { x: r.x, y: r.y, w: r.w, h: r.h }];
-    if (this.collides(this.pose)) {
-      this.cfg.boxes = before;
-      throw new Error("addObstacle: the box would overlap the robot; set it down somewhere free");
-    }
-    return this.cfg.boxes.length - 1;
+  /** The box with this id, or undefined. */
+  obstacle(id: string): Obstacle | undefined {
+    return this.cfg.boxes.find((b) => b.id === id);
   }
 
-  /** A person takes box `i` away (a viewer). Fails if there is no such box. */
-  removeObstacle(i: number): void {
-    if (!Number.isInteger(i) || i < 0 || i >= this.cfg.boxes.length)
-      throw new Error(`removeObstacle: no obstacle ${i}; this world has ${this.cfg.boxes.length}`);
-    this.cfg.boxes = this.cfg.boxes.filter((_, j) => j !== i);
+  /**
+   * A person sets a box down (a viewer). Returns its id: `r.id`, or the next free `box<n>`. Throws ObstacleError,
+   * changing nothing: `invalid` (not finite, a side not > 0, a malformed id), `outside` (not wholly inside the
+   * arena), `on_robot` (it would overlap the robot), `id_taken`.
+   */
+  addObstacle(r: ObstacleInput): string {
+    const id = r.id ?? this.freeId();
+    if (r.id !== undefined && this.obstacle(r.id))
+      throw new ObstacleError("id_taken", `addObstacle: there is a box "${r.id}" already`);
+    this.place([...this.cfg.boxes, this.checked("addObstacle", { ...r, id })]);
+    return id;
+  }
+  /** A person lifts box `id` and sets it down as `to` (a viewer): it keeps its id and its place in the list. Errors as addObstacle, and `no_such_box`. */
+  moveObstacle(id: string, to: Rect): void {
+    const b = this.existing("moveObstacle", id);
+    const moved = this.checked("moveObstacle", { ...b, x: to.x, y: to.y, w: to.w, h: to.h });
+    this.place(this.cfg.boxes.map((o) => (o.id === id ? moved : o)));
+  }
+  /** A person takes box `id` away (a viewer). Throws ObstacleError `no_such_box` when there is none. */
+  removeObstacle(id: string): void {
+    this.existing("removeObstacle", id);
+    this.place(this.cfg.boxes.filter((o) => o.id !== id));
+  }
+  /**
+   * Every obstacle at once (a viewer restores a world's own boxes), and the robot set down at `pose` when given
+   * (a teleport, as setPose). Throws ObstacleError, changing nothing, as addObstacle would for any of them, or when
+   * the robot does not fit among them.
+   */
+  setObstacles(list: readonly ObstacleInput[], pose?: Pose): void {
+    const fail = (i: number, why: string): never => {
+      throw new ObstacleError("id_taken", `setObstacles: obstacle ${i}: ${why}`);
+    };
+    const next = withIds(list, fail).map((b) => this.checked("setObstacles", b, false));
+    const before = this.cfg.boxes;
+    this.boxesNow(next);
+    if (this.collides(pose ?? this.pose)) {
+      this.boxesNow(before);
+      throw new ObstacleError(
+        "on_robot",
+        "setObstacles: a box would overlap the robot; the obstacles stay as they were",
+      );
+    }
+    this.obstacles_rev++;
+    if (pose) this.setPose(pose);
+  }
+
+  private existing(op: string, id: string): Obstacle {
+    const b = typeof id === "string" ? this.obstacle(id) : undefined;
+    if (!b)
+      throw new ObstacleError(
+        "no_such_box",
+        `${op}: no box ${JSON.stringify(id)}; this world has ${this.cfg.boxes.map((o) => o.id).join(", ") || "none"}`,
+      );
+    return b;
+  }
+  /** `b` if it can stand in this arena, else the ObstacleError that says why; with `robot`, also off the robot. */
+  private checked(op: string, b: Obstacle, robot = true): Obstacle {
+    if (![b.x, b.y, b.w, b.h].every(Number.isFinite) || !(b.w > 0 && b.h > 0))
+      throw new ObstacleError("invalid", `${op}: x, y, w, h must be finite numbers, with w and h > 0`);
+    if (!OBSTACLE_ID.test(b.id))
+      throw new ObstacleError(
+        "invalid",
+        `${op}: an id is 1 to 32 letters, digits, _ or -, got ${JSON.stringify(b.id)}`,
+      );
+    const { width, height } = this.cfg;
+    if (b.x < 0 || b.y < 0 || b.x + b.w > width || b.y + b.h > height)
+      throw new ObstacleError("outside", `${op}: a box lies wholly inside the arena (0..${width} x 0..${height} cm)`);
+    const out: Obstacle = { id: b.id, x: b.x, y: b.y, w: b.w, h: b.h };
+    if (robot && this.boxCollides(out, this.pose))
+      throw new ObstacleError("on_robot", `${op}: the box would overlap the robot; set it down somewhere free`);
+    return out;
+  }
+  /** The next `box<n>` no box has had in this world. */
+  private freeId(): string {
+    let id: string;
+    do id = `box${++this.lastBoxN}`;
+    while (this.obstacle(id));
+    return id;
+  }
+  /** Replaces the list (never changed in place: clones keep theirs) and counts the change. */
+  private place(next: Obstacle[]): void {
+    this.boxesNow(next);
+    this.obstacles_rev++;
+  }
+  private boxesNow(next: readonly Obstacle[]): void {
+    (this.cfg as { boxes: readonly Obstacle[] }).boxes = next;
   }
 
   /**
@@ -619,47 +749,49 @@ export class World {
   }
 
   collides(p: Pose): boolean {
-    const { width, height, boxes, body: g } = this.cfg;
+    const { width, height, boxes } = this.cfg;
     const cs = this.corners(p);
+    for (const [x, y] of cs) if (x < 0 || x > width || y < 0 || y > height) return true;
+    return boxes.some((b) => this.boxCollides(b, p, cs));
+  }
+  /** Whether box `b` overlaps the footprint at pose `p` (touching counts), by the separating axis theorem. */
+  boxCollides(b: Rect, p: Pose, cs: Vec[] = this.corners(p)): boolean {
+    // the world's axes: the footprint's bounding box against the box
     let minx = Infinity,
       maxx = -Infinity,
       miny = Infinity,
       maxy = -Infinity;
     for (const [x, y] of cs) {
-      if (x < 0 || x > width || y < 0 || y > height) return true;
       if (x < minx) minx = x;
       if (x > maxx) maxx = x;
       if (y < miny) miny = y;
       if (y > maxy) maxy = y;
     }
-    const c = Math.cos(p.th),
+    if (maxx < b.x || minx > b.x + b.w || maxy < b.y || miny > b.y + b.h) return false;
+    // the body's own axes
+    const g = this.cfg.body,
+      c = Math.cos(p.th),
       s = Math.sin(p.th);
-    for (const b of boxes) {
-      if (maxx < b.x || minx > b.x + b.w || maxy < b.y || miny > b.y + b.h) continue;
-      // The body's own axes (separating axis theorem).
-      let umin = Infinity,
-        umax = -Infinity,
-        vmin = Infinity,
-        vmax = -Infinity;
-      for (const [bx, by] of [
-        [b.x, b.y],
-        [b.x + b.w, b.y],
-        [b.x + b.w, b.y + b.h],
-        [b.x, b.y + b.h],
-      ] as Vec[]) {
-        const dx = bx - p.x,
-          dy = by - p.y;
-        const u = dx * c + dy * s,
-          v = -dx * s + dy * c;
-        if (u < umin) umin = u;
-        if (u > umax) umax = u;
-        if (v < vmin) vmin = v;
-        if (v > vmax) vmax = v;
-      }
-      if (umax < -g.back_cm || umin > g.front_cm || vmax < -g.half_width_cm || vmin > g.half_width_cm) continue;
-      return true;
+    let umin = Infinity,
+      umax = -Infinity,
+      vmin = Infinity,
+      vmax = -Infinity;
+    for (const [bx, by] of [
+      [b.x, b.y],
+      [b.x + b.w, b.y],
+      [b.x + b.w, b.y + b.h],
+      [b.x, b.y + b.h],
+    ] as Vec[]) {
+      const dx = bx - p.x,
+        dy = by - p.y;
+      const u = dx * c + dy * s,
+        v = -dx * s + dy * c;
+      if (u < umin) umin = u;
+      if (u > umax) umax = u;
+      if (v < vmin) vmin = v;
+      if (v > vmax) vmax = v;
     }
-    return false;
+    return !(umax < -g.back_cm || umin > g.front_cm || vmax < -g.half_width_cm || vmin > g.half_width_cm);
   }
 
   // ----- motion -----

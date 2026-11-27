@@ -46,6 +46,14 @@ describe("overhead render (pure RGBA buffer)", () => {
     );
     expect(near).toContainEqual([230, 40, 60]);
   });
+  test("a box that moved is drawn where it is now, not where the first picture had it", () => {
+    const w = quietWorld();
+    expect(px(renderWorld(w, { rays: false }), 60 * 4, (90 - 45) * 4)).toEqual([110, 110, 125]);
+    w.moveObstacle(w.cfg.boxes[0]!.id, { x: 95, y: 60, w: 10, h: 10 });
+    const img = renderWorld(w, { rays: false });
+    expect(px(img, 60 * 4, (90 - 45) * 4)).not.toEqual([110, 110, 125]);
+    expect(px(img, 100 * 4, (90 - 65) * 4)).toEqual([110, 110, 125]);
+  });
   test("snapshotPNG is a valid PNG whose pixels decode back to the buffer", () => {
     const w = quietWorld(EXAMPLES.wallsMaze);
     const img = renderWorld(w, { scale: 2 });

@@ -38,9 +38,9 @@
     "obstacles": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/rect"
+        "$ref": "#/$defs/obstacle"
       },
-      "description": "Solid boxes: the robot stalls against them and the distance sensor sees them."
+      "description": "Solid boxes: the robot stalls against them and the distance sensor sees them. Each has an id (given here, or box1, box2, ... in order) that names it while it exists."
     },
     "zones": {
       "type": "array",
@@ -202,6 +202,37 @@
         "h": {
           "type": "number",
           "minimum": 0
+        }
+      }
+    },
+    "obstacle": {
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "w": {
+          "type": "number",
+          "minimum": 0
+        },
+        "h": {
+          "type": "number",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,32}$",
+          "description": "Names the box in events and in a page's messages; unique within the world."
         }
       }
     }
