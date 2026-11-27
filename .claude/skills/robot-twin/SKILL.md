@@ -115,7 +115,7 @@ Keep each value with its source: state 7 needs them.
 
 ## 5 REGISTER
 
-1. `cd <clone>; bun scripts/setup.ts workshop`. Once the robot file exists, the setup registers it after `--twin` (with an EV3, after `--ev3` too), with bun's full path and local scope, and keeps its world and `--view`. A line `ev3 todo` means the setup is not done: do skill `setup-spinecord` first. A doctor `port` fail that names this session's ports is expected until the restart.
+1. `cd <clone>; bun scripts/setup.ts workshop`. Once the robot file exists, the setup registers it after `--twin` (with an EV3, after `--ev3` too), with bun's full path and local scope, and keeps its world and `--view`. A `todo` line for `ev3` means the setup is not done: do skill `setup-spinecord` first. A doctor `port` fail that names this session's ports is expected until the restart.
 2. The registration's `--name` wins over the file's `name`. When `bun scripts/setup.ts report` shows a `Robot name:` other than the file's `name`, run `bun scripts/setup.ts name "<the file's name>"`, or `name none` when the file has none.
 3. `claude mcp get spinecord` shows bun's full path and `--twin` with the robot file.
 4. "Close Claude Code and start it again in the workshop folder. Your robot is `<id>-sim` in the simulation, `<id>` with the EV3 connected. The 3D view is at http://127.0.0.1:8769/."
@@ -146,6 +146,6 @@ Registered: <robot flags> / not yet
 ## Rules
 
 - The brick beats a photo, a photo beats an assumption, and an assumption is always a token in `twin.unconfirmed`.
-- Only `~/mi-robot/robot.json` is written; never files in the clone.
+- You write only `~/mi-robot/robot.json`, never files in the clone; `setup.ts` writes its own files in `~/mi-robot`.
 - Never run a long-lived server yourself: the person runs state 4's line.
 - The real robot moves only after the person says the floor is clear.
