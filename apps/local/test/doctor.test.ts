@@ -338,8 +338,25 @@ describe("--doctor", () => {
       const only = await doctor({ robotArgs: ["--twin", wide], assistant: false, filesOnly: true }, quiet);
       expect(line(only.lines, "footprint r1-sim")).toMatchObject({
         status: "warn",
-        reason: "axle track 20 cm is wider than the footprint (18 cm wide)",
+        reason:
+          "footprint 18 cm wide is narrower than the axle track 20 cm plus a tyre or track width each side (25.6 cm)",
       });
+      // wide link treads: a 19.2 cm body around a 16 cm axle track has no room for them
+      const treads = join(dir, "treads.json");
+      writeFileSync(
+        treads,
+        JSON.stringify({
+          ...r1,
+          profile: { ...r1.profile, drivetrain: { ...r1.profile.drivetrain, axle_track_cm: 16 } },
+          twin: {
+            ...r1.twin,
+            body: { ...r1.twin?.body, half_width_cm: 9.6 },
+            view: { drive: "tracks", track: "links" },
+          },
+        }),
+      );
+      const tread = await doctor({ robotArgs: ["--twin", treads], assistant: false, filesOnly: true }, quiet);
+      expect(line(tread.lines, "footprint r1-sim")?.reason).toContain("(23.7 cm)");
       expect(only.code).toBe(0);
       const fine = await doctor(
         {
@@ -354,7 +371,7 @@ describe("--doctor", () => {
         cwd: REPO,
         stdout: "pipe",
       });
-      expect(cli.stdout.toString()).toMatch(/^warn {2}footprint r1-sim {2}axle track 20 cm/m);
+      expect(cli.stdout.toString()).toMatch(/^warn {2}footprint r1-sim {2}footprint 18 cm wide/m);
       expect(cli.stdout.toString().trimEnd().split("\n").at(-1)).toBe("doctor: ok");
       expect(cli.exitCode).toBe(0);
     } finally {

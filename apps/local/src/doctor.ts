@@ -383,7 +383,7 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
           check: `twin ${r.id}`,
           reason: describeTwin(r.robot, r.world, r.ownBuild === true, r.build?.drive),
         });
-        const clash = footprintClash(r.robot, r.world);
+        const clash = footprintClash(r.robot, r.world, r.build);
         if (clash)
           add({
             status: "warn",

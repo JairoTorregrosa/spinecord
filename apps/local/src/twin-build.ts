@@ -7,6 +7,7 @@ import type { RobotFile } from "../../../packages/driver-ev3/robot-file";
 import { TREAD_GRIP, type PhysicalDrive, type Tread } from "../../../packages/sim-ev3/brick";
 import { parseBrickPorts, type BrickPorts } from "../../../packages/sim-ev3/ports";
 import { parseWorld, type BodyShape } from "../../../packages/sim-world/world";
+import rolling from "../../../packages/lego-parts/data/rolling.json";
 
 /** The top-level keys of a robot file; anything else is a typo that would otherwise go unnoticed. */
 const FILE_KEYS = ["description", "name", "hardware", "profile", "pair", "twin"];
@@ -285,11 +286,37 @@ function checkPorts(
 
 /** One line of what a twin will have, for `--doctor`: ports, pair and drivetrain, footprint, and where they came from. */
 /** A build no robot can have: wheels further apart than the body is wide. Null when the file is consistent. */
-export function footprintClash(robot: RobotFile, world: unknown): string | null {
-  const track = robot.profile.drivetrain?.axle_track_cm;
+/** One tyre's or track's width in cm, from the parts map: the track the look names (else the one rolling nearest the
+ * wheel diameter), or the EV3 tyre nearest the wheel diameter. */
+function treadWidthCm(build: TwinBuild | null | undefined, diameter: number): number {
+  const part = (key: string) => {
+    const p = rolling.parts.find((x) => x.key === key);
+    if (!p) throw new Error(`lego-parts: no ${key} in rolling.json`);
+    return { d: (p.outer_diameter_mm?.value ?? 0) / 10, w: p.width_mm.value / 10 };
+  };
+  const view = build?.view as { drive?: string; track?: string } | undefined;
+  if (view?.drive === "tracks") {
+    const kind = view.track ?? (Math.abs(diameter - 3.68) <= Math.abs(diameter - 5.52) ? "rubber" : "links");
+    return part(kind === "rubber" ? "track_rubber" : "tread_link").w;
+  }
+  const tyres = ["tyre_56x28", "tyre_43x22", "tyre_69x36"].map(part);
+  return tyres.reduce((a, b) => (Math.abs(b.d - diameter) < Math.abs(a.d - diameter) ? b : a)).w;
+}
+
+/** A footprint the file writes is at least the axle track plus one tyre or track width on each side; the package's
+ * default footprint (no `twin.body.half_width_cm`) only at least the axle track. */
+export function footprintClash(robot: RobotFile, world: unknown, build?: TwinBuild | null): string | null {
+  const d = robot.profile.drivetrain;
+  if (d?.axle_track_cm === undefined) return null;
   const width = 2 * parseWorld(world).body.half_width_cm;
-  return track !== undefined && track > width
-    ? `axle track ${track} cm is wider than the footprint (${width} cm wide)`
+  const written = (build?.body as { half_width_cm?: number } | undefined)?.half_width_cm !== undefined;
+  if (!written)
+    return d.axle_track_cm > width
+      ? `axle track ${d.axle_track_cm} cm is wider than the footprint (${width} cm wide)`
+      : null;
+  const need = Math.round((d.axle_track_cm + 2 * treadWidthCm(build, d.wheel_diameter_cm)) * 10) / 10;
+  return width < need
+    ? `footprint ${width} cm wide is narrower than the axle track ${d.axle_track_cm} cm plus a tyre or track width each side (${need} cm)`
     : null;
 }
 
