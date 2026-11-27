@@ -303,8 +303,9 @@ function treadWidthCm(build: TwinBuild | null | undefined, diameter: number): nu
   return tyres.reduce((a, b) => (Math.abs(b.d - diameter) < Math.abs(a.d - diameter) ? b : a)).w;
 }
 
-/** A footprint the file writes is at least the axle track plus one tyre or track width on each side; the package's
- * default footprint (no `twin.body.half_width_cm`) only at least the axle track. */
+/** The axle track runs between the middles of the two tyres or tracks, so a footprint the file writes is at least
+ * the axle track plus one tyre or track width (half of it on each side); the package's default footprint (no
+ * `twin.body.half_width_cm`) only at least the axle track. */
 export function footprintClash(robot: RobotFile, world: unknown, build?: TwinBuild | null): string | null {
   const d = robot.profile.drivetrain;
   if (d?.axle_track_cm === undefined) return null;
@@ -314,9 +315,9 @@ export function footprintClash(robot: RobotFile, world: unknown, build?: TwinBui
     return d.axle_track_cm > width
       ? `axle track ${d.axle_track_cm} cm is wider than the footprint (${width} cm wide)`
       : null;
-  const need = Math.round((d.axle_track_cm + 2 * treadWidthCm(build, d.wheel_diameter_cm)) * 10) / 10;
+  const need = Math.round((d.axle_track_cm + treadWidthCm(build, d.wheel_diameter_cm)) * 10) / 10;
   return width < need
-    ? `footprint ${width} cm wide is narrower than the axle track ${d.axle_track_cm} cm plus a tyre or track width each side (${need} cm)`
+    ? `footprint ${width} cm wide is narrower than the axle track ${d.axle_track_cm} cm plus one tyre or track width (${need} cm)`
     : null;
 }
 
