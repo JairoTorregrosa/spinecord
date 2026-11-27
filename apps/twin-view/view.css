@@ -252,6 +252,15 @@ select {
 .panel.folded {
   height: auto !important;
 }
+/* a folded side panel is only its title: as narrow as that */
+.tools.folded,
+.brick.folded {
+  width: auto;
+  min-width: 150px;
+}
+.brick.folded #battery {
+  display: none;
+}
 .mini {
   font-size: 11px;
   padding: 1px 8px;
@@ -782,6 +791,12 @@ code {
   }
   #clock {
     display: none;
+  }
+  /* the top holds the bar and the folded panels: the hint goes above the calls */
+  .hint {
+    top: auto;
+    bottom: calc(var(--calls-h) + 22px);
+    max-width: calc(100% - 24px);
   }
 }
 @media (max-height: 640px) {
