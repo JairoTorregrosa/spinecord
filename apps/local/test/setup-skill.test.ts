@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIRM, launchLine, parseAuth, parseMcpGet, robotArgs, STEPS } from "../../../scripts/setup";
+import { CONFIRM, isRegistered, launchLine, parseAuth, parseMcpGet, robotArgs, STEPS } from "../../../scripts/setup";
 
 const DIR = join(import.meta.dir, "..", "..", "..", ".claude", "skills", "setup-spinecord");
 const SKILL = join(DIR, "SKILL.md");
@@ -99,8 +99,27 @@ test("setup.ts reads claude auth status and claude mcp get", () => {
   });
   const get =
     "spinecord:\n  Scope: Local config (private to you in this project)\n  Status: ✓ Connected\n  Command: bun\n  Args: /h/spinecord/apps/local/main.ts --twin /h/x.json\n";
-  expect(parseMcpGet(get)).toEqual({ scope: "local", args: "/h/spinecord/apps/local/main.ts --twin /h/x.json" });
-  expect(parseMcpGet("No MCP server found with name: spinecord")).toEqual({ scope: undefined, args: undefined });
+  expect(parseMcpGet(get)).toEqual({
+    scope: "local",
+    command: "bun",
+    args: "/h/spinecord/apps/local/main.ts --twin /h/x.json",
+  });
+  expect(parseMcpGet("No MCP server found with name: spinecord")).toEqual({
+    scope: undefined,
+    command: undefined,
+    args: undefined,
+  });
+});
+
+test("setup.ts registers bun by its full path, so a terminal without bun on PATH still starts spinecord", () => {
+  const args = ["/h/spinecord/apps/local/main.ts", "--twin", "/h/x.json"];
+  const reg = { scope: "local", command: "/h/.bun/bin/bun", args: args.join(" ") };
+  expect(isRegistered(reg, "/h/.bun/bin/bun", args, "darwin")).toBe(true);
+  // a registration with a bare `bun` is done again: Claude Code finds no bun in a new macOS terminal
+  expect(isRegistered({ ...reg, command: "bun" }, "/h/.bun/bin/bun", args, "darwin")).toBe(false);
+  expect(isRegistered({ ...reg, scope: "user" }, "/h/.bun/bin/bun", args, "darwin")).toBe(false);
+  const win = { scope: "local", command: "C:/Users/a/.bun/bin/bun.exe", args: "C:/S/main.ts" };
+  expect(isRegistered(win, "c:\\users\\a\\.bun\\bin\\bun.exe", ["c:\\s\\main.ts"], "win32")).toBe(true);
 });
 
 test("setup.ts registers absolute paths, the EV3 first, and prints a launch line per shell", () => {
