@@ -26,7 +26,7 @@ A part whose kind is unsure: "Is the part at <place> a <kind a> (<its tell>) or 
 | 10 | "Does the brick lie flat or stand upright? Which end of it has the screen and ports A-D: toward the front or the back?" | flat / upright; front / back | `places` | flat; the end you can see in the photo |
 | 11 | Per sensor: "How far ahead of the wheel axle is it (negative if behind), how far left or right of the middle, how high, and which way does it look (ahead, down, up, sideways, back)?" | numbers; ahead / down / up / left / right / back | `places` | identify.md's default place of that sensor; the way its face points in the photo |
 | 12 | "Is a phone on the robot? Where does it stand, how high is its bottom edge, which way does its screen face?" | none / numbers, front / back | `places` | none |
-| 13 | "What is your robot called?" | free | none | `mi-robot` |
+| 13 | "What is your robot called? You may leave it without a name." If `~/mi-robot/.spinecord-setup.json` has `name`, ask "Is it still <name>?" instead | free: 1-22 letters, digits, spaces, `'` `.` `-` | none | no name: leave `name` out; `profile.id` is `mi-robot` |
 | 14 | Always last: "Is there anything the photo does not show: a sensor underneath or inside, another motor, a part behind the brick?" | no / yes: what, where, which port | the ports | the ports you could not see stay listed |
 
 A value assumed here keeps its token in `twin.unconfirmed`. Write the question that would confirm it in the report.

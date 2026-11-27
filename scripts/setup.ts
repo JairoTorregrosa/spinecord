@@ -7,6 +7,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
+import { parseRobotName } from "../apps/local/src/config";
 import { paysBeforeProfile, type Env } from "../examples/assistant/setup";
 
 const REPO = join(import.meta.dir, "..");
@@ -33,6 +34,8 @@ export interface Robots {
 export interface State {
   profile: string;
   ev3?: boolean;
+  /** The name the person gave the robot (`--name` of the registration); absent: no name. */
+  name?: string;
   /** The organization the person confirmed pays. */
   org?: string;
   smoke?: { args: string; answer: string; cost_usd: number };
@@ -70,8 +73,8 @@ export function parseMcpGet(text: string): { scope?: string; args?: string } {
   };
 }
 
-/** The robot flags of the registration, with every path absolute. */
-export function robotArgs(robots: Robots, ev3File: string | null, repo: string = REPO): string[] {
+/** The robot flags of the registration, with every path absolute, and the person's name for the robot last. */
+export function robotArgs(robots: Robots, ev3File: string | null, repo: string = REPO, name?: string): string[] {
   const abs = (p: string) => (isAbsolute(p) ? p : join(repo, p));
   const out: string[] = [];
   if (ev3File !== null) out.push("--ev3", abs(ev3File));
@@ -79,6 +82,7 @@ export function robotArgs(robots: Robots, ev3File: string | null, repo: string =
   robots.twin.forEach((a, i) =>
     out.push(i > 0 && pathFlags.has(robots.twin[i - 1]!) && !a.startsWith("-") ? abs(a) : a),
   );
+  if (name !== undefined) out.push("--name", name);
   return out;
 }
 
@@ -108,8 +112,11 @@ function saveState(s: State): void {
 const ev3Copy = (): string => join(WORKSHOP, "robots", basename(robots().ev3));
 const ev3File = (s: State): string | null =>
   s.ev3 ? (existsSync(ev3Copy()) ? ev3Copy() : join(REPO, robots().ev3)) : null;
-const wanted = (s: State): string[] => robotArgs(robots(), ev3File(s));
-/** The smoke test drives the twin only, so its record holds the twin flags, which an EV3 change leaves alone. */
+const wanted = (s: State): string[] => robotArgs(robots(), ev3File(s), REPO, s.name);
+/**
+ * The smoke test drives the twin only, so its record holds the twin flags, which an EV3 change and a new name
+ * leave alone.
+ */
 const twinKey = (): string => robotArgs(robots(), null).join(" ");
 const norm = (s: string) => (process.platform === "win32" ? s.replaceAll("/", "\\").toLowerCase() : s);
 
@@ -468,6 +475,36 @@ async function flip(s: State): Promise<Line[]> {
   return [{ status: "ok", what: "flip", why: `${copy}: forward_sign ${d.forward_sign}` }, ...(await workshop(s))];
 }
 
+/**
+ * The person named the robot, renamed it, or took its name away (`none`): the name of setup's own registration
+ * changes, and nothing else. A registration this setup did not write (the robot-twin skill's) is left alone: its
+ * robot file holds the name.
+ */
+async function name(s: State, raw: string): Promise<Line[]> {
+  let next: string | undefined;
+  try {
+    next = raw === "none" ? undefined : parseRobotName(raw, "name");
+  } catch (e) {
+    return [{ status: "fail", what: "name", why: (e as Error).message, next: "ask the person for another name" }];
+  }
+  const reg = await registration();
+  const ours = [MAIN, ...wanted(s)].join(" ");
+  if (reg.scope && norm(reg.args ?? "") !== norm(ours))
+    return [
+      {
+        status: "fail",
+        what: "name",
+        why: `the registration in ${WORKSHOP} is not this setup's: ${reg.args ?? "?"}`,
+        next: `write "name": ${JSON.stringify(next ?? "")} in the robot file after --twin there (leave it out for no name), then restart Claude Code`,
+      },
+    ];
+  s.name = next;
+  saveState(s);
+  const said: Line = { status: "ok", what: "name", why: next === undefined ? "no name" : `"${next}"` };
+  if (s.ev3 === undefined) return [said, ...(await checkWorkshop(s))];
+  return [said, ...(await workshop(s))];
+}
+
 async function report(s: State): Promise<string> {
   const v = Object.fromEntries(
     await Promise.all(["git", "ant", "claude"].map(async (c) => [c, (await version(c)) ?? "not found"] as const)),
@@ -476,6 +513,7 @@ async function report(s: State): Promise<string> {
     `Installed: git ${v.git}, bun ${Bun.version}, ant ${v.ant}, Claude Code ${v.claude}`,
     `Who pays: Console organization "${s.org ?? "not confirmed"}", ant profile ${s.profile}`,
     `spinecord: ${REPO}, registered with local scope in ${WORKSHOP}: ${wanted(s).join(" ")}`,
+    `Robot name: ${s.name ?? "none"}`,
     `Smoke test: ${s.smoke ? `${s.smoke.answer} (USD ${s.smoke.cost_usd})` : "not run"}`,
     `Seen moving: ${s.moved ? "yes" : "no"}`,
     `EV3: ${!s.ev3 ? "none" : s.forward ? "online and forward" : "not checked"}`,
@@ -493,13 +531,15 @@ function print(step: string, lines: Line[]): 0 | 1 {
   return done ? 0 : 1;
 }
 
-export const STEPS = ["status", "login", "confirm", "workshop", "smoke", "view", "flip", "report"];
+export const STEPS = ["status", "login", "confirm", "workshop", "name", "smoke", "view", "flip", "report"];
 export const CONFIRM = ["org", "moved", "forward"];
 const USAGE = `usage: bun scripts/setup.ts <step>
   status                 every state, done or not, and the next one; changes nothing
   login [--profile <p>]  log the ant profile in (the browser opens); skipped when it is logged in
   confirm org            the person said the organization that pays holds the credits
-  workshop --ev3 yes|no  ${WORKSHOP}: settings, local registration, doctor
+  workshop --ev3 yes|no [--name <name>]
+                         ${WORKSHOP}: settings, local registration, doctor; --name: the robot's name
+  name <name>|none       give the robot a name, or take it away; registers again (restart Claude Code)
   smoke                  one claude -p request drives the twin (at most USD 0.50)
   view                   wait for the 3D view of the person's Claude Code (under ${STEP_MS / 1000} s), open it
   confirm moved          the person saw the robot move
@@ -533,6 +573,16 @@ export async function main(argv: string[]): Promise<number> {
     case "workshop": {
       const e = opt("--ev3");
       if (e !== undefined && e !== "yes" && e !== "no") break;
+      // without --name the name stays as it is
+      const n = opt("--name");
+      if (n !== undefined) {
+        try {
+          s.name = parseRobotName(n, "--name");
+        } catch (err) {
+          return print(step, [{ status: "fail", what: "name", why: (err as Error).message }]);
+        }
+        saveState(s);
+      }
       if (e !== undefined && (e === "yes") !== s.ev3) {
         s.ev3 = e === "yes";
         saveState(s);
@@ -540,6 +590,10 @@ export async function main(argv: string[]): Promise<number> {
       if (s.ev3 === undefined) return print(step, await checkWorkshop(s));
       return print(step, await workshop(s));
     }
+    case "name":
+      // a name of two words may come unquoted: every word after the step is the name
+      if (rest.length === 0) break;
+      return print(step, await name(s, rest.join(" ")));
     case "smoke":
       return print(step, await smoke(s));
     case "view":

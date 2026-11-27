@@ -3,8 +3,9 @@
 // code blocks are not prose and are skipped. Inline code and a link's text count as one word each. Its SKILL.md
 // stays short, every file it names exists, and every `setup <step>` it names is a step of scripts/setup.ts.
 import { expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { CONFIRM, launchLine, parseAuth, parseMcpGet, robotArgs, STEPS } from "../../../scripts/setup";
 
 const DIR = join(import.meta.dir, "..", "..", "..", ".claude", "skills", "setup-spinecord");
@@ -113,9 +114,45 @@ test("setup.ts registers absolute paths, the EV3 first, and prints a launch line
   ]);
   // the example twin, without a file: --view after --twin is a flag, not a path
   expect(robotArgs({ twin: ["--twin", "--view"], ev3: "d/r.json" }, null, "/r")).toEqual(["--twin", "--view"]);
+  // the person's name for the robot comes last, as one argument: a second run gives the same registration, and a
+  // new name changes only its value
+  const named = robotArgs(robots, "/m/r.json", "/r", "Doña Tuerca");
+  expect(named.slice(-2)).toEqual(["--name", "Doña Tuerca"]);
+  expect(robotArgs(robots, "/m/r.json", "/r", "Doña Tuerca")).toEqual(named);
+  expect(robotArgs(robots, "/m/r.json", "/r", "Rayo")).toEqual([...named.slice(0, -1), "Rayo"]);
+  expect(robotArgs(robots, "/m/r.json", "/r")).toEqual(named.slice(0, -2));
   expect(launchLine("linux", "credits")).toBe("cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude");
   expect(launchLine("win32", "credits")).toBe('cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "credits"; claude');
   const json = JSON.parse(readFileSync(join(DIR, "robots.json"), "utf8")) as typeof robots;
   for (const p of [json.ev3, ...json.twin.filter((a) => a.endsWith(".json"))])
     expect(existsSync(join(DIR, "..", "..", "..", p))).toBe(true);
+});
+
+test("setup.ts keeps the robot's name across runs, and a new name changes only the name", () => {
+  const home = mkdtempSync(join(tmpdir(), "spinecord-setup-home-"));
+  try {
+    // no claude on PATH: nothing is registered, only the state is written
+    const setup = (...args: string[]) =>
+      Bun.spawnSync([process.execPath, join(DIR, "..", "..", "..", "scripts", "setup.ts"), ...args], {
+        env: { HOME: home, USERPROFILE: home, PATH: dirname(process.execPath) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    const state = () => JSON.parse(readFileSync(join(home, "mi-robot", ".spinecord-setup.json"), "utf8"));
+    expect(setup("name", "Doña", "Tuerca").stdout.toString()).toContain('ok    name  "Doña Tuerca"');
+    const before = state();
+    expect(before.name).toBe("Doña Tuerca");
+    setup("workshop");
+    expect(state()).toEqual(before);
+    setup("name", "Rayo");
+    expect(state()).toEqual({ ...before, name: "Rayo" });
+    const bad = setup("name", "Rayo\nX");
+    expect(bad.exitCode).toBe(1);
+    expect(bad.stdout.toString()).toContain('name holds "\\n"');
+    expect(state().name).toBe("Rayo");
+    setup("name", "none");
+    expect(state().name).toBeUndefined();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
