@@ -50,23 +50,23 @@
           "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_basic/main.py"
         },
         "3": {
-          "value": "color sensor, the line-follower attachment",
+          "value": "color sensor, attachment: the line follower, looking down",
           "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_line/main.py"
         },
         "4": {
-          "value": "ultrasonic sensor, the obstacle attachment",
+          "value": "ultrasonic sensor, attachment: the obstacle detector, looking ahead",
           "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-core/robot_educator_ultrasonic/main.py"
         },
         "1": {
-          "value": "touch sensor (default port; the attachment's port is not in a sourced program)",
+          "value": "touch sensor, attachment: the bumper (default port; the attachment's port is not in a sourced program)",
           "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
         },
         "2": {
-          "value": "gyro sensor (default port; the attachment's port is not in a sourced program)",
+          "value": "gyro sensor, attachment: the gyro (default port; the attachment's port is not in a sourced program)",
           "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
         },
         "A": {
-          "value": "medium motor, the front attachment (arm or lifter)",
+          "value": "medium motor, attachment: the front arm or lifter",
           "source": "https://github.com/ev3dev/ev3dev-lang-python-demo/blob/stretch/robots/EDUCATOR/ultrasonic.py",
           "note": "ev3dev's Robot Educator demo: MediumMotor(OUTPUT_A)."
         }
@@ -79,7 +79,7 @@
         "unknown": true,
         "reason": "No LDraw model found: LDraw's OMR and Philo's set models (forums.ldraw.org/printthread.php?tid=23742) have TRACK3R, SPIK3R and the 45544+45560 Elephant, not this build. Placements would have to be read off the PDF instructions by hand; not done."
       },
-      "note": "Caster: the 45544 inventory holds one 18 mm steel ball (99948) and one ball receptacle (92911), the parts of the driving base's rear caster; their placement is not sourced."
+      "note": "The base is B and C with the two wheels and the caster. Every port marked 'attachment:' belongs to one of the alternative attachments; a robot carries the ones that are on it, usually one or two. Caster: the 45544 inventory holds one 18 mm steel ball (99948) and one ball receptacle (92911), the parts of the driving base's rear caster; their placement is not sourced."
     },
     {
       "key": "track3r",

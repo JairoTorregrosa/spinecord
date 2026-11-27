@@ -89,11 +89,12 @@ A model not in this table (the 31313 bonus models, a community build) is a custo
 
 Open `<clone>/packages/lego-parts/data/builds.json` and take the entry whose `key` is the model's.
 - `ports`: keys `A`-`D` are motor ports, `1`-`4` the sensor ports `S1`-`S4`. Each `value` reads `<kind>, <role>`. `large motor` and `medium motor` are kinds; a bare `motor` means the build does not say: the kind comes from the photo (length against the brick, "Look-alikes"), else the one rule of questions.md row 4, and its token stays. Its `note` says why.
-- A port's `alt` lists sources that say something else. When an `alt` names another side or port, keep `left_right` (or that port's token) whatever the person says about the model.
+- A role that starts with `attachment:` is one of the model's alternative attachments: it enters the file only when that attachment is in the photo or the person names it. Every other port is a fixed part of the model and enters the file also when the photo does not show it.
+- A port's `alt` lists sources that say something else. For the drive pair, write the `value`'s sides, put the `alt` in a note ("TRACK3R: the programs put the left track on B, the LDraw model on C"), and keep `left_right` whatever the person says about the model; for another port, keep its token.
 - `wheel_diameter_mm.value` and `axle_track_mm.value` ÷ 10 are `wheel_diameter_cm` and `axle_track_cm`, assumed; `{"unknown": true}` means parts.md and the photo decide.
-- `footprint_mm` (length, width, height), when it has a value, gives the footprint, assumed; else "Scale".
+- `footprint_mm` (length, width, height), when it has a value, gives the footprint, assumed: `half_width_cm` is half the width; with tracks `front_cm` and `back_cm` are half the length each (the axle is the tracks' middle); with wheels, split the length at the wheel axle as the photo shows. Else "Scale".
 - `note`: balancing, steering, walking, no drive. Each one is a row of robot-file.md "What a twin cannot have".
-- A port that is not in `ports` is empty on that model.
+- A port that is not in `ports` is empty on that model: a person's yes to the model confirms it empty too.
 
 ## Where a port is
 

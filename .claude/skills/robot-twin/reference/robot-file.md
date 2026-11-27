@@ -101,7 +101,7 @@ For each row the robot hits: write the note, tell the person the line in their l
 | Four or six wheels, two sides driven (or chained) | `differential`; the footprint covers every wheel; a note | "The twin drives as two sides; it draws two wheels." |
 | A caster, ball or skid | `back_cm` (or `front_cm`) reaches it | none |
 | Steering (one motor steers, one drives), legs, a walker | no `pair` and no drivetrain; the motors as roles; a note | "The twin cannot steer or walk: its motors turn, the body stays put." |
-| Two wheels and no caster: it balances | `differential`; a note "balances on two wheels; do not drive it without its balance program" | "The twin does not fall over; the real robot does without its balance program." |
+| Two wheels and no caster: it balances | `differential`; `view.caster` `"none"`; a note "balances on two wheels; do not drive it without its balance program" | "The twin does not fall over; the real robot does without its balance program." |
 | A motor turned by hand as a dial | role `dial`; a note | "In the twin nobody turns the dial; it reads what the program turns." |
 | A sensor that faces sideways, up, behind, or sits off the centre line | the closest `x` in `twin.body`; its real place in `twin.view.sensors`; a note | "In the twin the <sensor> looks straight ahead (reads the floor) on the centre line." |
 | Terrain (stairs, ramps, rough ground) | a note | "The twin's floor is flat." |
