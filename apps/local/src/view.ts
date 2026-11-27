@@ -33,6 +33,7 @@ import type {
 import { RAY_MAX_CM } from "../../twin-view/src/messages";
 import type { ViewPageFiles } from "../../twin-view/view-build";
 import type { ViewChat } from "./chat";
+import { cacheFile, respond, type CachedFile } from "./http-cache";
 import type { CallWatcher } from "./mcp";
 import type { LocalRobot } from "./robot";
 
@@ -414,6 +415,12 @@ export function serveView(
     return ++r.n <= VIEW_ACTIONS_PER_S;
   };
 
+  // the page's files with their tags; text is gzipped on first ask (http-cache.ts)
+  const text = (type: string) => /^text\/|javascript|json/.test(type);
+  const pageFiles = new Map<string, CachedFile>([
+    ["/", cacheFile("text/html; charset=utf-8", o.page.html, true)],
+    ...Object.entries(o.page.files).map(([name, f]) => [`/${name}`, cacheFile(f.type, f.body, text(f.type))] as const),
+  ]);
   const hosts = (p: number) => [`127.0.0.1:${p}`, `localhost:${p}`];
   let server: ReturnType<typeof Bun.serve>;
   try {
@@ -425,7 +432,6 @@ export function serveView(
         const own = hosts(srv.port ?? port);
         if (!own.includes(req.headers.get("host") ?? ""))
           return new Response("forbidden: ask for this listener by its own address", { status: 403 });
-        const headers = { "cache-control": "no-store", "x-content-type-options": "nosniff" };
         if (url.pathname === "/ws") {
           const origin = req.headers.get("origin");
           if (!origin || !own.map((h) => `http://${h}`).includes(origin))
@@ -434,10 +440,8 @@ export function serveView(
             ? undefined
             : new Response("expected a WebSocket upgrade", { status: 426 });
         }
-        if (url.pathname === "/")
-          return new Response(o.page.html, { headers: { ...headers, "content-type": "text/html; charset=utf-8" } });
-        const file = o.page.files[url.pathname.slice(1)];
-        if (file) return new Response(file.body, { headers: { ...headers, "content-type": file.type } });
+        const file = pageFiles.get(url.pathname);
+        if (file) return respond(file, req.headers, { "x-content-type-options": "nosniff" });
         return new Response("not found", { status: 404 });
       },
       websocket: {
