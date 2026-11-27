@@ -12,6 +12,7 @@
 // - meshes_cold: navigation start to the mark `twin:meshes` (every real mesh in place).
 // - wire_cold / wire_reload: bytes the page's loads took on the wire (Chrome's encodedDataLength, headers included).
 // - view_js_wire: bytes of view.js on the wire for a browser's Accept-Encoding.
+// - stream_drive: bytes and messages per second one page receives on its socket while the robot turns.
 // - frame_idle / frame_drive: median and p95 time between frames (rAF), over 4 s with the robot still and over 3 s
 //   of a turn in place that outlasts the window.
 // - busy_idle / busy_drive: the page's main-thread busy time per second over the same windows (TaskDuration).
@@ -345,6 +346,37 @@ try {
     const bytes = (await res.arrayBuffer()).byteLength;
     console.log(`view_js_wire bytes=${bytes} encoding=${res.headers.get("content-encoding") ?? "identity"} B`);
   }
+  if (SHOTS) {
+    const chrome = await launchChrome();
+    try {
+      await shots(chrome.cdp, url, server, robot_id, SHOTS);
+    } finally {
+      await chrome.stop();
+    }
+  }
+  // the page's update stream while the robot turns: what one page receives per second
+  {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { origin: `http://127.0.0.1:${port}` } } as any);
+    await new Promise((ok, no) => ((ws.onopen = ok), (ws.onerror = no)));
+    let bytes = 0,
+      msgs = 0,
+      biggest = 0;
+    ws.onmessage = (e) => {
+      const n = Buffer.byteLength(String(e.data));
+      bytes += n;
+      msgs++;
+      biggest = Math.max(biggest, n);
+    };
+    await sleep(500);
+    await whileTurning(server, robot_id, 3000, async () => {
+      bytes = msgs = biggest = 0;
+      await sleep(3000);
+    });
+    ws.close();
+    console.log(
+      `stream_drive bytes_per_s=${Math.round(bytes / 3)} msgs_per_s=${Math.round(msgs / 3)} largest=${biggest} B`,
+    );
+  }
   const chrome = await launchChrome();
   try {
     const loads: { cold: Load; reload: Load }[] = [];
@@ -352,7 +384,6 @@ try {
     const drive: number[] = [];
     const idleBusy: number[] = [];
     const driveBusy: number[] = [];
-    if (SHOTS) await shots(chrome.cdp, url, server, robot_id, SHOTS);
     for (let i = 0; i < RUNS; i++) {
       const l = await loadTwice(chrome.cdp, url);
       loads.push(l);

@@ -265,7 +265,11 @@ bun fmt         # oxfmt (bun fmt:check only checks)
 bun check       # tsc on every package
 bun run test    # every package and app; SHARD=1/3 for one shard, --affected --base origin/main for what a diff reaches
 bun run bench   # latency of the path from a tool call to the robot, on the twin (bench/run.ts)
+bun bench/page.ts      # what a person waits for around the 3D view: start, first frame, bytes, frame time
+bun bench/install.ts   # clone and install as the setup skill does them
 ```
+
+What those measured, before and after each change: [`docs/performance.md`](performance.md).
 
 `bun install` also installs the git hooks (lefthook: format, lint and gitleaks on staged files).
 
