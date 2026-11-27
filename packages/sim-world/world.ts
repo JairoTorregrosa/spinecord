@@ -252,10 +252,18 @@ export const ULTRASONIC_ECHO_DEG = 13;
  * and edges as the three target types; https://ecse.monash.edu/centres/irrc/LKPubs/IJRR95.PDF summarises). So a box
  * corner inside the cone and in plain view echoes whatever the angle. How far an edge still returns enough for the
  * EV3 sensor is not measured: this short range is chosen so that a strategy that relies on seeing a corner sees it
- * on the robot too. Where two walls meet (a concave corner, a corner reflector) the twin gives no echo of its own: the
- * faces' rule decides there, as before.
+ * on the robot too. Where two walls of the room meet, see ULTRASONIC_CORNER_MAX_CM.
  */
 export const ULTRASONIC_EDGE_MAX_CM = 60;
+/**
+ * Where two walls of the room meet square (a concave corner), sound that hits either wall near the corner comes back
+ * along the way it came after two bounces, whatever the angle: a corner reflector, the strongest of the three sonar
+ * targets (Leonard and Durrant-Whyte 1992, ch. 2). So a room corner inside the cone and in plain view echoes at its
+ * distance. How far is not measured: the edges' short range, for the same reason (a strategy that relies on it sees
+ * it on the robot too; at the sensor's full range the twin's learning example, reach-D, no longer learns its task).
+ * Corners where a box meets a wall or another box are not modelled (the faces' rule decides).
+ */
+export const ULTRASONIC_CORNER_MAX_CM = ULTRASONIC_EDGE_MAX_CM;
 /**
  * Infrared proximity (45509) per cm of a large light surface square on: the stock firmware (EV3-G) read 40-41 % with
  * a white wall at 38 cm, 88-90 % with black on it (https://github.com/ev3dev/ev3dev-lang-python/issues/518); ev3dev's
@@ -1526,12 +1534,76 @@ export class World {
   coneDistance(p: Pose = this.pose): number {
     const minCos = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
     let best = Infinity;
-    for (let i = 0; i < ULTRASONIC_RAYS; i++) {
-      const off = (((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * CONE_HALF_DEG * Math.PI) / 180;
+    for (const off of this.echoBearings(p)) {
       const h = this.rayHit(p, off);
       if (h.cos >= minCos - 1e-12 && h.d < best) best = h.d;
     }
     return Math.min(best, this.cornerEcho(p));
+  }
+  /**
+   * The bearings (rad, from the heading) the cone is searched along: ULTRASONIC_RAYS evenly across it, and where its
+   * nearest echo can lie between them, so that nothing inside the cone hides between two rays (a thin post far
+   * away): toward the nearest point of each face of each box and wall (where a flat face sends its echo back), and
+   * just to either side of each box corner (where a nearer box stops hiding a face behind it). Those inside the cone.
+   */
+  private echoBearings(p: Pose): number[] {
+    const half = (CONE_HALF_DEG * Math.PI) / 180;
+    const out: number[] = [];
+    for (let i = 0; i < ULTRASONIC_RAYS; i++) out.push(((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * half);
+    const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
+    const toward = (x: number, y: number): void => {
+      let off = (Math.atan2(y - oy, x - ox) - p.th) % (2 * Math.PI);
+      if (off > Math.PI) off -= 2 * Math.PI;
+      else if (off < -Math.PI) off += 2 * Math.PI;
+      if (Math.abs(off) <= half) out.push(off);
+    };
+    const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+    const { width, height, boxes } = this.cfg;
+    // the walls: the nearest point of each is straight across
+    toward(ox, 0);
+    toward(ox, height);
+    toward(0, oy);
+    toward(width, oy);
+    const NUDGE = 1e-4; // rad: just past a corner, onto the face it hid
+    const bearing = (x: number, y: number): number => {
+      let off = (Math.atan2(y - oy, x - ox) - p.th) % (2 * Math.PI);
+      if (off > Math.PI) off -= 2 * Math.PI;
+      else if (off < -Math.PI) off += 2 * Math.PI;
+      return off;
+    };
+    for (const b of boxes) {
+      // a box beyond the sensor's range, or wholly to one side of the cone, adds nothing
+      const nx = clamp(ox, b.x, b.x + b.w) - ox,
+        ny = clamp(oy, b.y, b.y + b.h) - oy;
+      if (Math.hypot(nx, ny) > ULTRASONIC_NO_ECHO_CM) continue;
+      if (nx !== 0 || ny !== 0) {
+        const bs = [bearing(b.x, b.y), bearing(b.x + b.w, b.y), bearing(b.x, b.y + b.h), bearing(b.x + b.w, b.y + b.h)];
+        // a box subtends less than pi from outside it: unwrap its bearings around the first one
+        const u = bs.map((v) => v - 2 * Math.PI * Math.round((v - bs[0]!) / (2 * Math.PI)));
+        if (Math.min(...u) > half || Math.max(...u) < -half) continue;
+      }
+      // the nearest point of each face (a segment along x or y), a hair inside it so the ray meets the face
+      const ix = (v: number) => clamp(v, b.x + 1e-6, b.x + b.w - 1e-6),
+        iy = (v: number) => clamp(v, b.y + 1e-6, b.y + b.h - 1e-6);
+      toward(ix(ox), b.y);
+      toward(ix(ox), b.y + b.h);
+      toward(b.x, iy(oy));
+      toward(b.x + b.w, iy(oy));
+      for (const [x, y] of [
+        [b.x, b.y],
+        [b.x + b.w, b.y],
+        [b.x, b.y + b.h],
+        [b.x + b.w, b.y + b.h],
+      ] as Vec[]) {
+        const n = out.length;
+        toward(x, y);
+        if (out.length > n) {
+          const c = out.pop()!;
+          for (const d of [c - NUDGE, c + NUDGE]) if (Math.abs(d) <= half) out.push(d);
+        }
+      }
+    }
+    return out;
   }
   /** The nearest box corner that echoes whatever the angle (ULTRASONIC_EDGE_MAX_CM): inside the cone and in plain view. */
   private cornerEcho(p: Pose): number {
@@ -1567,6 +1639,14 @@ export class World {
         // a corner on a wall or in another box is no edge: the surfaces meet there flush or hollow
         if (!inside(x, y, b) && !(b.height_cm !== undefined && z - b.height_cm > Math.hypot(x - ox, y - oy) * spread))
           look(x, y, ULTRASONIC_EDGE_MAX_CM);
+    // the room's corners: two walls square to each other send sound back the way it came (a corner reflector)
+    for (const [x, y] of [
+      [0, 0],
+      [width, 0],
+      [0, height],
+      [width, height],
+    ] as Vec[])
+      look(x, y, ULTRASONIC_CORNER_MAX_CM);
     return best;
   }
   /** What the ultrasonic sensor reads without noise (a display): 3..250 cm, 255 with no echo in range. */

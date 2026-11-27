@@ -315,6 +315,39 @@ describe("sensors", () => {
     expect(at(25)).toBeCloseTo(25, 1);
     expect(at(70)).toBe(255); // past ULTRASONIC_EDGE_MAX_CM an edge is too faint, and the faces stay silent
   });
+  test("ultrasonic: a 5 cm post anywhere inside the cone is seen, also between the cone's evenly spaced rays", () => {
+    const at = (d: number, lateral: number) => {
+      const w = quietWorld({
+        ...EXAMPLES.lineOval,
+        arena: { width_cm: 600, height_cm: 300 },
+        obstacles: [{ x: 100 + d, y: 150 + lateral - 2.5, w: 5, h: 5 }],
+      });
+      w.setPose({ x: 100 - w.cfg.body.distance_sensor_x_cm, y: 150, th: 0 });
+      return w.ultrasonicCm();
+    };
+    let missed = 0,
+      tried = 0;
+    for (const d of [100, 150, 200, 250 - 6])
+      for (let lat = -d * Math.tan((11 * Math.PI) / 180); lat <= d * Math.tan((11 * Math.PI) / 180); lat += 0.5) {
+        tried++;
+        if (at(d, lat) > Math.hypot(d, Math.max(0, Math.abs(lat) - 2.5)) + 1) missed++; // its near face echoes
+      }
+    expect(tried).toBeGreaterThan(200);
+    expect(missed).toBe(0);
+    expect(at(150, 0)).toBeCloseTo(150, 0);
+  });
+  test("ultrasonic: a room corner (two walls square to each other) echoes from any angle within reach", () => {
+    const w = quietWorld({ ...EXAMPLES.lineOval, arena: { width_cm: 300, height_cm: 300 }, obstacles: [] });
+    /** Sensor `cm` from the room's corner at (300, 300), looking straight into it at 45 deg to both walls. */
+    const at = (cm: number) => {
+      const ahead = w.cfg.body.distance_sensor_x_cm + cm;
+      w.setPose({ x: 300 - ahead * Math.SQRT1_2, y: 300 - ahead * Math.SQRT1_2, th: Math.PI / 4 });
+      return w.ultrasonicCm();
+    };
+    expect(at(40)).toBeCloseTo(40, 0); // the walls alone, at 45 deg, give nothing back
+    expect(at(55)).toBeCloseTo(55, 0);
+    expect(at(80)).toBe(255); // past ULTRASONIC_CORNER_MAX_CM (not measured, kept short)
+  });
   test("a gyro reset while the robot turns drifts by the rate it had; reset while still, it does not", () => {
     const w = quietWorld();
     w.stepWheels(-0.5, 0.5, 20); // turning left at about 240 deg/s
