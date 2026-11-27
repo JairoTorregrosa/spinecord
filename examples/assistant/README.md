@@ -237,7 +237,7 @@ Three runs of 2026-11-23 against the twin and the fake page, paid with A (the to
 | Write `bye` in the chat | The program ends the same way as with `Ctrl+C` |
 | The budget or `--for` is reached | The same end |
 
-`Ctrl+C` is the way to stop when you are in a hurry: the program waits for Claude about 10 s at most, and the robot stops at once, because the spinecord server stops every motor on `SIGINT` and when its input closes. On a real robot keep a hand near it on a first run; what spinecord does when the cable or the network goes away is in [Stopping the robot](../../README.md#stopping-the-robot).
+`Ctrl+C` is the way to stop when you are in a hurry: the program waits for Claude about 10 s at most, and the robot stops at once, because the spinecord server stops every motor on `SIGINT` and when its input closes. On a real robot keep a hand near it on a first run; what spinecord does when the cable or the network goes away is in [Stopping the robot](../../docs/manual.md#stopping-the-robot).
 
 ## 8. A real robot
 
@@ -248,7 +248,7 @@ bun agent.ts -- --ev3
 bun agent.ts --every 60 -- --ev3dev --ssh robot@HOST
 ```
 
-Write the brick's address in place of `HOST`. The flags are the server's own: [Choose the robots](../../README.md#choose-the-robots), or `bun ../../apps/local/main.ts --help`. To keep the server's log, add `--log-file robot.log` after the `--`. Try a mission on the twin first.
+Write the brick's address in place of `HOST`. The flags are the server's own: [Choose the robots](../../docs/manual.md#choose-the-robots), or `bun ../../apps/local/main.ts --help`. To keep the server's log, add `--log-file robot.log` after the `--`. Try a mission on the twin first.
 
 ## What it costs
 

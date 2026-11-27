@@ -32,6 +32,10 @@ const FORBIDDEN: Record<string, string[]> = {
   "packages/runtime": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "page-hub"].map((p) => `packages/${p}`),
   // the page hub talks to pages and to the runtime only through protocol's types and the Provider interface
   "packages/page-hub": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
+  // the LEGO parts map is data and a loader: it stands on nothing else
+  "packages/lego-parts": ["protocol", "driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime", "page-hub"].map(
+    (p) => `packages/${p}`,
+  ),
   // the bridge page speaks EV3 bytes and nothing else; apps/local builds and serves it, not the other way round
   "apps/robot-page": [
     ...["protocol", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
@@ -98,7 +102,17 @@ for (const unit of units) {
         const to = target(file, spec);
         if (!to || to === unit) return;
         const [kind, name] = to.split("/");
-        if (unit.startsWith("packages/") && kind === "apps")
+        // the 3D view reads the LEGO parts map in one module only, as a Bun macro that runs at build time, so the page
+        // gets the numbers and never the loader (node:fs) or the map's data; its tests, which never reach the page, may
+        // check against the map
+        if (
+          unit === "apps/twin-view" &&
+          to === "packages/lego-parts" &&
+          rel !== "apps/twin-view/src/lego.ts" &&
+          !rel.endsWith(".test.ts")
+        )
+          problems.push(`${rel}:${i + 1}: apps/twin-view reads packages/lego-parts only in src/lego.ts (${spec})`);
+        else if (unit.startsWith("packages/") && kind === "apps")
           problems.push(`${rel}:${i + 1}: ${unit} must not import an app (${spec})`);
         else if (FORBIDDEN[unit]?.includes(to))
           problems.push(

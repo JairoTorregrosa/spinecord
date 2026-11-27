@@ -993,8 +993,8 @@ class RuntimeImpl implements LocalRuntime {
     };
     const stuck = (moved: number, step: number, wasCut: boolean): boolean => {
       if (byTime) return false;
-      // An operation the runtime cut was never going to cover its step: there, motion that adds up over the
-      // cut operations is progress, however slow the motor.
+      // An operation the runtime cut, or the device at its time bound, was never going to cover its step:
+      // there, motion that adds up over the cut operations is progress, however slow the motor.
       creep = wasCut ? creep + moved : 0;
       if (wasCut && creep >= tol) creep = noProgress = 0;
       else noProgress = wasCut || moved < 0.1 * step ? noProgress + 1 : 0;
@@ -1128,6 +1128,12 @@ class RuntimeImpl implements LocalRuntime {
           signal.removeEventListener("abort", preempt);
         }
         const ended = cut || tripped || spent; // the runtime ended this operation itself
+        // The device ended it at its own time bound (CONTRACT §4: reason "timeout", measured.time_limited): the
+        // step it was sent was never going to fit, so, like an operation the runtime cut, its motion is judged by
+        // what adds up, not against the step. A motor that could not turn in that time is the device's to say
+        // ("stalled"); judged against the step, a long move on a link too slow to coast (one operation for the
+        // whole remainder) would stall after three ordinary operations.
+        const short = cut || (res.reason === "timeout" && res.measured?.time_limited === true);
         const wall = this.clock.now() - sent;
         checked = false;
         chunks++;
@@ -1170,7 +1176,7 @@ class RuntimeImpl implements LocalRuntime {
         const movedLead = delta * lead; // degrees (or ms) along the commanded direction
         const judged = own ?? movedLead; // with a track: this operation alone, until the readings say more
         if (verdict) break;
-        unread = o.track && { s0: startedAt, step, cut, n: chunks, asked: args[leadKey], noProgress, creep };
+        unread = o.track && { s0: startedAt, step, cut: short, n: chunks, asked: args[leadKey], noProgress, creep };
         f = Math.min(1, Math.max(0, f + delta));
         if (signal.aborted || (res.reason === "preempted" && !ended)) {
           reason = "preempted";
@@ -1190,7 +1196,7 @@ class RuntimeImpl implements LocalRuntime {
           break;
         }
         if (failure) break;
-        if (stuck(judged, step, cut)) break;
+        if (stuck(judged, step, short)) break;
         if (!byTime) {
           const motionMs = wall - (latency() ?? 0);
           const floor = integer ? 2 : 1;

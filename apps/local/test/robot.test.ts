@@ -353,7 +353,14 @@ describe("a twin in this process", () => {
 
 describe("shutdown", () => {
   test("two twins, one with a slower stop: a drive sent during shutdown is refused and no wheel turns", async () => {
-    const twin = (id: string) => ({ source: "twin" as const, id, robot: example.robot, world: example.world, seed: 1 });
+    const twin = (id: string) => ({
+      source: "twin" as const,
+      id,
+      robot: example.robot,
+      world: example.world,
+      seed: 1,
+      name: null,
+    });
     const example = loadConfig([]).robots[0] as Extract<
       ReturnType<typeof loadConfig>["robots"][number],
       { source: "twin" }

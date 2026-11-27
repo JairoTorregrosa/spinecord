@@ -1,365 +1,148 @@
 ---
 name: setup-spinecord
-description: Set up spinecord from zero on macOS, Windows or Linux for a person who received Claude API credits in a Console organization. Installs git, bun, the ant CLI and Claude Code, logs in with `ant auth login` so that the credits pay (no API key), clones spinecord, registers it in Claude Code in a workshop folder, runs `--doctor`, and drives the twin. Use it when a person asks to set up spinecord, to install the robot tools, or to prepare a computer for an EV3.
+description: Set up spinecord from zero on macOS, Windows or Linux for a person who is not a developer and who received Claude API credits in a Console organization. Installs git, bun, the ant CLI and Claude Code, logs in with `ant auth login` so that the credits pay (no API key), clones spinecord, registers it in the folder mi-robot, and ends with Claude driving the robot - the simulated twin in a 3D view in the browser, or a LEGO EV3 over USB. Resumes from any state. Also does the later asks - a new name for the robot, adding an EV3, repairing spinecord when it stops working. Use it when a person asks to set up spinecord, to install the robot tools, to prepare a computer for a robot workshop or an EV3, or says "call the robot Rayo", "llama al robot Rayo", "ponle Rayo a mi robot", "cámbiale el nombre al robot", "I have an EV3 now", "ya tengo un EV3", "ya tengo el EV3", "conecté el EV3", "spinecord does not work", "spinecord no funciona", "arregla spinecord".
 ---
 
-# Set up spinecord from zero
+# Set up spinecord
 
-## Context
+You are the agent on the computer of a person who wants Claude to drive a robot.
+The person is not a developer. Talk to the person in their language, in short sentences. Keep commands as written.
+The end: Claude Code moves the robot while the person looks. Without an EV3, the robot is a twin in a 3D page.
 
-You are an agent on the computer of a person who wants to drive a robot with Claude Code.
-The person is not a developer of spinecord.
-The person received Claude API credits in a Console organization.
-spinecord is an MCP server that runs on this computer and lets Claude drive a LEGO EV3 or its simulated twin.
-You install the tools, log in to the Console organization, register spinecord and prove that it works on the twin.
-The credits of the Console organization pay for Claude Code. Nobody makes or copies an API key.
-Talk to the person in the language that the person uses. Keep commands and file names as written here.
+## Files
 
-## Words
+Read a file only when a step names it. They are next to this file, also in the copy in `~/mi-robot/.claude/skills/setup-spinecord/`.
+Before the clone exists, read them at `https://raw.githubusercontent.com/JairoTorregrosa/spinecord/main/.claude/skills/setup-spinecord/<file>`.
 
-| Word | What it is |
+| File | When |
 |---|---|
-| the person | the human at this computer |
-| Console organization | the organization on platform.claude.com that holds the credits |
-| profile | an `ant` login, stored by name. This skill uses the name `credits` |
-| the clone | the folder `spinecord` that `git clone` makes, in the home folder of the person |
-| workshop folder | the folder `mi-robot` in the home folder of the person, outside the clone |
-| launch line | the command that starts Claude Code in the workshop folder with the profile |
-| the twin | the simulated robot `r1-sim`. It needs no hardware |
-| human step | a step that only the person can do, in a browser or with the robot |
-
-## Verified facts
-
-Each fact has its source and the date of the check. Use only these facts in the steps.
-
-| Fact | Source | Checked |
-|---|---|---|
-| `ant` 2.13.0 is the current release, with zip files for macOS and Windows and `.tar.gz`, `.deb` and `.rpm` files for Linux | https://github.com/anthropics/anthropic-cli/releases | 2026-11-24 |
-| macOS: `brew install anthropics/tap/ant` | https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart | 2026-11-24 |
-| Linux: the release `.tar.gz` file, extracted to a folder on `PATH` | https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart | 2026-11-24 |
-| Windows: `winget install Anthropic.Ant`, a portable zip package of the same release | https://github.com/microsoft/winget-pkgs/tree/master/manifests/a/Anthropic/Ant | 2026-11-24 |
-| `ant auth login` opens the browser. `--no-browser` prints the URL. `--profile <name>` makes that profile and makes it active | https://platform.claude.com/docs/en/cli-sdks-libraries/cli/authentication | 2026-11-24 |
-| A profile keeps its organization for later logins. For another organization, log in with a new profile name | https://platform.claude.com/docs/en/cli-sdks-libraries/cli/authentication | 2026-11-24 |
-| `ant auth status` prints `Logged in to <organization> as <email>`, the `Config dir:` path and the first characters of the token | `ant` 2.12.1 on macOS | 2026-11-24 |
-| The profiles live in `ANTHROPIC_CONFIG_DIR`, else `~/.config/anthropic` (macOS, Linux), else `%APPDATA%\Anthropic` (Windows) | https://platform.claude.com/docs/en/manage-claude/wif-reference | 2026-11-24 |
-| `ANTHROPIC_PROFILE` in the environment makes Claude Code use that profile, above a claude.ai login | https://code.claude.com/docs/en/authentication | 2026-11-24 |
-| With no `ANTHROPIC_PROFILE`, a claude.ai login pays ahead of the active profile | https://code.claude.com/docs/en/authentication | 2026-11-24 |
-| A profile name that does not exist makes Claude Code use the claude.ai login, with no error | Claude Code 2.1.331 on macOS | 2026-11-24 |
-| `ANTHROPIC_PROFILE` in the `env` of `.claude/settings.json` or `.claude/settings.local.json` does not change who pays | Claude Code 2.1.331 on macOS, `/status` | 2026-11-24 |
-| `claude auth status --text` prints `Profile: ... profile <name>` and `Organization:` when a profile pays, and `Login method:` for a claude.ai login | Claude Code 2.1.331 on macOS | 2026-11-24 |
-| Claude Code: `curl -fsSL https://claude.ai/install.sh \| bash` (macOS, Linux), `irm https://claude.ai/install.ps1 \| iex` (PowerShell) | https://code.claude.com/docs/en/setup | 2026-11-24 |
-| bun: `curl -fsSL https://bun.com/install \| bash` (macOS, Linux, needs `unzip`), `powershell -c "irm bun.sh/install.ps1\|iex"` (Windows) | https://bun.sh/docs/installation | 2026-11-24 |
-| spinecord needs bun 1.3.14 or later, and git | README.md of the clone | 2026-11-24 |
-| git: `brew install git` or `xcode-select --install` (macOS), `winget install --id Git.Git -e --source winget` (Windows) | https://git-scm.com/install/mac, https://git-scm.com/install/windows | 2026-11-24 |
-
-Not verified, so not in the steps: the location of the profiles that Claude Code reads on native Windows.
-The fix table gives the exit for that case.
-
-## States
-
-Go through the states in this order. Go to the next state only when the exit check of this state passes.
-
-| State | Exit check |
-|---|---|
-| 1 PREFLIGHT | You know the OS, the shell, and the version of git, bun, `ant`, `claude` and the browser |
-| 2 INSTALL | `git --version`, `bun --version` (1.3.14 or later), `ant --version` and `claude --version` each print a version |
-| 3 CONSOLE LOGIN | `ant auth status` shows `Logged in to <organization>`, the person confirms the name, and `models list` exits 0 |
-| 4 CLAUDE CODE PAYS | `claude auth status --text` with the profile shows `Profile:` and the same organization |
-| 5 SPINECORD | The clone, the install, the workshop folder and the registration exist |
-| 6 DOCTOR | The last line of `--doctor` is `doctor: ok` |
-| 7 SMOKE TEST | One request on the twin drives 5 cm, and you know the cost |
-| 8 EV3 OVER USB | `list_robots` shows the EV3 `online`, and the direction check passes. Skip this state if the person has no EV3 |
-| 9 REPORT | The person has the report |
-
-If the same step fails 2 times, stop. Show the error and the row of the fix table that matches it.
-
-## Steps
-
-### 1 PREFLIGHT
-
-1. Find the OS: macOS, Windows or Linux.
-2. Find the shell: zsh, bash or PowerShell. On Windows, use PowerShell for all commands.
-3. Run `git --version`, `bun --version`, `ant --version` and `claude --version`.
-4. Record the version of each tool, or "not found".
-5. On macOS, look for `/Applications/Google Chrome.app` and `/Applications/Microsoft Edge.app`.
-6. On Windows, look for `chrome.exe` and `msedge.exe` under `Program Files` and `Program Files (x86)`.
-7. On Linux, run `command -v google-chrome microsoft-edge`.
-8. Show the person a list of names and versions only. Do not show paths, variables or other output.
-
-### 2 INSTALL
-
-1. Make a list of the tools that state 1 did not find, and of a bun older than 1.3.14.
-2. If `ant` or `claude` prints a version, keep that version. Do not upgrade it.
-3. If the list is empty, go to state 3.
-4. Show the list and the commands to the person. Ask for approval, then install.
-5. Install one tool at a time. Run `<tool> --version` after each install.
-6. On Windows, after each install, tell the person to close the terminal and open a new one.
-7. On Windows, after a new terminal opens, run `<tool> --version` again.
-8. If a new terminal does not find a tool, use the row "PATH after an install" of the fix table.
-
-git:
-
-1. On macOS with Homebrew, run `brew install git`.
-2. On macOS without Homebrew, run `xcode-select --install`. Tell the person to click Install in the window that opens.
-3. On Windows, run `winget install --id Git.Git -e --source winget`.
-4. On Debian or Ubuntu, run `sudo apt install git unzip`. Tell the person that `sudo` installs system packages and asks for the password.
-
-bun:
-
-1. On macOS or Linux, run `curl -fsSL https://bun.com/install | bash`.
-2. Tell the person that this installer adds a `PATH` line to the shell profile. Ask for approval first.
-3. On Windows, run `powershell -c "irm bun.sh/install.ps1|iex"`.
-4. If bun is older than 1.3.14, run `bun upgrade`.
-
-ant:
-
-1. On macOS, run `brew install anthropics/tap/ant`.
-2. On Windows, run `winget install Anthropic.Ant`.
-3. On Linux, download the release file to `~/.local/bin`, with no `sudo`:
-
-```sh
-VERSION=2.13.0
-ARCH=$(uname -m | sed -e s/x86_64/amd64/ -e s/aarch64/arm64/)
-mkdir -p ~/.local/bin
-curl -fsSL "https://github.com/anthropics/anthropic-cli/releases/download/v${VERSION}/ant_${VERSION}_linux_${ARCH}.tar.gz" | tar -xz -C ~/.local/bin ant
-```
-
-4. On Linux, if `~/.local/bin` is not on `PATH`, use the row "PATH after an install" of the fix table.
-
-Claude Code:
-
-1. On macOS or Linux, run `curl -fsSL https://claude.ai/install.sh | bash`.
-2. On Windows, run `irm https://claude.ai/install.ps1 | iex`.
-3. Do not start `claude` for a login. State 3 and state 4 give Claude Code its login.
-
-### 3 CONSOLE LOGIN (human step)
-
-1. Tell the person what comes next, in these words or in the language of the person:
-   - "A browser page of platform.claude.com opens."
-   - "Sign in with the email that received the credits."
-   - "If the page asks for an organization, click the organization with the credits."
-   - "If the page asks for a workspace, click the default workspace."
-   - "Click Authorize, then come back to this terminal."
-2. Run `ant auth login --profile credits`.
-3. If the computer has no browser, run `ant auth login --profile credits --no-browser`.
-4. With `--no-browser`, give the person the URL. Tell the person to paste the code into the terminal.
-5. Run the command that fits the shell. It prints only the organization name.
-
-macOS or Linux:
-
-```sh
-ant --profile credits auth status | grep 'Logged in to' | sed -e 's/^ *Logged in to //' -e 's/ as [^ ]*$//'
-```
-
-Windows PowerShell:
-
-```powershell
-(ant --profile credits auth status | Select-String 'Logged in to').Line -replace '^\s*Logged in to ', '' -replace ' as \S+$', ''
-```
-
-6. If the command prints nothing, the profile has no login. Run step 2 again.
-7. Show the person the organization name only. Never show the full output of `ant auth status`.
-8. Ask the person: "Is this the organization with the credits?"
-9. If the person says no, use the row "Wrong Console organization" of the fix table.
-10. Run `ant --profile credits models list`. Do not show its output. Read only the exit code.
-11. If the exit code is not 0, run step 2 again.
-
-Exit check: the person confirmed the organization name, and `models list` exited 0.
-
-### 4 CLAUDE CODE PAYS WITH THE CONSOLE ORGANIZATION
-
-Claude Code takes the profile only from the environment of the terminal that starts it.
-A settings file does not do it. Do not put `ANTHROPIC_PROFILE` in a settings file.
-
-1. Check which of these variables have a value: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`.
-2. Also check `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY` and `CLAUDE_CODE_USE_ANTHROPIC_AWS`.
-3. Show the names of the variables that have a value. Never show a value.
-
-macOS or Linux:
-
-```sh
-for v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_ANTHROPIC_AWS; do printenv "$v" > /dev/null && echo "$v"; done
-```
-
-Windows PowerShell:
-
-```powershell
-'ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_USE_ANTHROPIC_AWS' | Where-Object { Test-Path "Env:$_" }
-```
-
-4. If a variable in that list has a value, use the row "Another credential pays" of the fix table.
-5. Run the check that fits the shell, and show only the lines it keeps.
-
-macOS or Linux:
-
-```sh
-ANTHROPIC_PROFILE=credits claude auth status --text | grep -E '^(Profile|Organization|Login method):'
-```
-
-Windows PowerShell:
-
-```powershell
-$env:ANTHROPIC_PROFILE = "credits"; claude auth status --text | Select-String '^(Profile|Organization|Login method):'
-```
-
-6. If the output has a line `Profile:` that ends with `profile credits`, compare the organization.
-7. Take the text between `Organization:` and ` · `. It must be the organization of state 3.
-8. Do not show the ID after ` · `.
-9. If the output has a line `Login method:`, a claude.ai login pays. Stop, and use the row "Another credential pays".
-10. If the output has no `Profile:` line on Windows, use the row "Windows profile folder" of the fix table.
-
-The launch line for the person:
-
-| Shell | Launch line |
-|---|---|
-| macOS or Linux | `cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude` |
-| Windows PowerShell | `cd $HOME\mi-robot; $env:ANTHROPIC_PROFILE = "credits"; claude` |
-
-11. Tell the person to start Claude Code with the launch line in each new terminal.
-12. Tell the person: "At the first start, Claude Code asks if you trust this folder. Choose Yes."
-13. If the person wants the variable in each terminal, ask for approval of a change to the shell profile.
-
-Exit check: `Profile:` names `credits`, and the organization is the one that the person confirmed.
-
-### 5 SPINECORD
-
-1. Ask for approval to clone into the home folder, install, make `mi-robot` and register spinecord there.
-2. In the home folder, run `git clone https://github.com/JairoTorregrosa/spinecord`.
-3. In the clone, run `bun install --filter @spinecord/local`.
-4. If the person wants the assistant example, run `bun install --filter @spinecord/local --filter @spinecord/assistant-example`.
-5. Make the folder `mi-robot` in the home folder. Do not make it inside the clone.
-6. In `mi-robot`, write the file `.claude/settings.json` with this text:
-
-```json
-{ "permissions": { "allow": ["mcp__spinecord"] } }
-```
-
-7. In `mi-robot`, run `bun <clone>/apps/local/main.ts --print-add --twin`. Write the full path of the clone for `<clone>`.
-8. Take the first line that it prints. Ignore the second line. Change `-s user` to `-s local`.
-9. Do not change other text of the line.
-10. Run `claude mcp get spinecord` in `mi-robot`. A result of "not found" is normal.
-11. If it finds a registration, run `claude mcp remove -s local spinecord` first.
-12. Run the line in `mi-robot`.
-13. The allow rule applies when the person trusts `mi-robot` at the first start of Claude Code.
-
-Use local scope for these reasons:
-
-- Only sessions that start in `mi-robot` start a spinecord server.
-- A Claude Code session in another folder opens no link to the robot.
-- With `--ev3`, a second session cannot hold port 8767.
-- With an EV3 on ev3dev, a second link can stop the motors during a move of the first session.
-
-Exit check: in `mi-robot`, `claude mcp get spinecord` shows a `Scope:` line that starts with `Local`.
-
-### 6 DOCTOR
-
-1. In `mi-robot`, run `bun <clone>/apps/local/main.ts --doctor --twin`.
-2. Add `--ev3` if the person has an EV3 with stock firmware on USB.
-3. Add `--pages` if the person lends a camera, a microphone or a screen through a browser page.
-4. Add `--assistant` if the person uses the assistant example. Then set `ANTHROPIC_PROFILE=credits` in the same command.
-5. Read each line. A line is `ok`, `warn` or `fail`, the reason, and after `->` the fix.
-6. For each `fail` line, show the line to the person. Ask for approval, then run the fix.
-7. A `warn` line does not stop this state. Show it to the person. Run its fix only after a yes.
-8. If a fix names `bun apps/local/main.ts`, write the full path of the clone, and run it in `mi-robot`.
-9. If a fix names `-s user`, write `-s local`.
-10. Run the doctor again. Repeat until the last line is `doctor: ok`.
-
-Exit check: the last line is `doctor: ok`.
-
-### 7 SMOKE TEST
-
-1. In `mi-robot`, run one request on the twin with the profile and a limit of USD 0.50.
-
-macOS or Linux:
-
-```sh
-ANTHROPIC_PROFILE=credits claude -p "List the robots. Then drive r1-sim forward 5 cm. Answer in one line." --allowedTools mcp__spinecord --max-budget-usd 0.50 --output-format json
-```
-
-Windows PowerShell:
-
-```powershell
-$env:ANTHROPIC_PROFILE = "credits"; claude -p "List the robots. Then drive r1-sim forward 5 cm. Answer in one line." --allowedTools mcp__spinecord --max-budget-usd 0.50 --output-format json
-```
-
-2. Read the JSON from standard output only. Do not merge standard error into it.
-3. Read `result`, `is_error` and `total_cost_usd`. Do not show other fields.
-4. Claude Code can say that it does not trust the workspace. That message is normal here. `--allowedTools` gives the spinecord tools.
-5. If `is_error` is true, find the error text in the fix table.
-6. Show the person the answer and the cost in USD.
-
-Exit check: the answer names `r1-sim` and a move of 5 cm, and you know the cost.
-
-### 8 EV3 OVER USB (human step)
-
-Skip this state if the person has no EV3 with stock firmware.
-
-1. In `mi-robot`, run `claude mcp remove -s local spinecord`.
-2. Run `bun <clone>/apps/local/main.ts --print-add --ev3 --twin`. Change `-s user` to `-s local`, then run the line in `mi-robot`.
-3. Run the doctor with `--ev3 --twin`, as in state 6, until `doctor: ok`.
-4. Tell the person these steps:
-   - "Turn on the EV3. Connect it to this computer with the USB cable."
-   - "Open a new terminal. Type the launch line and press Enter."
-   - "In Chrome or Edge, open http://127.0.0.1:8767/."
-   - "Click Connect EV3. In the browser window, click the EV3, then click Connect."
-   - "Keep that tab open."
-   - "In Claude Code, type: list the robots."
-5. Ask the person to read the state of the EV3 robot from the answer.
-6. If the state is not `online`, use the row "EV3 not listed" of the fix table.
-7. Tell the person to do the direction check:
-   - "Put the robot on the floor with free space in front of it."
-   - "In Claude Code, type: drive forward 5 cm."
-   - "Look at the robot. Tell me if it moved forward or backward."
-8. If the robot moved backward, do not change files in the clone. A change there blocks a later `git pull`.
-9. Copy `<clone>/deployments/example/robots/r1.json` to `mi-robot/robots/ev3.json`.
-10. In the copy, under `profile.drivetrain`, change `"forward_sign": 1` to `"forward_sign": -1`. Save the file.
-11. In `mi-robot`, run `claude mcp remove -s local spinecord`.
-12. Run `bun <clone>/apps/local/main.ts --print-add --ev3 <mi-robot>/robots/ev3.json --twin`. Write full paths.
-13. Change `-s user` to `-s local` in the first line, then run the line in `mi-robot`.
-14. Tell the person to close Claude Code and start it again with the launch line.
-15. Ask the person to do the direction check again.
-
-Exit check: the EV3 is `online`, and "drive forward 5 cm" moves it forward.
-
-### 9 REPORT
-
-Give the person this report:
-
-```text
-Installed: git <v>, bun <v>, ant <v>, Claude Code <v>, browser <name or none>
-Who pays: Console organization "<organization name>", profile credits
-spinecord: <clone path>, registered with local scope in <mi-robot path>, robots <flags>
-Doctor: doctor: ok
-Smoke test: <answer>, cost USD <total_cost_usd>
-EV3: online and forward | not checked
-To do: <the steps the person must still do>
-Start Claude Code with: <launch line>
-```
-
-## Fix table
-
-| Problem | Cause | Fix |
-|---|---|---|
-| `Credit balance is too low` | The profile logged in to an organization with no credits | Run `ant auth login --profile credits2` and click the Console organization with the credits. Then use `credits2` in all commands |
-| Wrong Console organization | The profile keeps its first organization | Same fix as `Credit balance is too low` |
-| Another credential pays | A variable from state 4, or a claude.ai login, pays ahead of the profile | Tell the person the name of the variable. Unset it in this terminal (`unset NAME` or `Remove-Item Env:NAME`). Start Claude Code with the launch line |
-| `Login method:` with the profile set | The profile name does not exist, or it has no login | Run `ant --profile credits auth status`. If there is no `Logged in to` line, do state 3 again |
-| Windows profile folder | Claude Code does not find the profile that `ant` wrote | Set `$env:ANTHROPIC_CONFIG_DIR` to the `Config dir:` path from `ant auth status`. Run the state 4 check again |
-| Port 8767 held | Another Claude Code session runs spinecord with `--ev3` | Close the other Claude Code session. Run the doctor again |
-| EV3 not listed | The USB cable, the EV3 is off, or the browser is not Chrome or Edge | Connect the cable. Turn on the EV3. Open the page in Chrome or Edge, and click Connect EV3 again |
-| PATH after an install | The terminal has the old `PATH` | Open a new terminal. On Windows, add the folder that the installer names to the user `PATH`, with approval |
-| macOS firewall with `--lan` | The firewall blocks connections to bun | Run the fix of the doctor line `firewall`. It uses `sudo`: tell the person why |
+| install.md | States TOOLS and CLONE: the install commands of each OS |
+| fixes.md | A check fails: one row for each known problem |
+| facts.md | A step and the computer disagree: the facts, their sources and what is not verified |
+| robots.json | The robots that the workshop registers. Change only this file to use other robots |
+
+`setup <step>` in this file means this command, in any shell, from either copy: `cd ~/spinecord; bun scripts/setup.ts <step>`.
+If this session installed a tool, put the `PATH` line of install.md for this OS first in the same command.
+Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next action. The last line is `setup <step>: ok` or `setup <step>: not done`.
+`setup status` changes nothing. Its last line `next <STATE>` names the state to do.
 
 ## Rules
 
-- Never ask the person to paste a key or a token into the chat.
-- Never show a token, a key, an email, or the full output of `ant auth status`.
-- Never run `ant auth print-credentials`.
-- Never write a secret to a file. Never put `ANTHROPIC_PROFILE` in a settings file.
-- Ask for approval of each install, clone and registration. Do the step only after a yes.
-- Never use `sudo` until you tell the person why.
-- Never change a shell profile or a user variable until the person agrees.
-- Do the steps of a human step only after you tell the person what to click.
-- If the same step fails 2 times, stop. Show the error and the row of the fix table.
-- Register spinecord with local scope in `mi-robot`. Never register it with user scope.
-- Do not start Claude Code in the clone for the robot. Use `mi-robot`.
+- The person acts only in the steps marked PERSON. Do all other steps yourself.
+- Before a PERSON step, say what the person will see and what to click. Then wait for the step to end.
+- Never ask for, show or write a key, a token or an email. Never run `ant auth print-credentials`.
+- Never put `ANTHROPIC_PROFILE` in a settings file. Claude Code ignores it there.
+- Never register spinecord with user scope. Never start the robot's Claude Code in the clone.
+- Before `sudo`, say why. Change a shell profile only as install.md says, after the approval of the plan.
+- Give every command a timeout of 10 minutes. Every step is safe to run again.
+- If the same step fails 2 times, stop. Show the error line and the row of fixes.md, in the person's language.
+- On Windows, use PowerShell for all commands.
+
+## Start: two questions and one approval
+
+1. Do the detect step of TOOLS. If the clone exists, also run `setup status`.
+2. Send the person one message with these three parts. Then wait for the answer.
+   - "Do you have a LEGO EV3 robot with you? Without one, Claude drives a robot on the screen."
+   - "What is the name of your robot? This is optional. Without a name, the robot has no name."
+   - The plan: the missing tools by name, the folders `~/spinecord` and `~/mi-robot`, one sign-in in the browser. Ask for one yes.
+   - On macOS and Linux, the plan also names one line in `~/.zshrc` or `~/.bashrc` for new terminals.
+3. Remember the EV3 answer and the name. State WORKSHOP needs them.
+4. After each state, show the person the progress list. Mark the states that are done:
+
+```text
+[x] 1 Tools   [x] 2 Download   [ ] 3 Sign in   [ ] 4 Credits pay   [ ] 5 Robot folder
+[ ] 6 Test    [ ] 7 See it move   [ ] 8 EV3 (only with an EV3)   [ ] 9 Report
+```
+
+## States
+
+Do the first state that is not done. To resume once the clone exists, run `setup status` and do the state that its line `next` names.
+
+| # | State | Done when |
+|---|---|---|
+| 1 | TOOLS | `git --version`, `bun --version` (1.3.14 or later), `ant --version`, `claude --version` each print a version |
+| 2 | CLONE | `setup status` prints its lines, and its last line starts with `next` |
+| 3 | LOGIN | `setup status` shows `LOGIN` `ok` |
+| 4 | PAYS | `setup status` shows `PAYS` `ok` |
+| 5 | WORKSHOP | `setup workshop` ends with `setup workshop: ok`, after the line `doctor: ok` |
+| 6 | SMOKE | `setup status` shows `SMOKE` `ok` |
+| 7 | SEE IT | `setup status` shows `SEE IT` `ok` |
+| 8 | EV3 | `setup status` shows `EV3` `ok` |
+| 9 | REPORT | The person has the report |
+
+### 1 TOOLS
+
+Detect: run the 4 `--version` commands. Install only what fails, as install.md says for this OS.
+Exit check: the 4 commands print versions in this session.
+
+### 2 CLONE
+
+Do the section Clone of install.md. It clones, or updates a clone that exists, and installs the packages.
+
+### 3 LOGIN (PERSON, in the browser)
+
+If `setup status` shows `LOGIN` `ok`, the profile has a login: go to state 4.
+Say this first, in the person's language:
+"A browser page of platform.claude.com opens now. Sign in with the email that received the credits. If it asks for an organization, click the one with the credits. Then click Authorize, and come back here."
+Then, at once, run `setup login`. It opens the browser and waits up to 5 minutes for the person.
+Exit check: `setup login: ok`. Else use fixes.md.
+
+### 4 PAYS (PERSON answers one question)
+
+Run `setup status`. Read the line `PAYS`.
+If it says `todo` with an organization name, ask the person: "Claude will use the credits of "<name>". Is that the organization with your credits?"
+If yes, run `setup confirm org`. If no, use the row "Wrong Console organization" of fixes.md.
+If it says `todo` with only an organization id, run `setup confirm org` and ask nothing. State SMOKE shows if the credits pay.
+If it says `fail`, use the row of fixes.md that it names after `->`.
+
+### 5 WORKSHOP
+
+Run `setup workshop --ev3 yes` or `setup workshop --ev3 no`, from the answer of the start.
+If the person gave a name, add `--name "<name>"` to that command. The name stays when you run the step again.
+It makes `~/mi-robot`, allows the spinecord tools there, copies the skills there (line `skills`), registers spinecord with local scope, and runs the doctor.
+A doctor `warn` line does not stop this state. For a `fail` line, use fixes.md, then run the same command again.
+
+### 6 SMOKE
+
+Run `setup smoke`. One `claude -p` request drives the twin 5 cm, for at most USD 0.50. It needs no person.
+Show the person the answer and the cost from the `smoke` line.
+
+### 7 SEE IT (PERSON)
+
+1. Run `setup report`. Take the launch line from its last line `Start Claude Code with:`.
+2. Say this, with the launch line, in the person's language:
+   - "Open a new terminal window. Paste this line and press Enter: <launch line>"
+   - "Claude Code shows a color theme, then security notes. Press Enter at each."
+   - "Then it asks if you trust the folder. Press the down arrow to Yes, I trust this folder, then Enter."
+3. Then, at once, run `setup view`. When the person's Claude Code runs, it opens the 3D page in the browser.
+4. If `setup view` ends `not done`, ask what the terminal shows, use fixes.md, and run it again.
+5. Say: "In the browser you see the robot in a room. In the new Claude Code, type: Drive forward 30 cm, then turn left 90 degrees."
+6. Ask: "Did the robot move on the page?" If yes, run `setup confirm moved`. If no, use fixes.md.
+
+### 8 EV3 (PERSON)
+
+Skip this state if the person has no EV3. The person keeps the Claude Code of state 7 open.
+
+1. Say:
+   - "Turn on the EV3. Connect it to this computer with the USB cable."
+   - "In Chrome or Edge, open http://127.0.0.1:8767/. Click Connect EV3 (the page is in English). In the window, click the EV3, then Connect. Keep that tab open."
+   - "Put the robot on the floor with free space in front of it. In Claude Code, type: list the robots, then drive the EV3 forward 5 cm."
+2. Ask: "Does the answer say the EV3 is online? Did the robot move forward or backward?"
+3. Not online: use the row "EV3 not `online`" of fixes.md.
+4. Forward: run `setup confirm forward`.
+5. Backward: say "Type /exit in Claude Code." Then run `setup flip`. Then say: "Paste the launch line again and press Enter." Do steps 1 and 2 again.
+
+### 9 REPORT
+
+Run `setup report`. Give the person its lines, in their language. Add what the person must still do, if anything.
+Running the skill again changes nothing and ends here.
+
+## Later asks
+
+The person asks for one of these after the setup, often in the robot's Claude Code in `~/mi-robot`. There, this session's spinecord holds its ports: a `port` `fail` that names them is expected until the restart. A registration change is read only at start. Then say: "Type /exit in Claude Code. Then paste the launch line again."
+
+| The person says | Do | Done when | Restart |
+|---|---|---|---|
+| A new name: "Call the robot Rayo", "llama al robot Rayo", "ponle Rayo a mi robot" | `setup name "<name>"`, or `setup name none` for no name. A `fail` line: do the action after `->` | `setup name` ends `ok` | Yes. The next start shows the name |
+| "I have an EV3 now", "ya tengo un EV3" | `setup workshop --ev3 yes`. After the restart, run `setup status` and do state 8 EV3 | `setup status` shows `EV3` `ok` | Yes, before state 8 |
+| "spinecord does not work. Run its doctor and fix it", "spinecord no funciona" | `setup workshop` runs the doctor. Fix each `fail` line with fixes.md, except the expected `port` lines. Then do the state that `setup status` names after `next` | After the restart: `setup workshop: ok`, and `setup status` ends `next REPORT` | Yes, after the fixes |

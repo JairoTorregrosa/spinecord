@@ -275,7 +275,7 @@ describe("devices(): detection and specs per CONTRACT.md 2.3", () => {
     expect(cmd("motor_pair", "run_pair").bound).toEqual({ kind: "ms", max: 250 });
     expect(cmd("speaker", "tone").bound).toEqual({ kind: "ms", params: ["duration_ms"], max: 5000 });
     expect(ch("ultrasonic", "distance_cm")).toMatchObject({ unit: "cm", type: "number", active: true });
-    expect(ch("infrared", "proximity_pct").approx).toContain("0.7 cm");
+    expect(ch("infrared", "proximity_pct").approx).toContain("1 cm");
     expect(ch("color", "rgb")).toMatchObject({ type: "vector", length: 3, active: false, mode_group: "S3" });
     expect(ch("color", "reflected_pct")).toMatchObject({ active: true, mode_group: "S3" });
     expect(ch("gyro", "angle_deg").unit).toBe("deg");

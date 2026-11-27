@@ -100,6 +100,15 @@ export function logCall(
 /** Longest argument text a watcher gets from one call. */
 export const WATCH_ARGS_MAX = 600;
 /**
+ * `text` cut to at most `max` UTF-16 units, with "…" when cut. A cut never splits a surrogate pair: half of one is
+ * not text, and a page would show it as a replacement character.
+ */
+export function cutText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const end = /[\uD800-\uDBFF]/.test(text[max - 1] ?? "") ? max - 1 : max;
+  return `${text.slice(0, end)}…`;
+}
+/**
  * Someone who watches the calls as they happen (the 3D view shows them next to the twin). It gets each call when
  * it begins, with its arguments cut to WATCH_ARGS_MAX characters of JSON, and when it ends, with its summary line.
  * A watcher that throws changes nothing of the call.
@@ -117,13 +126,15 @@ export interface CallWatcher {
   }): void;
 }
 
+/** Calls answered in this process. One sequence for every server it builds (the chat's in-process one too): a watcher keys calls by `n`. */
+let calls = 0;
+
 export function buildServer(robots: readonly LocalRobot[], watcher?: CallWatcher): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
   server.setRequestHandler("tools/list", async () => ({ tools: LISTED_TOOLS as never }));
-  let calls = 0;
   const watch = (f: (w: CallWatcher) => void): void => {
     if (!watcher) return;
     try {
@@ -143,7 +154,7 @@ export function buildServer(robots: readonly LocalRobot[], watcher?: CallWatcher
         n,
         tool: name,
         robot_id,
-        args: text.length > WATCH_ARGS_MAX ? `${text.slice(0, WATCH_ARGS_MAX)}…` : text,
+        args: cutText(text, WATCH_ARGS_MAX),
       });
     });
     const t0 = performance.now();

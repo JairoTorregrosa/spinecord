@@ -1,0 +1,367 @@
+/* The chat panel (--chat, experimental): injected by src/chat.ts only when the process's chat is on. It takes the
+   slot of the list of MCP calls, whose calls it shows in its own timeline. */
+:root {
+  --chat-h: clamp(230px, 32vh, 300px);
+}
+body.chat-on .calls {
+  display: none;
+}
+.chat {
+  left: calc(var(--side) + 24px);
+  right: calc(var(--brick) + 24px);
+  bottom: 12px;
+  height: var(--chat-h);
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  padding: 8px 10px 10px;
+  gap: 6px;
+  font-size: 13px;
+}
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+.chat-head .avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ff6b5e, var(--accent) 60%, #7a0006);
+  box-shadow: 0 0 0 2px rgba(227, 0, 11, 0.25);
+}
+.chat[data-state="speaking"] .avatar,
+.chat[data-state="acting"] .avatar {
+  animation: chat-pulse 0.9s ease-in-out infinite;
+}
+.chat-head .name {
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+.chat-head .spacer {
+  flex: 1;
+}
+.pill {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.pill.ok {
+  color: var(--ok);
+  border-color: rgba(60, 207, 122, 0.35);
+}
+.pill.busy {
+  color: var(--blue);
+  border-color: rgba(111, 179, 255, 0.4);
+}
+.pill.warn {
+  color: var(--warn);
+  border-color: rgba(242, 179, 61, 0.4);
+}
+.pill.bad {
+  color: var(--bad);
+  border-color: rgba(255, 90, 78, 0.45);
+}
+.pill.rec {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.spend {
+  width: 54px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.spend i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--ok), var(--warn));
+}
+.spent {
+  font-size: 11px;
+  color: var(--dim);
+  min-width: 40px;
+}
+.chat-head button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  height: 26px;
+  min-width: 30px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chat-body {
+  display: grid;
+  grid-template-columns: 1fr 108px;
+  gap: 10px;
+  min-height: 0;
+}
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 4px 0 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+.timeline li {
+  max-width: 92%;
+  line-height: 1.35;
+}
+.timeline li.user {
+  align-self: flex-end;
+  background: rgba(111, 179, 255, 0.16);
+  border: 1px solid rgba(111, 179, 255, 0.28);
+  padding: 4px 10px;
+  border-radius: 12px 12px 3px 12px;
+}
+.timeline li.user .via {
+  margin-right: 6px;
+  opacity: 0.7;
+}
+.timeline li.robot {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  border-radius: 12px 12px 12px 3px;
+  font-size: 14px;
+}
+.timeline li.robot .who {
+  color: #ff8a80;
+  margin-right: 6px;
+  font-size: 12px;
+}
+.timeline li.call {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  padding: 1px 8px;
+  border-left: 2px solid var(--line);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.timeline li.call {
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.timeline li.call .one {
+  margin-left: 6px;
+}
+.timeline li.call .more {
+  flex-basis: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.timeline li.call b {
+  color: var(--text);
+  font-weight: 600;
+}
+.timeline li.call .st {
+  margin-left: 4px;
+}
+.timeline li.call.busy {
+  border-color: var(--blue);
+}
+.timeline li.call.busy .st {
+  color: var(--blue);
+}
+.timeline li.call.ok {
+  border-color: rgba(60, 207, 122, 0.6);
+}
+.timeline li.call.ok .st {
+  color: var(--ok);
+}
+.timeline li.call.warn {
+  border-color: var(--warn);
+}
+.timeline li.call.warn .st {
+  color: var(--warn);
+}
+.timeline li.call.err {
+  border-color: var(--bad);
+}
+.timeline li.call.err .st {
+  color: var(--bad);
+}
+.timeline li.cost {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  opacity: 0.7;
+  padding-left: 10px;
+}
+.timeline li.stopped {
+  align-self: stretch;
+  max-width: none;
+  text-align: center;
+  color: #fff;
+  background: rgba(227, 0, 11, 0.35);
+  border-radius: 8px;
+  font-weight: 600;
+  padding: 2px 8px;
+}
+.timeline li.note {
+  align-self: stretch;
+  max-width: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+.timeline li.note.error {
+  background: rgba(242, 179, 61, 0.14);
+  color: var(--warn);
+}
+.timeline li.note.off {
+  background: rgba(255, 90, 78, 0.14);
+  color: #ffb3ad;
+}
+.timeline li.empty {
+  max-width: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: auto 0;
+}
+.timeline li.empty .hello {
+  width: 100%;
+  color: var(--dim);
+}
+.chip-s {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip-s:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+.controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 0;
+}
+.talk {
+  width: 76px;
+  height: 76px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  background: radial-gradient(circle at 40% 35%, #3a414d, #20252d);
+  color: #fff;
+  font-size: 30px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.08s;
+}
+.talk.on {
+  background: radial-gradient(circle at 40% 35%, #ff5a4e, var(--accent));
+  border-color: #ffb3ad;
+  transform: scale(1.06);
+  animation: chat-ring 1.1s ease-out infinite;
+}
+.talk:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.where {
+  font-size: 10.5px;
+  color: var(--dim);
+  text-align: center;
+  line-height: 1.2;
+}
+.where.cloud {
+  color: var(--warn);
+  cursor: help;
+}
+.stop {
+  margin-top: auto;
+  width: 100%;
+  height: 38px;
+  flex: none;
+  border-radius: 10px;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.stop:active {
+  transform: scale(0.97);
+}
+.stop:disabled {
+  opacity: 0.4;
+}
+.heard {
+  font-size: 14px;
+  color: #fff;
+  background: rgba(227, 0, 11, 0.22);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-style: italic;
+}
+.say-row {
+  display: flex;
+  gap: 6px;
+}
+.say-row .text {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 14px;
+}
+.say-row .text:focus {
+  outline: 2px solid rgba(111, 179, 255, 0.5);
+}
+.say-row .send {
+  width: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+}
+@keyframes chat-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(227, 0, 11, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 16px rgba(227, 0, 11, 0);
+  }
+}
+@keyframes chat-pulse {
+  50% {
+    box-shadow: 0 0 0 6px rgba(227, 0, 11, 0.12);
+  }
+}
+@media (max-width: 760px) {
+  .chat {
+    left: 12px;
+    right: 12px;
+  }
+}

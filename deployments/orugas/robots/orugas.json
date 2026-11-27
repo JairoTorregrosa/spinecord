@@ -1,5 +1,5 @@
 {
-  "description": "EV3 de orugas con un teléfono de pie al frente (su pantalla es la cara) y el sensor infrarrojo encima, mirando adelante. Motores grandes en B (oruga izquierda) y C (oruga derecha), infrarrojo en el puerto 4, sin giroscopio: el rumbo sale de los encoders. Las medidas son aproximadas: mide en el robot real y ajusta wheel_diameter_cm (avanza 50 cm y compara) y axle_track_cm (gira 360° y compara). El gemelo orugas-sim se construye con este mismo archivo.",
+  "description": "EV3 de orugas con un teléfono de pie al frente (su pantalla es la cara) y el sensor infrarrojo encima, mirando adelante. Motores grandes en B (oruga izquierda) y C (oruga derecha), infrarrojo en el puerto 4, sin giroscopio: el rumbo sale de los encoders. Las medidas son aproximadas: mide en el robot real y ajusta wheel_diameter_cm (avanza 50 cm y compara) y axle_track_cm (gira 360° y compara). `twin` es cómo está armado, para su gemelo: `body` la huella (8.5 cm por delante del eje, 13.5 por detrás con el parachoques, 9 a cada lado) y dónde mira el infrarrojo (6 cm por delante del eje, a 19.6 cm del suelo: mira por encima de una caja baja cercana), `ev3` qué hay en cada puerto, `drive` la tracción como es de verdad (una estimación: el gemelo gira un 20 % menos de lo que dicen los encoders, como las orugas que patinan; para medirlo, gira 360° en el robot real, mide cuánto giró de verdad y pon turn_scrub = 1 - real/360; calibrar `profile` lo corrige) y `view` cómo se ve en 3D (orugas, el ladrillo con la pantalla hacia delante, el teléfono, el infrarrojo sobre el teléfono, el parachoques y la etiqueta). El gemelo orugas-sim se construye con este mismo archivo, en cualquier mundo.",
   "pair": {
     "left": "B",
     "right": "C"
@@ -38,5 +38,53 @@
       "The infrared sensor on S4 sits on top of the phone, about 20 cm above the floor and 6 cm ahead of the axle, looking forward: the front of the tracks is about 2.5 cm ahead of it. It reads proximity_pct (0 touching, 100 far), not centimetres.",
       "A phone stands at the front with its screen facing forward; it can join as a page and lend its camera, screen and speaker."
     ]
+  },
+  "twin": {
+    "body": {
+      "front_cm": 8.5,
+      "back_cm": 13.5,
+      "half_width_cm": 9,
+      "color_sensor_x_cm": 7,
+      "color_spot_radius_cm": 1,
+      "distance_sensor_x_cm": 6,
+      "distance_sensor_z_cm": 19.6
+    },
+    "drive": {
+      "wheel_diameter_cm": 3.5,
+      "axle_track_cm": 13.5,
+      "turn_scrub": 0.2
+    },
+    "ev3": {
+      "motors": {
+        "B": "large",
+        "C": "large"
+      },
+      "sensors": {
+        "4": "ir"
+      }
+    },
+    "view": {
+      "drive": "tracks",
+      "brick": {
+        "x_cm": -1.5,
+        "screen": "front"
+      },
+      "phone": {
+        "x_cm": 5.2,
+        "bottom_cm": 10.8,
+        "screen": "front"
+      },
+      "sensors": {
+        "4": {
+          "x_cm": 5,
+          "y_cm": 4.6,
+          "z_cm": 19.6
+        }
+      },
+      "bumper": {
+        "x_cm": -10.5
+      },
+      "label": "3"
+    }
   }
 }

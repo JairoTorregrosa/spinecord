@@ -1,5 +1,5 @@
 {
-  "description": "Example robot (not a default): the LEGO EV3 educator base. Large motors on B (left) and C (right), a medium motor on A, four sensors. `pair` are the ports of the synced motor pair `ev3.pair`, `hardware` the facts about the brick that are not motion limits (`tone_volume_pct` is read on stock firmware, `speech_volume_pct` on ev3dev), `profile` a contract RobotProfile (CONTRACT.md §3). `profile.drivetrain.heading` names the channel that measures the heading of a move, by the role `gyro`; a base without it measures the heading from its wheel encoders. The twin r1-sim is built from this same file.",
+  "description": "Example robot (not a default): the LEGO EV3 educator base. Large motors on B (left) and C (right), a medium motor on A, four sensors. `pair` are the ports of the synced motor pair `ev3.pair`, `hardware` the facts about the brick that are not motion limits (`tone_volume_pct` is read on stock firmware, `speech_volume_pct` on ev3dev), `profile` a contract RobotProfile (CONTRACT.md §3). `profile.drivetrain.heading` names the channel that measures the heading of a move, by the role `gyro`; a base without it measures the heading from its wheel encoders. `twin` is its build for the twin (CONTRACT.md §3): `twin.ev3` is what is plugged into each port; it has no `body` or `view`, so its twin takes the default footprint and look. The twin r1-sim is built from this same file, in any world.",
   "pair": {
     "left": "B",
     "right": "C"
@@ -44,5 +44,20 @@
       "Colour sensor points down, 7 cm ahead of the axle.",
       "Distance sensor looks forward from the front edge."
     ]
+  },
+  "twin": {
+    "ev3": {
+      "motors": {
+        "A": "medium",
+        "B": "large",
+        "C": "large"
+      },
+      "sensors": {
+        "1": "touch",
+        "2": "gyro",
+        "3": "color",
+        "4": "ultrasonic"
+      }
+    }
   }
 }

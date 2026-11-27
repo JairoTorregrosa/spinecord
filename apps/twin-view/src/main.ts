@@ -2,14 +2,21 @@
 // the person watching. The twin runs in the process; this page only shows it and asks it for what a person
 // does to a robot on the floor (pick it up, set boxes down, press a button).
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { buildArena, toScene, type Arena } from "./arena";
+import { applyLink, frameStats, placeCamera } from "./deeplink";
 import { Sound } from "./audio";
+import { Cameras, CAMS, type Cam } from "./camera";
+import { ChatPanel } from "./chat";
+import { Hand, MODES, heading, type Mode } from "./hand";
 import * as hud from "./hud";
+import { draftLines } from "./draft";
+import { LOST_GRACE_MS, hideNo3d, showNo3d } from "./no3d";
+import { SensorRayView } from "./rays";
+import { Link, type LinkState } from "./link";
 import { lookOf } from "./look";
-import type { Box, PageMessage, RobotMeta, RobotState, ServerMessage } from "./messages";
-import { buildRobot, P, type RobotModel } from "./model";
+import type { RobotMeta, RobotState, ServerMessage } from "./messages";
+import { buildRobot, type RobotModel } from "./model";
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const e = document.getElementById(id);
@@ -21,25 +28,81 @@ const HELPERS = 1; // layer of what only the person sees: rays, trail, ghosts
 
 // ---------------------------------------------------------------- renderer, scene, lights
 const canvas = $<HTMLCanvasElement>("scene");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+/**
+ * The renderer, or null when this browser cannot draw in 3D (no WebGL context): the page then says so where the
+ * scene would be (src/no3d.ts) and everything else (connection, panels, widgets, calls) goes on without it.
+ */
+let renderer: THREE.WebGLRenderer | null = null;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+} catch (e) {
+  showNo3d("no_context", (e as Error).message);
+}
+if (renderer) {
+  // 1.5 device pixels per CSS pixel: past that an integrated GPU pays in fill rate for detail nobody sees
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  // the sun's shadow does not depend on the camera: drawn when something casting it moved (shadowFrame) and shared
+  // by the robot's camera
+  renderer.shadowMap.autoUpdate = false;
+  // Neutral keeps LEGO's saturated colours and white plastic white, where ACES turns them grey and yellow
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  renderer.toneMappingExposure = 1.0;
+}
+// a context the browser takes back (a GPU reset, too many tabs) and does not return within LOST_GRACE_MS
+let lostTimer: ReturnType<typeof setTimeout> | null = null;
+canvas.addEventListener("webglcontextlost", (e) => {
+  e.preventDefault(); // ask for it back
+  lostTimer ??= setTimeout(() => showNo3d("lost", "webglcontextlost without webglcontextrestored"), LOST_GRACE_MS);
+});
+canvas.addEventListener("webglcontextrestored", () => {
+  if (lostTimer) clearTimeout(lostTimer);
+  lostTimer = null;
+  hideNo3d();
+});
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x14171c);
-scene.fog = new THREE.Fog(0x14171c, 500, 2000);
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.5;
-scene.add(new THREE.HemisphereLight(0xe2ebff, 0x3b322a, 0.85));
-const sun = new THREE.DirectionalLight(0xfff3e2, 2.3);
+// a bright room around the arena, the fog melting the far floor into it
+const ROOM = 0xc9c6bf;
+scene.background = new THREE.Color(ROOM);
+scene.fog = new THREE.Fog(ROOM, 500, 2000);
+if (renderer) {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.55;
+  pmrem.dispose();
+}
+scene.add(new THREE.HemisphereLight(0xeef2ff, 0x5a5048, 0.9));
+// the window's light: warm, from high up at a slant, with soft shadows
+const sun = new THREE.DirectionalLight(0xfff1de, 2.2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.bias = -0.0003;
-sun.shadow.normalBias = 0.03;
+sun.shadow.radius = 3;
+sun.shadow.blurSamples = 12;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
+// The world matrices are brought up to date once a frame, before the shadow's check and the renders.
+scene.matrixWorldAutoUpdate = false;
+let shadowSig = NaN,
+  shadowAt = -Infinity;
+/** Draws the sun's shadow again when something casting it, or the sun, moved since it was last drawn: never while
+ *  all stands still, and at most every 30 ms while things move (the shadow pass costs as much as the scene's). */
+function shadowFrame(now: number): void {
+  let sig = sun.position.x + 3 * sun.position.y + 7 * sun.position.z + 11 * sun.shadow.camera.right,
+    n = 0;
+  scene.traverseVisible((o) => {
+    if (!o.castShadow) return;
+    n++;
+    const e = o.matrixWorld.elements;
+    for (let i = 0; i < 16; i++) sig += e[i]! * (i + 1 + (n % 13));
+  });
+  sig += n * 1e6;
+  if (sig === shadowSig || now - shadowAt < 30) return;
+  if (renderer) renderer.shadowMap.needsUpdate = true;
+  shadowSig = sig;
+  shadowAt = now;
+}
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.5, 8000);
 camera.layers.enable(HELPERS);
@@ -62,33 +125,17 @@ let from: Shown | null = null;
 let shown: Shown | null = null;
 let roles: Record<string, string> = {};
 const sound = new Sound();
-
-// ---------------------------------------------------------------- the distance sensor's cone
-const conePos = new Float32Array(4 * 3);
-const coneGeo = new THREE.BufferGeometry();
-coneGeo.setAttribute("position", new THREE.BufferAttribute(conePos, 3));
-coneGeo.setIndex([0, 1, 2, 0, 2, 3]);
-const coneMat = new THREE.MeshBasicMaterial({
-  color: 0x3ccf7a,
-  transparent: true,
-  opacity: 0.16,
-  side: THREE.DoubleSide,
-  depthWrite: false,
+/** --chat: the panel is built only when the process's hello says the chat is on. */
+const chat = new ChatPanel({
+  send: (m) => link.send(m),
+  toast: (text, kind) => hud.toast(text, kind),
+  setVoice: (v) => (sound.voice = v),
 });
-const cone = new THREE.Mesh(coneGeo, coneMat);
-const rayPos = new Float32Array(6 * 3);
-const rayGeo = new THREE.BufferGeometry();
-rayGeo.setAttribute("position", new THREE.BufferAttribute(rayPos, 3));
-const rays = new THREE.LineSegments(
-  rayGeo,
-  new THREE.LineBasicMaterial({ color: 0x3ccf7a, transparent: true, opacity: 0.7 }),
-);
-const hitGeo = new THREE.SphereGeometry(0.9, 14, 10);
-const hits = [0, 1, 2].map(() => new THREE.Mesh(hitGeo, new THREE.MeshBasicMaterial({ color: 0x3ccf7a })));
-const coneGroup = new THREE.Group();
-coneGroup.add(cone, rays, ...hits);
+
+// ---------------------------------------------------------------- the sensors' rays, as the physics casts them
+const sensorRays = new SensorRayView();
+const coneGroup = sensorRays.group;
 robotRoot.add(coneGroup);
-cone.frustumCulled = rays.frustumCulled = false;
 
 // ---------------------------------------------------------------- trail
 const TRAIL_MAX = 6000;
@@ -122,75 +169,38 @@ const trailAdd = (x: number, y: number) => {
   trailGeo.attributes.position!.needsUpdate = true;
 };
 
-// ---------------------------------------------------------------- ghosts of what the hand is doing
-const ghostRobot = new THREE.Group();
-const ghostMat = new THREE.LineBasicMaterial({ color: 0x6fb3ff });
-const ghostOutline = new THREE.LineLoop(new THREE.BufferGeometry(), ghostMat);
-const ghostArrow = new THREE.Line(new THREE.BufferGeometry(), ghostMat);
-const ghostFill = new THREE.Mesh(
-  new THREE.PlaneGeometry(1, 1),
-  new THREE.MeshBasicMaterial({ color: 0x6fb3ff, transparent: true, opacity: 0.18, depthWrite: false }),
-);
-ghostFill.rotation.x = -Math.PI / 2;
-ghostRobot.add(ghostOutline, ghostArrow, ghostFill);
-ghostRobot.visible = false;
-scene.add(ghostRobot);
-const ghostBox = new THREE.Mesh(
-  new THREE.BoxGeometry(1, 1, 1),
-  new THREE.MeshBasicMaterial({ color: 0x6fb3ff, transparent: true, opacity: 0.28, depthWrite: false }),
-);
-ghostBox.visible = false;
-scene.add(ghostBox);
-const setGhostShape = (m: RobotMeta) => {
-  const b = m.world.body;
-  const z = 0.25;
-  ghostOutline.geometry.dispose();
-  ghostOutline.geometry = new THREE.BufferGeometry().setFromPoints([
-    P(b.front_cm, b.half_width_cm, z),
-    P(b.front_cm, -b.half_width_cm, z),
-    P(-b.back_cm, -b.half_width_cm, z),
-    P(-b.back_cm, b.half_width_cm, z),
-  ]);
-  ghostArrow.geometry.dispose();
-  ghostArrow.geometry = new THREE.BufferGeometry().setFromPoints([
-    P(0, 0, z),
-    P(b.front_cm + 8, 0, z),
-    P(b.front_cm + 5, 2.5, z),
-    P(b.front_cm + 8, 0, z),
-    P(b.front_cm + 5, -2.5, z),
-  ]);
-  ghostFill.scale.set(b.front_cm + b.back_cm, 2 * b.half_width_cm, 1);
-  ghostFill.position.copy(P((b.front_cm - b.back_cm) / 2, 0, 0.2));
-};
-for (const o of [coneGroup, trail, ghostRobot, ghostBox]) o.traverse((c) => c.layers.set(HELPERS));
+for (const o of [coneGroup, trail]) o.traverse((c) => c.layers.set(HELPERS));
 
 // ---------------------------------------------------------------- the socket
-let ws: WebSocket | null = null;
-let req = 0;
-const pending = new Map<number, string>();
-let retryMs = 800;
+const link = new Link(`ws://${location.host}/ws`, (m) => receive(m), linkChanged);
 let offlineTimer: ReturnType<typeof setTimeout> | null = null;
-function send(m: PageMessage, what: string): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return hud.toast("Sin conexión con spinecord");
-  pending.set(m.req, what);
-  ws.send(JSON.stringify(m));
-}
-const nextReq = () => ++req;
-function connect(): void {
-  ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => {
-    retryMs = 800;
+let offlineClock: ReturnType<typeof setInterval> | null = null;
+function linkChanged(s: LinkState): void {
+  chat.linkState(s === "open");
+  document.body.classList.toggle("stale", s !== "open");
+  if (s === "open") {
     if (offlineTimer) clearTimeout(offlineTimer);
+    if (offlineClock) clearInterval(offlineClock);
+    offlineTimer = offlineClock = null;
     $("offline").hidden = true;
     hud.chip("chip-ws", ["Conectado", "ok"]);
-  };
-  ws.onmessage = (ev) => receive(JSON.parse(String(ev.data)) as ServerMessage);
-  ws.onclose = () => {
-    hud.chip("chip-ws", ["Reconectando…", "warn"]);
-    offlineTimer ??= setTimeout(() => ($("offline").hidden = false), 1500);
-    setTimeout(connect, retryMs);
-    retryMs = Math.min(5000, retryMs * 1.6);
-  };
+    // back after a loss: the robot may be anywhere now
+    if (cams.mode === "follow") cams.frame("ease");
+    return;
+  }
+  // at once: nothing the chips said is known any more; they come back with the first state after the return
+  hud.chip("chip-ws", ["Sin conexión · reintentando", "bad"]);
+  hud.chip("chip-link", ["—", ""]);
+  hud.chip("chip-activity", ["—", ""]);
+  // a blink of the socket is not worth a curtain; a real loss is, with how long it has lasted
+  offlineTimer ??= setTimeout(() => {
+    $("offline").hidden = false;
+    const tick = () =>
+      ($("offline-since").textContent =
+        `Sin datos desde hace ${Math.round((performance.now() - link.closedAt) / 1000)} s · reintentando…`);
+    tick();
+    offlineClock = setInterval(tick, 1000);
+  }, 1500);
 }
 
 function receive(m: ServerMessage): void {
@@ -199,12 +209,15 @@ function receive(m: ServerMessage): void {
       robots = m.robots;
       interval = 1000 / m.rate_hz;
       const sel = $<HTMLSelectElement>("robot");
-      sel.innerHTML = robots.map((r) => `<option value="${r.id}">${r.id}</option>`).join("");
+      sel.replaceChildren(...robots.map((r) => new Option(r.name ? `${r.name} · ${r.id}` : r.id, r.id)));
       sel.hidden = robots.length < 2;
       const keepId = focus && robots.some((r) => r.id === focus!.id) ? focus.id : robots[0]?.id;
       sel.value = keepId ?? "";
       hud.callsReset();
       for (const c of m.calls) hud.call(c);
+      for (const e of m.events.find((x) => x.id === keepId)?.events ?? []) hud.worldEvent(e);
+      chat.hello(m.chat);
+      for (const c of m.calls) chat.call(c);
       setFocus(keepId ?? null);
       break;
     }
@@ -213,12 +226,15 @@ function receive(m: ServerMessage): void {
       if (focus?.id === m.robot.id) setFocus(m.robot.id);
       break;
     }
-    case "boxes":
+    case "boxes": {
+      const r = robots.find((x) => x.id === m.id);
+      if (r) r.world.boxes = m.boxes;
       if (focus?.id === m.id && arena) {
-        focus.world.boxes = m.boxes;
         arena.setBoxes(m.boxes);
+        hand.boxesChanged();
       }
       break;
+    }
     case "state": {
       const st = m.robots.find((r) => r.id === focus?.id);
       if (st) onState(st);
@@ -228,29 +244,77 @@ function receive(m: ServerMessage): void {
       if (m.id === focus?.id) {
         sound.tone(m.hz, m.ms, m.volume);
         say(`♪ ${m.hz} Hz · ${m.ms} ms`, 1200, true);
+        missedSound();
       }
       break;
     case "speak":
       if (m.id === focus?.id) {
         sound.speak(m.text);
         say(`🗣 ${m.text}`, Math.max(2600, m.text.length * 75));
+        missedSound();
       }
+      break;
+    case "events":
+      if (m.id === focus?.id) for (const e of m.events) hud.worldEvent(e);
       break;
     case "call_start":
     case "call_end":
       hud.call(m);
+      chat.call(m);
       break;
-    case "reply": {
-      const what = pending.get(m.req);
-      pending.delete(m.req);
-      if (!m.ok) hud.toast(`${what ?? "No se pudo"}: ${m.error ?? "error"}`);
+    case "chat":
+    case "chat_user":
+    case "chat_delta":
+    case "chat_end":
+    case "chat_stopped":
+    case "chat_refused":
+      chat.receive(m);
       break;
-    }
   }
 }
 
 // ---------------------------------------------------------------- focus: build the world and the robot
-let firstView = true;
+/** The robot's name is the page's title, its id beside it; without a name, the page's own title. */
+/** The "borrador" chip, only for a twin whose build someone has yet to confirm. */
+function showDraft(r: RobotMeta | null): void {
+  const lines = r ? draftLines(r) : [];
+  $("chip-draft").hidden = lines.length === 0;
+  $("draft-items").replaceChildren(
+    ...lines.map((l) => {
+      const li = document.createElement("li");
+      li.textContent = l;
+      return li;
+    }),
+  );
+}
+
+function showTitle(r: RobotMeta | null): void {
+  showDraft(r);
+  const title = $("title");
+  if (!r?.name) {
+    title.innerHTML = "EV3 <b>gemelo 3D</b>";
+    document.title = "EV3 · gemelo 3D";
+    return;
+  }
+  const name = document.createElement("b"),
+    id = document.createElement("span");
+  name.textContent = r.name;
+  id.className = "dim";
+  id.textContent = r.id;
+  title.replaceChildren(name, " ", id);
+  document.title = `${r.name} · gemelo 3D`;
+}
+
+/** The robot and world the camera last framed: another one is framed afresh, the same one keeps the view. */
+let framed = "";
+/** Fog hides where the floor ends at eye level. From straight above the camera stands far off: there it would hide the arena. */
+function fitFog(): void {
+  if (!focus) return;
+  const size = Math.max(focus.world.width, focus.world.height);
+  const far = cams.mode === "top" ? 40 : 4.5;
+  (scene.fog as THREE.Fog).near = (size * far) / 3;
+  (scene.fog as THREE.Fog).far = size * far;
+}
 function setFocus(id: string | null): void {
   focus = robots.find((r) => r.id === id) ?? null;
   if (arena) {
@@ -266,20 +330,32 @@ function setFocus(id: string | null): void {
   cur = null;
   from = shown = null;
   trailReset();
+  hand.reset(focus);
+  showConeOption();
+  showTitle(focus);
   if (!focus) return;
   const look = lookOf(focus);
   model = buildRobot(focus, look);
   robotRoot.add(model.group);
-  arena = buildArena(focus.world, model.height);
+  arena = buildArena(focus.world, model.height, renderer?.capabilities.getMaxAnisotropy() ?? 1);
   scene.add(arena.group);
-  setGhostShape(focus);
-  coneGroup.visible = model.rayOrigin !== null && $<HTMLInputElement>("opt-cone").checked;
+  coneGroup.visible = hasRays(focus) && $<HTMLInputElement>("opt-cone").checked;
   roles = {};
-  if (focus.drivetrain) {
-    const what = look.drive === "tracks" ? "oruga" : "rueda";
-    roles[focus.drivetrain.left] = `${what} izq.`;
-    roles[focus.drivetrain.right] = `${what} der.`;
+  // the drive motors say what they turn, as the build has it: tracks, wheels, or nothing (a build without a drive)
+  const turns = look.drive === "tracks" ? "oruga" : look.drive === "wheels" ? "rueda" : null;
+  if (focus.drivetrain && turns) {
+    roles[focus.drivetrain.left] = `${turns} izq.`;
+    roles[focus.drivetrain.right] = `${turns} der.`;
   }
+  // and the others what they move, as the look builds it
+  const MOVES: Record<string, string> = {
+    axle: "eje",
+    arm: "brazo",
+    lift: "elevador",
+    turntable: "plataforma",
+    gripper: "pinza",
+  };
+  for (const m of look.motors) roles[m.port] ??= MOVES[m.attachment] ?? "";
   $("pip").hidden = !$<HTMLInputElement>("opt-pip").checked;
   // light and fog to the size of the arena
   const w = focus.world,
@@ -293,17 +369,30 @@ function setFocus(id: string | null): void {
   sc.near = 1;
   sc.far = size * 4;
   sc.updateProjectionMatrix();
-  (scene.fog as THREE.Fog).near = size * 3;
-  (scene.fog as THREE.Fog).far = size * 9;
-  controls.maxDistance = size * 3;
-  if (firstView) {
-    firstView = false;
-    const s = toScene(w.start.x, w.start.y);
-    controls.target.copy(s);
-    const h = w.start.heading_deg * DEG;
-    camera.position.set(s.x - Math.cos(h) * 70 + Math.sin(h) * 45, 62, s.z + Math.sin(h) * 70 + Math.cos(h) * 45);
-    controls.update();
-  }
+  fitFog();
+  const key = `${focus.id}\n${w.name}`;
+  const first = key !== framed;
+  // the robot whole, where it is (not where it started), in the part of the canvas no panel covers: behind it and
+  // to its right, or from the front when a phone looks ahead, where its face reads. A deep link's angle wins.
+  cams.extent = {
+    front_cm: w.body.front_cm,
+    back_cm: w.body.back_cm,
+    half_width_cm: w.body.half_width_cm,
+    height_cm: model?.height ?? 20,
+  };
+  cams.aim.az = look.phone && Math.cos(look.phone.yaw * DEG) > 0.5 ? -135 : -32;
+  cams.fitArena(w, first);
+  framed = key;
+}
+
+/** Does this robot have a sensor whose rays the page draws (ultrasonic, infrared, colour)? */
+function hasRays(m: RobotMeta | null): boolean {
+  return m !== null && Object.values(m.ports.sensors).some((k) => k === "ultrasonic" || k === "ir" || k === "color");
+}
+/** The rays option is offered only to a robot that has such a sensor. */
+function showConeOption(): void {
+  $("opt-cone-row").hidden = !hasRays(focus);
+  $("opt-cone-label").textContent = "Rayos de los sensores";
 }
 
 function onState(st: RobotState): void {
@@ -355,10 +444,15 @@ setInterval(() => {
   hud.chip("chip-activity", hud.ACTIVITY[st.activity] ?? [st.activity, ""]);
   if (st.motors.some((m) => m.blocked) || (st.stalled && st.activity !== "idle")) pushedAt = performance.now();
   $("chip-stall").hidden = performance.now() - pushedAt > 3000;
-  const heading = ((Math.round(st.pose.heading_deg) % 360) + 360) % 360;
   $("pose").textContent =
-    `x ${st.pose.x.toFixed(1)} · y ${st.pose.y.toFixed(1)} cm · θ ${heading}° · t ${(st.t_ms / 1000).toFixed(1)} s`;
+    `x ${st.pose.x.toFixed(1)} · y ${st.pose.y.toFixed(1)} cm · θ ${heading(st.pose.heading_deg).toFixed(0)}°`;
+  $("clock").textContent = `t ${(st.t_ms / 1000).toFixed(1)} s`;
   hud.ports(st, roles);
+}, 100);
+setInterval(() => {
+  hud.callsTick();
+  const p = hand.pointer;
+  $("pointer").textContent = p ? `x ${p.x.toFixed(1)} · y ${p.y.toFixed(1)} cm` : "—";
 }, 100);
 
 // ---------------------------------------------------------------- speech bubble
@@ -373,196 +467,119 @@ function say(text: string, ms: number, tone = false): void {
   bubbleUntil = performance.now() + ms;
 }
 
-// ---------------------------------------------------------------- the hand
-type Mode = "look" | "carry" | "box" | "remove";
-let mode: Mode = "look";
-type Drag =
-  | { kind: "robot"; dx: number; dy: number; x: number; y: number; th: number }
-  | { kind: "place"; x0: number; y0: number; th: number }
-  | { kind: "box"; x0: number; y0: number; x: number; y: number };
-let drag: Drag | null = null;
-const raycaster = new THREE.Raycaster();
-const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-const ndc = new THREE.Vector2();
-const pointerAt = (e: PointerEvent) => {
-  const r = canvas.getBoundingClientRect();
-  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-  raycaster.setFromCamera(ndc, camera);
-};
-/** The world point (cm) under the pointer, on the floor, kept inside the arena. */
-const floorAt = (e: PointerEvent): { x: number; y: number } | null => {
-  pointerAt(e);
-  const p = raycaster.ray.intersectPlane(floorPlane, new THREE.Vector3());
-  if (!p || !focus) return null;
-  const { width, height } = focus.world;
-  return { x: Math.min(width, Math.max(0, p.x)), y: Math.min(height, Math.max(0, -p.z)) };
-};
-const onRobot = (e: PointerEvent): boolean => {
-  if (!model) return false;
-  pointerAt(e);
-  return raycaster.intersectObject(model.group, true).length > 0;
-};
-const boxUnder = (e: PointerEvent): number | null => {
-  if (!arena) return null;
-  pointerAt(e);
-  const hit = raycaster.intersectObjects(arena.boxes, false)[0];
-  return hit ? (hit.object.userData.index as number) : null;
-};
-const showGhost = (x: number, y: number, th: number) => {
-  ghostRobot.visible = true;
-  ghostRobot.position.copy(toScene(x, y));
-  ghostRobot.rotation.y = th;
-};
-const HINTS: Record<Mode, string> = {
-  look: "",
-  carry: "Pulsa donde quieres el robot y arrastra hacia donde debe mirar · Q / E lo giran · Esc sale",
-  box: "Arrastra un rectángulo en el suelo para poner una caja · un clic pone una de 20 × 20 cm · Esc sale",
-  remove: "Haz clic en una caja para quitarla · Esc sale",
-};
-function setMode(m: Mode): void {
-  mode = m;
-  drag = null;
-  ghostRobot.visible = ghostBox.visible = false;
-  arena?.highlight(null);
-  for (const b of document.querySelectorAll<HTMLButtonElement>("#modes button"))
-    b.classList.toggle("on", b.dataset.mode === m);
-  canvas.className = m === "carry" || m === "box" ? "place" : "";
-  hud.hint(camMode === "eye" && m !== "look" ? "Cambia a la cámara Libre o Seguir para usar la mano" : HINTS[m]);
-}
-
-// registered before OrbitControls: a drag the hand takes turns the controls off before they see the press
-canvas.addEventListener("pointerdown", (e) => {
-  if (e.button !== 0 || !focus || !cur || camMode === "eye") return;
-  if (mode === "remove") {
-    const i = boxUnder(e);
-    if (i !== null) {
-      controls.enabled = false;
-      e.stopImmediatePropagation();
-      send({ t: "box_remove", req: nextReq(), id: focus.id, index: i }, "No se pudo quitar la caja");
-      drag = null;
+// ---------------------------------------------------------------- the camera and the hand
+const cams = new Cameras(
+  camera,
+  canvas,
+  (m) => {
+    for (const b of document.querySelectorAll<HTMLButtonElement>("#cams button")) {
+      const on = b.dataset.cam === m;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-checked", String(on));
     }
-    return;
-  }
-  const p = floorAt(e);
-  if (!p) return;
-  if (mode === "look") {
-    if (!onRobot(e)) return;
-    const s = shown ?? { x: cur.pose.x, y: cur.pose.y, th: cur.pose.heading_deg * DEG };
-    drag = { kind: "robot", dx: s.x - p.x, dy: s.y - p.y, x: s.x, y: s.y, th: s.th };
-    canvas.className = "grabbing";
-    showGhost(s.x, s.y, s.th);
-  } else if (mode === "carry") {
-    drag = { kind: "place", x0: p.x, y0: p.y, th: shown?.th ?? cur.pose.heading_deg * DEG };
-    showGhost(p.x, p.y, drag.th);
-  } else if (mode === "box") {
-    drag = { kind: "box", x0: p.x, y0: p.y, x: p.x, y: p.y };
-  }
-  if (drag) {
-    // the hand has it: the camera must not turn with this drag
-    controls.enabled = false;
-    e.stopImmediatePropagation();
-    canvas.setPointerCapture(e.pointerId);
-  }
+    fitFog();
+    $("pip").hidden = m === "eye" || !$<HTMLInputElement>("opt-pip").checked;
+    canvas.dataset.cam = m;
+    hand.refreshHint();
+  },
+  freeArea,
+);
+// a deep link's angle, distance or height wins over the first framing
+cams.onSnap = (target, heading) => placeCamera(camera, target, heading);
+/** The canvas left uncovered by the panels, for the top view. */
+function freeArea(): { left: number; top: number; right: number; bottom: number } {
+  const r = (id: string) => $(id).getBoundingClientRect();
+  const c = canvas.getBoundingClientRect();
+  // the hint floats over the scene and fades: it is not a panel, or the scene would jump when it goes
+  const top = r("bar").bottom + 8;
+  const left = $("tools").classList.contains("folded") ? 12 : r("tools").right + 8;
+  const right = $("brick").classList.contains("folded") ? c.width - 12 : r("brick").left - 8;
+  const below = document.getElementById("chat") ?? $("callpanel"); // --chat: the chat takes the calls' place
+  return {
+    left: left - c.left,
+    top: top - c.top,
+    right: right - c.left,
+    bottom: below.getBoundingClientRect().top - 8 - c.top,
+  };
+}
+const shownPose = () => shown ?? (cur ? { x: cur.pose.x, y: cur.pose.y, th: cur.pose.heading_deg * DEG } : null);
+const hand = new Hand({
+  canvas,
+  camera,
+  scene,
+  cams,
+  link,
+  focus: () => focus,
+  pose: shownPose,
+  arena: () => arena,
+  robot: () => model?.group ?? null,
+  helpers: HELPERS,
 });
-canvas.addEventListener("pointermove", (e) => {
-  if (!drag) {
-    if (mode === "remove") arena?.highlight(boxUnder(e));
-    else if (mode === "look" && camMode !== "eye") canvas.className = onRobot(e) ? "grab" : "";
-    return;
-  }
-  const p = floorAt(e);
-  if (!p) return;
-  if (drag.kind === "robot") {
-    drag.x = Math.min(focus!.world.width, Math.max(0, p.x + drag.dx));
-    drag.y = Math.min(focus!.world.height, Math.max(0, p.y + drag.dy));
-    showGhost(drag.x, drag.y, drag.th);
-  } else if (drag.kind === "place") {
-    const dx = p.x - drag.x0,
-      dy = p.y - drag.y0;
-    if (Math.hypot(dx, dy) > 3) drag.th = Math.atan2(dy, dx);
-    showGhost(drag.x0, drag.y0, drag.th);
-  } else {
-    drag.x = p.x;
-    drag.y = p.y;
-    const r = boxRect(drag);
-    ghostBox.visible = true;
-    ghostBox.scale.set(r.w, 14, r.h);
-    ghostBox.position.copy(toScene(r.x + r.w / 2, r.y + r.h / 2, 7));
-  }
-});
-const boxRect = (d: { x0: number; y0: number; x: number; y: number }): Box => {
-  if (Math.hypot(d.x - d.x0, d.y - d.y0) < 3) return { x: d.x0 - 10, y: d.y0 - 10, w: 20, h: 20 };
-  const x = Math.min(d.x0, d.x),
-    y = Math.min(d.y0, d.y);
-  return { x, y, w: Math.max(2, Math.abs(d.x - d.x0)), h: Math.max(2, Math.abs(d.y - d.y0)) };
-};
-const endDrag = (e: PointerEvent, cancel = false) => {
-  controls.enabled = camMode !== "eye";
-  const d = drag;
-  drag = null;
-  ghostRobot.visible = ghostBox.visible = false;
-  if (mode === "look") canvas.className = "";
-  if (!d || !focus || cancel) return;
-  if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
-  if (d.kind === "robot")
-    send({ t: "carry", req: nextReq(), id: focus.id, x: d.x, y: d.y, heading_deg: d.th / DEG }, "No cabe ahí");
-  else if (d.kind === "place")
-    send({ t: "carry", req: nextReq(), id: focus.id, x: d.x0, y: d.y0, heading_deg: d.th / DEG }, "No cabe ahí");
-  else {
-    const r = boxRect(d);
-    send({ t: "box_add", req: nextReq(), id: focus.id, ...r }, "No se pudo poner la caja");
-  }
-};
-canvas.addEventListener("pointerup", (e) => endDrag(e));
-canvas.addEventListener("pointercancel", (e) => endDrag(e, true));
-
-window.addEventListener("keydown", (e) => {
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-  if (e.key === "Escape") {
-    drag = null;
-    controls.enabled = camMode !== "eye";
-    setMode("look");
-  } else if ((e.key === "q" || e.key === "e") && focus && cur && !drag) {
-    const s = shown ?? { x: cur.pose.x, y: cur.pose.y, th: cur.pose.heading_deg * DEG };
-    const turn = e.key === "q" ? 15 : -15;
-    send(
-      { t: "carry", req: nextReq(), id: focus.id, x: s.x, y: s.y, heading_deg: s.th / DEG + turn },
-      "No se pudo girar",
-    );
-  } else if (["1", "2", "3", "4"].includes(e.key))
-    setMode((["look", "carry", "box", "remove"] as const)[Number(e.key) - 1]!);
-});
+/** Puts the view in camera mode `m`: the buttons, the keys, and a deep link use this. */
+export function setCam(m: Cam): void {
+  cams.set(m);
+}
 
 // ---------------------------------------------------------------- the controls of the page
 for (const b of document.querySelectorAll<HTMLButtonElement>("#modes button"))
-  b.addEventListener("click", () => setMode(b.dataset.mode as Mode));
+  b.addEventListener("click", () => hand.setMode(b.dataset.mode as Mode));
+for (const b of document.querySelectorAll<HTMLButtonElement>("#cams button"))
+  b.addEventListener("click", () => setCam(b.dataset.cam as Cam));
+$("cam-reset").addEventListener("click", () => cams.reset());
 $("restore").addEventListener("click", () => {
-  if (focus) send({ t: "restore", req: nextReq(), id: focus.id }, "No se pudo restaurar");
-  trailReset();
+  if (!focus) return;
+  const id = focus.id;
+  void link.request({ t: "restore", id }).then((r) => {
+    if (!r.ok) return hud.toast(`${hud.REFUSAL[r.code]}${r.code === "internal" ? `: ${r.error}` : ""}`);
+    if (focus?.id === id) trailReset();
+    hud.toast("Mundo restaurado: sus cajas de origen y el robot en la salida (giroscopio y odometría a cero)", "info");
+  });
 });
+$("trail-clear").addEventListener("click", () => trailReset());
 $<HTMLSelectElement>("robot").addEventListener("change", (e) => setFocus((e.target as HTMLSelectElement).value));
 $<HTMLInputElement>("opt-cone").addEventListener("change", (e) => {
-  coneGroup.visible = (e.target as HTMLInputElement).checked && model?.rayOrigin != null;
+  coneGroup.visible = (e.target as HTMLInputElement).checked && hasRays(focus);
 });
 $<HTMLInputElement>("opt-trail").addEventListener(
   "change",
   (e) => (trail.visible = (e.target as HTMLInputElement).checked),
 );
 $<HTMLInputElement>("opt-pip").addEventListener("change", (e) => {
-  $("pip").hidden = !(e.target as HTMLInputElement).checked || camMode === "eye";
+  $("pip").hidden = !(e.target as HTMLInputElement).checked || cams.mode === "eye";
 });
-$<HTMLInputElement>("opt-sound").addEventListener("change", (e) => {
-  const on = (e.target as HTMLInputElement).checked;
-  sound.setEnabled(on);
-  if (on) hud.toast("Sonido activado: tonos del ladrillo y voz del altavoz simulado", true);
-});
+
+// sound: off until the person's click lets the browser play
+const soundBtn = $<HTMLButtonElement>("sound");
+let soundNoted = false;
+async function toggleSound(): Promise<void> {
+  const want = !sound.enabled;
+  const playing = await sound.setEnabled(want);
+  soundBtn.setAttribute("aria-pressed", String(playing));
+  soundBtn.classList.toggle("on", playing);
+  soundBtn.classList.remove("missed");
+  soundBtn.textContent = playing ? "🔊 Sonido" : "🔇 Sonido";
+  if (want && !playing) hud.toast("El navegador no deja sonar la página: pulsa otra vez el botón de sonido");
+  else if (playing) hud.toast("Sonido activado: tonos del ladrillo y voz del altavoz simulado", "info");
+}
+soundBtn.addEventListener("click", () => void toggleSound());
+/** The robot made a sound the person did not hear: the button says so, and once a note explains it. */
+function missedSound(): void {
+  if (sound.enabled) return;
+  soundBtn.classList.add("missed");
+  if (soundNoted) return;
+  soundNoted = true;
+  hud.toast("El robot está sonando: pulsa 🔇 Sonido (o la tecla M) para oírlo", "info");
+}
+
 for (const b of document.querySelectorAll<HTMLButtonElement>("#pad button")) {
   const btn = Number(b.dataset.btn);
   let down = false;
   const press = (d: boolean) => {
     if (!focus || down === d) return;
     down = d;
-    send({ t: "button", req: nextReq(), id: focus.id, button: btn, down: d }, "Botón");
+    void link.request({ t: "button", id: focus.id, button: btn, down: d }).then((r) => {
+      if (!r.ok && d) hud.toast(`Botón: ${hud.REFUSAL[r.code]}`);
+    });
   };
   b.addEventListener("pointerdown", (e) => {
     try {
@@ -575,36 +592,87 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#pad button")) {
   b.addEventListener("pointerup", () => press(false));
   b.addEventListener("pointercancel", () => press(false));
   b.addEventListener("lostpointercapture", () => press(false));
+  // the keyboard too: Space or Enter on a focused button holds it while the key is down
+  b.addEventListener("keydown", (e) => {
+    if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+      e.preventDefault();
+      press(true);
+    }
+  });
+  b.addEventListener("keyup", (e) => {
+    if (e.key === " " || e.key === "Enter") press(false);
+  });
+  b.addEventListener("blur", () => press(false));
 }
 
-// ---------------------------------------------------------------- cameras
-type Cam = "free" | "follow" | "eye";
-let camMode: Cam = "follow";
-const controls = new OrbitControls(camera, canvas);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.maxPolarAngle = Math.PI / 2 - 0.04;
-controls.minDistance = 12;
-controls.target.set(60, 0, -60);
-camera.position.set(-20, 90, 40);
-let saved: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
-for (const b of document.querySelectorAll<HTMLButtonElement>("#cams button"))
+// panels fold away to give the scene room; the choice is kept for the next visit
+const narrow = matchMedia("(max-width: 760px)");
+for (const b of document.querySelectorAll<HTMLButtonElement>("[data-fold]")) {
+  const panel = $(b.dataset.fold!);
+  const key = `twin-view:fold:${b.dataset.fold}`;
+  const set = (folded: boolean) => {
+    panel.classList.toggle("folded", folded);
+    b.setAttribute("aria-expanded", String(!folded));
+  };
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(key);
+  } catch {
+    // storage blocked: the fold works, it is only not remembered
+  }
+  // a narrow window folds the side panels whatever was chosen on a wide one; only a click is remembered
+  const side = b.dataset.fold !== "callpanel";
+  set((side && narrow.matches) || stored === "1");
   b.addEventListener("click", () => {
-    const next = b.dataset.cam as Cam;
-    if (next === camMode) return;
-    if (next === "eye") saved = { pos: camera.position.clone(), target: controls.target.clone() };
-    else if (camMode === "eye" && saved) {
-      camera.position.copy(saved.pos);
-      controls.target.copy(saved.target);
+    const folded = !panel.classList.contains("folded");
+    set(folded);
+    stored = folded ? "1" : "0";
+    try {
+      localStorage.setItem(key, stored);
+    } catch {
+      // see above
     }
-    camMode = next;
-    controls.enabled = next !== "eye";
-    for (const x of document.querySelectorAll<HTMLButtonElement>("#cams button"))
-      x.classList.toggle("on", x.dataset.cam === next);
-    $("pip").hidden = next === "eye" || !$<HTMLInputElement>("opt-pip").checked;
-    setMode(mode);
   });
-let lastFollow: THREE.Vector3 | null = null;
+  if (b.dataset.fold !== "callpanel") narrow.addEventListener("change", () => set(narrow.matches));
+}
+
+const help = $("help");
+const showHelp = (on: boolean) => {
+  help.hidden = !on;
+  if (on) $("help-close").focus();
+};
+$("help-open").addEventListener("click", () => showHelp(help.hidden === true));
+$("help-close").addEventListener("click", () => showHelp(false));
+help.addEventListener("click", (e) => {
+  if (e.target === help) showHelp(false);
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement) return;
+  const k = e.key.toLowerCase();
+  if (k === "escape") {
+    if (!help.hidden) return showHelp(false);
+    return hand.escape();
+  }
+  if (t instanceof HTMLButtonElement && (k === " " || k === "enter")) return; // the button's own
+  if (k === "?" || k === "h") showHelp(help.hidden === true);
+  else if (!help.hidden) return; // the help is up: the scene behind it takes no keys
+  else if (k === "q" || k === "e") hand.turnKey(k === "q" ? 1 : -1);
+  else if (k >= "1" && k <= "5") hand.setMode(MODES[Number(k) - 1]!);
+  else if (k === "c") setCam(CAMS[(CAMS.indexOf(cams.mode) + 1) % CAMS.length]!);
+  else if (k === "0" || k === "home") cams.reset();
+  else if (k === "m") void toggleSound();
+  else return;
+  e.preventDefault();
+});
+hud.callsInit();
+// the panels start below the top bar, whose height grows when a narrow window wraps it
+new ResizeObserver(() => {
+  const b = $("bar").getBoundingClientRect();
+  document.documentElement.style.setProperty("--top", `${Math.round(b.bottom + 12)}px`);
+}).observe($("bar"));
 
 // ---------------------------------------------------------------- every frame
 const tmpA = new THREE.Vector3(),
@@ -612,38 +680,18 @@ const tmpA = new THREE.Vector3(),
 function resize(): void {
   const w = canvas.clientWidth,
     h = canvas.clientHeight;
+  if (!renderer) return;
   const c = renderer.domElement;
   if (c.width !== Math.floor(w * renderer.getPixelRatio()) || c.height !== Math.floor(h * renderer.getPixelRatio())) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    cams.resized();
   }
 }
-const rayColour = new THREE.Color();
+const seeThrough = [new THREE.Vector3(), new THREE.Vector3()];
 function updateCone(st: RobotState): void {
-  if (!model?.rayOrigin || !coneGroup.visible) return;
-  const o = model.rayOrigin;
-  const a = 12 * DEG;
-  const dist = st.sensors.find((s) => s.kind === "ultrasonic" || s.kind === "ir");
-  const reading = dist?.values[0];
-  const near = typeof reading === "number" && dist?.kind === "ultrasonic" ? reading : Math.min(...st.rays_cm);
-  rayColour.setHSL(Math.min(0.36, Math.max(0, (near - 5) / 120) * 0.36), 0.85, 0.5);
-  coneMat.color.copy(rayColour);
-  (rays.material as THREE.LineBasicMaterial).color.copy(rayColour);
-  conePos.set([o.x, o.y, o.z], 0);
-  [-a, 0, a].forEach((off, i) => {
-    const L = Math.min(255, st.rays_cm[i]!);
-    const x = o.x + Math.cos(off) * L,
-      z = o.z - Math.sin(off) * L;
-    conePos.set([x, o.y, z], (i + 1) * 3);
-    rayPos.set([o.x, o.y, o.z, x, o.y, z], i * 6);
-    hits[i]!.position.set(x, o.y, z);
-    hits[i]!.visible = st.rays_cm[i]! <= 250;
-    (hits[i]!.material as THREE.MeshBasicMaterial).color.copy(rayColour);
-  });
-  coneGeo.attributes.position!.needsUpdate = true;
-  rayGeo.attributes.position!.needsUpdate = true;
-  coneGeo.computeBoundingSphere();
+  if (coneGroup.visible) sensorRays.update(st.rays);
 }
 
 function frame(now: number): void {
@@ -661,26 +709,24 @@ function frame(now: number): void {
     hud.led(cur.led, t);
   } else robotRoot.visible = false;
 
-  if (s && camMode === "follow") {
-    const p = toScene(s.x, s.y, 4);
-    if (lastFollow) {
-      tmpA.subVectors(p, lastFollow);
-      camera.position.add(tmpA);
-      controls.target.add(tmpA);
-    } else controls.target.copy(p);
-    lastFollow = p;
-  } else lastFollow = null;
-
   // the robot's camera
   if (model && s) {
     robotRoot.updateMatrixWorld();
     eyeCam.position.copy(tmpA.copy(model.eye.pos).applyMatrix4(robotRoot.matrixWorld));
     eyeCam.lookAt(tmpB.copy(model.eye.look).applyMatrix4(robotRoot.matrixWorld));
   }
-  if (camMode === "eye" && model && s) {
-    camera.position.copy(eyeCam.position);
-    camera.quaternion.copy(eyeCam.quaternion);
-  } else controls.update();
+  cams.update(s, model && s ? eyeCam : null);
+  // nothing hides the robot from the person's camera: a box or a wall in the way turns see-through meanwhile
+  if (arena && s && model && cams.mode !== "eye" && cams.mode !== "top") {
+    const base = toScene(s.x, s.y);
+    seeThrough[0]!.set(base.x, model.height * 0.5, base.z);
+    seeThrough[1]!.set(base.x, model.height * 0.9, base.z);
+    arena.clearView(camera.position, seeThrough);
+  } else arena?.clearView(camera.position, []);
+  hand.frame();
+  // the robot's camera sees what the robot sees, never the helpers
+  if (cams.mode === "eye" && model && s) camera.layers.disable(HELPERS);
+  else camera.layers.enable(HELPERS);
 
   // the bubble over the robot
   const bubble = $("bubble");
@@ -697,10 +743,13 @@ function frame(now: number): void {
     }
   }
 
+  if (!renderer) return; // no 3D: the panels go on, the scene is a message
   const w = canvas.clientWidth,
     h = canvas.clientHeight;
   renderer.setScissorTest(false);
   renderer.setViewport(0, 0, w, h);
+  scene.updateMatrixWorld();
+  shadowFrame(now);
   renderer.render(scene, camera);
   const pip = $("pip");
   if (!pip.hidden && model && s) {
@@ -713,11 +762,16 @@ function frame(now: number): void {
     renderer.setScissorTest(true);
     renderer.setScissor(x, y, r.width, r.height);
     renderer.setViewport(x, y, r.width, r.height);
+    // the phone's camera does not see the robot it stands on, and skipping the body halves this pass's cost
+    const shown = model.group.visible;
+    model.group.visible = false;
     renderer.render(scene, eyeCam);
+    model.group.visible = shown;
     renderer.setScissorTest(false);
   }
+  frameStats(renderer, now);
 }
 
-setMode("look");
-connect();
+hand.setMode("look");
+applyLink(setCam);
 requestAnimationFrame(frame);

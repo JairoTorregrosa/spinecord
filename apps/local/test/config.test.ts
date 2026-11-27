@@ -114,6 +114,7 @@ describe("robots without a robot file", () => {
           hardware: { low_battery_v: 6.5, max_tone_ms: 5000, speech_volume_pct: 100 },
           ssh: { user: "robot", host: "ev3dev.local" },
           installBridge: true,
+          name: null,
         },
       ]);
   });
@@ -407,6 +408,7 @@ describe("pages", () => {
         source: "pages",
         id: "pages",
         profile: expect.objectContaining({ id: "pages", roles: {}, limits: expect.any(Object) }),
+        name: null,
       },
     ]);
     expect(c.pages).toEqual({ port: DEFAULT_PAGE_PORT });

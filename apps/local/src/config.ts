@@ -13,9 +13,32 @@ import type { RobotProfile } from "../../../packages/protocol/types";
 import { parseWorld } from "../../../packages/sim-world/world";
 import type { LanConfig } from "./lan";
 import { DEFAULT_PAGE_PORT } from "./pages";
+import { readBuild, withBuild, type TwinBuild, type Unconfirmed } from "./twin-build";
 
 /** Port of the 3D view of the twins (`--view`), on 127.0.0.1. */
 export const DEFAULT_VIEW_PORT = 8769;
+/** `--chat` (experimental, CONTRACT §6): the model and the budget of the process, US dollars. */
+export const DEFAULT_CHAT_MODEL = "claude-haiku-5-5";
+export const DEFAULT_CHAT_USD = 1;
+export interface ChatConfig {
+  model: string;
+  usd: number;
+}
+/** A model id as the API names them: letters, digits, dots and dashes. */
+const MODEL_ID = /^[a-z0-9][a-z0-9.-]{2,63}$/;
+function chatConfig(where: string, model: unknown, usd: unknown): ChatConfig {
+  const m = model === undefined ? DEFAULT_CHAT_MODEL : model;
+  if (typeof m !== "string" || !MODEL_ID.test(m))
+    throw new Error(
+      `${where}: the chat model must be a model id such as ${DEFAULT_CHAT_MODEL}, got ${JSON.stringify(model)}`,
+    );
+  const n = usd === undefined ? DEFAULT_CHAT_USD : typeof usd === "string" && usd.trim() !== "" ? Number(usd) : usd;
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0 || n > 100)
+    throw new Error(
+      `${where}: the chat budget must be a number of US dollars above 0 and up to 100, got ${JSON.stringify(usd)}`,
+    );
+  return { model: m, usd: n };
+}
 
 export const DEFAULT_PORT = 8767;
 /** The repository root: where a relative path on the command line is taken from. */
@@ -41,6 +64,10 @@ export const EXAMPLE = {
   world: join(import.meta.dir, "..", "examples", "room.json"),
 };
 
+/** Longest robot name: one line of the EV3's screen (22 characters), where the robot shows it. */
+export const MAX_NAME = 22;
+const NAME_CHARS = /^[\p{L}\p{M}\p{N} '.-]+$/u;
+const NAME_RULE = `1 to ${MAX_NAME} letters (accents too), digits, spaces, ' . or -`;
 export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP server over stdio; logs on stderr
 
   --help                         this text
@@ -52,6 +79,8 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  firewall; one line per check with the next command, last line "doctor: ok"
                                  or "doctor: <n> to fix" (exit 1); starts nothing
     --assistant                  also check who pays for examples/assistant (names of variables, never values)
+    --files-only                 check only the robot files those flags name, nothing of this computer: the
+                                 robots, twin and draft lines; exit 1 only when a file is refused
 
   (no arguments)                 the example robot's twin (deployments/example/robots/r1.json) in
                                  apps/local/examples/room.json
@@ -89,6 +118,13 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  the MCP calls, and the person there can pick the robot up, set boxes down
                                  and press the brick's buttons (needs a twin)
     --view-port <n>              its port (default ${DEFAULT_VIEW_PORT}; 0 takes a free port)
+    --chat                       experimental: a chat with Claude in the view, typed or spoken, as the first
+                                 twin; Claude Code's login of this computer pays (ANTHROPIC_PROFILE selects
+                                 an ant profile)
+      --chat-model <id>          its model (default ${DEFAULT_CHAT_MODEL})
+      --chat-usd <n>             its budget for this process, US dollars (default ${DEFAULT_CHAT_USD})
+  --name <text>                  the name the person gave the robot: every robot of this command line takes it,
+                                 over the "name" of its file (${NAME_RULE})
   --log-file <path>              also append every JSON log line of stderr to this file; its folder is
                                  created, and a file that cannot be opened ends the start
   --config <file.json>           the robots and the port as a file, for more than one robot of a kind:
@@ -103,7 +139,7 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                    {"source": "pages", "robot": path, "id"?: s}]}
                                  "pages" or a robot of source "pages" makes every robot take pages
 
-A robot file is {hardware, profile, pair?}; one for --pages is {profile} alone. For --ev3dev its hardware also needs speech_volume_pct. pair and
+A robot file is {hardware, profile, pair?, twin?, description?, name?}; one for --pages is {profile, description?, name?}. For --ev3dev its hardware also needs speech_volume_pct. pair and
 profile.drivetrain are for a robot with a synced pair of wheels: deployments/example/robots/arm.json has neither.
 --twin, --ev3 and --ev3dev without a file use the example robot, deployments/example/robots/r1.json.
 
@@ -115,8 +151,25 @@ decides nothing. A file that is not there ends the start with its absolute path.
 /** --help: main.ts prints the usage and exits 0. */
 export class HelpAsked extends Error {}
 
-export type RobotSource =
-  | { source: "twin"; id: string; robot: RobotFile; world: unknown; seed: number }
+/** Every robot source has the name the person gave the robot: its file's `name`, or `--name`; null when none. */
+export type RobotSource = (
+  | {
+      source: "twin";
+      id: string;
+      robot: RobotFile;
+      /** The world's JSON with the robot's build (its file's `twin`) in place, checked against the profile. */
+      world: unknown;
+      seed: number;
+      /** true when the build came from the robot file's `twin`, false when from the world. */
+      ownBuild?: boolean;
+      /** What of the build nobody confirmed (its file's `twin.unconfirmed`); empty for a twin that is not a draft. */
+      unconfirmed?: Unconfirmed[];
+      /**
+       * The robot file's `twin`, checked (null without one): its `drive` is what the drivetrain physically is, and
+       * every world `load_world` takes gets its build, like the one the twin started in.
+       */
+      build?: TwinBuild | null;
+    }
   | { source: "ev3"; id: string; robot: RobotFile }
   | {
       source: "ev3dev";
@@ -126,7 +179,8 @@ export type RobotSource =
       ssh: SshOptions;
       installBridge: boolean;
     }
-  | { source: "pages"; id: string; profile: RobotProfile };
+  | { source: "pages"; id: string; profile: RobotProfile }
+) & { name: string | null };
 export interface LocalConfig {
   robots: RobotSource[];
   /** Port of the page that lends a stock EV3. Bound only when a robot of source "ev3" exists. */
@@ -136,7 +190,7 @@ export interface LocalConfig {
   /** Peripheral pages (CONTRACT §2.4): null when off. On, every robot gets a page hub, and the page listener binds this port. */
   pages?: PagesConfig | null;
   /** `--view`: the 3D view of the twins on 127.0.0.1, at this port. Null or absent when off. */
-  view?: { port: number } | null;
+  view?: { port: number; chat?: ChatConfig | null } | null;
 }
 
 export interface PagesConfig {
@@ -150,6 +204,31 @@ export interface PagesConfig {
 }
 
 const ROBOT_ID = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+/**
+ * The name a person gave a robot (CONTRACT §3, `name`), trimmed and in NFC. Refused, naming `field`, when it is
+ * not a string, empty, longer than MAX_NAME, or holds anything but letters, digits, spaces, ' . and - (so no
+ * control character, line break, quote or shell character: it travels on command lines and onto the brick).
+ */
+export function parseRobotName(raw: unknown, field: string): string {
+  if (typeof raw !== "string") throw new Error(`${field} must be a string (${NAME_RULE}), got ${JSON.stringify(raw)}`);
+  const name = raw.normalize("NFC").trim();
+  if (name === "") throw new Error(`${field} is empty: ${NAME_RULE}; leave it out for a robot with no name`);
+  const length = [...name].length;
+  if (length > MAX_NAME)
+    throw new Error(`${field} has ${length} characters, at most ${MAX_NAME}: ${JSON.stringify(name)}`);
+  if (!NAME_CHARS.test(name)) {
+    const bad = [...name].find((c) => !NAME_CHARS.test(c))!;
+    throw new Error(
+      `${field} holds ${JSON.stringify(bad)} (U+${bad.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}): ${NAME_RULE}`,
+    );
+  }
+  return name;
+}
+/** The `name` of a robot file's JSON, or null when it has none. */
+function nameOf(raw: unknown, where: string): string | null {
+  if (!isObj(raw) || raw.name === undefined) return null;
+  return parseRobotName(raw.name, `${where}: name`);
+}
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function readJson(where: string, path: string): unknown {
@@ -212,8 +291,9 @@ export function parsePagesRobot(json: unknown, where: string): RobotProfile {
     throw new Error(`${where}: ${field} ${why}`);
   };
   if (!isObj(json)) return fail("the file", "must be an object {profile}");
-  const extra = Object.keys(json).filter((k) => k !== "profile" && k !== "description");
-  if (extra.length) fail(extra.join(", "), "is not part of a robot without a body: its file is {profile} alone");
+  const extra = Object.keys(json).filter((k) => !["profile", "description", "name"].includes(k));
+  if (extra.length)
+    fail(extra.join(", "), "is not part of a robot without a body: its file is {profile, description?, name?}");
   const p = isObj(json.profile) ? json.profile : fail("profile", "must be an object");
   const known = ["id", "roles", "limits", "notes"];
   const more = Object.keys(p).filter((k) => !known.includes(k));
@@ -245,10 +325,32 @@ export function parsePagesRobot(json: unknown, where: string): RobotProfile {
   };
 }
 
-function robotFile(where: string, path: string): { file: RobotFile; raw: unknown } {
-  const raw = readJson(where, path);
-  return { file: parseRobotFile(raw, `${where} ${path}`), raw };
+interface ReadRobot {
+  file: RobotFile;
+  raw: unknown;
+  name: string | null;
+  build: TwinBuild | null;
+  path: string;
 }
+function robotFile(where: string, path: string): ReadRobot {
+  const raw = readJson(where, path);
+  const file = parseRobotFile(raw, `${where} ${path}`);
+  return { file, raw, build: readBuild(raw, `${where} ${path}`), path, name: nameOf(raw, `${where} ${path}`) };
+}
+/** The world a twin of `r` runs in: the room read from `path`, with the robot's build in place. */
+function twinWorld(
+  r: ReadRobot,
+  where: string,
+  path: string,
+): Pick<Source<"twin">, "world" | "ownBuild" | "unconfirmed" | "build"> {
+  return {
+    world: withBuild(world(where, path), r.build, r.file, { robot: r.path, world: `${where} ${path}` }),
+    build: r.build,
+    ownBuild: r.build !== null,
+    unconfirmed: r.build?.unconfirmed ?? [],
+  };
+}
+type Source<K extends RobotSource["source"]> = Extract<RobotSource, { source: K }>;
 /** A private key ssh is told to use. Checked here: ssh itself goes on with its default keys when the file is missing. */
 /** `--page-ext`: a folder that is there. Its files are listed at each request, so an edit shows on a reload. */
 function extFolder(where: string, path: string): string {
@@ -308,12 +410,18 @@ function fromFile(file: string): LocalConfig {
   const unknown = Object.keys(json).filter((k) => !["port", "robots", "pages", "view"].includes(k));
   if (unknown.length)
     throw new Error(`${where}: unknown field ${unknown.join(", ")}; allowed: port, pages, view, robots`);
-  let view: { port: number } | null = null;
+  let view: { port: number; chat?: ChatConfig | null } | null = null;
   if (json.view !== undefined && json.view !== false) {
     const v = json.view === true ? {} : json.view;
-    if (!isObj(v) || Object.keys(v).some((k) => k !== "port"))
-      throw new Error(`${where}: view must be true or {"port"?: n}`);
+    if (!isObj(v) || Object.keys(v).some((k) => k !== "port" && k !== "chat"))
+      throw new Error(`${where}: view must be true or {"port"?: n, "chat"?: true | {"model"?, "usd"?}}`);
     view = { port: v.port === undefined ? DEFAULT_VIEW_PORT : int(`${where}: view.port`, v.port, 0, 65535) };
+    if (v.chat !== undefined && v.chat !== false) {
+      const c = v.chat === true ? {} : v.chat;
+      if (!isObj(c) || Object.keys(c).some((k) => k !== "model" && k !== "usd"))
+        throw new Error(`${where}: view.chat must be true or {"model"?: id, "usd"?: n}`);
+      view.chat = chatConfig(`${where}: view.chat`, c.model, c.usd);
+    }
   }
   let pages: PagesConfig | null = null;
   if (json.pages !== undefined) {
@@ -373,22 +481,30 @@ function fromFile(file: string): LocalConfig {
     const robotPath = at(r.robot, `${f}.robot`);
     if (r.id !== undefined && typeof r.id !== "string") throw new Error(`${where}: ${f}.id must be a string`);
     if (r.source === "pages") {
-      const profile = parsePagesRobot(readJson(`${where}: ${f}.robot`, robotPath), `${where}: ${f}.robot ${robotPath}`);
+      const json = readJson(`${where}: ${f}.robot`, robotPath);
+      const profile = parsePagesRobot(json, `${where}: ${f}.robot ${robotPath}`);
       pages ??= { port: DEFAULT_PAGE_PORT };
-      return { source: "pages", id: r.id ?? profile.id, profile };
+      return {
+        source: "pages",
+        id: r.id ?? profile.id,
+        profile,
+        name: nameOf(json, `${where}: ${f}.robot ${robotPath}`),
+      };
     }
-    const { file, raw } = robotFile(`${where}: ${f}.robot`, robotPath);
+    const read = robotFile(`${where}: ${f}.robot`, robotPath);
+    const { file, raw, name } = read;
     switch (r.source) {
       case "twin":
         return {
           source: "twin",
           id: r.id ?? twinId(file.profile.id),
           robot: file,
-          world: world(`${where}: ${f}.world`, at(r.world, `${f}.world`)),
+          ...twinWorld(read, `${where}: ${f}.world`, at(r.world, `${f}.world`)),
           seed: r.seed === undefined ? 1 : int(`${where}: ${f}.seed`, r.seed, 0, 0xffffffff),
+          name,
         };
       case "ev3":
-        return { source: "ev3", id: r.id ?? file.profile.id, robot: file };
+        return { source: "ev3", id: r.id ?? file.profile.id, robot: file, name };
       case "ev3dev": {
         if (!isObj(r.ssh) || typeof r.ssh.host !== "string" || typeof r.ssh.user !== "string")
           throw new Error(`${where}: ${f}.ssh must be {"host": string, "user": string, "port"?, "identity_file"?}`);
@@ -413,6 +529,7 @@ function fromFile(file: string): LocalConfig {
               : {}),
           },
           installBridge: r.install_bridge === true,
+          name,
         };
       }
       default:
@@ -479,6 +596,10 @@ export function loadConfig(argv: string[]): LocalConfig {
       "page-ext": { type: "string" },
       view: { type: "boolean" },
       "view-port": { type: "string" },
+      name: { type: "string" },
+      chat: { type: "boolean" },
+      "chat-model": { type: "string" },
+      "chat-usd": { type: "string" },
     },
   });
   if (values.help) throw new HelpAsked();
@@ -508,6 +629,9 @@ export function loadConfig(argv: string[]): LocalConfig {
     if (values["page-origin"] !== undefined) needs("page-origin", "pages", values.pages !== undefined);
     if (values["page-ext"] !== undefined) needs("page-ext", "pages", values.pages !== undefined);
     if (values["view-port"] !== undefined) needs("view-port", "view", values.view === true);
+    if (values.chat !== undefined) needs("chat", "view", values.view === true);
+    for (const flag of ["chat-model", "chat-usd"] as const)
+      if (values[flag] !== undefined) needs(flag, "chat", values.chat === true);
     for (const flag of ["lan-interface", "lan-cert", "lan-key", "lan-host"] as const)
       if (values[flag] !== undefined) needs(flag, "lan", values.lan === true);
     if ((values["lan-cert"] === undefined) !== (values["lan-key"] === undefined))
@@ -516,23 +640,29 @@ export function loadConfig(argv: string[]): LocalConfig {
       throw new Error("--lan-host names the host of a certificate of your own: it needs --lan-cert");
     for (const flag of ["ssh", "ssh-key", "install-bridge"] as const)
       if (values[flag] !== undefined) needs(flag, "ev3dev", values.ev3dev !== undefined);
-    // --view alone shows the twin a bare start runs
-    if (given.length === 0 || given.every((k) => k === "view" || k === "view-port"))
+    // --view (with its chat flags, and --name) alone shows the twin a bare start runs
+    if (
+      given.length === 0 ||
+      given.every((k) => ["view", "view-port", "chat", "chat-model", "chat-usd", "name"].includes(k))
+    ) {
+      const example = robotFile("example robot", EXAMPLE.robot);
       robots.push({
         source: "twin",
-        id: twinId(robotFile("example robot", EXAMPLE.robot).file.profile.id),
-        robot: robotFile("example robot", EXAMPLE.robot).file,
-        world: world("example world", EXAMPLE.world),
+        id: twinId(example.file.profile.id),
+        robot: example.file,
+        ...twinWorld(example, "example world", EXAMPLE.world),
         seed: 1,
+        name: example.name,
       });
+    }
     if (values.ev3 !== undefined) {
-      const { file } = robotFile("--ev3", fromRepo(values.ev3));
-      robots.push({ source: "ev3", id: file.profile.id, robot: file });
+      const { file, name } = robotFile("--ev3", fromRepo(values.ev3));
+      robots.push({ source: "ev3", id: file.profile.id, robot: file, name });
     }
     if (values.ev3dev !== undefined) {
       if (values.ssh === undefined) throw new Error("--ev3dev needs --ssh <user@host>");
       const robotPath = fromRepo(values.ev3dev);
-      const { file, raw } = robotFile("--ev3dev", robotPath);
+      const { file, raw, name } = robotFile("--ev3dev", robotPath);
       robots.push({
         source: "ev3dev",
         id: file.profile.id,
@@ -545,22 +675,30 @@ export function loadConfig(argv: string[]): LocalConfig {
             : {}),
         },
         installBridge: values["install-bridge"] === true,
+        name,
       });
     }
     if (values.twin !== undefined) {
-      const { file } = robotFile("--twin", fromRepo(values.twin));
+      const read = robotFile("--twin", fromRepo(values.twin));
       robots.push({
         source: "twin",
-        id: twinId(file.profile.id),
-        robot: file,
-        world: world("--world", values.world === undefined ? EXAMPLE.world : fromRepo(values.world)),
+        id: twinId(read.file.profile.id),
+        robot: read.file,
+        ...twinWorld(read, "--world", values.world === undefined ? EXAMPLE.world : fromRepo(values.world)),
         seed: values.seed === undefined ? 1 : int("--seed", values.seed, 0, 0xffffffff),
+        name: read.name,
       });
     }
     if (values.pages !== undefined) {
       const path = fromRepo(values.pages);
-      const profile = parsePagesRobot(readJson("--pages", path), `--pages ${path}`);
-      robots.push({ source: "pages", id: profile.id, profile });
+      const json = readJson("--pages", path);
+      const profile = parsePagesRobot(json, `--pages ${path}`);
+      robots.push({ source: "pages", id: profile.id, profile, name: nameOf(json, `--pages ${path}`) });
+    }
+    // the person's name for the robot wins over the files': a robot and its twin share it
+    if (values.name !== undefined) {
+      const name = parseRobotName(values.name, "--name");
+      for (const r of robots) r.name = name;
     }
     config = {
       robots,
@@ -569,6 +707,7 @@ export function loadConfig(argv: string[]): LocalConfig {
         ? {
             port:
               values["view-port"] === undefined ? DEFAULT_VIEW_PORT : int("--view-port", values["view-port"], 0, 65535),
+            ...(values.chat ? { chat: chatConfig("--chat", values["chat-model"], values["chat-usd"]) } : {}),
           }
         : null,
       pages:

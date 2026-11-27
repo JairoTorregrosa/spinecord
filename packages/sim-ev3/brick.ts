@@ -15,15 +15,7 @@ import {
   readParam,
 } from "../driver-ev3/encode";
 import type { Transport } from "../driver-ev3/transport";
-import {
-  World,
-  DT_MS,
-  COLOR_RGB,
-  IR_FULL_SCALE_CM,
-  REFLECT_BY_COLOR,
-  ULTRASONIC_MAX_CM,
-  ULTRASONIC_MIN_CM,
-} from "../sim-world/world";
+import { World, DT_MS, COLOR_RGB, DEFAULT_PUSH_N, checkDrive } from "../sim-world/world";
 import type { WorldHost } from "../sim-world/world-provider";
 import type { RobotProfile } from "../protocol/types";
 import {
@@ -39,17 +31,133 @@ export const TYPE_LARGE_MOTOR = 7;
 export const TYPE_MEDIUM_MOTOR = 8;
 /** Large motor at 100 % speed, deg/s (about 170 rpm). */
 export const LARGE_DEG_S = 1020;
-/** Medium motor at 100 % speed, deg/s (about 260 rpm). */
+/**
+ * Medium motor at 100 % speed, deg/s (about 260 rpm): ev3dev's max_speed of lego-ev3-m-motor. LEGO states 240-250 rpm
+ * under load (https://robolab.inf.tu-dresden.de/hardware/motors).
+ */
 export const MEDIUM_DEG_S = 1560;
+/**
+ * Stall torque, N·cm: the most a motor turns against, at zero speed and full power. LEGO gives 40 for the large motor
+ * and 12 for the medium (https://robolab.inf.tu-dresden.de/hardware/motors; 0.4 and 0.12 N·m); one measurement found
+ * 43 for the large (https://www.eurobricks.com/forum/forums/topic/87670-ev3-large-and-medium-motors-comparison).
+ * Between no load and that, the speed a motor can reach falls in a straight line (a DC motor's torque-speed line).
+ */
+export const LARGE_STALL_NCM = 40;
+/**
+ * The friction coefficient of a tread on a classroom floor, by kind (a robot file's `twin.drive.tread`): LEGO rubber
+ * tyres measured 1.0-1.2 on wood, plastic EV3 track links about 0.25 (CONTRACT §4 Twin cites both); the low end of
+ * the tyres' range. With the robot's weight it decides whether a wheel against a wall slips or stalls: an EV3 of 1 kg
+ * on 5.6 cm wheels grips with 9.8 N (tyres) or 2.5 N (tracks) against the 29 N its two large motors push, so both
+ * slip. Not measured on a robot.
+ */
+export const TREAD_GRIP = { tyres: 1.0, tracks: 0.25 } as const;
+export type Tread = keyof typeof TREAD_GRIP;
+export const MEDIUM_STALL_NCM = 12;
+/** Standard gravity, m/s2. */
+const G = 9.81;
+/**
+ * The most the EV3 gyro (45505) measures, deg/s: the LEGO MINDSTORMS Education EV3 User Guide (2013) gives 440 deg/s,
+ * and ev3dev's sensor table GYRO-RATE -440..440. A faster spin reads 440 (signed).
+ */
+export const GYRO_MAX_DEG_S = 440;
 /** The fastest loop rate the twin declares: a tick is an exchange with this emulator in the same process. */
 export const SIM_BRICK_LOOP_RATE_HZ = 100;
 /**
- * A motor released without brake keeps turning while it slows down. Here: a linear run-down that lasts this long
- * from 100 % speed (proportionally shorter from less). An approximation, to be calibrated on a real robot.
+ * A motor released without brake keeps turning while friction slows it down: a constant deceleration that takes
+ * this long from 100 % speed (proportionally shorter from less), so about 710 deg from 100 % and 180 from 50 %.
+ * An estimate, not a measurement (docs/twin-fidelity.md, scripts/twin-bench/real.json `coast_ms_100`): the
+ * friction torque is the no-load current times the torque constant, 0.06 A x 0.43 N m / 1.8 A = 0.014 N m
+ * (Philo's EV3 motor figures), against a shaft inertia of 0.0009-0.0014 kg m2 (Things DAQ) at 17.6 rad/s:
+ * 1.1-1.7 s. The middle of that. A wheel under a robot coasts differently (more inertia, rolling friction); not
+ * measured either.
  */
-export const COAST_MS_AT_100 = 200;
+export const COAST_MS_AT_100 = 1400;
+/**
+ * Mechanical time constant of a motor: the shaft speed follows a speed or power command as a first-order lag with
+ * this constant, at 63 % of the new speed after it and at 90 % after 2.3 times it (175 ms). Things DAQ measured
+ * 76 ms (median of four EV3 large motors at 40-100 % input, bare shaft):
+ * https://thingsdaq.org/2022/08/26/dc-motor-characterization-2-of-2/ . A load slows it (86-98 ms there with
+ * 0.00023-0.00045 kg m2 on the shaft, about a 1 kg robot on small sprockets); the twin does not add a robot's
+ * inertia. This is the large motor's; the medium motor has MEDIUM_MOTOR_TAU_MS.
+ */
+export const MOTOR_TAU_MS = 76;
+/**
+ * The medium motor's time constant. No measurement found (Things DAQ measured only the large motor): the large
+ * motor's number, named apart so that a measurement can replace it. A lighter rotor would answer faster, and a twin
+ * that answers no faster than the robot keeps a strategy from depending on a quicker response than it will get.
+ */
+export const MEDIUM_MOTOR_TAU_MS = 76;
+/**
+ * The lag reaches the commanded speed within this fraction of full speed, and from then on runs at it exactly: the
+ * speed the brick reports (whole percent) is then the commanded one, and a stopping motor reads exactly 0.
+ */
+const SETTLE_FRACTION = 0.002;
 
-/** The drive wheels of the robot this brick sits in. It comes from the robot profile, never from the world file. */
+/**
+ * One motor's speed (deg/s) over `h` ms, integrated exactly so that the result does not depend on how time is cut.
+ * `tauMs` is that motor's time constant (MOTOR_TAU_MS, MEDIUM_MOTOR_TAU_MS).
+ *
+ * `run` is the speed the command asks for. A power command (`full` absent) is the motor's own first-order lag to the
+ * speed that power gives. A speed command (`full` = the speed full power reaches now, `rate` unloaded) is regulated:
+ * the firmware's speed loop (lms2012 d_pwm.c, dRegulateSpeed) saturates at full power while the speed is short of
+ * the setpoint, so the shaft rises along the full-power lag and holds the setpoint once there. That is why a
+ * regulated start is faster than an unregulated one. Measured on ev3dev (its own speed regulator, the nearest
+ * measurement there is; docs/twin-fidelity.md, hw-log rows): `run_degrees 90 @20` turned 47 deg in its first 250 ms
+ * and `run_pair @25` 59-60, where a 76 ms lag to the setpoint gives 36 and 45. No stock-firmware trace was found.
+ */
+export function motorStep(
+  v0: number,
+  how: { run: number; full?: number } | "brake" | "coast",
+  h: number,
+  rate: number,
+  tauMs: number = MOTOR_TAU_MS,
+): { v: number; d: number } {
+  const t = h / 1000,
+    tau = tauMs / 1000,
+    f = rate / (COAST_MS_AT_100 / 1000);
+  if (typeof how === "object") {
+    const vt = how.run,
+      e0 = v0 - vt,
+      eps = SETTLE_FRACTION * rate;
+    if (Math.abs(e0) <= eps) return { v: vt, d: vt * t };
+    if (how.full !== undefined) {
+      // Saturated: the full-power lag toward vp, until it crosses vt at ts.
+      const vp = -Math.sign(e0) * how.full;
+      if ((vp - vt) * -Math.sign(e0) > eps) {
+        const ts = tau * Math.log((v0 - vp) / (vt - vp));
+        const dAt = (u: number) => vp * u + (v0 - vp) * tau * (1 - Math.exp(-u / tau));
+        if (t <= ts) return { v: vp + (v0 - vp) * Math.exp(-t / tau), d: dAt(t) };
+        return { v: vt, d: dAt(ts) + vt * (t - ts) };
+      }
+      // the setpoint is at (or past) what full power reaches: nothing to saturate toward, the plain lag
+    }
+    const ts = tau * Math.log(Math.abs(e0) / eps);
+    if (t <= ts) {
+      const e = Math.exp(-t / tau);
+      return { v: vt + e0 * e, d: vt * t + e0 * tau * (1 - e) };
+    }
+    return { v: vt, d: vt * t + e0 * tau * (1 - eps / Math.abs(e0)) };
+  }
+  if (v0 === 0) return { v: 0, d: 0 };
+  if (how === "coast") {
+    // Friction alone.
+    const s = Math.sign(v0),
+      u0 = Math.abs(v0),
+      ts = u0 / f,
+      tt = Math.min(t, ts);
+    return { v: t >= ts ? 0 : s * (u0 - f * t), d: s * (u0 * tt - (f * tt * tt) / 2) };
+  }
+  // Brake: the firmware holds the shaft where the brake came (lms2012 d_pwm.c, state BRAKED: BrakeMotor sets
+  // Power = -TachoCnt * 400, full reverse power one degree past the stop point). The overshoot and return of that
+  // hold last some tens of ms and end on the stop point: the twin skips them and stops there.
+  return { v: 0, d: 0 };
+}
+
+/**
+ * The drive wheels of the robot this brick sits in, as they physically are: the wheel that really rolls and the
+ * track the body really turns on. The runtime plans its moves with the profile's numbers, which may be wrong; the
+ * brick and the physics run on these, so calibrating the profile changes what the robot does, as on the floor.
+ */
 export interface BrickDrivetrain {
   left: MotorPort;
   right: MotorPort;
@@ -57,24 +165,50 @@ export interface BrickDrivetrain {
   axle_track_cm: number;
   /** 1 if positive motor rotation rolls the robot forward, -1 if the motors are mounted the other way. */
   forward_sign: 1 | -1;
+  /** Share of a turn a skid-steer base loses to its treads scrubbing sideways (World DriveGeometry). Default 0. */
+  turn_scrub?: number;
+  /**
+   * What the robot weighs (g) and the friction coefficient of its tread on the floor, both or neither. With them
+   * the drive pushes at most grip x weight, and when that is less than its motors can turn against, its wheels slip
+   * and keep turning against a wall instead of stalling. Without them it pushes DEFAULT_PUSH_N and stalls at walls.
+   */
+  mass_g?: number;
+  grip?: number;
+}
+/** What a twin's build says the drivetrain physically is (a robot file's `twin.drive`); each absent field is the profile's. */
+export interface PhysicalDrive {
+  wheel_diameter_cm?: number;
+  axle_track_cm?: number;
+  turn_scrub?: number;
+  /** What the robot weighs (g) and how its tread grips the floor (friction coefficient): both or neither. */
+  mass_g?: number;
+  grip?: number;
 }
 /**
  * Builds the brick's drivetrain from a robot profile plus the ports of its motor pair (the same `pair` the EV3
- * provider is configured with). A robot without a drivetrain or without a pair gives null: the twin's motors
- * turn, the robot stays.
+ * provider is configured with), with `physical` (a twin's build) in place of the profile's numbers where it gives
+ * them. A robot without a drivetrain or without a pair gives null: the twin's motors turn, the robot stays.
  */
 export function drivetrainFromProfile(
   profile: RobotProfile,
   pair: { left: MotorPort; right: MotorPort } | undefined,
+  physical: PhysicalDrive = {},
 ): BrickDrivetrain | null {
   const d = profile.drivetrain;
-  if (!d || !pair) return null;
+  if (!d || !pair) {
+    if (Object.keys(physical).length > 0)
+      throw new Error("a physical drive (twin.drive) needs a robot whose profile has a drivetrain and a pair");
+    return null;
+  }
   return {
     left: pair.left,
     right: pair.right,
-    wheel_diameter_cm: d.wheel_diameter_cm,
-    axle_track_cm: d.axle_track_cm,
+    wheel_diameter_cm: physical.wheel_diameter_cm ?? d.wheel_diameter_cm,
+    axle_track_cm: physical.axle_track_cm ?? d.axle_track_cm,
     forward_sign: d.forward_sign,
+    turn_scrub: physical.turn_scrub ?? 0,
+    ...(physical.mass_g === undefined ? {} : { mass_g: physical.mass_g }),
+    ...(physical.grip === undefined ? {} : { grip: physical.grip }),
   };
 }
 /** System reply with error: [len][counter][0x05][command][status]. */
@@ -97,16 +231,18 @@ interface Motor {
   plugged: MotorType | null; // null = nothing plugged in
   type: number;
   rate: number; // deg/s at 100 %
+  tau: number; // time constant of its lag, ms
   pos: number; // tacho degrees, fractional
-  speedPct: number; // signed speed while running, 0 when idle
+  speedPct: number; // signed commanded speed while a command runs, 0 when none does
   setPct: number; // speed/power stored by A4/A5, used by A6
   target: number | null; // stop when the tacho reaches this
   until: number | null; // stop at this brick time (ms)
   blocked: boolean; // wheel against a wall: busy, tacho frozen
   holdBrake: boolean; // end flag of the running command: true = brake, false = coast
-  coastFrom: number; // deg/s (signed) when the coast began
-  coastTotal: number; // ms the whole run-down takes
-  coastLeft: number; // ms of run-down still to go; 0 = not coasting
+  regulated: boolean; // the running command holds a speed (the SPEED and SYNC opcodes), not a power
+  setRegulated: boolean; // the level stored by A4/A5 is a speed (A5), not a power (A4)
+  vel: number; // deg/s (signed) the shaft really turns at: it lags the command and runs down after it
+  braking: boolean; // with no command running: true = the brake slows it, false = it coasts
 }
 interface Sensor {
   kind: SensorKindName;
@@ -206,6 +342,15 @@ export class SimBrick implements Transport, WorldHost {
   private last: number;
   private inFlight = false;
   private bumps = 0;
+  /** The drive's wheels slip at a wall (its tread's traction is below what its motors turn against): see BrickDrivetrain. */
+  private slips = false;
+  /** Traction of the tread (N), or null when the build does not say. */
+  private tractionN: number | null = null;
+  /** Torque (N·cm) the last physics step put on each drive motor: a box it slides, or a tread slipping at a wall. */
+  private loadNcm = 0;
+  /** What the drive wheels do, for the world's event log: they turn freely, are held by a wall, or slip against one. */
+  private driveState: "free" | "stalled" | "slipping" = "free";
+  private slipNow = false;
   private touchWas = false;
   private hasTouch = false;
 
@@ -231,6 +376,11 @@ export class SimBrick implements Transport, WorldHost {
         throw new Error(`SimBrick: drivetrain.forward_sign must be 1 or -1, got ${String(d.forward_sign)}`);
       if (!"ABCD".includes(d.left) || !"ABCD".includes(d.right) || d.left === d.right)
         throw new Error(`SimBrick: drivetrain needs two different motor ports A-D, got ${d.left} and ${d.right}`);
+      checkDrive({ axle_track_cm: d.axle_track_cm, turn_scrub: d.turn_scrub ?? 0 });
+      if ((d.mass_g === undefined) !== (d.grip === undefined) || !((d.mass_g ?? 1) > 0 && (d.grip ?? 1) > 0))
+        throw new Error(
+          `SimBrick: drivetrain needs mass_g and grip both > 0, or neither, got ${d.mass_g} and ${d.grip}`,
+        );
     }
     this.drivetrain = d ? { ...d } : null;
     this.world = opts.world;
@@ -260,10 +410,26 @@ export class SimBrick implements Transport, WorldHost {
     return ports;
   }
 
+  private stallNcm(type: MotorType): number {
+    return type === "medium" ? MEDIUM_STALL_NCM : LARGE_STALL_NCM;
+  }
   private plug(ports: BrickPorts): void {
     this.ports = ports;
-    // The physics gets the axle track from the profile's drivetrain; without one the body cannot roll.
-    this.world.drive = this.drivetrain ? { axle_track_cm: this.drivetrain.axle_track_cm } : null;
+    // The physics gets the axle track and the scrub of the physical drivetrain; without one the body cannot roll.
+    const d = this.drivetrain;
+    if (d) {
+      // what the drive pushes: what its tread grips with, and never more than its two motors turn against
+      const stall = Math.min(...[d.left, d.right].map((p) => this.stallNcm(ports.motors[p] ?? "large")));
+      const motorN = (2 * stall) / (d.wheel_diameter_cm / 2);
+      this.tractionN = d.mass_g !== undefined && d.grip !== undefined ? (d.grip * d.mass_g * G) / 1000 : null;
+      this.slips = this.tractionN !== null && this.tractionN < motorN;
+      this.world.drive = {
+        axle_track_cm: d.axle_track_cm,
+        turn_scrub: d.turn_scrub ?? 0,
+        push_n: Math.min(this.tractionN ?? DEFAULT_PUSH_N, motorN),
+      };
+    } else this.world.drive = null;
+    this.loadNcm = 0;
     this.motors = (["A", "B", "C", "D"] as MotorPort[]).map((port) => {
       const plugged = ports.motors[port] ?? null;
       return {
@@ -271,6 +437,7 @@ export class SimBrick implements Transport, WorldHost {
         plugged,
         type: plugged === null ? TYPE_NONE : plugged === "medium" ? TYPE_MEDIUM_MOTOR : TYPE_LARGE_MOTOR,
         rate: plugged === "medium" ? MEDIUM_DEG_S : LARGE_DEG_S,
+        tau: plugged === "medium" ? MEDIUM_MOTOR_TAU_MS : MOTOR_TAU_MS,
         pos: 0,
         speedPct: 0,
         setPct: 0,
@@ -278,9 +445,10 @@ export class SimBrick implements Transport, WorldHost {
         until: null,
         blocked: false,
         holdBrake: false,
-        coastFrom: 0,
-        coastTotal: 0,
-        coastLeft: 0,
+        regulated: false,
+        setRegulated: false,
+        vel: 0,
+        braking: false,
       };
     });
     this.sensors = (["1", "2", "3", "4"] as const).map((p) => {
@@ -288,6 +456,9 @@ export class SimBrick implements Transport, WorldHost {
       return kind ? { kind, type: SENSOR_TYPE[kind], mode: 0 } : null;
     });
     this.hasTouch = this.sensors.some((s) => s?.kind === "touch");
+    this.world.watch_echo = this.sensors.some((s) => s?.kind === "ultrasonic");
+    this.driveState = "free";
+    this.slipNow = false;
     this.bumps = 0;
     this.touchWas = this.hasTouch && this.world.senseTouch() === 1;
     this.world.resetGyro();
@@ -306,6 +477,7 @@ export class SimBrick implements Transport, WorldHost {
     this.tick();
     this.sensors[port - 1] = null;
     this.hasTouch = this.sensors.some((s) => s?.kind === "touch");
+    this.world.watch_echo = this.sensors.some((s) => s?.kind === "ultrasonic");
   }
 
   // ------------------------------------------------------------- inspection (tests, viewer)
@@ -335,7 +507,7 @@ export class SimBrick implements Transport, WorldHost {
         tacho_deg: m.pos,
         speed_pct: this.speedNow(m),
         blocked: m.blocked,
-        coasting: m.speedPct === 0 && m.coastLeft > 0,
+        coasting: m.speedPct === 0 && m.vel !== 0 && !m.braking,
       })),
       sensors: this.sensors.map((s, i) => ({
         port: String(i + 1) as SensorPort,
@@ -355,27 +527,26 @@ export class SimBrick implements Transport, WorldHost {
   /** sensorValues without noise (see peek); [] for a mode the emulator does not have. */
   private peekValues(s: Sensor): number[] {
     const w = this.world;
-    const cm = (d: number) => Math.round(Math.min(ULTRASONIC_MAX_CM, Math.max(ULTRASONIC_MIN_CM, d)) * 10) / 10;
     switch (s.kind) {
       case "touch":
         return s.mode === 0 ? [w.senseTouch()] : s.mode === 1 ? [this.bumps] : [];
       case "color":
-        if (s.mode === 0) return [REFLECT_BY_COLOR[w.senseColorId()]!];
+        if (s.mode === 0) return [Math.round(Math.min(100, Math.max(0, w.reflectSpot())))];
         if (s.mode === 1) return [5];
         if (s.mode === 2) return [w.senseColorId()];
         if (s.mode === 4) return COLOR_RGB[w.senseColorId()]!.map((c) => Math.round((c / 255) * 400));
         return [];
       case "ultrasonic":
-        if (s.mode === 0) return [cm(w.coneDistance())];
-        if (s.mode === 1) return [Math.round((cm(w.coneDistance()) / 2.54) * 10) / 10];
+        if (s.mode === 0) return [w.ultrasonicCm()];
+        if (s.mode === 1) return [Math.round((w.ultrasonicCm() / 2.54) * 10) / 10];
         return s.mode === 2 ? [0] : [];
       case "gyro": {
         const angle = -Math.round(w.peekGyroDeg()) + 0,
-          rate = Math.round(-w.rate_deg_s) + 0;
+          rate = Math.round(-w.gyroRateDegS()) + 0;
         return s.mode === 0 ? [angle] : s.mode === 1 ? [rate] : s.mode === 3 ? [angle, rate] : [];
       }
       case "ir":
-        return s.mode === 0 ? [Math.round(Math.min(100, Math.max(0, (w.rayDistance() / IR_FULL_SCALE_CM) * 100)))] : [];
+        return s.mode === 0 ? [Math.round(w.irProximity())] : [];
     }
   }
   pressButton(button: number, down = true): void {
@@ -390,7 +561,7 @@ export class SimBrick implements Transport, WorldHost {
     if (!(dt > 0)) return;
     let at = this.last;
     this.last = t;
-    const turning = (): boolean => this.motors.some((m) => m.speedPct !== 0 || m.coastLeft > 0);
+    const turning = (): boolean => this.motors.some((m) => m.speedPct !== 0 || m.vel !== 0);
     if (!turning()) {
       this.world.wait(dt);
       return;
@@ -408,42 +579,69 @@ export class SimBrick implements Transport, WorldHost {
   }
 
   private substep(at: number, h: number): void {
-    const want = [0, 0, 0, 0];
+    const want = [0, 0, 0, 0],
+      vEnd = [0, 0, 0, 0],
+      ends = [false, false, false, false];
     const dt = this.drivetrain;
     const li = dt ? "ABCD".indexOf(dt.left) : -1,
       ri = dt ? "ABCD".indexOf(dt.right) : -1;
     this.motors.forEach((m, i) => {
       if (m.speedPct === 0) {
-        if (m.coastLeft <= 0) return;
-        // Run-down after a command that ended without brake: speed falls linearly to zero.
-        const active = Math.min(h, m.coastLeft);
-        want[i] = m.coastFrom * ((m.coastLeft - active / 2) / m.coastTotal) * (active / 1000);
-        m.coastLeft -= active;
+        const r = motorStep(m.vel, m.braking ? "brake" : "coast", h, m.rate, m.tau);
+        want[i] = r.d;
+        vEnd[i] = r.v;
         return;
       }
+      // A time bound can end the command inside this step: the rest of the step is its brake or run-down.
       const active = m.until !== null ? Math.max(0, Math.min(h, m.until - at)) : h;
-      let d = (m.speedPct / 100) * m.rate * (active / 1000);
-      if (m.target !== null && (m.speedPct > 0 ? m.pos + d >= m.target : m.pos + d <= m.target)) d = m.target - m.pos;
+      // a load on a drive wheel lowers the speed its motor can reach (its torque-speed line), whatever it was told
+      let vt = (m.speedPct / 100) * m.rate,
+        cap = m.rate;
+      if ((i === li || i === ri) && this.loadNcm > 0) {
+        cap = m.rate * Math.max(0, 1 - this.loadNcm / this.stallNcm(m.plugged ?? "large"));
+        vt = Math.sign(vt) * Math.min(Math.abs(vt), cap);
+      }
+      const run = motorStep(m.vel, m.regulated ? { run: vt, full: cap } : { run: vt }, active, m.rate, m.tau);
+      let d = run.d,
+        v = run.v;
+      if (m.until !== null && at + h >= m.until - 1e-9) {
+        ends[i] = true;
+        const after = motorStep(v, m.holdBrake ? "brake" : "coast", h - active, m.rate, m.tau);
+        d += after.d;
+        v = after.v;
+      }
+      // A step ends on its count: the twin lands on it exactly (CONTRACT §4 Twin).
+      if (m.target !== null && (m.speedPct > 0 ? m.pos + d >= m.target : m.pos + d <= m.target)) {
+        d = m.target - m.pos;
+        v = 0;
+        ends[i] = true;
+      }
       want[i] = d;
+      vEnd[i] = v;
     });
     // Only the profile's drive wheels move the robot; with no drivetrain the motors turn freely.
     const cmPerDeg = dt ? (dt.forward_sign * Math.PI * dt.wheel_diameter_cm) / 360 : 0;
     const blocked = dt
       ? this.world.stepWheels(want[li]! * cmPerDeg, want[ri]! * cmPerDeg, h)
       : (this.world.wait(h), false);
+    // A tread that grips less than its motors push slips at a wall: the wheels keep turning, the body stays.
+    const slipping = blocked && this.slips;
+    const r = dt ? dt.wheel_diameter_cm / 2 : 0;
+    this.loadNcm = ((slipping ? this.tractionN! : blocked ? 0 : this.world.last_push_n) / 2) * r;
     this.motors.forEach((m, i) => {
-      const wheel = i === li || i === ri;
-      if (m.speedPct === 0) {
-        if (wheel && blocked) m.coastLeft = 0;
-        else m.pos += want[i]!;
-        return;
-      }
-      m.blocked = wheel && blocked;
-      if (!m.blocked) m.pos += want[i]!;
-      // A step ends when the tacho gets there (never, if blocked); a time bound ends on time even against a wall.
-      if ((m.target !== null && Math.abs(m.pos - m.target) < 1e-9) || (m.until !== null && at + h >= m.until - 1e-9))
-        this.halt(m, m.holdBrake);
+      const held = (i === li || i === ri) && blocked && !slipping;
+      // A drive wheel held by a wall stops: its tacho counts up to where the body came to rest, then stays.
+      m.pos += held ? want[i]! * this.world.last_step_fraction : want[i]!;
+      m.vel = held ? 0 : vEnd[i]!;
+      if (m.speedPct === 0) return;
+      m.blocked = held;
+      // A time bound ends on time even against a wall; a step ends on its count (never, while blocked).
+      if (ends[i] && !(held && m.target !== null)) this.halt(m, m.holdBrake);
     });
+    // slipping while the wheels still turn after this step (a command that ended here has stopped them)
+    const turns = (i: number) => this.motors[i]!.speedPct !== 0 || this.motors[i]!.vel !== 0;
+    this.slipNow = slipping && (turns(li) || turns(ri));
+    this.noteDrive();
     if (this.hasTouch) {
       const pressed = this.world.senseTouch() === 1;
       if (pressed && !this.touchWas) this.bumps++;
@@ -510,31 +708,45 @@ export class SimBrick implements Transport, WorldHost {
   }
 
   // ------------------------------------------------------------- motors
-  /** Ends a motor's command. brake = true stops it dead and holds; false lets it run down (unless it is blocked). */
+  /** Ends a motor's command. brake = true stops it where it is; false lets it run down (unless it is blocked). */
   private halt(m: Motor, brake: boolean): void {
     if (m.speedPct === 0 && !brake) return; // already stopped or running down: releasing it changes nothing
-    const speed = m.blocked ? 0 : (m.speedPct / 100) * m.rate;
+    if (m.blocked || brake) m.vel = 0; // a brake holds the shaft where it is (see motorStep)
     m.speedPct = 0;
     m.target = null;
     m.until = null;
     m.blocked = false;
-    if (brake || speed === 0) {
-      m.coastLeft = 0;
-      return;
+    m.braking = brake;
+    // Both drive wheels held: the body stops turning now, so a gyro reset at this instant sees a still robot.
+    const d = this.drivetrain;
+    if (d && this.motors["ABCD".indexOf(d.left)]!.vel === 0 && this.motors["ABCD".indexOf(d.right)]!.vel === 0) {
+      this.world.rate_deg_s = 0;
+      this.slipNow = false;
     }
-    m.coastFrom = speed;
-    m.coastTotal = m.coastLeft = COAST_MS_AT_100 * Math.min(1, Math.abs(speed) / m.rate);
+    this.noteDrive();
   }
-  /** A new command takes the motor over, also in the middle of a run-down. */
-  private drive(m: Motor, speed: number, brake: boolean): void {
+  /** Tells the world's event log when the drive wheels begin or end being held (stalled) or slipping. */
+  private noteDrive(): void {
+    const d = this.drivetrain;
+    if (!d) return;
+    const held = this.motors["ABCD".indexOf(d.left)]!.blocked || this.motors["ABCD".indexOf(d.right)]!.blocked;
+    const now = held ? "stalled" : this.slipNow ? "slipping" : "free";
+    if (now === this.driveState) return;
+    if (this.driveState === "stalled") this.world.note({ kind: "stall_ended" });
+    if (this.driveState === "slipping") this.world.note({ kind: "slip_ended" });
+    if (now === "stalled") this.world.note({ kind: "stall_began" });
+    if (now === "slipping") this.world.note({ kind: "slip_began" });
+    this.driveState = now;
+  }
+  /** A new command takes the motor over, also in the middle of a run-down: the shaft goes on from its speed. */
+  private drive(m: Motor, speed: number, brake: boolean, regulated: boolean): void {
     m.speedPct = speed;
     m.holdBrake = brake;
-    m.coastLeft = 0;
+    m.regulated = regulated;
   }
-  /** Speed in percent as OUTPUT_READ reports it: commanded while running, the run-down speed while coasting, 0 if blocked. */
+  /** Speed in percent as OUTPUT_READ reports it: what the shaft really does (it lags the command), 0 if blocked. */
   private speedNow(m: Motor): number {
-    if (m.speedPct !== 0) return m.blocked ? 0 : m.speedPct;
-    return m.coastLeft > 0 ? ((m.coastFrom * (m.coastLeft / m.coastTotal)) / m.rate) * 100 : 0;
+    return m.blocked ? 0 : (m.vel / m.rate) * 100;
   }
   private masked(mask: number): Motor[] {
     if (mask < 0 || mask > 0x0f) throw new Error(`bad output mask ${mask}`);
@@ -544,26 +756,26 @@ export class SimBrick implements Transport, WorldHost {
     if (v < -100 || v > 100) throw new Error(`${what} ${v} outside -100..100`);
     return v;
   }
-  private startStep(m: Motor, speed: number, degrees: number, brake: boolean): void {
+  private startStep(m: Motor, speed: number, degrees: number, brake: boolean, regulated: boolean): void {
     if (degrees < 0) throw new Error(`negative step ${degrees}`);
     if (speed === 0) {
       this.halt(m, true);
       return;
     }
-    this.drive(m, speed, brake);
+    this.drive(m, speed, brake, regulated);
     m.until = null;
     if (degrees === 0) {
       m.target = null;
       this.unboundedMoves++;
     } else m.target = m.pos + Math.sign(speed) * degrees;
   }
-  private startTime(m: Motor, speed: number, ms: number, brake: boolean): void {
+  private startTime(m: Motor, speed: number, ms: number, brake: boolean, regulated: boolean): void {
     if (ms < 0) throw new Error(`negative time ${ms}`);
     if (speed === 0) {
       this.halt(m, true);
       return;
     }
-    this.drive(m, speed, brake);
+    this.drive(m, speed, brake, regulated);
     m.target = null;
     if (ms === 0) {
       m.until = null;
@@ -585,9 +797,10 @@ export class SimBrick implements Transport, WorldHost {
     const speeds = turn >= 0 ? [speed, speed * ratio] : [speed * ratio, speed];
     pair.forEach((m, i) => {
       const s = speeds[i]!;
-      if (byTime) this.startTime(m, s, amount, brake);
+      // c_output.c runs a synchronised pair under speed regulation
+      if (byTime) this.startTime(m, s, amount, brake, true);
       else if (s === 0) this.halt(m, true);
-      else this.startStep(m, s, amount === 0 ? 0 : Math.abs(amount * (s / speed)), brake);
+      else this.startStep(m, s, amount === 0 ? 0 : Math.abs(amount * (s / speed)), brake, true);
     });
   }
 
@@ -615,9 +828,11 @@ export class SimBrick implements Transport, WorldHost {
       }
       case "gyro": {
         // The real EV3 gyro counts CLOCKWISE as positive. The world is counter-clockwise positive, so negate.
+        // Its rate saturates at GYRO_MAX_DEG_S. (The angle a saturated gyro loses is not modelled.)
+        const rate = () => Math.round(Math.max(-GYRO_MAX_DEG_S, Math.min(GYRO_MAX_DEG_S, -w.gyroRateDegS()))) + 0;
         if (s.mode === 0) return [-w.senseGyro() + 0];
-        if (s.mode === 1) return [Math.round(-w.rate_deg_s) + 0];
-        if (s.mode === 3) return [-w.senseGyro() + 0, Math.round(-w.rate_deg_s) + 0];
+        if (s.mode === 1) return [rate()];
+        if (s.mode === 3) return [-w.senseGyro() + 0, rate()];
         break;
       }
       case "ir": {
@@ -691,9 +906,13 @@ export class SimBrick implements Transport, WorldHost {
           // Sets the level; a motor already running changes speed at once, an idle one waits for OUTPUT_START.
           for (const m of ms) {
             m.setPct = v;
+            m.setRegulated = opcode === OP.OUTPUT_SPEED;
             if (m.speedPct !== 0) {
               if (v === 0) this.halt(m, true);
-              else m.speedPct = v;
+              else {
+                m.speedPct = v;
+                m.regulated = m.setRegulated;
+              }
             }
           }
           break;
@@ -702,7 +921,7 @@ export class SimBrick implements Transport, WorldHost {
           layer();
           for (const m of this.masked(num())) {
             if (m.setPct === 0) continue;
-            this.drive(m, m.setPct, true);
+            this.drive(m, m.setPct, true, m.setRegulated);
             m.target = null;
             m.until = null;
             this.unboundedMoves++;
@@ -735,7 +954,8 @@ export class SimBrick implements Transport, WorldHost {
             s3 = num();
           const brake = num() !== 0;
           if (s1 < 0 || s2 < 0 || s3 < 0) throw new Error("negative step");
-          for (const m of ms) this.startStep(m, speed, s1 + s2 + s3, brake); // ramp-up and ramp-down are not modelled: constant speed over the whole step
+          // the ramp is the motor's own rise (motorStep), not s1 and s3
+          for (const m of ms) this.startStep(m, speed, s1 + s2 + s3, brake, opcode === OP.OUTPUT_STEP_SPEED);
           break;
         }
         case OP.OUTPUT_TIME_POWER:
@@ -748,7 +968,7 @@ export class SimBrick implements Transport, WorldHost {
             t3 = num();
           const brake = num() !== 0;
           if (t1 < 0 || t2 < 0 || t3 < 0) throw new Error("negative time");
-          for (const m of ms) this.startTime(m, speed, t1 + t2 + t3, brake);
+          for (const m of ms) this.startTime(m, speed, t1 + t2 + t3, brake, opcode === OP.OUTPUT_TIME_SPEED);
           break;
         }
         case OP.OUTPUT_STEP_SYNC:

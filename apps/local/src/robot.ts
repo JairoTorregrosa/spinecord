@@ -45,6 +45,8 @@ const MOVING_TOOLS: readonly string[] = ["drive", "turn", "arc"];
 
 export interface RobotOptions {
   id: string;
+  /** The name the person gave the robot (CONTRACT §3, `name`): list_robots and describe_robot say it. Default null. */
+  name?: string | null;
   /** What a person must do to bring this robot online while it is offline (the page to open); null when nothing. */
   connect?: string | null;
   onTransition?: (fsm: "link" | "activity" | "life", from: string, to: string, why: string) => void;
@@ -110,6 +112,7 @@ export const ATTACH_STOPS = 3;
 
 export class LocalRobot {
   readonly id: string;
+  readonly name: string | null;
   private readonly connectBase: string | null;
   private attachError: string | null = null; // why the last attempt to bring the robot online failed
   private attachNeedsPerson = false; // that failure repeats until a person changes something (a bridge to reinstall)
@@ -130,6 +133,7 @@ export class LocalRobot {
 
   constructor(private readonly o: RobotOptions) {
     this.id = o.id;
+    this.name = o.name ?? null;
     this.connectBase = o.connect ?? null;
     this.clock = o.clock ?? realClock;
   }
@@ -180,6 +184,7 @@ export class LocalRobot {
   listing() {
     return {
       ...this.view(),
+      name: this.name,
       fault_reason: this.activity === "fault" ? this.faultReason : null,
       connect: this.link === "online" ? null : this.connectHint,
       join: this.o.pages?.join() ?? null,
@@ -286,10 +291,12 @@ export class LocalRobot {
     if (tool === "reset_fault") return this.resetFault(rt);
     if (tool === "run_loop") return this.runLoop(rt, args, cancel);
     if (tool === "supervise_loop") return this.superviseLoop(args, cancel);
-    if (tool === "describe_robot" && this.o.pages) {
-      // the pages of the robot are this process's (their state machine is apps/local's): added to the runtime's answer
+    if (tool === "describe_robot") {
+      // the name and the pages of the robot are this process's (the pages' state machine is apps/local's): added
+      // to the runtime's answer
       const out = await this.bounded(rt, tool, args, null, cancel);
-      return { ...out, data: { ...(out.data as Record<string, unknown>), pages: this.o.pages.view() } };
+      const data = { ...(out.data as Record<string, unknown>), name: this.name };
+      return { ...out, data: this.o.pages ? { ...data, pages: this.o.pages.view() } : data };
     }
     const moving = this.moves(rt, tool, args);
     const reads = !moving && tool !== "command_device";

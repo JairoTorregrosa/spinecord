@@ -34,10 +34,35 @@ describe("peek", () => {
     for (let i = 0; i < 20; i++) a.brick.peek();
     expect(await readUltrasonic(a.call)).toBe(await readUltrasonic(b.call));
   });
+  test("reflect mode shows the average of the spot, as the robot reads it: in between on the edge of a line", async () => {
+    const { brick, call, world } = rig();
+    world.setPose({ x: 43, y: 26.5, th: 0 }); // the sensor's centre on the line's edge
+    await call(E.inputReadySi(2, 0, 0, 1, 0), 4); // the colour sensor in reflect mode
+    const shown = brick.peek().sensors[2]!.values[0]!;
+    expect(shown).toBeGreaterThan(25);
+    expect(shown).toBeLessThan(70);
+    expect(E.readF32((await call(E.inputReadySi(2, 0, 0, 1, 0), 4)).globals, 0)).toBe(shown);
+  });
+  test("watching changes nothing: a twin ticked every frame drives the same path as one never looked at", async () => {
+    const BC = E.OUTPUT_MASK.B | E.OUTPUT_MASK.C;
+    const watched = noisy(3),
+      alone = noisy(3);
+    for (const t of [watched, alone]) await t.call(E.outputTimeSync(BC, 40, 30, 2000, false));
+    for (let i = 0; i < 90; i++) watched.run(33); // a viewer at 30 frames a second
+    watched.brick.peek();
+    alone.run(2970);
+    const a = watched.world.pose,
+      b = alone.world.pose;
+    // the same noise is drawn; steps cut elsewhere integrate a changing curvature a hair differently
+    expect(Math.abs(a.x - b.x) + Math.abs(a.y - b.y)).toBeLessThan(0.005);
+    expect(Math.abs(a.th - b.th)).toBeLessThan(1e-4);
+    expect(watched.brick.tacho("B")).toBe(alone.brick.tacho("B"));
+    expect(await readUltrasonic(watched.call)).toBe(await readUltrasonic(alone.call));
+  });
   test("a turning pair shows its speed and tacho; the gyro follows the turn, clockwise-positive", async () => {
     const { brick, call, run } = rig();
-    await call(E.outputStepSync(E.OUTPUT_MASK.B | E.OUTPUT_MASK.C, 40, 200, 360, true));
-    run(100);
+    await call(E.outputStepSync(E.OUTPUT_MASK.B | E.OUTPUT_MASK.C, 40, 200, 3600, true));
+    run(600); // past the motors' lag
     const p = brick.peek();
     const b = p.motors[1]!,
       c = p.motors[2]!;

@@ -52,8 +52,8 @@ describe("the arm example: no pair, no drivetrain", () => {
     try {
       expect(fleet.robots.map((r) => r.id)).toEqual(["arm-sim"]);
       const tool = toolsOf(fleet.robots, "arm-sim");
-      // the default room plugs motors into A, B and C: without a pair, B and C are two motors
-      await armWorks(tool, ["ev3.A", "ev3.B", "ev3.C"]);
+      // the file's twin plugs a medium motor into A and a large one into B, not the room's A, B and C
+      await armWorks(tool, ["ev3.A", "ev3.B"]);
       // the twin's body stays where the world put it, whatever its motors do
       const pose = (await tool("read_device", { device: "sim.world", channels: ["pose"] })).data.readings[0].value;
       expect(pose).toEqual([60, 60, 0]);
@@ -69,7 +69,7 @@ describe("the arm example: no pair, no drivetrain", () => {
     };
     const brick = new SimBrick({ world: new World(parseWorld(world), 1), drivetrain: null });
     const robot = new LocalRobot({ id: "arm" });
-    await robot.attach(ev3Runtime({ source: "ev3", id: "arm", robot: await file(ARM) }, brick));
+    await robot.attach(ev3Runtime({ name: null, source: "ev3", id: "arm", robot: await file(ARM) }, brick));
     try {
       await armWorks(toolsOf([robot], "arm"), ["ev3.A", "ev3.B"]);
     } finally {
@@ -82,7 +82,7 @@ describe("the heading of the base example", () => {
   const turn = async (robot: RobotFile) => {
     const world = await Bun.file(EXAMPLE.world).json();
     const fleet = await buildFleet(
-      { port: 0, robots: [{ source: "twin", id: "base-sim", robot, world, seed: 1 }] },
+      { port: 0, robots: [{ name: null, source: "twin", id: "base-sim", robot, world, seed: 1 }] },
       { log: () => {} },
     );
     try {

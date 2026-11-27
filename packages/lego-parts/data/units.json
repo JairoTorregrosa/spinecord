@@ -1,0 +1,94 @@
+{
+  "note": "The LEGO grid. A module is the stud pitch; Technic holes sit on the same pitch. LDraw coordinates (LDU) are exact multiples of these, so every position in ldraw-geometry.json converts to modules by dividing by 20.",
+  "ldu_mm": {
+    "value": 0.4,
+    "unit": "mm",
+    "source": "https://www.ldraw.org/article/218.html#ldu",
+    "note": "The LDraw specification's real-world approximation; taken because every LDraw file is drawn on it.",
+    "alt": [
+      {
+        "value": 0.3993,
+        "source": "https://www.lugnet.com/~330/FAQ/Build/dimensions",
+        "note": "Measured on real bricks (±0.0001 mm). 0.2 % smaller: 0.2 mm over a 15-module beam."
+      }
+    ]
+  },
+  "ldraw_axes": {
+    "value": "right-handed, -Y is up; X to the right and Z towards the viewer in LDraw's front view; each part has its own origin",
+    "source": "https://www.ldraw.org/article/218.html"
+  },
+  "module_ldu": {
+    "value": 20,
+    "unit": "LDU",
+    "source": "https://www.ldraw.org/article/218.html#ldu",
+    "note": "1 brick width/depth = 20 LDU."
+  },
+  "module_mm": {
+    "value": 8,
+    "unit": "mm",
+    "source": "https://www.ldraw.org/article/218.html#ldu",
+    "note": "20 LDU x 0.4 mm: the stud pitch and the Technic hole pitch."
+  },
+  "plate_height_ldu": { "value": 8, "unit": "LDU", "source": "https://www.ldraw.org/article/218.html#ldu" },
+  "plate_height_mm": { "value": 3.2, "unit": "mm", "source": "https://www.ldraw.org/article/218.html#ldu" },
+  "brick_height_ldu": { "value": 24, "unit": "LDU", "source": "https://www.ldraw.org/article/218.html#ldu" },
+  "brick_height_mm": { "value": 9.6, "unit": "mm", "source": "https://www.ldraw.org/article/218.html#ldu" },
+  "stud_diameter_mm": {
+    "value": 4.8,
+    "unit": "mm",
+    "source": "https://www.ldraw.org/article/218.html#ldu",
+    "note": "12 LDU."
+  },
+  "stud_height_mm": {
+    "value": 1.6,
+    "unit": "mm",
+    "source": "https://www.ldraw.org/article/218.html#ldu",
+    "note": "4 LDU."
+  },
+  "brick_and_two_plates_mm": {
+    "value": 16,
+    "unit": "mm",
+    "source": "https://www.ldraw.org/article/218.html#ldu",
+    "note": "24 + 8 + 8 LDU = 40 LDU = 2 modules: a brick and two plates stacked put Technic holes on the same 8 mm pitch vertically as horizontally."
+  },
+  "pin_hole_diameter_mm": {
+    "value": 4.8,
+    "unit": "mm",
+    "source": "https://library.ldraw.org/library/official/p/connhole.dat",
+    "note": "The hole cylinder has radius 6 LDU."
+  },
+  "pin_hole_pitch_mm": {
+    "value": 8,
+    "unit": "mm",
+    "source": "https://library.ldraw.org/library/official/parts/32524.dat",
+    "note": "Beam 7: holes every 20 LDU along its length."
+  },
+  "axle_cross_mm": {
+    "value": 4.8,
+    "unit": "mm",
+    "source": "https://library.ldraw.org/library/official/parts/3705.dat",
+    "note": "Across the cross of a Technic axle (LDraw bounding box 12 LDU)."
+  },
+  "axle_length_mm": {
+    "value": "8 n - 0.4",
+    "unit": "mm",
+    "source": "https://library.ldraw.org/library/official/parts/3705.dat",
+    "note": "An axle n long is 20 n - 1 LDU (axle 4: 79 LDU = 31.6 mm)."
+  },
+  "beam_thick_mm": {
+    "value": 8,
+    "unit": "mm",
+    "source": "https://library.ldraw.org/library/official/parts/32524.dat",
+    "note": "A thick (studless) beam is 1 module along its holes' axis and 7.2 mm (0.9 module) across; n holes long it measures 8 n - 0.8 mm."
+  },
+  "beam_thin_mm": {
+    "value": 4,
+    "unit": "mm",
+    "source": "https://library.ldraw.org/library/official/parts/6632.dat",
+    "note": "A thin beam is half a module thick."
+  },
+  "half_module_offsets": {
+    "value": "Thin beams (0.5 module thick), the 0.5-module bush 32123b, the pin 3/4, and the axle 5.5 with stop sit on half-module positions; EV3 parts put their holes on whole modules except where ldraw-geometry.json lists a hole centre at an odd multiple of 10 LDU.",
+    "source": "https://library.ldraw.org/library/official/parts/6632.dat"
+  }
+}

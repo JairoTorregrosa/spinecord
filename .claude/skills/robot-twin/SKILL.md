@@ -1,0 +1,153 @@
+---
+name: robot-twin
+description: Make the spinecord twin match the LEGO EV3 robot a person built. From photos of the robot, what a connected EV3 reports on each port, and the person's answers, it writes the person's robot file (ports, wheels or tracks, footprint, phone, look), marks what nobody confirmed, checks it, shows the twin in the 3D view, calibrates on the real robot and registers it in Claude Code. It stops and says why when the photo is not of one EV3 robot the person built. Use it when a person says "my robot", "match the twin to my robot", "here is a photo of my robot", "make the simulation look like my robot", "mi robot", "este es mi robot", "aquí está la foto de mi robot", "haz que el gemelo sea mi robot", "simula mi robot".
+---
+
+# Match the twin to the person's robot
+
+You are a coding agent on the computer of a person who built a LEGO EV3 robot. spinecord is set up (skill `setup-spinecord`).
+You write one robot file, so that the twin `<id>-sim` is that robot: its ports, drive, footprint and look. What nobody confirmed stays listed in the file as unconfirmed, never passed off as known.
+Talk to the person in the language the person uses. Each message in quotes here is the English source: say it in the person's language, keep its meaning and its question marks, never add a second question. Keep commands, file names and JSON keys as written here. Write `<clone>` and `~/mi-robot` as full paths of this computer.
+
+| Word | What it is |
+|---|---|
+| `<clone>` | the spinecord clone. `claude mcp get spinecord` in the workshop folder shows `<clone>/apps/local/main.ts`. This file is `<clone>/.claude/skills/robot-twin/SKILL.md`, or its copy in `~/mi-robot/.claude/skills/robot-twin/` (the setup's `workshop` step copies it); `<clone>` is found the same way from both |
+| robot file | `~/mi-robot/robot.json`. Never write in the clone |
+| the brick | the EV3 on USB, with spinecord registered with `--ev3` and the robot `online` (skill `setup-spinecord`, its EV3 state). Which robot file it was registered with does not matter: the brick reports what is plugged in |
+| the person | someone who answers you in this session. When you were told that nobody will answer, or the person says to go on without questions, there is no person |
+| check | `bun <clone>/apps/local/main.ts --doctor --files-only --twin ~/mi-robot/robot.json`. It reads only the file: exit 0 means the file is valid |
+| the map | `<clone>/packages/lego-parts/data/`: the real parts and the official builds (`builds.json`). Read a build as identify.md "Reading a build" says |
+| token | an entry of `twin.unconfirmed`: `A`-`D`, `S1`-`S4`, `left_right`, `front`, `drive`, `wheel_diameter`, `axle_track` change how the robot moves; `footprint`, `places` change only the look and collisions |
+
+## Outcomes
+
+- **stop**: no file is written; you tell the person why and what you need (state 0). A stop keeps its question open: it is never answered by an assumption.
+- **draft twin**: a valid file whose `twin.unconfirmed` is not empty. The 3D page shows it as the chip `borrador`, with its tokens under `Sin confirmar`. Tell the person: "This is a draft twin: <the draft line of the check> are guesses. Answer these questions or connect the brick, and I will confirm them." with the questions.
+- **twin**: a valid file with `twin.unconfirmed` empty or absent.
+
+## States
+
+Start at the first state whose exit check fails. If `~/mi-robot/robot.json` exists, states 0-2 are done: read it; if its `twin.unconfirmed` lists a token and a person or the brick is here, go to state 1 for those tokens only, else go to state 3. If a step fails 2 times, end there and show the person the exact error.
+
+| State | Exit check |
+|---|---|
+| 0 INTAKE | The photos show one assembled EV3 robot that the person built, with its drive and brick readable (identify.md "Readable"), and every deciding question is answered; or the outcome is **stop** |
+| 1 GATHER | Every row of the table "Confirm" has a value and a source (brick, photo, person, model or assumed; model counts as assumed unless the person said yes to the model) |
+| 2 WRITE | The robot file exists, and `twin.unconfirmed` lists exactly the tokens whose source is assumed |
+| 3 CHECK | The check prints `twin <id>-sim` matching state 1, and the draft gate below passes |
+| 4 SHOW | The person says the 3D twin matches, or the differences left are in "What a twin cannot have"; skipped with no person |
+| 5 REGISTER | `claude mcp get spinecord` in the workshop folder shows bun's full path and `--twin` with the robot file; skipped with no person |
+| 6 CALIBRATE | `profile.notes` has a line that starts with `Calibrated`, or there is no real robot to drive |
+| 7 REPORT | The person has the report |
+
+## 0 INTAKE
+
+Read [reference/identify.md](reference/identify.md), "What the photo shows", "Readable" and "Official models". Classify each photo with "What the photo shows" before you read any detail. The first row that matches decides; only the last two rows write a file. 
+
+| The photo shows | Say, then |
+|---|---|
+| A picture of an official model you recognise ("What the photo shows": not a photo) | "This is <an instruction drawing / …> of the <model>, <its attachment or variant>, not a photo of a robot you built. Did you build exactly this, step by step? If yes, I can start from its instructions; either way, a photo of your robot from above and from the side helps." (es: "Esto es <un dibujo de instrucciones / …> del <modelo>, <su accesorio>, no una foto de un robot que tú armaste. ¿Armaste exactamente esto, paso a paso? Si sí, puedo partir de sus instrucciones; en todo caso, me sirve una foto de tu robot desde arriba y de lado.") **stop**, deciding question open |
+| Any other picture that is not a photo, or no robot | "This is <a slide / an instruction drawing / …>, not a photo of the robot you built. Please send a photo of your robot, from above and from the side." **stop** |
+| EV3 parts not built into a robot (a brick, loose motors, a wheel), alone in the photo | "I see EV3 parts that are not built into a robot yet. When your robot is built, send me a photo of it from above and from the side." **stop** |
+| A non-EV3 brick (identify.md "Not an EV3" decides), and no EV3 | "This robot is built on a <NXT / SPIKE Prime / …> (<the tell you saw>). spinecord drives LEGO EV3 bricks only, so I cannot make its twin. If you also have an EV3 robot, send me a photo of it." (es: "Este robot está armado sobre un <NXT / SPIKE Prime / …> (<la señal que viste>). spinecord solo maneja ladrillos LEGO EV3, así que no puedo hacer su gemelo. Si también tienes un robot EV3, mándame una foto de él.") **stop** |
+| A robot whose brick is not readable (a shell, blur, out of frame), with no tell of "Not an EV3" and no EV3 part seen (a red-hub motor, an EV3 sensor) | "I can see <what you see>, but not the brick it is built on. Please send <the views of identify.md "More photos">, one with the brick's ports." **stop** |
+| An EV3 robot beside robots of another kind | "I see <what each is>. Only <the EV3 one> runs on an EV3. Is that your robot?" **stop**, deciding question open |
+| EV3 parts not built into a robot, beside another robot | "I see EV3 parts not built into a robot yet. <The other> is a <platform>, not an EV3, so I cannot make its twin. Which is yours?" **stop**, deciding question open |
+| Several robots, EV3 or too blurred to tell | "I see <n> robots: (a) <place, colour, wheels or tracks>, (b) … Which one is yours?" (es: "Veo <n> robots: (a) <lugar, color, ruedas u orugas>, (b) … ¿Cuál es el tuyo?"). Blurred: add "Please send a sharp photo of it." and say nothing about the platform. **stop**, deciding question open |
+| One EV3 robot whose brick or drive is not readable, and it is not an official model you recognise | "I can see <what you see>, but not <what is hidden>. Please send <the views of identify.md "More photos">." **stop** |
+| One EV3 robot whose brick or drive is not readable, and it is an official model you recognise (identify.md "Official models") | "This looks like the <model> <with …>, but I cannot see <what is hidden>. Is it exactly that model? Or send <the views of identify.md "More photos">." **stop**, deciding question open |
+| One EV3 robot, readable, an official model or built on a model's base | Go on with the model (below) |
+| One EV3 robot, readable | Go on |
+
+**Deciding questions.** Only these stop while unanswered: "Is this your robot?", "Which robot is yours?", "Did you build exactly this model?" (a picture that is not a photo), "Is it exactly this model?" when the brick or the drive cannot be read otherwise, and "Is this the <model>?" for a model with no drive (an arm, a station; message in robot-file.md "A robot with no drive"). Any other open question lets a **draft twin** through with its tokens. With no person it stays open: **stop**, never a file on the likely answer. With a person, the answer or new photos start state 0 again. **stop** writes no file and ends at state 7 with that message as the report.
+
+**Official model.** identify.md "Official models" decides between the model, a robot on a model's base, and a custom robot. A yes to "did you build exactly this" or "is it exactly this model" makes the model's build the source of the robot. Otherwise the model's values are assumed, and "Is this the <model>, built as in the instructions, with <attachments>?" goes first in the state 1 message; on a base, "Is it built on the <model>'s base?" (a balancer importing more than the drive asks the model question). In state 1 the build gives (identify.md "Reading a build"); on a model's base, only the drive:
+- the ports the photo does not show: every fixed port of the build, the hidden ones too (a gyro inside Gyro Boy is in the file, source "model", its token kept); an `attachment:` port only when that attachment is seen or named. A plug read clearly beats the build; with doubt the build's port is written, its token kept, and the row 4 table asks the difference. Read clearly: "The <model> uses B and C; in your photo the cables go into A and B. Are the wheels on A and B?"; with doubt: "I could not read the plugs; are the <tracks/wheels> on <X> and <Y>?";
+- its wheel diameter and axle track, assumed (tokens kept until state 6), unless the photo shows other sizes (wheels visibly further apart, a frame reaching far behind the base): measure those with the brick as the ruler (identify.md "Scale"). An axle track wider than the footprint (the check's `footprint` warn): a footprint read from the photo wins, `axle_track_cm` is its width minus one wheel or track width; the default footprint (no `twin.body`) loses, `half_width_cm` is half of the axle track plus one wheel or track width, `footprint` kept. Floor: width ≥ axle track + one tyre or track width each side; a track's length ≥ sprocket spacing + one sprocket;
+- its notes: balancing, steering, walking, no drive.
+A person's yes to the model confirms the ports whose kind the build names and the ports it leaves empty (take their tokens out); the questions then shrink to what the instructions do not fix: the attachment, ports a person may have changed, the name, a phone.
+
+## 1 GATHER
+
+Sources, best first; a later source never overrides an earlier one.
+
+1. **The brick.** Call `list_robots`, then `describe_robot` on the robot whose source is `ev3`; map each port with [reference/brick.md](reference/brick.md). It confirms what is on each port, not what it does or where it sits.
+2. **The photos.** Read them with [reference/identify.md](reference/identify.md): each part (its LEGO number), where it sits, the scale. A part's kind comes from its tells; when two kinds fit (a part seen from behind, a colour sensor or a touch sensor), write the likelier one, keep its port's token, and ask a question that names both. One photo is enough; what it cannot settle is assumed.
+3. **The person.** Everything still unconfirmed, in one message, from [reference/questions.md](reference/questions.md). Ask again only what stays open. "I don't know" keeps the value assumed.
+4. **The model** (only for an official model, state 0): the build's values for what the photo does not show, assumed unless the person said yes to the model.
+5. **Assumed.** With no source left, take the value questions.md gives for it (one rule per value; for a port, row 4), and write its token. Never copy a port, side or number from an example file.
+
+### Confirm
+
+| Value | Token | Confirmed by | Not by |
+|---|---|---|---|
+| What is on each port: the part's kind, and for a motor that does not drive what it does | `A`-`D`, `S1`-`S4` (the token covers the kind: a kind you guessed keeps its port's token) | the brick; the person; the person's yes to an official model, for the ports whose kind its build names; a photo where the port's label is legible and its cable can be followed to the part, or its socket is visibly empty (identify.md "Where a port is") | a port you cannot read; a kind you chose between two |
+| Which pair motor drives the left side, seen from behind | `left_right` | the person; state 6 | a photo |
+| Which end is the front | `front` | the person; state 6 | a photo |
+| Wheels, tracks, or no drive | `drive` | a photo showing what touches the floor; the person | |
+| Wheel diameter | `wheel_diameter` | the size printed on the tire, legible; a row of parts.md the person picks; a measurement; state 6 | a row you picked by eye |
+| Axle track | `axle_track` | the person's measurement; state 6 | |
+| Footprint (`twin.body` lengths) | `footprint` | the person's measurement; a photo with a ruler beside the robot | a length scaled from a part (identify.md "Scale"): use it, keep the token |
+| Where the brick, sensors and phone sit, and the brick's pose (flat, standing, tilted) | `places` | the person; a photo with a ruler | the same; always write the pose (robot-file.md "Parts") |
+
+Keep each value's source for state 7.
+
+## 2 WRITE
+
+1. Read [reference/robot-file.md](reference/robot-file.md) and the header comment of `<clone>/apps/twin-view/src/look.ts` (the fields of `twin.view`; it changes).
+2. Copy the template. It arrives with every token in `twin.unconfirmed`. Fill each value from state 1; take a token out only when its "Confirm" source is not assumed.
+3. Add each sensor and actuator from robot-file.md "Parts". Delete what the robot does not have.
+4. In `profile.notes`: what each actuator does and its range, where each sensor looks, what the phone is for, and one line per row of "What a twin cannot have" that this robot hits. Tell the person those rows now, before any twin is shown (a balancer, a stair climber, a station with no drive).
+5. `name`: the name the person gave the robot (questions.md row 13), as they wrote it; with no name, leave `name` out. Never make one up. `profile.id`: that name in lowercase, accents dropped, spaces as `-`; with no name, `mi-robot`.
+
+## 3 CHECK
+
+1. Run the check. A `fail` on `robots` names the field and the fix, a `footprint` warn the fix after `->`: fix the file and run it again.
+2. Compare the `twin <id>-sim` line with state 1: each port and role, the pair, wheel and axle track, the footprint, the look.
+3. **Draft gate.** A `draft <id>-sim` line lists the tokens left. For each one that changes how the robot moves: if a source of its "Confirmed by" is here (the brick, the person) and you have not used it for that token yet, go back to state 1 for it. No token left: the outcome is **twin**. Tokens left: the outcome is **draft twin**; tell the person so now, and with no person go to state 7.
+
+## 4 SHOW (human step)
+
+1. Ask the person to run, in a new terminal: `bun <clone>/apps/local/main.ts --twin ~/mi-robot/robot.json --view --view-port 8770`
+2. "Open http://127.0.0.1:8770/. Tell me what differs from your robot: wheels or tracks, where the parts are, the size."
+3. Fix each difference, run the check, ask the person to restart the line (Ctrl+C) and reload.
+4. A difference the file cannot show (robot-file.md "What a twin cannot have"): a note, and one line to the person.
+5. When done, the person stops the line.
+
+## 5 REGISTER
+
+1. `cd <clone>; bun scripts/setup.ts workshop`. Once the robot file exists, the setup registers it after `--twin` (with an EV3, after `--ev3` too), with bun's full path and local scope, and keeps its world and `--view`. A `todo` line for `ev3` means the setup is not done: do skill `setup-spinecord` first. A doctor `port` fail that names this session's ports is expected until the restart.
+2. The registration's `--name` wins over the file's `name`. When `bun scripts/setup.ts report` shows a `Robot name:` other than the file's `name`, run `bun scripts/setup.ts name "<the file's name>"`, or `name none` when the file has none.
+3. `claude mcp get spinecord` shows bun's full path and `--twin` with the robot file.
+4. "Close Claude Code and start it again in the workshop folder. Your robot is `<id>-sim` in the simulation, `<id>` with the EV3 connected. The 3D view is at http://127.0.0.1:8769/."
+
+## 6 CALIBRATE (human step)
+
+Needs state 5, a new session, the EV3 `online`, and the person saying the floor is clear. Skip every move that is unsafe or meaningless for the build, and say so: a robot that balances on two wheels (it falls when driven without its balance program), a build with no drive, a stair climber off its stairs.
+
+1. Front and sides: "Put the robot on the floor with free space ahead." Call `drive` 5 cm. Backward: set `forward_sign` to -1. Then `turn` 90°: it must turn left (counter-clockwise from above). It turned right: swap `pair.left` and `pair.right`. Take `front` and `left_right` out of `twin.unconfirmed`. Do state 5 step 4 again.
+2. Distance: `drive` 50 cm; "How far did it go, in cm?" `wheel_diameter_cm` = old × measured ÷ 50, round to 0.01.
+3. Turn: `turn` 360°; "How far did it turn?" `axle_track_cm` = old × 360 ÷ turned degrees, round to 0.1. With `drivetrain.heading` (a gyro) skip this unless it is off by more than 10°.
+4. Write the numbers, take `wheel_diameter` and `axle_track` out of `twin.unconfirmed`, run the check, ask the person to restart Claude Code, repeat steps 2 and 3 once.
+5. Within 1 cm and 5°: add the note `Calibrated <date>: drive 50 cm went <x> cm, turn 360° turned <y>°.`
+
+## 7 REPORT
+
+```text
+Outcome: stop / draft twin / twin
+Robot file: ~/mi-robot/robot.json (id <id>, twin <id>-sim)   (stop: none, and why)
+Ports: <port: part, role, source> for each port
+Brick: flat / standing / leaning <n>°, seen in <photo>
+Drive: <wheels / tracks / none>, wheel <d> cm, axle track <t> cm, forward_sign <s> (calibrated: yes / no)
+Unconfirmed: <the draft line of the check, or none>
+Not in the twin: <rows of "What a twin cannot have", or none>
+Questions for the person: <the open questions of questions.md, in one message, or none; a stop's deciding question first>
+Registered: <robot flags> / not yet
+```
+
+## Rules
+
+- The brick beats a photo, a photo beats an assumption, and an assumption is always a token in `twin.unconfirmed`.
+- You write only `~/mi-robot/robot.json`, never files in the clone; `setup.ts` writes its own files in `~/mi-robot`.
+- Never run a long-lived server yourself: the person runs state 4's line.
+- The real robot moves only after the person says the floor is clear.

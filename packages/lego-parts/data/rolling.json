@@ -1,0 +1,736 @@
+{
+  "parts": [
+    {
+      "key": "rim_43x26",
+      "name": "Wheel rim 43.2 x 26, 6 pin holes (Technic Racing Small)",
+      "kind": "rim",
+      "ids": {
+        "design": "56908",
+        "bricklink": "56908",
+        "rebrickable": "56908",
+        "ldraw": "56908",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink alternate number 51488."
+      },
+      "outer_diameter_mm": {
+        "value": 43.2,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/56908.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 26.4,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/56908.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 26,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=56908",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "mass_g": {
+        "value": 9,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=56908"
+      },
+      "recognise": "Light grey rim with six round pin holes around an axle hole; carries the wide 56 x 28 tyre in the Education set."
+    },
+    {
+      "key": "rim_56x34",
+      "name": "Wheel rim 56 x 34, 6 pin holes (Technic Racing Medium)",
+      "kind": "rim",
+      "ids": {
+        "design": "15038",
+        "bricklink": "15038",
+        "rebrickable": "15038",
+        "ldraw": "15038",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink alternate number 51150."
+      },
+      "outer_diameter_mm": {
+        "value": 56,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/15038.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 33.6,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/15038.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 34,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=15038",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "mass_g": {
+        "value": 16.4,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=15038"
+      },
+      "recognise": "Big light grey rim with six pin holes; carries the 68.8 x 36 tyre (Expansion set)."
+    },
+    {
+      "key": "rim_30x20",
+      "name": "Wheel rim 30.4 x 20, no pin holes, reinforced",
+      "kind": "rim",
+      "ids": {
+        "design": "56145",
+        "bricklink": "56145",
+        "rebrickable": "56145",
+        "ldraw": "56145",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink alternate number 116110."
+      },
+      "outer_diameter_mm": {
+        "value": 30.4,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/56145.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 20,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/56145.dat",
+        "note": "LDraw bounding box."
+      },
+      "mass_g": {
+        "value": 4.25,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=56145"
+      },
+      "recognise": "Small rim (black in the home set, light grey in the Expansion set) with ribs on the outside; carries the 43.2 x 22 tyre or the home set's rubber track."
+    },
+    {
+      "key": "rim_18x14",
+      "name": "Wheel rim 18 x 14 with axle hole",
+      "kind": "rim",
+      "ids": {
+        "design": "55982",
+        "bricklink": "55982",
+        "rebrickable": "55982",
+        "ldraw": "55982",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink alternate number 67125."
+      },
+      "outer_diameter_mm": {
+        "value": 16.8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/55982.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 18,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=55982",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "width_mm": {
+        "value": 14.8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/55982.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 14,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=55982",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "mass_g": {
+        "value": 1.77,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=55982"
+      },
+      "recognise": "Small light grey rim with fake bolts; carries the 24 x 14 tyre."
+    },
+    {
+      "key": "rim_18x8",
+      "name": "Wheel rim 18 x 8 with deep spokes and pin hole",
+      "kind": "rim",
+      "ids": {
+        "design": "13971",
+        "bricklink": "13971",
+        "rebrickable": "13971",
+        "ldraw": "13971",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "value": 16.8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/13971.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 18,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=13971",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "width_mm": {
+        "value": 8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/13971.dat",
+        "note": "LDraw bounding box."
+      },
+      "mass_g": {
+        "value": 1.02,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=13971"
+      },
+      "recognise": "Narrow small light grey rim with deep spokes."
+    },
+    {
+      "key": "rim_11x8",
+      "name": "Wheel rim 11 x 8 with centre groove",
+      "kind": "rim",
+      "ids": {
+        "design": "42610",
+        "bricklink": "42610",
+        "rebrickable": "42610",
+        "ldraw": "42610",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "value": 11.2,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/42610.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 11,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=42610",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "width_mm": {
+        "value": 8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/42610.dat",
+        "note": "LDraw bounding box."
+      },
+      "mass_g": {
+        "value": 0.39,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=42610"
+      },
+      "recognise": "Tiny light grey rim with a groove; often a caster or a pulley."
+    },
+    {
+      "key": "pulley",
+      "name": "Technic wedge belt wheel (pulley)",
+      "kind": "rim",
+      "ids": {
+        "design": "4185",
+        "bricklink": "4185",
+        "rebrickable": "4185",
+        "ldraw": "4185a",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "LDraw moved 4185 to 4185a. BrickLink alternate numbers 2786, 49750, 65668."
+      },
+      "outer_diameter_mm": {
+        "value": 24,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/4185a.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 4,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/4185a.dat",
+        "note": "LDraw bounding box."
+      },
+      "mass_g": {
+        "value": 0.97,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=4185"
+      },
+      "recognise": "Grey disc with a V groove and an axle hole; with the small black tyre 2815 it is a small wheel."
+    },
+    {
+      "key": "tyre_56x28",
+      "name": "Tyre 56 x 28 ZR Street",
+      "kind": "tyre",
+      "ids": {
+        "design": "41897",
+        "bricklink": "41897",
+        "rebrickable": "41897",
+        "ldraw": "41897",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "value": 56,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/41897.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 28,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/41897.dat",
+        "note": "LDraw bounding box."
+      },
+      "mass_g": {
+        "value": 13.98,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=41897"
+      },
+      "recognise": "Wide black tyre with a street tread; the Education Driving Base's wheel on rim 56908.",
+      "fits": ["rim_43x26"]
+    },
+    {
+      "key": "tyre_43x22",
+      "name": "Tyre 43.2 x 22 ZR",
+      "kind": "tyre",
+      "ids": {
+        "design": "44309",
+        "bricklink": "44309",
+        "rebrickable": "44309",
+        "ldraw": "44309",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink alternate number 5327."
+      },
+      "outer_diameter_mm": {
+        "value": 43.2,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/44309.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 21.6,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/44309.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 22,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=44309",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "mass_g": {
+        "value": 11.15,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=44309"
+      },
+      "recognise": "Black tyre for rim 56145; the home set's wheel.",
+      "fits": ["rim_30x20"]
+    },
+    {
+      "key": "tyre_69x36",
+      "name": "Tyre 68.8 x 36 ZR",
+      "kind": "tyre",
+      "ids": {
+        "design": "44771",
+        "bricklink": "44771",
+        "rebrickable": "44771",
+        "ldraw": "44771",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "value": 68.8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/44771.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 35.2,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/44771.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 36,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=44771",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "mass_g": {
+        "value": 23.53,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=44771"
+      },
+      "recognise": "The biggest black tyre (Expansion set), on rim 15038."
+    },
+    {
+      "key": "tyre_24x14",
+      "name": "Tyre 24 x 14 shallow tread with centre band",
+      "kind": "tyre",
+      "ids": {
+        "design": "89201",
+        "bricklink": "89201",
+        "rebrickable": "89201",
+        "ldraw": "89201",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink alternate number 24341."
+      },
+      "outer_diameter_mm": {
+        "value": 24,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/89201.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 13.6,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/89201.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 14,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=89201",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "mass_g": {
+        "value": 3.49,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=89201"
+      },
+      "recognise": "Small black tyre for rim 55982."
+    },
+    {
+      "key": "tyre_14x6",
+      "name": "Tyre 14 x 6 solid smooth",
+      "kind": "tyre",
+      "ids": {
+        "design": "50951",
+        "bricklink": "50951",
+        "rebrickable": "50951",
+        "ldraw": "50951",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "value": 15.2,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/50951.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 14,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=50951",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "width_mm": {
+        "value": 6.4,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/50951.dat",
+        "note": "LDraw bounding box.",
+        "alt": [
+          {
+            "value": 6,
+            "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=50951",
+            "note": "size in BrickLink's name; LDraw taken (it is the modelled geometry)."
+          }
+        ]
+      },
+      "mass_g": {
+        "unknown": true,
+        "reason": "BrickLink's page answered with a human-verification page; not retried."
+      },
+      "recognise": "Tiny smooth black tyre."
+    },
+    {
+      "key": "pulley_tyre",
+      "name": "Tyre for the Technic wedge belt wheel",
+      "kind": "tyre",
+      "ids": {
+        "design": "2815",
+        "bricklink": "2815",
+        "rebrickable": "2815",
+        "ldraw": "2815",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "value": 30.4,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/2815.dat",
+        "note": "LDraw bounding box."
+      },
+      "width_mm": {
+        "value": 3.2,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/2815.dat",
+        "note": "LDraw bounding box."
+      },
+      "mass_g": {
+        "value": 0.75,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=2815"
+      },
+      "recognise": "Thin black rubber ring on the pulley 4185."
+    },
+    {
+      "key": "track_rubber",
+      "name": "Rubber track 2.5 wide, 36 ridges (home set)",
+      "kind": "tread",
+      "ids": {
+        "design": "53992",
+        "bricklink": "53992",
+        "rebrickable": "53992",
+        "ldraw": "53992-f1",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "LDraw has no flat 53992; it ships formed shapes: -f1 around two rims 20 x 30, -f2/-f3 around three, -f4 a circle. -f1 is the one listed here. Rebrickable's elements.csv also lists design id 13972."
+      },
+      "outer_diameter_mm": {
+        "value": 36.8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/53992-f1.dat",
+        "note": "Height of LDraw's track formed around two 30.4 mm rims (56145): 30.4 + 2 x 3.2 mm of rubber. Rolling diameter over the track, before calibration."
+      },
+      "width_mm": {
+        "value": 20,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/53992-f1.dat"
+      },
+      "mass_g": {
+        "unknown": true,
+        "reason": "BrickLink's page answered with a human-verification page; not retried."
+      },
+      "recognise": "A black rubber band with ridges, stretched around two small rims (56145) on each side: TRACK3R's tracks.",
+      "specs": {
+        "ridges": {
+          "value": 36,
+          "source": "https://library.ldraw.org/library/official/parts/53992-f1.dat"
+        },
+        "rubber_thickness_mm": {
+          "value": 3.2,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/53992-f1.dat",
+          "note": "(36.8 - 30.4) / 2."
+        }
+      },
+      "fits": ["rim_30x20"]
+    },
+    {
+      "key": "tread_link",
+      "name": "Technic chain tread 5 wide (link with two pin holes)",
+      "kind": "tread_link",
+      "ids": {
+        "design": "88323",
+        "bricklink": "57518",
+        "rebrickable": "88323",
+        "ldraw": "88323",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink files Rebrickable's 88323 under 57518 (88323 is a BrickLink alternate number); LDraw keeps both: 57518 (original) and 88323 (reinforced)."
+      },
+      "outer_diameter_mm": {
+        "unknown": true,
+        "reason": "not a wheel"
+      },
+      "width_mm": {
+        "value": 38.4,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/88323.dat",
+        "note": "LDraw bounding box, across the track."
+      },
+      "mass_g": {
+        "value": 1.4,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=57518"
+      },
+      "recognise": "Black plastic links that click together into a track; run on the 10-tooth sprocket 57519.",
+      "specs": {
+        "pitch_mm": {
+          "value": 13.6,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/s/57518s01.dat",
+          "note": "34 LDU hinge to hinge, read from the link's symmetry (hinge at z=0, centre at z=-17); not stated by any source."
+        }
+      },
+      "fits": ["sprocket_10t"]
+    },
+    {
+      "key": "tread_foot",
+      "name": "Rubber foot for chain tread 5 wide",
+      "kind": "tread_link",
+      "ids": {
+        "design": "14149",
+        "bricklink": "14149",
+        "rebrickable": "14149",
+        "ldraw": "14149",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "unknown": true,
+        "reason": "not a wheel"
+      },
+      "width_mm": {
+        "value": 23.2,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/14149.dat",
+        "note": "LDraw bounding box, across the track."
+      },
+      "mass_g": {
+        "value": 0.52,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=14149"
+      },
+      "recognise": "Red rubber pad clipped onto a tread link for grip (Expansion set)."
+    },
+    {
+      "key": "sprocket_10t",
+      "name": "Technic tread sprocket wheel large, 10 teeth",
+      "kind": "sprocket",
+      "ids": {
+        "design": "57519",
+        "bricklink": "57519",
+        "rebrickable": "57519",
+        "ldraw": "57519",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "value": 40.8,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/57519.dat",
+        "note": "Over the teeth, LDraw bounding box.",
+        "alt": [
+          {
+            "value": 40.4,
+            "source": "https://brickarchitect.com/parts/57519",
+            "note": "the size in the part's usual name."
+          }
+        ]
+      },
+      "width_mm": {
+        "value": 14.56,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/57519.dat"
+      },
+      "mass_g": {
+        "value": 5.1,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=57519"
+      },
+      "recognise": "Black 10-tooth wheel with an axle hole that drives the plastic tread links.",
+      "specs": {
+        "teeth": {
+          "value": 10,
+          "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=57519"
+        },
+        "rolling_diameter_with_tread_mm": {
+          "value": 55.2,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/s/57518s01.dat",
+          "note": "Derived, not measured: the link's hinge axis is at its origin and the link is symmetric about z = -17 LDU (its pin holes), so the hinge pitch is 34 LDU (13.6 mm). Ten links put the hinges on a circle of 13.6 / sin(18\u00b0) = 44.0 mm; the link's outer face (the side with the rubber-foot pin holes) is 14 LDU (5.6 mm) outside the hinge, giving 44.0 + 2 x 5.6 = 55.2 mm. Calibrate on the robot.",
+          "alt": [
+            {
+              "value": 54,
+              "source": "https://github.com/pybricks/pybricks-projects/blob/master/sets/mindstorms-ev3/education-expansion/tank_bot/main.py",
+              "note": "Pybricks Tank Bot: 'about 54 mm'."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "key": "steel_ball",
+      "name": "Technic steel ball 18 mm",
+      "kind": "caster",
+      "ids": {
+        "design": "99948",
+        "bricklink": "99948",
+        "rebrickable": "99948",
+        "ldraw": "99948",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz"
+      },
+      "outer_diameter_mm": {
+        "value": 18,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/99948.dat",
+        "note": "LDraw bounding box (largest side)."
+      },
+      "width_mm": {
+        "value": 18,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/99948.dat",
+        "note": "LDraw bounding box (smallest side)."
+      },
+      "mass_g": {
+        "value": 24.3,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=99948"
+      },
+      "recognise": "A chrome steel ball under the Education Driving Base's rear.",
+      "fits": ["ball_socket"]
+    },
+    {
+      "key": "ball_socket",
+      "name": "Technic ball joint large receptacle",
+      "kind": "caster",
+      "ids": {
+        "design": "92911",
+        "bricklink": "92911",
+        "rebrickable": "92911",
+        "ldraw": "92911",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink alternate number 65453."
+      },
+      "outer_diameter_mm": {
+        "value": 24,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/92911.dat",
+        "note": "LDraw bounding box (largest side)."
+      },
+      "width_mm": {
+        "value": 23.2,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/92911.dat",
+        "note": "LDraw bounding box (smallest side)."
+      },
+      "mass_g": {
+        "value": 3.5,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=92911"
+      },
+      "recognise": "Dark grey cup that holds the steel ball."
+    },
+    {
+      "key": "ball_socket_frame",
+      "name": "Technic ball joint large open with C-shape pivot frame",
+      "kind": "caster",
+      "ids": {
+        "design": "92910",
+        "bricklink": "92910",
+        "rebrickable": "92910",
+        "ldraw": "92910",
+        "source": "https://cdn.rebrickable.com/media/downloads/elements.csv.gz",
+        "note": "BrickLink alternate number 65452."
+      },
+      "outer_diameter_mm": {
+        "value": 48,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/92910.dat",
+        "note": "LDraw bounding box (largest side)."
+      },
+      "width_mm": {
+        "value": 18.33,
+        "unit": "mm",
+        "source": "https://library.ldraw.org/library/official/parts/92910.dat",
+        "note": "LDraw bounding box (smallest side)."
+      },
+      "mass_g": {
+        "value": 5,
+        "unit": "g",
+        "source": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=92910"
+      },
+      "recognise": "Light grey C-shaped holder (Expansion set)."
+    }
+  ],
+  "note": "Everything that makes an EV3 roll or stand, from the inventories of 31313, 45544 and 45560. Diameters from the LDraw geometry; the size in the catalogue name as an alt where it differs. fits: ev3dev2 wheel.py pairs the 56 x 28 tyre with rim 56908 and the 43.2 x 22 tyre with rim 56145 (https://github.com/ev3dev/ev3dev-lang-python/blob/ev3dev-stretch/ev3dev2/wheel.py); the rest follow the parts' names."
+}
