@@ -159,9 +159,14 @@ function linkChanged(s: LinkState): void {
     offlineTimer = offlineClock = null;
     $("offline").hidden = true;
     hud.chip("chip-ws", ["Conectado", "ok"]);
+    // back after a loss: the robot may be anywhere now
+    if (cams.mode === "follow") cams.frame("ease");
     return;
   }
-  hud.chip("chip-ws", ["Reconectando…", "warn"]);
+  // at once: nothing the chips said is known any more; they come back with the first state after the return
+  hud.chip("chip-ws", ["Sin conexión · reintentando", "bad"]);
+  hud.chip("chip-link", ["—", ""]);
+  hud.chip("chip-activity", ["—", ""]);
   // a blink of the socket is not worth a curtain; a real loss is, with how long it has lasted
   offlineTimer ??= setTimeout(() => {
     $("offline").hidden = false;
@@ -311,10 +316,11 @@ function setFocus(id: string | null): void {
   scene.add(arena.group);
   coneGroup.visible = hasRays(focus) && $<HTMLInputElement>("opt-cone").checked;
   roles = {};
-  if (focus.drivetrain) {
-    const what = look.drive === "tracks" ? "oruga" : "rueda";
-    roles[focus.drivetrain.left] = `${what} izq.`;
-    roles[focus.drivetrain.right] = `${what} der.`;
+  // the drive motors say what they turn, as the build has it: tracks, wheels, or nothing (a build without a drive)
+  const turns = look.drive === "tracks" ? "oruga" : look.drive === "wheels" ? "rueda" : null;
+  if (focus.drivetrain && turns) {
+    roles[focus.drivetrain.left] = `${turns} izq.`;
+    roles[focus.drivetrain.right] = `${turns} der.`;
   }
   $("pip").hidden = !$<HTMLInputElement>("opt-pip").checked;
   // light and fog to the size of the arena
@@ -332,21 +338,16 @@ function setFocus(id: string | null): void {
   fitFog();
   const key = `${focus.id}\n${w.name}`;
   const first = key !== framed;
+  // the robot whole, where it is (not where it started), in the part of the canvas no panel covers: behind it and
+  // to its right, or from the front when a phone looks ahead, where its face reads. A deep link's angle wins.
+  cams.extent = {
+    front_cm: w.body.front_cm,
+    back_cm: w.body.back_cm,
+    half_width_cm: w.body.half_width_cm,
+    height_cm: model?.height ?? 20,
+  };
+  cams.aim.az = look.phone && Math.cos(look.phone.yaw * DEG) > 0.5 ? -135 : -32;
   cams.fitArena(w, first);
-  if (first && cams.mode === "follow") {
-    // Close enough to see the robot's parts without touching the camera: behind it and to its right, or from the
-    // front when a phone looks ahead, where its face reads. A deep link's angle wins.
-    const s = toScene(w.start.x, w.start.y);
-    const h = w.start.heading_deg * DEG;
-    const az = (look.phone && Math.cos(look.phone.yaw * DEG) > 0.5 ? -135 : -32) * DEG;
-    const a = h + Math.PI - az,
-      d = 58,
-      el = 38 * DEG;
-    cams.controls.target.copy(s);
-    camera.position.set(s.x + Math.cos(a) * Math.cos(el) * d, Math.sin(el) * d, s.z - Math.sin(a) * Math.cos(el) * d);
-    placeCamera(camera, cams.controls.target, h);
-    cams.controls.update();
-  }
   framed = key;
 }
 
@@ -449,6 +450,8 @@ const cams = new Cameras(
   },
   freeArea,
 );
+// a deep link's angle, distance or height wins over the first framing
+cams.onSnap = (target, heading) => placeCamera(camera, target, heading);
 /** The canvas left uncovered by the panels, for the top view. */
 function freeArea(): { left: number; top: number; right: number; bottom: number } {
   const r = (id: string) => $(id).getBoundingClientRect();
@@ -488,7 +491,7 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#modes button"))
   b.addEventListener("click", () => hand.setMode(b.dataset.mode as Mode));
 for (const b of document.querySelectorAll<HTMLButtonElement>("#cams button"))
   b.addEventListener("click", () => setCam(b.dataset.cam as Cam));
-$("cam-reset").addEventListener("click", () => cams.reset(shownPose()));
+$("cam-reset").addEventListener("click", () => cams.reset());
 $("restore").addEventListener("click", () => {
   if (!focus) return;
   const id = focus.id;
@@ -625,7 +628,7 @@ window.addEventListener("keydown", (e) => {
   else if (k === "q" || k === "e") hand.turnKey(k === "q" ? 1 : -1);
   else if (k >= "1" && k <= "5") hand.setMode(MODES[Number(k) - 1]!);
   else if (k === "c") setCam(CAMS[(CAMS.indexOf(cams.mode) + 1) % CAMS.length]!);
-  else if (k === "0" || k === "home") cams.reset(shownPose());
+  else if (k === "0" || k === "home") cams.reset();
   else if (k === "m") void toggleSound();
   else return;
   e.preventDefault();
@@ -648,6 +651,7 @@ function resize(): void {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    cams.resized();
   }
 }
 function updateCone(st: RobotState): void {

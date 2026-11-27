@@ -3,7 +3,7 @@
 //   carry    press where the robot goes, drag towards where it must face
 //   box      drag a rectangle to set a box down (a click: 20 × 20 cm), drag a box to move it
 //   remove   click a box to take it away
-//   measure  drag on the floor: distance and angle, as the tools count them (cm, degrees counter-clockwise)
+//   measure  drag on the floor, or click and click: distance and angle, as the tools count them (cm, degrees counter-clockwise)
 // What the hand holds is drawn as a ghost: blue where it can go, red where the process would refuse it, with the
 // reason next to it. The process still decides; its refusal is shown where the hand let go.
 import * as THREE from "three";
@@ -49,7 +49,7 @@ const HINTS: Record<Mode, string> = {
   carry: "Pulsa donde va y arrastra hacia donde mira",
   box: "Arrastra: caja nueva · arrastra una caja: moverla",
   remove: "Clic en una caja: quitarla",
-  measure: "Arrastra para medir",
+  measure: "Arrastra, o clic y clic, para medir",
 };
 const FIT_WORDS: Record<Exclude<Fit, "free">, string> = {
   wall: "No cabe: se saldría de la pista",
@@ -94,6 +94,8 @@ export class Hand {
   private readonly tapeEnds: THREE.Mesh[];
   /** The finished measure stays on the floor until the next one or Esc. */
   private measured: { x0: number; y0: number; x: number; y: number } | null = null;
+  /** A measure by two clicks: where the first click was, until the second (the tape follows the pointer). */
+  private anchor: { x: number; y: number } | null = null;
   private readonly tag = document.getElementById("tag")!;
   private tagAt: THREE.Vector3 | null = null;
 
@@ -140,7 +142,7 @@ export class Hand {
   /** The robot shown changed (another twin, another world): what the hand held belongs to the old one. */
   reset(m: RobotMeta | null): void {
     this.cancel();
-    this.measured = null;
+    this.measured = this.anchor = null;
     this.tape.visible = false;
     if (m) this.shapeGhost(m);
   }
@@ -160,6 +162,7 @@ export class Hand {
   setMode(m: Mode): void {
     this.cancel();
     this.mode = m;
+    this.anchor = null;
     if (m !== "measure") {
       this.measured = null;
       this.tape.visible = false;
@@ -184,8 +187,8 @@ export class Hand {
   /** Esc: first lets go of what the hand holds, then clears the measure, then goes back to look. */
   escape(): void {
     if (this.drag) return this.cancel();
-    if (this.measured) {
-      this.measured = null;
+    if (this.measured || this.anchor) {
+      this.measured = this.anchor = null;
       this.tape.visible = false;
       return;
     }
@@ -303,6 +306,10 @@ export class Hand {
     this.pointer = this.floorAt(e, false);
     const d = this.drag;
     const f = this.c.focus();
+    if (!d && this.anchor && this.mode === "measure" && this.pointer) {
+      this.measured = { x0: this.anchor.x, y0: this.anchor.y, x: this.pointer.x, y: this.pointer.y };
+      this.show();
+    }
     if (!d || !f) {
       const hover =
         this.c.cams.mode === "eye"
@@ -355,7 +362,21 @@ export class Hand {
           : this.c.link.request({ t: "box_move", id: f.id, box: d.id, ...b });
       void sent.then((r) => this.answer(r, e));
     } else {
-      this.measured = Math.hypot(d.x - d.x0, d.y - d.y0) < 0.5 ? null : { x0: d.x0, y0: d.y0, x: d.x, y: d.y };
+      const click = Math.hypot(d.x - d.x0, d.y - d.y0) < 0.5;
+      if (!click) {
+        this.anchor = null;
+        this.measured = { x0: d.x0, y0: d.y0, x: d.x, y: d.y };
+      } else if (this.anchor) {
+        // the second click: from the first to here
+        this.measured = { x0: this.anchor.x, y0: this.anchor.y, x: d.x0, y: d.y0 };
+        this.anchor = null;
+        this.refreshHint();
+      } else {
+        // the first click: the tape follows the pointer until the second
+        this.anchor = { x: d.x0, y: d.y0 };
+        this.measured = null;
+        hud.hint("Clic en el otro punto");
+      }
       this.show();
     }
   }

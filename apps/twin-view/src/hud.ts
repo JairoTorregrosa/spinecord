@@ -219,8 +219,19 @@ export function worldEvent(e: WorldEventMsg): void {
   if (!r) return;
   const list = $<HTMLOListElement>("calls");
   $("calls-hint").hidden = true;
+  // the same thing again (a stall that begins and ends against a wall): one row with a count, not a column of them
+  const top = list.firstElementChild as HTMLLIElement | null;
+  if (top?.classList.contains("ev") && top.dataset.what === `${r.icon}${r.text}`) {
+    const n = Number(top.dataset.n ?? "1") + 1;
+    top.dataset.n = String(n);
+    top.querySelector(".what")!.textContent = `${r.text} ×${n}`;
+    top.querySelector(".ms")!.textContent = `t ${(e.t_ms / 1000).toFixed(1)} s`;
+    top.title = `${top.title}\n${JSON.stringify(e)}`.slice(-2000);
+    return;
+  }
   const li = document.createElement("li");
   li.className = "ev";
+  li.dataset.what = `${r.icon}${r.text}`;
   li.innerHTML = `<span class="ico" aria-hidden="true"></span><span class="what"></span><span class="ms"></span>`;
   li.querySelector(".ico")!.textContent = r.icon;
   li.querySelector(".what")!.textContent = r.text;
