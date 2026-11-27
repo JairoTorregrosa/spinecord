@@ -36,11 +36,12 @@ const SCREEN = "ev3.display";
  * screen that refuses (the robot came online in fault) is logged and changes nothing else.
  */
 export async function greet(robot: LocalRobot, log: Log): Promise<void> {
+  if (robot.name === null) return;
   const screen = robot
     .runtime()
     ?.devices()
     .find((d) => d.id === SCREEN);
-  if (robot.name === null || !screen?.commands.some((c) => c.name === "text")) return;
+  if (!screen?.commands.some((c) => c.name === "text")) return;
   try {
     await robot.call("command_device", { device: SCREEN, command: "text", args: { lines: [robot.name] } });
   } catch (e) {
