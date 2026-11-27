@@ -306,7 +306,7 @@ export function paysTodo(profile: string, org: string): Line {
       ? `Claude Code pays with the organization of the profile ${profile}, id ${id}: ant shows no name`
       : `Claude Code pays with the organization "${org}"`,
     next: id
-      ? `ask the person to open platform.claude.com, Settings, Organization, and compare its id with ${id}; if it is the organization with the credits: bun scripts/setup.ts confirm org`
+      ? `ask the person to open platform.claude.com, Settings, Organization, and compare its id with ${id}; if it is the organization with the credits: bun scripts/setup.ts confirm org; if not, or the person cannot find it: fixes.md, row "Wrong Console organization"`
       : `ask the person if "${org}" holds the credits; if yes: bun scripts/setup.ts confirm org`,
   };
 }

@@ -112,7 +112,7 @@ Keep each value's source for state 7.
 2. "Open http://127.0.0.1:8770/. Tell me what differs from your robot: wheels or tracks, where the parts are, the size."
 3. Fix each difference, run the check, restart the preview, ask the person to reload.
 4. A difference the file cannot show (robot-file.md "What a twin cannot have"): a note, one line to the person.
-5. When the person answered, stop the preview.
+5. When the person answered, stop the preview: stop the background task you started, by its own id. Never kill by name.
 
 ## 5 REGISTER
 
