@@ -15,8 +15,10 @@ import {
   parseAuth,
   parseMcpGet,
   restartLine,
+  paysTodo,
   robotArgs,
   STEPS,
+  whoPays,
 } from "../../../scripts/setup";
 
 const DIR = join(import.meta.dir, "..", "..", "..", ".claude", "skills", "setup-spinecord");
@@ -145,6 +147,21 @@ test("setup.ts takes the organization from ant when Claude Code names none", () 
     id,
   });
   expect(parseAntOrg("Config dir:      /h/.config/anthropic\n")).toEqual({ name: undefined, id: undefined });
+});
+
+test("PAYS waits for the person with a name or only an id; the report prints an id as an id", () => {
+  const id = "11111111-2222-4333-8444-555555555555";
+  const named = paysTodo("credits", "Acme Labs");
+  expect(named.status).toBe("todo");
+  expect(named.next).toContain('ask the person if "Acme Labs" holds the credits');
+  const bare = paysTodo("credits", `id ${id}`);
+  expect(bare.status).toBe("todo");
+  expect(bare.next).toContain("platform.claude.com");
+  expect(bare.next).toContain(id);
+  expect(bare.next).not.toContain("without a question");
+  expect(whoPays("Acme Labs", "credits")).toBe('Who pays: Console organization "Acme Labs", ant profile credits');
+  expect(whoPays(`id ${id}`, "credits")).toBe(`Who pays: Console organization with id ${id}, ant profile credits`);
+  expect(whoPays(undefined, "credits")).toBe("Who pays: Console organization not confirmed, ant profile credits");
 });
 
 test("setup.ts registers bun by its full path, so a terminal without bun on PATH still starts spinecord", () => {

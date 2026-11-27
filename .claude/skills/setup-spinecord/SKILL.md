@@ -92,7 +92,7 @@ Exit check: `setup login: ok`. Else use fixes.md.
 Run `setup status`. Read the line `PAYS`.
 If it says `todo` with an organization name, ask the person: "Claude will use the credits of "<name>". Is that the organization with your credits?"
 If yes, run `setup confirm org`. If no, use the row "Wrong Console organization" of fixes.md.
-If it says `todo` with only an organization id, run `setup confirm org` and ask nothing. State SMOKE shows if the credits pay.
+If it says `todo` with only an organization id, ask the person to compare it with the id at platform.claude.com, Settings, Organization. If it is the organization with the credits, run `setup confirm org`.
 If it says `fail`, use the row of fixes.md that it names after `->`.
 
 ### 5 WORKSHOP
