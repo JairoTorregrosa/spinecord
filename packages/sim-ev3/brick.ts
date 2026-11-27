@@ -412,7 +412,7 @@ export class SimBrick implements Transport, WorldHost {
         return s.mode === 2 ? [0] : [];
       case "gyro": {
         const angle = -Math.round(w.peekGyroDeg()) + 0,
-          rate = Math.round(-w.rate_deg_s) + 0;
+          rate = Math.round(-w.gyroRateDegS()) + 0;
         return s.mode === 0 ? [angle] : s.mode === 1 ? [rate] : s.mode === 3 ? [angle, rate] : [];
       }
       case "ir":
@@ -662,8 +662,8 @@ export class SimBrick implements Transport, WorldHost {
       case "gyro": {
         // The real EV3 gyro counts CLOCKWISE as positive. The world is counter-clockwise positive, so negate.
         if (s.mode === 0) return [-w.senseGyro() + 0];
-        if (s.mode === 1) return [Math.round(-w.rate_deg_s) + 0];
-        if (s.mode === 3) return [-w.senseGyro() + 0, Math.round(-w.rate_deg_s) + 0];
+        if (s.mode === 1) return [Math.round(-w.gyroRateDegS()) + 0];
+        if (s.mode === 3) return [-w.senseGyro() + 0, Math.round(-w.gyroRateDegS()) + 0];
         break;
       }
       case "ir": {

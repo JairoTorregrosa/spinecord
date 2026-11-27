@@ -260,6 +260,25 @@ describe("sensors", () => {
     w.setPose({ x: 0 + 10.5, y: 150, th: 0 });
     expect(w.senseUltrasonic()).toBe(255);
   });
+  test("a gyro reset while the robot turns drifts by the rate it had; reset while still, it does not", () => {
+    const w = quietWorld();
+    w.stepWheels(-0.5, 0.5, 20); // turning left at about 240 deg/s
+    w.resetGyro();
+    w.wait(1000); // still, for a second
+    expect(w.senseGyro()).toBeLessThan(-200);
+    w.resetGyro(); // still now: a good zero
+    w.wait(1000);
+    expect(w.senseGyro()).toBe(0);
+  });
+  test("the gyro is within +-3 deg on a 90 deg turn for most seeds, off by its own scale error", () => {
+    const errors = Array.from({ length: 100 }, (_, seed) => {
+      const w = new World(config(EXAMPLES.lineOval, { noise: { ...NO_NOISE, gyro_scale: 0.017 } }), seed, DRIVE);
+      w.advance(-Math.PI * 3, Math.PI * 3, 10); // exactly 90 deg on a 12 cm axle
+      return w.peekGyroDeg() - 90;
+    });
+    expect(errors.filter((e) => Math.abs(e) <= 3).length).toBeGreaterThanOrEqual(90);
+    expect(errors.some((e) => Math.abs(e) > 0.5)).toBe(true);
+  });
   test("sensor noise is seeded and does not disturb the motion", () => {
     const a = new World(config(), 5, DRIVE),
       b = new World(config(), 5, DRIVE);

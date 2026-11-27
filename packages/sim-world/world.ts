@@ -89,6 +89,12 @@ export interface NoiseConfig {
   reflect_pct: number;
   gyro_deg: number;
   gyro_drift_deg_s: number;
+  /**
+   * Scale error of the gyro (relative std dev, drawn from the seed): it counts (1 + e) degrees per real degree. LEGO
+   * gives the EV3 gyro (45505) an accuracy of +-3 deg on a 90 deg turn
+   * (https://education.lego.com/ar-ae/lessons/ev3-space/turn-using-sensor/); 0.017 makes that about two std devs.
+   */
+  gyro_scale: number;
 }
 
 export interface WorldConfig {
@@ -126,6 +132,7 @@ export const DEFAULT_NOISE: NoiseConfig = {
   reflect_pct: 1,
   gyro_deg: 0.3,
   gyro_drift_deg_s: 0,
+  gyro_scale: 0.017,
 };
 export const NO_NOISE: NoiseConfig = {
   motor: 0,
@@ -137,6 +144,7 @@ export const NO_NOISE: NoiseConfig = {
   reflect_pct: 0,
   gyro_deg: 0,
   gyro_drift_deg_s: 0,
+  gyro_scale: 0,
 };
 
 /** Physics step (ms of simulated time). */
@@ -425,6 +433,9 @@ export class World {
   private gainR = 1;
   private gyroZeroTh: number;
   private gyroZeroMs = 0;
+  /** deg/s the gyro took as its zero when it was last reset: the turning rate at that moment (0 when still). */
+  private gyroOffset = 0;
+  private readonly gyroGain: number;
   private segs: Seg[] = [];
   private trackLine = -1;
   private trackS = 0;
@@ -442,6 +453,8 @@ export class World {
     this.sensorRng = new Rng(seed ^ 0x5bd1e995);
     this.gainL = 1 + cfg.noise.wheel_bias * this.motionRng.gauss();
     this.gainR = 1 + cfg.noise.wheel_bias * this.motionRng.gauss();
+    // Its own stream, so the motion of a seed is the same whatever the gyro's error.
+    this.gyroGain = 1 + cfg.noise.gyro_scale * new Rng(mixSeed(seed, 0x6779726f)).gauss();
     cfg.lines.forEach((line, li) => {
       const p = line.points;
       if (p.length < 2) throw new Error("world: a line needs at least 2 points");
@@ -541,12 +554,21 @@ export class World {
    */
   peekGyroDeg(): number {
     return (
-      ((this.pose.th - this.gyroZeroTh) * 180) / Math.PI +
-      (this.cfg.noise.gyro_drift_deg_s * (this.t_ms - this.gyroZeroMs)) / 1000
+      (((this.pose.th - this.gyroZeroTh) * 180) / Math.PI) * this.gyroGain +
+      ((this.cfg.noise.gyro_drift_deg_s - this.gyroOffset) * (this.t_ms - this.gyroZeroMs)) / 1000
     );
   }
+  /** The gyro's rate without noise and not rounded (deg/s, counter-clockwise-positive). */
+  gyroRateDegS(): number {
+    return this.rate_deg_s * this.gyroGain + this.cfg.noise.gyro_drift_deg_s - this.gyroOffset;
+  }
 
+  /**
+   * Zeroes the angle (a reset, a mode switch, plugging it in). The real gyro also takes the rate it feels at that
+   * moment as its zero: reset while the robot turns, it then drifts by that rate until the next reset while still.
+   */
   resetGyro(): void {
+    this.gyroOffset = this.rate_deg_s * this.gyroGain;
     this.gyroZeroTh = this.pose.th;
     this.gyroZeroMs = this.t_ms;
   }
@@ -995,12 +1017,7 @@ export class World {
 
   /** Accumulated gyro angle in whole degrees since the last reset, counter-clockwise-positive. */
   senseGyro(): number {
-    const nz = this.cfg.noise;
-    const deg =
-      ((this.pose.th - this.gyroZeroTh) * 180) / Math.PI +
-      (nz.gyro_drift_deg_s * (this.t_ms - this.gyroZeroMs)) / 1000 +
-      nz.gyro_deg * this.sensorRng.gauss();
-    return Math.round(deg) + 0;
+    return Math.round(this.peekGyroDeg() + this.cfg.noise.gyro_deg * this.sensorRng.gauss()) + 0;
   }
 
   /** A named point of the map. Fails if it does not exist, listing the ones that do. */

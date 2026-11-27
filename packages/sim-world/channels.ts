@@ -27,7 +27,7 @@ export function readSensorChannel(world: World, kind: SimSensorKind, channel: st
     case "gyro.angle_deg":
       return world.senseGyro();
     case "gyro.rate_deg_s":
-      return Math.round(world.rate_deg_s) + 0;
+      return Math.round(world.gyroRateDegS()) + 0;
     case "infrared.proximity_pct":
       return world.senseIrProximity();
   }

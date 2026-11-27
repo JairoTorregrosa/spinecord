@@ -62,6 +62,7 @@ test("peekGyroDeg spends no sensor noise: what the robot reads next does not cha
   const b = new World(config(EXAMPLES.wallsMaze), 7, { ...DRIVE });
   for (const w of [a, b]) w.advance(-5, 5, 10);
   for (let i = 0; i < 5; i++) a.peekGyroDeg();
-  expect(a.peekGyroDeg()).toBeCloseTo(((a.pose.th - a.cfg.start.th) * 180) / Math.PI, 9);
+  const turned = ((a.pose.th - a.cfg.start.th) * 180) / Math.PI;
+  expect(Math.abs(a.peekGyroDeg() - turned)).toBeLessThan(0.05 * Math.abs(turned)); // off only by its scale error
   expect([a.senseGyro(), a.senseUltrasonic()]).toEqual([b.senseGyro(), b.senseUltrasonic()]);
 });
