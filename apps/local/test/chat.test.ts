@@ -264,6 +264,18 @@ describe("the chat over the view's socket", () => {
     expect(r.chat.current).toBe("idle");
   });
 
+  test("a stop passes even when the page is over its limit of actions", async () => {
+    const r = await rig(new FakeBrain());
+    const p = await r.connect();
+    const drive = r.tool("drive", { distance_cm: 100, speed_pct: 20 });
+    await until("the robot moves", () => r.fleet.robots[0]!.view().activity === "acting", 4000);
+    for (let i = 0; i < 70; i++) p.send({ t: "restore_nothing", req: i, id: "r1-sim" });
+    p.send({ t: "chat_stop" });
+    expect((await drive).data.reason).toBe("preempted");
+    await p.next((m) => m.t === "chat_stopped");
+    expect(p.got.some((m) => m.t === "reply" && !m.ok && m.code === "too_fast")).toBe(true);
+  });
+
   test("no login: the chat is off with the reason, the view goes on; the budget turns it off too", async () => {
     const r = await rig(new FakeBrain(new NoLogin("Claude Code has no login on this computer.")));
     expect(r.chat.status()).toMatchObject({ state: "off", off: { code: "no_login" } });

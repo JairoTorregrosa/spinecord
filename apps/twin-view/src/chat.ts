@@ -50,6 +50,14 @@ const OFF: Record<string, string> = {
   session_ended: "La sesión con Claude terminó. Vuelve a abrir spinecord con --chat.",
   ending: "spinecord se está cerrando.",
 };
+/** Why a move ended before doing all it was asked, in the person's words. */
+const REASON: Record<string, string> = {
+  preempted: "■ parado",
+  stalled: "⚠ bloqueado",
+  timeout: "⚠ sin tiempo",
+  clamped: "⚠ recortado",
+  condition_met: "✓ condición",
+};
 const SUGGESTIONS = ["Avanza 30 cm y gira a la izquierda", "¿Qué tienes delante?", "Da una vuelta completa"];
 const REFUSED: Record<string, string> = {
   busy: "Espera a que termine, o pulsa Parar",
@@ -89,40 +97,39 @@ type EarWhere = "local" | "google" | "microsoft" | "none";
  */
 class Ear {
   where: EarWhere = "none";
-  canInstall = false;
   private rec: SR | null = null;
   private final = "";
   private interim = "";
   private ended: (() => void) | null = null;
   constructor(public lang: string) {}
 
-  /** Decides where recognition runs for `lang`: on this computer when the browser has it there. */
-  async probe(): Promise<void> {
-    const C = SRCtor();
-    if (!C) return void (this.where = "none");
-    const maker: EarWhere = navigator.userAgent.includes("Edg/") ? "microsoft" : "google";
-    this.where = maker;
-    this.canInstall = false;
-    // Only Google Chrome and Microsoft Edge carry on-device recognition: in a build without it (a headless shell,
-    // plain Chromium) asking for it kills the page's renderer ("No binder found for OnDeviceSpeechRecognition").
-    const brands = (navigator as { userAgentData?: { brands?: { brand: string }[] } }).userAgentData?.brands ?? [];
-    if (!brands.some((b) => b.brand === "Google Chrome" || b.brand === "Microsoft Edge")) return;
-    if (!C.available) return;
-    try {
-      const local = await C.available({ langs: [this.lang], processLocally: true });
-      if (local === "available") this.where = "local";
-      else if (local === "downloadable" || local === "downloading") this.canInstall = !!C.install;
-    } catch {
-      // the browser cannot answer: it is the maker's service, as it says above
-    }
+  /** Until the person asks for recognition on this computer, it is the browser maker's service (said on the button). */
+  reset(): void {
+    this.where = !SRCtor() ? "none" : navigator.userAgent.includes("Edg/") ? "microsoft" : "google";
   }
 
-  async install(): Promise<boolean> {
+  /**
+   * The person asked for recognition on this computer (a click: the browser may download its language pack).
+   * Asked only then, never at load: in a browser build without on-device recognition (a headless shell, plain
+   * Chromium) the question kills the page's renderer ("No binder found for OnDeviceSpeechRecognition"), so it is
+   * asked only in Google Chrome and Microsoft Edge, and only by the person's own click.
+   */
+  async useLocal(): Promise<"local" | "unavailable" | "failed"> {
     const C = SRCtor();
-    if (!C?.install) return false;
-    const ok = await C.install({ langs: [this.lang], processLocally: true });
-    await this.probe();
-    return ok && this.where === "local";
+    const brands = (navigator as { userAgentData?: { brands?: { brand: string }[] } }).userAgentData?.brands ?? [];
+    if (!C?.available || !brands.some((b) => b.brand === "Google Chrome" || b.brand === "Microsoft Edge"))
+      return "unavailable";
+    try {
+      const o = { langs: [this.lang], processLocally: true };
+      let state = await C.available(o);
+      if ((state === "downloadable" || state === "downloading") && C.install && (await C.install(o)))
+        state = await C.available(o);
+      if (state !== "available") return "unavailable";
+      this.where = "local";
+      return "local";
+    } catch {
+      return "failed";
+    }
   }
 
   start(o: { track?: MediaStreamTrack; onText: (text: string) => void; onError: (code: string) => void }): void {
@@ -323,7 +330,10 @@ export class ChatPanel {
           el = this.row("robot", `<b class="who">${esc(this.status?.robot.name ?? "")}</b><span class="say"></span>`);
           this.answers.set(m.turn, el);
         }
+        const list = this.list();
+        const near = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
         el.querySelector(".say")!.textContent += m.text;
+        if (near) list.scrollTop = list.scrollHeight;
         if (live && this.live.has(m.turn)) this.voice.feed(m.text);
         break;
       }
@@ -364,8 +374,12 @@ export class ChatPanel {
       this.callRows.set(m.n, row);
     } else if (row) {
       row.classList.remove("busy");
-      row.classList.add(m.ok ? "ok" : "err");
-      row.querySelector(".st")!.textContent = m.ok ? `✓ ${(m.ms / 1000).toFixed(1)} s` : `✕ ${m.code ?? ""}`;
+      // a move that "succeeded" but did not do all it was asked says why (stopped, blocked, cut, a condition)
+      const why = /\breason=(preempted|stalled|timeout|clamped|condition_met)\b/.exec(m.summary)?.[1];
+      row.classList.add(!m.ok ? "err" : why && why !== "condition_met" ? "warn" : "ok");
+      row.querySelector(".st")!.textContent = !m.ok
+        ? `✕ ${m.code ?? ""}`
+        : `${why ? `${REASON[why]} · ` : "✓ "}${(m.ms / 1000).toFixed(1)} s`;
       row.title = `${row.title}\n${m.summary}`;
     }
     this.render();
@@ -413,17 +427,17 @@ export class ChatPanel {
       );
     }
     this.listening = true;
+    this.stoppedWhileListening = false;
     this.heard("");
     this.ear.start({
       ...(track ? { track } : {}),
       onText: (t) => {
         this.heard(t);
-        // a spoken "para" stops while the person still speaks, before they let go
-        if (isStopUtterance(t)) {
-          this.ear.abort();
-          this.listening = false;
-          this.heard("");
-          this.stop();
+        // a spoken "para" stops the robot while the person still speaks, before they let go. Listening goes on:
+        // "para qué sirve…" begins with it, and the rest of the question is sent at the release.
+        if (!this.stoppedWhileListening && isStopUtterance(t)) {
+          this.stoppedWhileListening = true;
+          this.stop(false);
         }
       },
       onError: (code) => {
@@ -446,9 +460,25 @@ export class ChatPanel {
     this.render();
     const text = await this.ear.finish();
     this.heard("");
-    if (text) this.sendText(text, "voice");
+    await this.afterHearing(text);
     return text;
   }
+
+  /**
+   * What the recognizer heard, once the person let go: a stop when it is only a stop word (unless that stop was
+   * already sent while they spoke), else a message, sent once a stopped turn has ended.
+   */
+  private async afterHearing(text: string): Promise<void> {
+    if (!text) return;
+    if (isStopUtterance(text)) {
+      if (!this.stoppedWhileListening) this.stop();
+      return;
+    }
+    for (let i = 0; i < 50 && this.status?.state !== "idle" && this.status?.state !== "off"; i++)
+      await new Promise((r) => setTimeout(r, 100));
+    this.sendText(text, "voice");
+  }
+  private stoppedWhileListening = false;
 
   private stopListening(abort: boolean): void {
     if (!this.listening) return;
@@ -472,9 +502,9 @@ export class ChatPanel {
   }
 
   /** Stop: the process stops the robot; this page silences itself at once, without waiting for the answer. */
-  private stop(): void {
+  private stop(endListening = true): void {
     this.voice.cancel();
-    this.stopListening(true);
+    if (endListening) this.stopListening(true);
     if (!this.host.send({ t: "chat_stop" })) this.host.toast("Sin conexión con spinecord: no se pudo parar");
   }
 
@@ -549,15 +579,17 @@ export class ChatPanel {
       const lang = this.ear.lang === "es-ES" ? "en-US" : "es-ES";
       this.ear.lang = lang;
       this.voice.setLang(lang);
-      void this.ear.probe().then(() => this.render());
+      this.ear.reset();
       this.render();
     });
     root.querySelector(".where")!.addEventListener("click", () => {
-      if (!this.ear.canInstall) return;
-      void this.ear.install().then((ok) => {
+      if (this.ear.where === "local" || this.ear.where === "none") return;
+      void this.ear.useLocal().then((r) => {
         this.host.toast(
-          ok ? "Voz local lista: tu voz ya no sale de este computador" : "No se pudo instalar la voz local",
-          ok ? "info" : "error",
+          r === "local"
+            ? "Voz local lista: tu voz ya no sale de este computador"
+            : "Este navegador no tiene reconocimiento de voz local para este idioma",
+          r === "local" ? "info" : "error",
         );
         this.render();
       });
@@ -581,10 +613,12 @@ export class ChatPanel {
         release();
       }
     });
-    void this.ear.probe().then(() => this.render());
+    this.ear.reset();
     (window as unknown as { spinecordChat?: unknown }).spinecordChat = {
       sayFile: (url: string) => this.sayFile(url),
-      ear: () => ({ where: this.ear.where, lang: this.ear.lang, canInstall: this.ear.canInstall }),
+      ear: () => ({ where: this.ear.where, lang: this.ear.lang }),
+      /** The step after the recognizer, for a test whose browser has no recognizer: as if `text` was heard. */
+      heard: (text: string) => this.afterHearing(text),
       voice: () => this.voice.label,
     };
   }
@@ -667,13 +701,13 @@ export class ChatPanel {
         ? "🔒 voz local"
         : this.ear.where === "none"
           ? "sin voz"
-          : `voz → ${this.ear.where === "google" ? "Google" : "Microsoft"}${this.ear.canInstall ? " · ⬇ local" : ""}`;
+          : `voz → ${this.ear.where === "google" ? "Google" : "Microsoft"}`;
     where.title =
       this.ear.where === "local"
         ? "Tu voz se reconoce en este computador: no sale de aquí"
         : this.ear.where === "none"
           ? "Este navegador no reconoce voz: usa Chrome o Edge"
-          : `Mientras mantienes el botón, tu voz va al servicio de ${this.ear.where === "google" ? "Google" : "Microsoft"} para convertirla en texto${this.ear.canInstall ? ". Clic: descargar el reconocimiento local (unos 60 MB)" : ""}`;
+          : `Mientras mantienes el botón, tu voz va al servicio de ${this.ear.where === "google" ? "Google" : "Microsoft"} para convertirla en texto. Clic: usar el reconocimiento de este computador si el navegador lo tiene (puede descargar unos 60 MB)`;
     where.classList.toggle("cloud", this.ear.where === "google" || this.ear.where === "microsoft");
     const input = r.querySelector<HTMLInputElement>(".text")!;
     input.disabled = !talkable;

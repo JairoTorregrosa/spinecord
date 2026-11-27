@@ -406,8 +406,9 @@ export function serveView(
             return ws.close(4000, "bad message: not an object");
           const m = msg as Record<string, unknown>;
           const req = typeof m.req === "number" && Number.isFinite(m.req) ? m.req : 0;
-          // letting a button go is never refused: a release lost to the limit would hold it down for good
-          const release = m.t === "button" && m.down !== true;
+          // letting a button go is never refused: a release lost to the limit would hold it down for good;
+          // neither is the chat's stop (--chat): a stop lost to the limit would leave the robot moving
+          const release = (m.t === "button" && m.down !== true) || (o.chat !== undefined && m.t === "chat_stop");
           if (!release && !allowed(ws))
             return send(ws, { t: "reply", req, ok: false, code: "too_fast", error: "too many actions this second" });
           // --chat: the chat's own messages (src/chat.ts); without it they are unknown actions, as before

@@ -1,7 +1,7 @@
 /* The chat panel (--chat, experimental): injected by src/chat.ts only when the process's chat is on. It takes the
    slot of the list of MCP calls, whose calls it shows in its own timeline. */
 :root {
-  --chat-h: clamp(230px, 34vh, 340px);
+  --chat-h: clamp(230px, 32vh, 300px);
 }
 body.chat-on .calls {
   display: none;
@@ -171,6 +171,12 @@ body.chat-on .calls {
 .timeline li.call.ok .st {
   color: var(--ok);
 }
+.timeline li.call.warn {
+  border-color: var(--warn);
+}
+.timeline li.call.warn .st {
+  color: var(--warn);
+}
 .timeline li.call.err {
   border-color: var(--bad);
 }
@@ -237,7 +243,7 @@ body.chat-on .calls {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 4px;
   min-height: 0;
 }
@@ -277,6 +283,7 @@ body.chat-on .calls {
   cursor: help;
 }
 .stop {
+  margin-top: auto;
   width: 100%;
   height: 38px;
   flex: none;
