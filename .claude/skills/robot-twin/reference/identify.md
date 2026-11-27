@@ -4,23 +4,23 @@ Sizes are the parts' bounding boxes from BrickLink's catalogue (marked verified 
 
 ## What the photo shows
 
-Read the tells in this order; the first group seen decides.
+Read the tells in this order; the first group seen decides. Only group 1, or group 3 on an official model you recognise, stops.
 
 | # | Tells | It is |
 |---|---|---|
 | 1 | Print on the image: a step number, a parts call-out box (`1x`, `2x`), an arrow showing where a part goes, a logo or set number, text blocks, a frame, a projector's keystone, a monitor bezel, moiré, other images beside it | not a photo: a drawing, render, box art, slide or screen |
-| 2 | Signs of a real object: cables that sag or bend unevenly, parts slightly out of line, dust or wear, a hard shadow on a floor or table, a hand, a table edge, a mat, a room | a photo, unless group 3 is also seen: then it is the "photo and picture at once" row of state 0 |
-| 3 | Studio look only: a seamless backdrop curving up behind the robot, soft even light, glossy flawless parts, cables drawn ideal | an official model you recognise: a picture, not a photo. Any other robot: the person's photo, go on |
+| 2 | Any sign of a real object: cables that sag, hang loose or bend unevenly, parts slightly out of line, dust or wear, a hard shadow on a real floor or table, a hand, a table edge, a mat, a room, a part the official model lacks or a part of it missing | the person's photo, also with a studio look and also when it looks like a model: go on |
+| 3 | Studio look and no sign of group 2: a seamless backdrop curving up behind the robot, soft even light, glossy flawless parts, cables drawn ideal | an official model you recognise, built exactly: box art or a render, not a photo. Any other robot: the person's photo, go on |
 | | Several robots: more than one drive base or more than one brick | the "several" rows. A robot in the background, out of focus or cut off, while one robot is the sharp subject in the middle, does not make it several: go on with the subject and say in the report which robot you used |
 
 ## Readable
 
 The gate of state 0 counts the brick and the drive as readable only when the photo shows:
-- **the brick**: its body, not only an edge or a cable, and at least one of the signs of an EV3: the screen, the dark grey button cross, a port end with its row of four sockets, or the `EV3` print. A brick covered by parts, seen only from below or from a side with none of these, or too blurred to tell any of them, is not readable. Tilted or standing upright is fine: say so in the file;
+- **the brick**: its body, not only an edge or a cable, and at least one of the signs of an EV3: the screen, the dark grey button cross, a port end with its row of four sockets, or the `EV3` print. A brick covered by parts, seen only from below or from a side with none of these, or too blurred to tell any of them, is not readable. Tilted or standing upright is fine: write the pose now, a tilted brick as the nearer of flat and standing with a note "the brick leans <n>° toward <the front / the back>" (robot-file.md "Parts");
 - **the drive**: what touches the floor on at least one side (wheels, tracks, legs, a fixed base), and that side's motor or the axle it drives.
 A robot that hides one of the two is a "not readable" row of state 0, also when everything else is sharp.
 
-**Not an EV3** needs one of: the other brick seen with a tell of its row below (NXT: the orange button or three output ports `A B C`; SPIKE, Robot Inventor: the 5 × 5 light grid or six ports; RCX: the yellow brick), or motors and sensors with flat white cables fixed to them. NXT motors and sensors alone do not decide: they plug into an EV3 too. Anything less is "not readable".
+**Not an EV3** needs one of: the other brick seen with a tell of its row below (NXT: the orange button or three output ports `A B C`; SPIKE, Robot Inventor: the 5 × 5 light grid or six ports; RCX: the yellow brick), or motors and sensors with flat white cables fixed to them. NXT motors and sensors alone do not decide: they plug into an EV3 too. Colour alone never decides, and nothing on a blurred photo does. Anything less is "not readable".
 
 | Brick | Tells | spinecord |
 |---|---|---|
@@ -69,8 +69,8 @@ A robot **is the model** when the photo shows its drive (what touches the floor,
 
 | Model (set) | `builds.json` key | Tells |
 |---|---|---|
-| Driving Base, Robot Educator (45544) | `educator_driving_base` | Brick flat on two large motors, two 56 mm wheels, a steel ball caster behind; attachments in front: colour sensor down, ultrasonic ahead, touch bumper, gyro, a medium-motor arm |
-| Gyro Boy (45544) | `gyro_boy` | Brick standing upright on two 56 mm wheels and no caster; ultrasonic eyes on top, two arms; it balances |
+| Driving Base, Robot Educator (45544) | `educator_driving_base` | Brick flat on two large motors, two 56 mm wheels, a steel ball caster behind; attachments, each told by its mount when its face is hidden: low under the front, facing the floor: colour; on the front at brick height, looking ahead: ultrasonic; a beam bar low across the front with a sensor behind it: touch; up on the body away from the floor, top face up: gyro; a medium motor on the front with an arm or lifter: the arm. Name the one the mount shows; never "<a> or maybe <b>" |
+| Gyro Boy (45544) | `gyro_boy` | Brick standing upright on two 56 mm wheels and no caster; ultrasonic eyes on top, two arms; it balances. Any two-wheel balancer with the brick upright takes its ports and its hidden gyro, with tokens |
 | Puppy (45544) | `puppy` | Four legs, the brick as the body, a head on a neck |
 | Color Sorter (45544) | `color_sorter` | A station: a belt and a feeder tray, the colour sensor over the belt, no wheels |
 | Robot Arm H25 (45544) | `robot_arm_h25` | A crane-like arm on a turntable base, a gripper at its end, no wheels |
@@ -78,7 +78,7 @@ A robot **is the model** when the photo shows its drive (what touches the floor,
 | Stair Climber (45544 + 45560) | `stair_climber` | Four big wheels front and back, a lifting frame under the body for climbing a step |
 | Znap (45544 + 45560) | `znap` | A long low body on two wheels, a snapping jaw head with the ultrasonic sensor |
 | Elephant (45544 + 45560) | `elephant` | Four legs, a long trunk, a big head |
-| TRACK3R (31313) | `track3r` | Brick flat over two rubber tracks on small rims, the infrared sensor ahead, a tool in front (spinner, hammer, claw or bazooka) |
+| TRACK3R (31313) | `track3r` | Brick flat over two rubber tracks on small rims; the infrared sensor at one end, looking out of it (the build's front, port 4); the tool (spinner, hammer, claw or bazooka) on the medium motor at the other end (port A) |
 | EV3RSTORM (31313) | `ev3rstorm` | A humanoid on rubber tracks, the brick upright as the chest, the infrared sensor as the head, a bazooka arm |
 | GRIPP3R (31313) | `gripp3r` | Rubber tracks and a large two-claw gripper in front, the infrared sensor on top |
 | R3PTAR (31313) | `r3ptar` | A snake standing up, the infrared sensor as the head |
