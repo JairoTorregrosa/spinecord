@@ -12,6 +12,7 @@ import {
   MEDIUM_DEG_S,
   LARGE_STALL_NCM,
   MEDIUM_STALL_NCM,
+  BRAKE_REST_DEG,
   drivetrainFromProfile,
 } from "./brick";
 import { BOX_FLOOR_FRICTION, DEFAULT_PUSH_N, World, parseWorld } from "../sim-world/world";
@@ -167,6 +168,8 @@ describe("motors drive the world", () => {
     expect(E.readI8(g, 0)).toBe(40);
     expect(E.readI32(g, 1)).toBeGreaterThan(160);
     await call(E.outputStop(BC, true));
+    expect(E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0)).toBeGreaterThan(20); // the brake's run-on
+    run(1000); // at rest
     g = (await call(E.outputRead(2, 0, 1), 5)).globals;
     const count = E.readI32((await call(E.outputGetCount(2, 0), 4)).globals, 0);
     expect(count).toBe(E.readI32(g, 1));
@@ -176,16 +179,33 @@ describe("motors drive the world", () => {
     expect(E.readI8(g, 0)).toBe(0);
     expect(E.readI32(g, 1)).toBe(count);
   });
-  test("A3 with brake stops a move where the brake came: the firmware holds the shaft there", async () => {
+  test("A3 with brake holds the shaft where the brake came: it runs on, springs back and rests at the stop point", async () => {
     const { call, run, brick, world } = rig();
     await call(E.outputStepSync(BC, 50, 0, 2000, true));
     run(400);
     await call(E.outputStop(E.ALL_OUTPUTS, true));
     expect(brick.busy()).toBe(false);
+    const stop = brick.tacho("B"),
+      x = world.pose.x;
+    expect(E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0)).toBe(50); // still turning: the hold has only begun
+    let peak = stop,
+      low = stop;
+    for (let i = 0; i < 100; i++) {
+      run(5);
+      peak = Math.max(peak, brick.tacho("B"));
+      low = Math.min(low, brick.tacho("B"));
+    }
+    // from 50 %: about 14 deg on (docs/twin-fidelity.md estimated 7-15), then back past the stop point
+    expect(peak - stop).toBeGreaterThan(10);
+    expect(peak - stop).toBeLessThan(17);
+    expect(low - stop).toBeLessThan(-1);
+    expect(Math.abs(brick.tacho("B") - stop)).toBeLessThanOrEqual(BRAKE_REST_DEG);
+    expect(brick.peek().motors[1]!.settling).toBe(false);
     expect(E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0)).toBe(0);
-    const x = world.pose.x;
+    const rest = world.pose.x;
+    expect(Math.abs(rest - x)).toBeLessThanOrEqual((BRAKE_REST_DEG * Math.PI * 5.6) / 360);
     run(2000);
-    expect(world.pose.x).toBe(x);
+    expect(world.pose.x).toBe(rest); // held there
   });
   test("a power command reaches 90 % of its speed after 2.3 lag constants (about 0.2 s), and exactly its speed later", async () => {
     const { call, run } = rig();
@@ -233,9 +253,10 @@ describe("motors drive the world", () => {
     await call(E.outputTimeSpeed(E.OUTPUT_MASK.B | E.OUTPUT_MASK.C, 20, 0, 250, 0, true));
     run(240);
     expect(brick.busy(BC)).toBe(true);
-    run(20);
+    run(10);
     expect(brick.busy(BC)).toBe(false);
     expect(Math.abs(brick.tacho("B") - regulated(0.2 * 1020, 250, 1020))).toBeLessThanOrEqual(1); // behind by the rise
+    run(1000); // the brake's run is over
     const pose = { ...world.pose };
     await call(E.outputStepSpeed(E.OUTPUT_MASK.A, -30, 0, 45, 0, true));
     run(1000);
@@ -549,11 +570,14 @@ describe("time-bounded motion and the end flag (brake or coast)", () => {
     const deg = brick.tacho("B");
     expect(brick.tacho("C")).toBe(deg);
     run(1000);
-    expect(brick.tacho("B")).toBe(deg); // braked: not one degree more
+    expect(Math.abs(brick.tacho("B") - deg)).toBeLessThanOrEqual(BRAKE_REST_DEG); // braked: back at the stop point
+    expect(brick.tacho("C")).toBe(brick.tacho("B"));
+    const at = () => brick.peek().motors.map((m) => m.tacho_deg); // not rounded
+    const rest = at();
     await call(E.outputTimeSync(BC, -30, 200, 250, true));
     run(300);
     expect(world.pose.th).toBeGreaterThan(0.3); // B back, C forward: a left spin
-    expect(Math.abs(brick.tacho("B") - deg + (brick.tacho("C") - deg))).toBeLessThanOrEqual(1); // equal and opposite
+    expect(Math.abs(at()[1]! - rest[1]! + (at()[2]! - rest[2]!))).toBeLessThan(1e-6); // equal and opposite
   });
   test("coast (brake = 0): the motor runs down after the bound, is not busy meanwhile, and A8 shows the falling speed", async () => {
     const { call, run, brick } = rig();
@@ -587,8 +611,8 @@ describe("time-bounded motion and the end flag (brake or coast)", () => {
     run(110);
     const t = brick.tacho("B");
     await call(E.outputStop(BC, true));
-    run(500);
-    expect(brick.tacho("B")).toBe(t); // the brake cuts the coast short
+    run(1000);
+    expect(Math.abs(brick.tacho("B") - t)).toBeLessThanOrEqual(BRAKE_REST_DEG); // the brake cuts the coast short
     // A3 without brake on a running motor lets it run down too.
     await call(E.outputTimeSync(BC, 50, 0, 2000, true));
     run(100);
@@ -638,12 +662,13 @@ describe("sensor mode switches behave like the real sensors", () => {
     expect(await read(0)).toBe(0); // back to angle: it restarted from zero
     expect((await call(E.inputGetTypeMode(1, 0, 1), 2)).globals[1]).toBe(0);
   });
-  test("a gyro reset right after a braked spin takes a still zero: it does not drift", async () => {
+  test("a gyro reset once a braked spin has come to rest takes a still zero: it does not drift", async () => {
     const { call, run } = rig();
     await call(E.outputTimeSync(BC, 40, 200, 2000, true));
     run(500);
     await call(E.outputStop(BC, true));
-    await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 1, 1, 0), 4); // rate mode: a reset, in the same instant
+    run(1000); // the brake's run-on and spring-back are over
+    await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 1, 1, 0), 4); // rate mode: a reset
     await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 0, 1, 0), 4);
     run(1000);
     expect(E.readF32((await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 0, 1, 0), 4)).globals, 0)).toBe(0);

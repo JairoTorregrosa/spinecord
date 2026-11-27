@@ -149,12 +149,26 @@ async function stops(): Promise<void> {
       const { samples } = await during(r, 1, run, () => r.brick.peek().motors[3]!.tacho_deg);
       const end = lastOpAt(r, OP.OUTPUT_TIME_SPEED) + 250;
       const tEnd = samples.find((s) => s.t >= end)!;
-      await settle(r);
+      // a brake runs the shaft on, then springs it back toward the stop point: the row is the run-on (its peak)
+      let peak = samples.filter((s) => s.t >= end).reduce((p, s) => Math.max(p, s.v), tEnd.v);
+      const t1 = r.now();
+      while (r.now() - t1 < 5000) {
+        const m = r.brick.peek().motors[3]!;
+        peak = Math.max(peak, m.tacho_deg);
+        if (m.speed_pct === 0 && !m.coasting && !m.settling) break;
+        await r.sleep(1);
+      }
       const final = r.brick.peek().motors[3]!.tacho_deg;
       const ms = r.now() - end; // from the brick's end of the command to rest
       const over = final - tEnd.v;
       if (brake)
-        add("motor", `brake_overshoot_${pct}`, `brake from ${pct} %: shaft travel after the stop`, r1(over, 1));
+        add(
+          "motor",
+          `brake_overshoot_${pct}`,
+          `brake from ${pct} %: shaft travel after the stop`,
+          r1(peak - tEnd.v, 1),
+          { note: `run-on peak; at rest ${r1(over, 1)} deg from the stop point after ${r1(ms, 0)} ms` },
+        );
       else if (pct === 100 || pct === 50) {
         add(
           "motor",

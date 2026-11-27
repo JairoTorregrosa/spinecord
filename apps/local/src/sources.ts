@@ -16,6 +16,7 @@ import { PageHub, type PageHubOptions } from "../../../packages/page-hub/hub";
 import type { Provider } from "../../../packages/protocol/types";
 import { createRuntime, type LocalRuntime } from "../../../packages/runtime/runtime";
 import {
+  BRAKE_SETTLE_MS,
   LARGE_DEG_S,
   MEDIUM_DEG_S,
   SIM_BRICK_LOOP_RATE_HZ,
@@ -118,6 +119,7 @@ export function twinRuntime(
           // the twin's motors, each type at its own speed
           degPerSecAt100: LARGE_DEG_S,
           mediumDegPerSecAt100: MEDIUM_DEG_S,
+          stopSettleMs: EV3_STOP_SETTLE_MS,
           loopRateHz: SIM_BRICK_LOOP_RATE_HZ,
           ...time,
         }),
@@ -128,6 +130,13 @@ export function twinRuntime(
   return { runtime, brick, sim };
 }
 
+/**
+ * How long a stock-firmware provider waits for a braked motor to read speed 0 before it calls the stop unverified:
+ * the firmware's brake holds the shaft, which runs on and springs back for up to BRAKE_SETTLE_MS (about 490 ms from
+ * 100 %; the provider's own default is 300), plus a margin for a loaded wheel. The same for a twin and a robot.
+ */
+export const EV3_STOP_SETTLE_MS = Math.ceil(BRAKE_SETTLE_MS / 100) * 100 + 100;
+
 /** The runtime of a stock-firmware EV3 reached through `transport` (the bridge page's socket, or a fake brick). */
 export function ev3Runtime(s: Source<"ev3">, transport: Transport, hub?: PageHub): LocalRuntime {
   const { pair, hardware } = s.robot;
@@ -136,7 +145,14 @@ export function ev3Runtime(s: Source<"ev3">, transport: Transport, hub?: PageHub
     profile,
     providers: [
       (limits) =>
-        new Ev3Provider(transport, { limits, hardware, pair, roles: profile.roles, loopRateHz: EV3_USB_LOOP_RATE_HZ }),
+        new Ev3Provider(transport, {
+          limits,
+          hardware,
+          pair,
+          roles: profile.roles,
+          stopSettleMs: EV3_STOP_SETTLE_MS,
+          loopRateHz: EV3_USB_LOOP_RATE_HZ,
+        }),
       ...last(hub),
     ],
   });

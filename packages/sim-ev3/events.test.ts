@@ -43,8 +43,9 @@ describe("sim.world events", () => {
     await r.call(E.outputTimeSync(BC, 40, 0, 1500, true));
     r.run(2000);
     const es = (await read(sim)).events;
-    expect(kinds(es)).toEqual(["contact_began cup", "push_began cup", "push_ended cup"]);
-    const ended = es[2] as Extract<WorldEvent, { kind: "push_ended" }>;
+    // the brake's spring-back rolls the robot off the box it stopped against
+    expect(kinds(es)).toEqual(["contact_began cup", "push_began cup", "contact_ended cup", "push_ended cup"]);
+    const ended = es[3] as Extract<WorldEvent, { kind: "push_ended" }>;
     expect(ended.moved_cm).toBeCloseTo(r.world.obstacle("cup")!.x - 61, 2);
   });
   test("a tread that slips at a wall says so instead of stalling", async () => {
@@ -52,7 +53,13 @@ describe("sim.world events", () => {
     const sim = new SimWorldProvider({ host: r.brick });
     await r.call(E.outputTimeSync(BC, 50, 0, 4000, true));
     r.run(5000);
-    expect(kinds((await read(sim)).events)).toEqual(["contact_began wall_east", "slip_began", "slip_ended"]);
+    // the brake's spring-back rolls the body off the wall the wheels slipped against
+    expect(kinds((await read(sim)).events)).toEqual([
+      "contact_began wall_east",
+      "slip_began",
+      "contact_ended wall_east",
+      "slip_ended",
+    ]);
   });
   test("the ultrasonic echo lost on a slanted wall, and back square on", async () => {
     const w = new World(

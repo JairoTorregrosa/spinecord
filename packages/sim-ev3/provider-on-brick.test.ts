@@ -9,7 +9,7 @@ import type { CommandResult } from "../protocol/types";
 import { World } from "../sim-world/world";
 import { SimWorldProvider } from "../sim-world/world-provider";
 import { quietWorld, EXAMPLES, config, DRIVE } from "../sim-world/testkit";
-import { SimBrick, LARGE_DEG_S, MEDIUM_DEG_S, type BrickDrivetrain } from "./brick";
+import { SimBrick, BRAKE_SETTLE_MS, LARGE_DEG_S, MEDIUM_DEG_S, type BrickDrivetrain } from "./brick";
 import { DRIVETRAIN, regulated } from "./testkit";
 
 // Kept low on purpose: the provider's polls ride on real timers, whose granularity (about 15 ms on Windows)
@@ -26,6 +26,8 @@ function twin(world: World = quietWorld(), drivetrain: BrickDrivetrain | null = 
     ...(drivetrain ? { pair: { left: drivetrain.left, right: drivetrain.right } } : {}),
     degPerSecAt100: LARGE_DEG_S,
     mediumDegPerSecAt100: MEDIUM_DEG_S,
+    // a braked shaft runs on and springs back before it reads speed 0 (as the app builds it, EV3_STOP_SETTLE_MS)
+    stopSettleMs: BRAKE_SETTLE_MS + 100,
     pollMs: 2,
     now,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms / SPEEDUP)),
@@ -267,6 +269,9 @@ describe("Ev3Provider on SimBrick", () => {
     expect(r.reason).toBe("preempted");
     expect(r.measured.left_deg as number).toBeGreaterThan(5);
     expect(r.measured.left_deg as number).toBeLessThan(0.3 * LARGE_DEG_S * 0.25);
+    await new Promise((r2) => setTimeout(r2, 800)); // the brake's run-on and spring-back
+    brick.tick();
+    expect(brick.peek().motors.every((m) => !m.settling && m.speed_pct === 0)).toBe(true);
     const x = world.pose.x;
     await new Promise((r2) => setTimeout(r2, 60));
     brick.tick();
