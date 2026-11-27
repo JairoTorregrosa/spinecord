@@ -91,6 +91,7 @@ Exit check: `setup login: ok`. Else use fixes.md.
 Run `setup status`. Read the line `PAYS`.
 If it says `todo` with an organization name, ask the person: "Claude will use the credits of "<name>". Is that the organization with your credits?"
 If yes, run `setup confirm org`. If no, use the row "Wrong Console organization" of fixes.md.
+If it says `todo` with only an organization id, run `setup confirm org` and ask nothing. State SMOKE shows if the credits pay.
 If it says `fail`, use the row of fixes.md that it names after `->`.
 
 ### 5 WORKSHOP
@@ -109,7 +110,8 @@ Show the person the answer and the cost from the `smoke` line.
 1. Run `setup report`. Take the launch line from its last line `Start Claude Code with:`.
 2. Say this, with the launch line, in the person's language:
    - "Open a new terminal window. Paste this line and press Enter: <launch line>"
-   - "If Claude Code asks for a color theme, press Enter. If it asks if you trust the folder, choose Yes."
+   - "Claude Code shows a color theme, then security notes. Press Enter at each."
+   - "Then it asks if you trust the folder. Press the down arrow to Yes, I trust this folder, then Enter."
 3. Then, at once, run `setup view`. When the person's Claude Code runs, it opens the 3D page in the browser.
 4. If `setup view` ends `not done`, ask what the terminal shows, use fixes.md, and run it again.
 5. Say: "In the browser you see the robot in a room. In the new Claude Code, type: Drive forward 30 cm, then turn left 90 degrees."

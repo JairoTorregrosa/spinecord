@@ -5,7 +5,16 @@
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIRM, isRegistered, launchLine, parseAuth, parseMcpGet, robotArgs, STEPS } from "../../../scripts/setup";
+import {
+  CONFIRM,
+  isRegistered,
+  launchLine,
+  parseAntOrg,
+  parseAuth,
+  parseMcpGet,
+  robotArgs,
+  STEPS,
+} from "../../../scripts/setup";
 
 const DIR = join(import.meta.dir, "..", "..", "..", ".claude", "skills", "setup-spinecord");
 const SKILL = join(DIR, "SKILL.md");
@@ -109,6 +118,25 @@ test("setup.ts reads claude auth status and claude mcp get", () => {
     command: undefined,
     args: undefined,
   });
+});
+
+test("setup.ts takes the organization from ant when Claude Code names none", () => {
+  // Claude Code 2.1.332 with a profile: one Profile line, no Organization line
+  expect(parseAuth("Profile: credentials-file · user_oauth · profile credits\n")).toEqual({
+    profile: "credits",
+    org: undefined,
+    loginMethod: undefined,
+  });
+  const id = "11111111-2222-4333-8444-555555555555";
+  // ant 2.14.0 right after a login: the Credentials block names the organization
+  const fresh = `Credentials\n               organization:   Acme Labs (${id})\n\nOrganization\n  (active) * Profile organization_id                        ${id}\n`;
+  expect(parseAntOrg(fresh)).toEqual({ name: "Acme Labs", id });
+  // after a token refresh only the id is left
+  expect(parseAntOrg(`Organization\n  (active) * Profile organization_id                        ${id}\n`)).toEqual({
+    name: undefined,
+    id,
+  });
+  expect(parseAntOrg("Config dir:      /h/.config/anthropic\n")).toEqual({ name: undefined, id: undefined });
 });
 
 test("setup.ts registers bun by its full path, so a terminal without bun on PATH still starts spinecord", () => {
