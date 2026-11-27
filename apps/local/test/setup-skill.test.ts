@@ -91,9 +91,8 @@ test("SKILL.md is short, its description fits, and the files and steps it names 
 });
 
 test("setup.ts reads claude auth status and claude mcp get", () => {
-  const paid =
-    "Login: ok\nProfile: credentials-file · user_oauth · profile credits\nOrganization: Taller Robots · 1f2e\n";
-  expect(parseAuth(paid)).toEqual({ profile: "credits", org: "Taller Robots", loginMethod: undefined });
+  const paid = "Login: ok\nProfile: credentials-file · user_oauth · profile credits\nOrganization: Acme Labs · 1f2e\n";
+  expect(parseAuth(paid)).toEqual({ profile: "credits", org: "Acme Labs", loginMethod: undefined });
   expect(parseAuth("Login method: Claude Max account\nOrganization: Me · 9\n")).toMatchObject({
     profile: undefined,
     loginMethod: "Claude Max account",
