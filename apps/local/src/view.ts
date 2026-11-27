@@ -14,7 +14,7 @@ import type {
   Box,
   CallEnd,
   CallStart,
-  PageMessage,
+  RefusalCode,
   RobotMeta,
   RobotState,
   ServerMessage,
@@ -27,6 +27,17 @@ import type { LocalRobot } from "./robot";
 export const VIEW_RATE_HZ = 30;
 /** Calls a page that opens late still sees. */
 const CALL_HISTORY = 40;
+/** Longest message a page may send: an action is a few numbers. A longer one closes that page's socket. */
+export const VIEW_MESSAGE_MAX = 2048;
+/** Actions one page may send in a second: far above a hand (a held button, a drag that ends), far below a flood. */
+export const VIEW_ACTIONS_PER_S = 60;
+/**
+ * Bytes a page may leave unread before it misses state frames: a page that is slow or asleep gets the next
+ * frame once it catches up (each one is whole), never a growing queue of old ones.
+ */
+const STATE_BACKLOG_MAX = 256 * 1024;
+/** Bytes unread at which the socket is closed: the page joins again and starts from a fresh hello. */
+const BACKPRESSURE_MAX = 4 * 1024 * 1024;
 
 export interface ViewTwin {
   id: string;
@@ -45,6 +56,16 @@ type Log = (ev: string, fields?: Record<string, unknown>) => void;
 interface Socket {
   send(data: string): unknown;
   close(code?: number, reason?: string): void;
+  getBufferedAmount(): number;
+}
+/** An action refused, changing nothing; the page words it from `code`. */
+class Refused extends Error {
+  constructor(
+    readonly code: RefusalCode,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100 + 0;
@@ -109,11 +130,31 @@ function state(t: ViewTwin): RobotState {
   };
 }
 
-/** The finite number `msg[key]`, or a throw naming it. */
+/** The finite number `msg[key]`, or a refusal naming it. */
 function num(msg: Record<string, unknown>, key: string): number {
   const v = msg[key];
-  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${key} must be a finite number`);
+  if (typeof v !== "number" || !Number.isFinite(v)) throw new Refused("invalid", `${key} must be a finite number`);
   return v;
+}
+
+/** The box `x, y, w, h` of an action, refused unless it lies inside the arena with sides of 1 cm or more. */
+function boxOf(msg: Record<string, unknown>, w: World): Box {
+  const r = { x: num(msg, "x"), y: num(msg, "y"), w: num(msg, "w"), h: num(msg, "h") };
+  if (r.w < 1 || r.h < 1 || r.x < 0 || r.y < 0 || r.x + r.w > w.cfg.width || r.y + r.h > w.cfg.height)
+    throw new Refused(
+      "outside",
+      `a box lies inside the arena (0..${w.cfg.width} x 0..${w.cfg.height} cm) with sides of 1 cm or more`,
+    );
+  return r;
+}
+
+/** Sets box `r` down, or refuses when it would sit on the robot. */
+function setDown(w: World, r: Box): void {
+  try {
+    w.addObstacle(r);
+  } catch (e) {
+    throw new Refused("box_on_robot", (e as Error).message);
+  }
 }
 
 /** Starts the server. Throws when the port cannot be bound (another process, or another spinecord, holds it). */
@@ -123,17 +164,29 @@ export function serveView(
   o: { page: ViewPageFiles; log: Log; rateHz?: number },
 ): ViewServer {
   if (twins.length === 0) throw new Error("the 3D view needs at least one twin");
-  const rate = o.rateHz ?? VIEW_RATE_HZ;
+  const hz = o.rateHz ?? VIEW_RATE_HZ;
   const byId = new Map(twins.map((t) => [t.id, t]));
   const sockets = new Set<Socket>();
-  /** Buttons each page holds down: released when that page goes away. */
-  const held = new Map<Socket, Set<string>>();
+  /**
+   * Buttons each page holds down, by twin. A button is down while any page holds it: one page letting go (or
+   * going away) releases it only when no other page still holds it.
+   */
+  const held = new Map<Socket, Map<string, Set<number>>>();
+  const heldElsewhere = (s: Socket, id: string, b: number) =>
+    [...held].some(([o, m]) => o !== s && m.get(id)?.has(b) === true);
+  const letGo = (s: Socket, id: string, b: number) => {
+    held.get(s)?.get(id)?.delete(b);
+    if (!heldElsewhere(s, id, b)) byId.get(id)?.brick.pressButton(b, false);
+  };
+  /** Actions of each page in the current second, for VIEW_ACTIONS_PER_S. */
+  const rate = new Map<Socket, { second: number; n: number }>();
   /** What each twin looked like at the last tick: its world, its obstacles, its tone count. */
   const seen = new Map<string, { world: World; boxes: string; tones: number }>();
   /** The obstacles each world came with, for `restore`. */
   const original = new WeakMap<World, Box[]>();
   const calls: (CallStart | CallEnd)[] = [];
 
+  let stopped = false;
   const send = (s: Socket, m: ServerMessage) => {
     try {
       s.send(JSON.stringify(m));
@@ -141,10 +194,12 @@ export function serveView(
       // a socket that is closing: its close handler cleans up
     }
   };
-  const broadcast = (m: ServerMessage) => {
+  /** To every page. `skippable`: a page with a backlog misses it (a state frame: the next one replaces it). */
+  const broadcast = (m: ServerMessage, skippable = false) => {
     if (sockets.size === 0) return;
     const text = JSON.stringify(m);
     for (const s of sockets) {
+      if (skippable && s.getBufferedAmount() > STATE_BACKLOG_MAX) continue;
       try {
         s.send(text);
       } catch {
@@ -167,7 +222,11 @@ export function serveView(
       tones: t.brick.toneCount,
     });
   }
-  const unsubscribe = twins.map((t) => t.sim.onSpoken((text) => broadcast({ t: "speak", id: t.id, text })));
+  const unsubscribe = [
+    ...twins.map((t) => t.sim.onSpoken((text) => broadcast({ t: "speak", id: t.id, text }))),
+    // the obstacles a world came with are taken when it arrives, before any page can act on it
+    ...twins.map((t) => t.sim.onDevicesChanged(() => remember(t.brick.world))),
+  ];
 
   const tick = () => {
     if (sockets.size === 0) return;
@@ -202,57 +261,91 @@ export function serveView(
       last.tones = count;
       robots.push(st);
     }
-    broadcast({ t: "state", robots });
+    broadcast({ t: "state", robots }, true);
   };
-  const timer = setInterval(tick, Math.max(10, Math.round(1000 / rate)));
+  const timer = setInterval(tick, Math.max(10, Math.round(1000 / hz)));
   timer.unref?.();
 
-  /** One action of the person at the page. Throws with a message for that person. */
+  /** One action of the person at the page. Throws Refused, changing nothing, when it cannot be done. */
   const act = (s: Socket, msg: Record<string, unknown>): void => {
-    const t = byId.get(String(msg.id));
-    if (!t) throw new Error(`no twin "${String(msg.id)}" here: ${[...byId.keys()].join(", ")}`);
+    const t = typeof msg.id === "string" ? byId.get(msg.id) : undefined;
+    if (!t) throw new Refused("invalid", `no twin ${JSON.stringify(msg.id)} here: ${[...byId.keys()].join(", ")}`);
     const { brick } = t;
     brick.tick(); // the physics up to now happens where the robot was
     const w = brick.world;
+    const boxIndex = () => {
+      const i = num(msg, "index");
+      if (!Number.isInteger(i) || i < 0 || i >= w.cfg.boxes.length)
+        throw new Refused("no_such_box", `no box ${i}: this world has ${w.cfg.boxes.length}`);
+      return i;
+    };
     switch (msg.t) {
-      case "carry":
-        w.carry({ x: num(msg, "x"), y: num(msg, "y"), th: num(msg, "heading_deg") / DEG });
-        break;
-      case "box_add": {
-        const r = { x: num(msg, "x"), y: num(msg, "y"), w: num(msg, "w"), h: num(msg, "h") };
-        if (r.w < 1 || r.h < 1 || r.w > w.cfg.width || r.h > w.cfg.height)
-          throw new Error(`a box from 1 cm up to the size of the arena (${w.cfg.width} x ${w.cfg.height} cm)`);
-        w.addObstacle(r);
+      case "carry": {
+        const p = { x: num(msg, "x"), y: num(msg, "y"), th: num(msg, "heading_deg") / DEG };
+        if (w.collides(p))
+          throw new Refused(
+            "does_not_fit",
+            `the robot does not fit at (${p.x.toFixed(1)}, ${p.y.toFixed(1)}): it would overlap a wall or a box`,
+          );
+        w.carry(p);
         break;
       }
-      case "box_remove":
-        w.removeObstacle(num(msg, "index"));
+      case "box_add":
+        setDown(w, boxOf(msg, w));
         break;
-      case "restore": {
+      case "box_remove":
+        w.removeObstacle(boxIndex());
+        break;
+      case "box_move": {
+        const i = boxIndex();
+        const r = boxOf(msg, w);
         const before = w.cfg.boxes;
-        w.cfg.boxes = (original.get(w) ?? []).map((b) => ({ ...b }));
+        w.removeObstacle(i);
         try {
-          w.setPose({ ...w.cfg.start });
+          setDown(w, r);
         } catch (e) {
-          w.cfg.boxes = before;
+          w.cfg.boxes = before; // the box stays where it was
           throw e;
         }
         break;
       }
+      case "restore": {
+        const own = original.get(w);
+        if (!own) throw new Error(`the view never saw world "${w.cfg.name}" arrive: it cannot know its own boxes`);
+        const before = w.cfg.boxes;
+        w.cfg.boxes = own.map((b) => ({ ...b }));
+        if (w.collides(w.cfg.start)) {
+          w.cfg.boxes = before;
+          throw new Refused("does_not_fit", "the start pose is not free: something stands where the robot starts");
+        }
+        w.setPose({ ...w.cfg.start });
+        break;
+      }
       case "button": {
         const b = num(msg, "button");
-        if (!Number.isInteger(b) || b < 1 || b > 6) throw new Error("button must be 1..6");
-        const down = msg.down === true;
-        brick.pressButton(b, down);
-        const mine = held.get(s)!;
-        if (down) mine.add(`${t.id}:${b}`);
-        else mine.delete(`${t.id}:${b}`);
+        if (!Number.isInteger(b) || b < 1 || b > 6) throw new Refused("invalid", "button must be 1..6");
+        let mine = held.get(s)!.get(t.id);
+        if (!mine) held.get(s)!.set(t.id, (mine = new Set()));
+        if (msg.down === true) {
+          mine.add(b);
+          brick.pressButton(b, true);
+        } else letGo(s, t.id, b);
         return; // too frequent to log
       }
       default:
-        throw new Error(`unknown action ${JSON.stringify(msg.t)}`);
+        throw new Refused("invalid", `unknown action ${JSON.stringify(msg.t)}`);
     }
     o.log("view_action", { robot_id: t.id, action: msg.t });
+  };
+  /** Counts one action of page `s`; false when it is over VIEW_ACTIONS_PER_S this second. */
+  const allowed = (s: Socket): boolean => {
+    const second = Math.floor(performance.now() / 1000);
+    const r = rate.get(s);
+    if (!r || r.second !== second) {
+      rate.set(s, { second, n: 1 });
+      return true;
+    }
+    return ++r.n <= VIEW_ACTIONS_PER_S;
   };
 
   const hosts = (p: number) => [`127.0.0.1:${p}`, `localhost:${p}`];
@@ -282,35 +375,46 @@ export function serveView(
         return new Response("not found", { status: 404 });
       },
       websocket: {
+        // a longer message is no action of this page: Bun closes that socket (1009), the listener goes on
+        maxPayloadLength: VIEW_MESSAGE_MAX,
+        backpressureLimit: BACKPRESSURE_MAX,
+        closeOnBackpressureLimit: true,
         open(ws) {
+          if (stopped) return ws.close(1001, "the process is ending");
           sockets.add(ws);
-          held.set(ws, new Set());
-          send(ws, { t: "hello", robots: twins.map(meta), rate_hz: rate, calls });
+          held.set(ws, new Map());
+          send(ws, { t: "hello", robots: twins.map(meta), rate_hz: hz, calls });
         },
         message(ws, data) {
           if (typeof data !== "string") return ws.close(4000, "bad message: expected JSON text");
-          let msg: PageMessage | Record<string, unknown>;
+          let msg: unknown;
           try {
-            msg = JSON.parse(data) as Record<string, unknown>;
+            msg = JSON.parse(data);
           } catch {
             return ws.close(4000, "bad message: not JSON");
           }
-          if (typeof msg !== "object" || msg === null) return ws.close(4000, "bad message: not an object");
-          const req = typeof msg.req === "number" ? msg.req : 0;
+          if (typeof msg !== "object" || msg === null || Array.isArray(msg))
+            return ws.close(4000, "bad message: not an object");
+          const m = msg as Record<string, unknown>;
+          const req = typeof m.req === "number" && Number.isFinite(m.req) ? m.req : 0;
+          if (!allowed(ws))
+            return send(ws, { t: "reply", req, ok: false, code: "too_fast", error: "too many actions this second" });
           try {
-            act(ws, msg as Record<string, unknown>);
+            act(ws, m);
             send(ws, { t: "reply", req, ok: true });
           } catch (e) {
-            send(ws, { t: "reply", req, ok: false, error: (e as Error).message });
+            if (e instanceof Refused) return send(ws, { t: "reply", req, ok: false, code: e.code, error: e.message });
+            // a fault of the view, not of the person: logged loud, shown as one on the page, the listener goes on
+            const error = (e as Error).message;
+            o.log("view_error", { robot_id: m.id, action: m.t, error });
+            send(ws, { t: "reply", req, ok: false, code: "internal", error });
           }
         },
         close(ws) {
           sockets.delete(ws);
-          // a page that goes away lets go of the buttons it held
-          for (const key of held.get(ws) ?? []) {
-            const [id, b] = key.split(":");
-            byId.get(id!)?.brick.pressButton(Number(b), false);
-          }
+          rate.delete(ws);
+          // a page that goes away lets go of the buttons it held (those no other page holds)
+          for (const [id, bs] of held.get(ws) ?? []) for (const b of [...bs]) letGo(ws, id, b);
           held.delete(ws);
         },
       },
@@ -325,6 +429,7 @@ export function serveView(
   }
   const bound = server.port ?? port;
   const keep = (m: CallStart | CallEnd) => {
+    if (stopped) return;
     calls.push(m);
     if (calls.length > CALL_HISTORY) calls.shift();
     broadcast(m);
@@ -333,9 +438,11 @@ export function serveView(
     url: `http://127.0.0.1:${bound}/`,
     port: bound,
     clients: () => sockets.size,
-    callStarted: (c) => keep({ t: "call_start", ...c }),
-    callEnded: (c) => keep({ t: "call_end", ...c }),
+    callStarted: (c) => keep({ t: "call_start", at: Date.now(), ...c }),
+    callEnded: (c) => keep({ t: "call_end", at: Date.now(), ...c }),
     stop() {
+      if (stopped) return;
+      stopped = true;
       clearInterval(timer);
       for (const u of unsubscribe) u();
       for (const s of sockets) s.close(1001, "the process is ending");

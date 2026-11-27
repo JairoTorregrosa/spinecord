@@ -88,6 +88,8 @@ export interface RobotState {
 export interface CallStart {
   t: "call_start";
   n: number;
+  /** When it began, ms since the epoch (the page and the process share a clock: both run on this computer). */
+  at: number;
   tool: string;
   robot_id: string | null;
   /** The call's arguments as JSON, cut. */
@@ -96,6 +98,8 @@ export interface CallStart {
 export interface CallEnd {
   t: "call_end";
   n: number;
+  /** When it ended, ms since the epoch. */
+  at: number;
   tool: string;
   robot_id: string | null;
   ok: boolean;
@@ -115,13 +119,32 @@ export type ServerMessage =
   | { t: "speak"; id: string; text: string }
   | CallStart
   | CallEnd
-  | { t: "reply"; req: number; ok: boolean; error?: string };
+  | { t: "reply"; req: number; ok: true }
+  /** An action refused, changing nothing: `code` says why for the page's own words, `error` in English. */
+  | { t: "reply"; req: number; ok: false; code: RefusalCode; error: string };
+
+/**
+ * Why an action of the page was refused. does_not_fit: the robot would overlap a wall or a box there;
+ * box_on_robot: the box would sit on the robot; outside: a box not inside the arena; no_such_box: that box is
+ * gone (another page took it); too_fast: more actions than a hand makes; invalid: a malformed action;
+ * internal: a fault of the view itself (the process logs it as view_error).
+ */
+export type RefusalCode =
+  | "does_not_fit"
+  | "box_on_robot"
+  | "outside"
+  | "no_such_box"
+  | "too_fast"
+  | "invalid"
+  | "internal";
 
 export type PageMessage =
   /** A person picks the robot up and sets it down (the gyro feels the turn). */
   | { t: "carry"; req: number; id: string; x: number; y: number; heading_deg: number }
   | { t: "box_add"; req: number; id: string; x: number; y: number; w: number; h: number }
   | { t: "box_remove"; req: number; id: string; index: number }
+  /** Box `index` lifted and set down as `x, y, w, h` (it then comes last in the list). */
+  | { t: "box_move"; req: number; id: string; index: number; x: number; y: number; w: number; h: number }
   /** The world's own obstacles back, and the robot at its start pose. */
   | { t: "restore"; req: number; id: string }
   /** A brick button (1 up, 2 enter, 3 down, 4 right, 5 left, 6 back) goes down or up. */

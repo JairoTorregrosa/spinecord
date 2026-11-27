@@ -11,7 +11,8 @@ import { buildViewPage } from "../../twin-view/view-build";
 import { DEFAULT_VIEW_PORT, loadConfig } from "../src/config";
 import { buildFleet, type Fleet } from "../src/sources";
 import { callTool } from "../src/tools";
-import { serveView, type ViewServer } from "../src/view";
+import { cutText } from "../src/mcp";
+import { VIEW_ACTIONS_PER_S, VIEW_MESSAGE_MAX, serveView, type ViewServer } from "../src/view";
 import { startServer, until, type TestServer } from "./client";
 
 describe("--view flags", () => {
@@ -81,6 +82,7 @@ function page(url: string, origin = new URL(url).origin) {
     ws,
     got,
     next,
+    closed: new Promise<number>((resolve) => ws.addEventListener("close", (e) => resolve(e.code))),
     opened: new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve();
       ws.onerror = () => reject(new Error("the socket did not open"));
@@ -100,7 +102,8 @@ function page(url: string, origin = new URL(url).origin) {
   };
 }
 
-async function rig() {
+/** `rateHz`: the state frames; a slow rate keeps the tick away from what a test does between two frames. */
+async function rig(rateHz = 50) {
   const events: Record<string, unknown>[] = [];
   const log = (ev: string, fields?: Record<string, unknown>) => void events.push({ ev, ...fields });
   const fleet = await buildFleet(loadConfig(["--twin"]), { log });
@@ -110,7 +113,7 @@ async function rig() {
     sim: fleet.sims.get(r.id)!,
     robot: r,
   }));
-  const view = serveView(twins, 0, { page: await buildViewPage(), log, rateHz: 50 });
+  const view = serveView(twins, 0, { page: await buildViewPage(), log, rateHz });
   const entry = { fleet, view, sockets: [] as WebSocket[] };
   open.push(entry);
   const tool = async (name: string, args: Record<string, unknown> = {}) =>
@@ -164,8 +167,7 @@ describe("the view listener", () => {
     expect(s.pose).toMatchObject({ x: 40, y: 50, heading_deg: 90 });
     expect(Math.abs((await reading("gyro", "angle_deg")) - 90)).toBeLessThanOrEqual(2);
     const refused = await p.act({ t: "carry", id: "r1-sim", x: 1, y: 1, heading_deg: 0 });
-    expect(refused.ok).toBe(false);
-    expect(refused.error).toMatch(/does not fit/);
+    expect(refused).toMatchObject({ ok: false, code: "does_not_fit" });
   });
 
   test("a box set down is what the distance sensor sees; taking it away and restoring bring the room back", async () => {
@@ -176,8 +178,14 @@ describe("the view listener", () => {
     const boxes = await p.next<Extract<ServerMessage, { t: "boxes" }>>((m) => m.t === "boxes", 0);
     expect(boxes.boxes).toEqual([{ x: 85, y: 50, w: 10, h: 20 }]);
     expect(Math.abs((await reading("distance", "distance_cm")) - 17)).toBeLessThan(3);
-    const onRobot = await p.act({ t: "box_add", id: "r1-sim", x: 55, y: 55, w: 10, h: 10 });
-    expect(onRobot.ok).toBe(false);
+    expect(await p.act({ t: "box_add", id: "r1-sim", x: 55, y: 55, w: 10, h: 10 })).toMatchObject({
+      ok: false,
+      code: "box_on_robot",
+    });
+    expect(await p.act({ t: "box_add", id: "r1-sim", x: 115, y: 50, w: 10, h: 20 })).toMatchObject({
+      ok: false,
+      code: "outside",
+    });
     expect(await p.act({ t: "box_remove", id: "r1-sim", index: 0 })).toMatchObject({ ok: true });
     expect(Math.abs((await reading("distance", "distance_cm")) - far)).toBeLessThan(3);
     await p.act({ t: "box_add", id: "r1-sim", x: 85, y: 50, w: 10, h: 20 });
@@ -187,7 +195,47 @@ describe("the view listener", () => {
     const s = await p.state();
     expect(s.pose).toEqual({ x: 60, y: 60, heading_deg: 0 });
     await p.next((m) => m.t === "boxes" && m.boxes.length === 0, before);
-    expect(await p.act({ t: "fly", id: "r1-sim" })).toMatchObject({ ok: false, error: 'unknown action "fly"' });
+    expect(await p.act({ t: "fly", id: "r1-sim" })).toMatchObject({
+      ok: false,
+      code: "invalid",
+      error: 'unknown action "fly"',
+    });
+  });
+
+  test("a box moved is lifted and set down whole; onto the robot it is refused and stays", async () => {
+    const { connect, reading } = await rig();
+    const p = await connect();
+    await p.act({ t: "box_add", id: "r1-sim", x: 10, y: 10, w: 10, h: 10 });
+    expect(await p.act({ t: "box_move", id: "r1-sim", index: 0, x: 85, y: 50, w: 10, h: 20 })).toMatchObject({
+      ok: true,
+    });
+    expect(Math.abs((await reading("distance", "distance_cm")) - 17)).toBeLessThan(3);
+    const refused = await p.act({ t: "box_move", id: "r1-sim", index: 0, x: 55, y: 55, w: 10, h: 10 });
+    expect(refused).toMatchObject({ ok: false, code: "box_on_robot" });
+    expect(await p.act({ t: "box_move", id: "r1-sim", index: 3, x: 5, y: 5, w: 5, h: 5 })).toMatchObject({
+      ok: false,
+      code: "no_such_box",
+    });
+    await p.next((m) => m.t === "boxes" && m.boxes.length === 1 && m.boxes[0]!.x === 85, 0);
+  });
+
+  test("restore right after load_world, before any frame, brings that world's own boxes back", async () => {
+    const { connect, tool, fleet } = await rig(0.05); // one frame in 20 s: none falls inside this test
+    const p = await connect();
+    const world = JSON.parse(await Bun.file(join(import.meta.dir, "..", "examples", "room.json")).text());
+    world.name = "room-with-box";
+    world.obstacles = [{ x: 10, y: 10, w: 12, h: 12 }];
+    const loaded = await tool("command_device", {
+      device: "sim.world",
+      command: "load_world",
+      args: { world: JSON.stringify(world) },
+    });
+    expect(loaded.ok).toBe(true);
+    const w = fleet.bricks.get("r1-sim")!.world;
+    expect(w.cfg.name).toBe("room-with-box");
+    w.cfg.boxes = []; // what a page's "take it away" leaves
+    expect(await p.act({ t: "restore", id: "r1-sim" })).toMatchObject({ ok: true });
+    expect(w.cfg.boxes).toEqual([{ x: 10, y: 10, w: 12, h: 12 }]);
   });
 
   test("a button held on the page is pressed for the tools until the page lets go or goes away", async () => {
@@ -202,6 +250,60 @@ describe("the view listener", () => {
     expect(await reading("ev3.buttons", "pressed")).toEqual(["right"]);
     p.ws.close();
     await until("the page gone", async () => (await reading("ev3.buttons", "pressed")).length === 0);
+  });
+
+  test("a button two pages hold stays down until the last of them lets go", async () => {
+    const { connect, reading } = await rig();
+    const a = await connect();
+    const b = await connect();
+    await a.act({ t: "button", id: "r1-sim", button: 2, down: true });
+    await b.act({ t: "button", id: "r1-sim", button: 2, down: true });
+    a.ws.close();
+    await a.closed;
+    await b.state(); // the close has been handled by then
+    expect(await reading("ev3.buttons", "pressed")).toEqual(["enter"]);
+    await b.act({ t: "button", id: "r1-sim", button: 2, down: false });
+    expect(await reading("ev3.buttons", "pressed")).toEqual([]);
+  });
+
+  test("a bad, oversized or flooding page changes nothing and the listener goes on", async () => {
+    const { connect, view, fleet } = await rig();
+    const good = await connect();
+    const pose = { ...fleet.bricks.get("r1-sim")!.world.pose };
+    for (const bad of [
+      { t: "carry", id: "r1-sim", x: "1", y: 2, heading_deg: 0 },
+      { t: "carry", id: { toString: 1 }, x: 1, y: 2, heading_deg: 0 },
+      { t: "box_remove", id: "r1-sim", index: 0.5 },
+      { t: "button", id: "r1-sim", button: 2.5, down: true },
+    ])
+      expect(await good.act(bad)).toMatchObject({ ok: false });
+    for (const text of ["[1,2]", "null", "not json", "x".repeat(VIEW_MESSAGE_MAX + 1)]) {
+      const bad = await connect();
+      bad.ws.send(text);
+      expect(await bad.closed).not.toBe(1000);
+    }
+    const flood = await connect();
+    for (let i = 0; i < VIEW_ACTIONS_PER_S + 20; i++)
+      flood.ws.send(JSON.stringify({ t: "button", id: "r1-sim", button: 1, down: false, req: i + 1 }));
+    await flood.next((m) => m.t === "reply" && !m.ok && m.code === "too_fast", 0);
+    expect(fleet.bricks.get("r1-sim")!.world.pose).toEqual(pose);
+    await good.state();
+    expect(view.clients()).toBe(2);
+  });
+
+  test("stop closes every page and the listener, twice is harmless", async () => {
+    const { connect, view } = await rig();
+    const p = await connect();
+    view.stop();
+    expect(await p.closed).toBe(1001);
+    view.stop();
+    expect(view.clients()).toBe(0);
+    expect(
+      await fetch(view.url).then(
+        () => "answered",
+        () => "refused",
+      ),
+    ).toBe("refused");
   });
 
   test("a tone of the brick, a phrase of the simulated speaker and a moving call reach the page", async () => {
@@ -243,4 +345,13 @@ test("through the MCP server: --view prints its address and the page sees each c
   const end = await p.next<Extract<ServerMessage, { t: "call_end" }>>((m) => m.t === "call_end" && m.n === start.n, 0);
   expect(end).toMatchObject({ ok: true, code: null, robot_id: "r1-sim" });
   expect(end.summary).toMatch(/^read_all ok/);
+  expect(end.at).toBeGreaterThanOrEqual(start.at);
+});
+
+test("call arguments are cut for the page without splitting a character in two", () => {
+  expect(cutText("abc", 3)).toBe("abc");
+  expect(cutText("abcd", 3)).toBe("abc…");
+  // "😀" is two UTF-16 units: a cut through it drops it whole
+  expect(cutText("ab😀", 3)).toBe("ab…");
+  expect(cutText("a😀b", 3)).toBe("a😀…");
 });
