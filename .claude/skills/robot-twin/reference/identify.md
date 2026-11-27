@@ -118,7 +118,7 @@ With no ruler, the brick is the ruler. Keep every length assumed (`footprint`, `
 
 1. Find the brick's long side in the photo (111.2 mm port end to port end, 72 mm across: the map's `electronics.json`, part 95646) and divide its length in pixels by 11.12: that is pixels per cm. In a photo at a slant, use a length that lies in the same plane as the one you measure.
 2. Measure each length in pixels and divide; where a beam lies along it, count its holes instead: n holes are 0.8 × n cm.
-3. Take wheel and tyre diameters from parts.md by what the part is, never by scaling; check the footprint against them (a 56 mm wheel is half the brick's length). The footprint is at least the axle track plus one tyre or track width each side; a track's length at least its sprocket spacing plus one sprocket.
+3. Take wheel and tyre diameters from parts.md by what the part is, never by scaling; check the footprint against them (a 56 mm wheel is half the brick's length). The footprint is at least the axle track plus one tyre or track width (the axle track runs between the middles of the tyres); a track's length at least its sprocket spacing plus one sprocket.
 
 ## More photos
 
