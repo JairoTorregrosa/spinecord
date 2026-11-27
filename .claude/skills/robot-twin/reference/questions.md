@@ -2,7 +2,7 @@
 
 Send every open question in **one** message, numbered, in the person's language, each with its choices so the person can answer "1 b, 2 a, 3 12 cm". Leave out a question whose value is already confirmed (SKILL.md, "Confirm"). Ask the intake questions (photos, which robot) first and alone: their answer changes the rest.
 
-**At most 10 questions.** Skip a row the photo answers (row 10 brick pose, row 12 phone, row 7's track kind when rubber bands or links show); its token stays. Row 4 is one table question for all ports. Row 11 asks only a distance sensor's distance ahead of the axle; never x/y/z from a person. A motor's direction and range are measured in state 6. More than 10 left: ask first those that change how the robot moves (front, pair, drive, ports, tyre, axle track), and say the rest can wait.
+**At most 10 questions.** Skip a row the photo answers (row 10 brick pose, row 12 phone, row 15 support, row 7's track kind when rubber bands or links show); its token stays. Row 4 is one table question for all ports. Row 11 asks only a distance sensor's distance ahead of the axle; never x/y/z from a person. A motor's direction and range are measured in state 6. More than 10 left: ask first those that change how the robot moves (front, pair, drive, ports, tyre, axle track), and say the rest can wait.
 
 No ruler? A LEGO beam is one: from the centre of one hole to the centre of the next is 0.8 cm, so "lay a beam along it and count the holes; each hole is 0.8 cm". A 15-hole beam is 12 cm long.
 

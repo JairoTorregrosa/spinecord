@@ -288,7 +288,7 @@ function checkPorts(
 /** A build no robot can have: wheels further apart than the body is wide. Null when the file is consistent. */
 /** One tyre's or track's width in cm, from the parts map: the track the look names (else the one rolling nearest the
  * wheel diameter), or the EV3 tyre nearest the wheel diameter. */
-function treadWidthCm(build: TwinBuild | undefined, diameter: number): number {
+function treadWidthCm(build: TwinBuild | null | undefined, diameter: number): number {
   const part = (key: string) => {
     const p = rolling.parts.find((x) => x.key === key);
     if (!p) throw new Error(`lego-parts: no ${key} in rolling.json`);
@@ -305,13 +305,15 @@ function treadWidthCm(build: TwinBuild | undefined, diameter: number): number {
 
 /** A footprint the file writes is at least the axle track plus one tyre or track width on each side; the package's
  * default footprint (no `twin.body.half_width_cm`) only at least the axle track. */
-export function footprintClash(robot: RobotFile, world: unknown, build?: TwinBuild): string | null {
+export function footprintClash(robot: RobotFile, world: unknown, build?: TwinBuild | null): string | null {
   const d = robot.profile.drivetrain;
   if (d?.axle_track_cm === undefined) return null;
   const width = 2 * parseWorld(world).body.half_width_cm;
   const written = (build?.body as { half_width_cm?: number } | undefined)?.half_width_cm !== undefined;
   if (!written)
-    return d.axle_track_cm > width ? `axle track ${d.axle_track_cm} cm is wider than the footprint (${width} cm wide)` : null;
+    return d.axle_track_cm > width
+      ? `axle track ${d.axle_track_cm} cm is wider than the footprint (${width} cm wide)`
+      : null;
   const need = Math.round((d.axle_track_cm + 2 * treadWidthCm(build, d.wheel_diameter_cm)) * 10) / 10;
   return width < need
     ? `footprint ${width} cm wide is narrower than the axle track ${d.axle_track_cm} cm plus a tyre or track width each side (${need} cm)`
