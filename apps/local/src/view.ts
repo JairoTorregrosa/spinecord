@@ -314,11 +314,12 @@ export function serveView(
         if (!own) throw new Error(`the view never saw world "${w.cfg.name}" arrive: it cannot know its own boxes`);
         const before = w.cfg.boxes;
         w.cfg.boxes = own.map((b) => ({ ...b }));
-        if (w.collides(w.cfg.start)) {
+        try {
+          w.setPose({ ...w.cfg.start }); // free: the World checked its own boxes against its start when it was made
+        } catch (e) {
           w.cfg.boxes = before;
-          throw new Refused("does_not_fit", "the start pose is not free: something stands where the robot starts");
+          throw e;
         }
-        w.setPose({ ...w.cfg.start });
         break;
       }
       case "button": {
@@ -397,7 +398,9 @@ export function serveView(
             return ws.close(4000, "bad message: not an object");
           const m = msg as Record<string, unknown>;
           const req = typeof m.req === "number" && Number.isFinite(m.req) ? m.req : 0;
-          if (!allowed(ws))
+          // letting a button go is never refused: a release lost to the limit would hold it down for good
+          const release = m.t === "button" && m.down !== true;
+          if (!release && !allowed(ws))
             return send(ws, { t: "reply", req, ok: false, code: "too_fast", error: "too many actions this second" });
           try {
             act(ws, m);

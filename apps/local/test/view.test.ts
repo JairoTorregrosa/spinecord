@@ -284,8 +284,12 @@ describe("the view listener", () => {
     }
     const flood = await connect();
     for (let i = 0; i < VIEW_ACTIONS_PER_S + 20; i++)
-      flood.ws.send(JSON.stringify({ t: "button", id: "r1-sim", button: 1, down: false, req: i + 1 }));
+      flood.ws.send(JSON.stringify({ t: "button", id: "r1-sim", button: 1, down: true, req: i + 1 }));
     await flood.next((m) => m.t === "reply" && !m.ok && m.code === "too_fast", 0);
+    expect(fleet.bricks.get("r1-sim")!.peek().buttons).toEqual([1]);
+    // over the limit all the same, a release goes through: nothing is left held
+    expect(await flood.act({ t: "button", id: "r1-sim", button: 1, down: false })).toMatchObject({ ok: true });
+    expect(fleet.bricks.get("r1-sim")!.peek().buttons).toEqual([]);
     expect(fleet.bricks.get("r1-sim")!.world.pose).toEqual(pose);
     await good.state();
     expect(view.clients()).toBe(2);
