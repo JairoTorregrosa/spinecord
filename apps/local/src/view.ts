@@ -8,18 +8,29 @@
 // resolve to this computer gets 403), and only the page served here may open the socket (any site a browser has
 // open can reach 127.0.0.1).
 import type { SimBrick } from "../../../packages/sim-ev3/brick";
-import { CONE_HALF_DEG, ObstacleError, type World } from "../../../packages/sim-world/world";
+import {
+  CONE_HALF_DEG,
+  ObstacleError,
+  ULTRASONIC_ECHO_DEG,
+  ULTRASONIC_MAX_CM,
+  ULTRASONIC_RAYS,
+  type World,
+} from "../../../packages/sim-world/world";
 import type { SimWorldProvider } from "../../../packages/sim-world/world-provider";
 import type {
   Box,
   CallEnd,
+  Obstacle,
   CallStart,
   RefusalCode,
   RobotMeta,
   RobotState,
+  SensorRays,
   ServerMessage,
+  WorldEventMsg,
   WorldShape,
 } from "../../twin-view/src/messages";
+import { RAY_MAX_CM } from "../../twin-view/src/messages";
 import type { ViewPageFiles } from "../../twin-view/view-build";
 import type { ViewChat } from "./chat";
 import type { CallWatcher } from "./mcp";
@@ -28,6 +39,8 @@ import type { LocalRobot } from "./robot";
 export const VIEW_RATE_HZ = 30;
 /** Calls a page that opens late still sees. */
 const CALL_HISTORY = 40;
+/** World events of each twin a page that opens late still sees. */
+const EVENT_HISTORY = 40;
 /** Longest message a page may send: an action is a few numbers. A longer one closes that page's socket. */
 export const VIEW_MESSAGE_MAX = 2048;
 /** Actions one page may send in a second: far above a hand (a held button, a drag that ends), far below a flood. */
@@ -80,7 +93,7 @@ function shape(w: World): WorldShape {
     name: c.name,
     width: c.width,
     height: c.height,
-    boxes: c.boxes.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h })),
+    boxes: c.boxes.map((b) => ({ ...b })),
     zones: c.zones.map((z) => ({
       x: z.x,
       y: z.y,
@@ -91,7 +104,15 @@ function shape(w: World): WorldShape {
     })),
     lines: c.lines.map((l) => ({ points: l.points.map((p) => [p[0], p[1]]), width: l.width, closed: l.closed })),
     points: c.points.map((p) => ({ ...p })),
-    body: { ...c.body },
+    body: {
+      front_cm: c.body.front_cm,
+      back_cm: c.body.back_cm,
+      half_width_cm: c.body.half_width_cm,
+      color_sensor_x_cm: c.body.color_sensor_x_cm,
+      color_spot_radius_cm: c.body.color_spot_radius_cm,
+      distance_sensor_x_cm: c.body.distance_sensor_x_cm,
+      distance_sensor_z_cm: c.body.distance_sensor_z_cm,
+    },
     start: { x: c.start.x, y: c.start.y, heading_deg: c.start.th * DEG },
     look: look !== null && typeof look === "object" && !Array.isArray(look) ? (look as Record<string, unknown>) : null,
   };
@@ -108,11 +129,39 @@ function meta(t: ViewTwin): RobotMeta {
   };
 }
 
+/** The rays the twin's sensors cast now, for the sensors it has (src/messages.ts SensorRays). Spends no noise. */
+export function sensorRays(w: World, kinds: readonly string[]): SensorRays {
+  const b = w.cfg.body;
+  const cm = (d: number) => r1(Math.min(RAY_MAX_CM, d));
+  let ultrasonic: SensorRays["ultrasonic"] = null;
+  if (kinds.includes("ultrasonic")) {
+    const half = CONE_HALF_DEG / DEG,
+      minCos = Math.cos(ULTRASONIC_ECHO_DEG / DEG);
+    const rays = Array.from({ length: ULTRASONIC_RAYS }, (_, i) => {
+      const off = ((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * half;
+      const h = w.rayHit(w.pose, off);
+      return { deg: r1(off * DEG), cm: cm(h.d), echo: h.cos >= minCos - 1e-12 && h.d <= ULTRASONIC_MAX_CM };
+    });
+    // the reading's own rule (ultrasonicCm): an echo beyond the range, or none, reads 255
+    const e = w.coneEcho();
+    ultrasonic = { rays, echo: e.d <= ULTRASONIC_MAX_CM ? { deg: r1(e.off * DEG), cm: r1(e.d) } : null };
+  }
+  const ir = kinds.includes("ir")
+    ? {
+        rays: w.irBeam().rays.map((r) => ({
+          deg: r1(r.off * DEG),
+          cm: cm(r.d),
+          share: Math.round(r.share * 1000) / 1000,
+        })),
+      }
+    : null;
+  const color = kinds.includes("color") ? { ahead_cm: b.color_sensor_x_cm, r_cm: b.color_spot_radius_cm } : null;
+  return { from: { ahead_cm: b.distance_sensor_x_cm, z_cm: b.distance_sensor_z_cm }, ultrasonic, ir, color };
+}
+
 function state(t: ViewTwin): RobotState {
   const p = t.brick.peek(); // runs the physics up to now
   const w = t.brick.world;
-  const a = CONE_HALF_DEG / DEG;
-  const ray = (off: number) => r1(Math.min(9999, w.rayDistance(w.pose, off)));
   const v = t.robot.view();
   return {
     id: t.id,
@@ -121,13 +170,19 @@ function state(t: ViewTwin): RobotState {
     link: v.link,
     activity: v.activity,
     motors: p.motors.map((m) => ({ ...m, tacho_deg: r1(m.tacho_deg), speed_pct: r1(m.speed_pct) })),
-    sensors: p.sensors.map((s) => ({ port: s.port, kind: s.kind, mode: s.mode, values: s.values })),
+    // as the tools read them: the EV3 gyro counts clockwise, the contract counter-clockwise (driver-ev3's ccw)
+    sensors: p.sensors.map((s) => ({
+      port: s.port,
+      kind: s.kind,
+      mode: s.mode,
+      values: s.kind === "gyro" ? s.values.map((v) => (v === 0 ? 0 : -v)) : s.values,
+    })),
     led: p.led,
     lcd: p.lcd,
     battery_v: p.battery_v,
     battery_pct: p.battery_pct,
     buttons: p.buttons,
-    rays_cm: [ray(-a), ray(0), ray(a)],
+    rays: sensorRays(w, Object.values(t.brick.ports.sensors) as string[]),
     t_ms: Math.round(w.t_ms),
   };
 }
@@ -184,9 +239,11 @@ export function serveView(
   /** Actions of each page in the current second, for VIEW_ACTIONS_PER_S. */
   const rate = new Map<Socket, { second: number; n: number }>();
   /** What each twin looked like at the last tick: its world, its obstacles, its tone count. */
-  const seen = new Map<string, { world: World; boxes: string; tones: number }>();
+  const seen = new Map<string, { world: World; rev: number; tones: number; events: number }>();
+  /** The last world events of each twin, for a page that opens late. */
+  const happened = new Map<string, WorldEventMsg[]>(twins.map((t) => [t.id, []]));
   /** The obstacles each world came with, for `restore`. */
-  const original = new WeakMap<World, Box[]>();
+  const original = new WeakMap<World, Obstacle[]>();
   const calls: (CallStart | CallEnd)[] = [];
 
   let stopped = false;
@@ -221,8 +278,9 @@ export function serveView(
     remember(t.brick.world);
     seen.set(t.id, {
       world: t.brick.world,
-      boxes: JSON.stringify(t.brick.world.cfg.boxes),
+      rev: t.brick.world.obstacles_rev,
       tones: t.brick.toneCount,
+      events: t.brick.world.eventsSince(0).next,
     });
   }
   const unsubscribe = [
@@ -247,14 +305,21 @@ export function serveView(
       if (w !== last.world) {
         remember(w);
         last.world = w;
-        last.boxes = JSON.stringify(w.cfg.boxes);
+        last.rev = w.obstacles_rev;
+        last.events = 0; // a new world keeps its own log
         broadcast({ t: "robot", robot: meta(t) });
-      } else {
-        const boxes = JSON.stringify(w.cfg.boxes);
-        if (boxes !== last.boxes) {
-          last.boxes = boxes;
-          broadcast({ t: "boxes", id: t.id, boxes: w.cfg.boxes.map((b) => ({ ...b })) });
-        }
+      } else if (w.obstacles_rev !== last.rev) {
+        // every change of the obstacles counts in obstacles_rev: a push, a page's action, sim.world
+        last.rev = w.obstacles_rev;
+        broadcast({ t: "boxes", id: t.id, rev: w.obstacles_rev, boxes: w.cfg.boxes.map((b) => ({ ...b })) });
+      }
+      const ev = w.eventsSince(last.events);
+      if (ev.events.length > 0) {
+        last.events = ev.next;
+        const kept = happened.get(t.id)!;
+        kept.push(...ev.events);
+        kept.splice(0, Math.max(0, kept.length - EVENT_HISTORY));
+        broadcast({ t: "events", id: t.id, events: ev.events });
       }
       const count = t.brick.toneCount;
       if (count > last.tones) {
@@ -277,11 +342,16 @@ export function serveView(
     const { brick } = t;
     brick.tick(); // the physics up to now happens where the robot was
     const w = brick.world;
-    const boxIndex = () => {
-      const i = num(msg, "index");
-      if (!Number.isInteger(i) || i < 0 || i >= w.cfg.boxes.length)
-        throw new Refused("no_such_box", `no box ${i}: this world has ${w.cfg.boxes.length}`);
-      return i;
+    /** The id of the box the action names; refused when no box of this world has it (another page took it). */
+    const boxId = () => {
+      const id = msg.box;
+      if (typeof id !== "string") throw new Refused("invalid", "box must be the id of a box");
+      if (!w.obstacle(id))
+        throw new Refused(
+          "no_such_box",
+          `no box ${JSON.stringify(id)}: this world has ${w.cfg.boxes.map((b) => b.id).join(", ") || "none"}`,
+        );
+      return id;
     };
     switch (msg.t) {
       case "carry": {
@@ -300,12 +370,12 @@ export function serveView(
         break;
       }
       case "box_remove": {
-        const id = w.cfg.boxes[boxIndex()]!.id;
+        const id = boxId();
         boxChange(() => w.removeObstacle(id));
         break;
       }
       case "box_move": {
-        const id = w.cfg.boxes[boxIndex()]!.id;
+        const id = boxId();
         const r = boxOf(msg, w);
         boxChange(() => w.moveObstacle(id, r)); // refused, the box stays where it was
         break;
@@ -384,6 +454,7 @@ export function serveView(
             robots: twins.map(meta),
             rate_hz: hz,
             calls,
+            events: [...happened].map(([id, events]) => ({ id, events })),
             ...(o.chat ? { chat: o.chat.hello() } : {}),
           });
         },

@@ -22,6 +22,19 @@
           >Atascado</span
         >
         <span id="chip-call" class="chip busy mono" title="Llamada MCP en curso" hidden></span>
+        <button
+          id="chip-draft"
+          class="chip warn"
+          popovertarget="draft-list"
+          title="Partes de este robot que nadie confirmó"
+          hidden
+        >
+          borrador
+        </button>
+      </div>
+      <div id="draft-list" class="panel draft" popover>
+        <b>Sin confirmar</b>
+        <ul id="draft-items"></ul>
       </div>
       <div class="readout mono">
         <span
@@ -149,50 +162,49 @@
     </div>
     <div id="help" class="offline" hidden>
       <div class="panel help" role="dialog" aria-modal="true" aria-labelledby="help-title">
-        <b id="help-title">Cómo se usa</b>
-        <p>
-          Claude mueve este robot con sus herramientas MCP. Tú puedes hacerle lo que le harías a un robot en el suelo:
-          levantarlo y ponerlo en otro sitio, ponerle cajas delante, pulsar los botones del ladrillo. Las llamadas de
-          Claude aparecen abajo; un clic en una llamada la muestra entera.
-        </p>
-        <table>
+        <b id="help-title">Atajos</b>
+        <table class="legend">
+          <tr>
+            <td>🖐 arrastrar el robot</td>
+            <td>levantarlo</td>
+          </tr>
+          <tr>
+            <td>🖱 arrastrar el suelo</td>
+            <td>girar la vista</td>
+          </tr>
+          <tr>
+            <td>🖱 rueda</td>
+            <td>acercar</td>
+          </tr>
+          <tr>
+            <td><kbd>Mayús</kbd>+arrastrar · 2 dedos</td>
+            <td>desplazar</td>
+          </tr>
           <tr>
             <td><kbd>1</kbd>…<kbd>5</kbd></td>
             <td>Mirar · Mover · Caja · Quitar · Medir</td>
           </tr>
           <tr>
             <td><kbd>Q</kbd> <kbd>E</kbd></td>
-            <td>girar el robot 15° (o lo que llevas en la mano); la rueda gira 5°, con <kbd>Mayús</kbd> 1°</td>
+            <td>girar 15°</td>
           </tr>
           <tr>
-            <td><kbd>Esc</kbd> · clic derecho</td>
-            <td>soltar sin dejar el robot / borrar la medida / volver a Mirar</td>
+            <td><kbd>Esc</kbd></td>
+            <td>soltar · cancelar</td>
           </tr>
           <tr>
             <td><kbd>C</kbd> · <kbd>0</kbd></td>
-            <td>cambiar de cámara · centrar la vista</td>
-          </tr>
-          <tr>
-            <td>arrastrar · rueda</td>
-            <td>girar la vista · acercar (en Arriba, arrastrar desplaza)</td>
-          </tr>
-          <tr>
-            <td><kbd>Mayús</kbd>+arrastrar · clic derecho</td>
-            <td>desplazar la vista; en el táctil, dos dedos</td>
+            <td>cámara · centrar</td>
           </tr>
           <tr>
             <td><kbd>M</kbd></td>
-            <td>sonido y voz</td>
+            <td>sonido</td>
           </tr>
           <tr>
-            <td><kbd>?</kbd></td>
-            <td>esta ayuda</td>
+            <td>📏</td>
+            <td>cm · grados antihorarios</td>
           </tr>
         </table>
-        <p class="dim">
-          Unidades como en las herramientas: cm, y grados en sentido antihorario desde +x (θ entre −180 y 180). El robot
-          sin giroscopio no siente que lo muevas: su rumbo sale de los encoders.
-        </p>
         <button id="help-close" class="wide">Entendido</button>
       </div>
     </div>

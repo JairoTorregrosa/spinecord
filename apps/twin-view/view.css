@@ -202,6 +202,29 @@ select {
   border-color: #ff5a4e66;
   background: #ff5a4e22;
 }
+button.chip {
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.draft {
+  position: fixed;
+  inset: auto;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: inherit;
+}
+.draft ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.draft li {
+  margin: 2px 0;
+}
 .chip.busy {
   color: #cfe5ff;
   border-color: #6fb3ff66;
@@ -502,6 +525,17 @@ body:has(#pip:not([hidden])) .tools {
   cursor: pointer;
   border-radius: 6px;
 }
+.calls li.ev {
+  grid-template-columns: 16px 1fr auto;
+  padding: 3px 4px;
+  cursor: default;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.calls li.ev .ico {
+  font-size: 12px;
+  line-height: 18px;
+}
 .calls li:hover {
   background: rgba(255, 255, 255, 0.03);
 }
@@ -586,6 +620,7 @@ body:has(#pip:not([hidden])) .tools {
 }
 .calls .args,
 .calls .sum {
+  display: none;
   grid-column: 2 / 4;
   font-family: var(--mono);
   font-size: 11.5px;
@@ -823,4 +858,110 @@ body.no-hud .pip,
 body.no-hud .hint,
 body.no-hud .tag3d {
   display: none !important;
+}
+
+/* widgets of the brick panel (src/widgets.ts): every number also in the widget's title */
+.port .val {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.port .val .tacho {
+  font-size: 11px;
+  min-width: 38px;
+  text-align: right;
+}
+.w-gauge,
+.w-bar,
+.w-compass,
+.w-dot,
+.w-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.w-gauge span {
+  font-size: 11px;
+  color: var(--dim);
+  min-width: 34px;
+  text-align: right;
+}
+.w-bar i {
+  display: block;
+  width: 64px;
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.w-bar i b {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+.w-bar.near i b {
+  background: linear-gradient(90deg, var(--ok), var(--warn), var(--bad));
+  background-size: 64px 100%;
+}
+.w-bar.low i b {
+  background: var(--bad);
+}
+.w-bar.none span {
+  color: var(--dim);
+}
+#battery .w-bar i {
+  width: 34px;
+}
+#battery .w-bar span {
+  font-size: 11px;
+}
+.w-dot i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #ffffff22;
+  border: 1px solid #ffffff33;
+}
+.w-dot.on i {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+}
+.w-swatch i {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid #fff5;
+}
+
+/* a call at a glance: icon, tool, one value; the arguments and the summary when opened */
+.calls li.open .args,
+.calls li.open .sum:not([hidden]) {
+  display: block;
+}
+.calls li {
+  padding: 4px 4px;
+}
+.calls .tool .ic {
+  display: inline-block;
+  width: 18px;
+  font-weight: 400;
+}
+.calls .tool .one {
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--dim);
+  margin-left: 8px;
+}
+
+.hint {
+  transition: opacity 0.6s;
+}
+.hint.fade {
+  opacity: 0;
+}
+.help .legend td {
+  padding: 3px 10px 3px 0;
+  white-space: nowrap;
 }

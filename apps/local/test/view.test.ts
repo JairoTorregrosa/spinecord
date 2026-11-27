@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { World } from "../../../packages/sim-world/world";
+import { IR_RAYS, NO_NOISE, ULTRASONIC_RAYS, World } from "../../../packages/sim-world/world";
 import { loadWorldFile } from "../../../packages/sim-world/world-file";
 import { fit } from "../../twin-view/src/fit";
 import type { ServerMessage } from "../../twin-view/src/messages";
@@ -15,7 +15,7 @@ import { DEFAULT_VIEW_PORT, loadConfig } from "../src/config";
 import { buildFleet, type Fleet } from "../src/sources";
 import { callTool } from "../src/tools";
 import { cutText } from "../src/mcp";
-import { VIEW_ACTIONS_PER_S, VIEW_MESSAGE_MAX, serveView, type ViewServer } from "../src/view";
+import { VIEW_ACTIONS_PER_S, VIEW_MESSAGE_MAX, sensorRays, serveView, type ViewServer } from "../src/view";
 import { startServer, until, type TestServer } from "./client";
 
 describe("--view flags", () => {
@@ -189,7 +189,7 @@ describe("the view listener", () => {
       ok: false,
       code: "outside",
     });
-    expect(await p.act({ t: "box_remove", id: "r1-sim", index: 0 })).toMatchObject({ ok: true });
+    expect(await p.act({ t: "box_remove", id: "r1-sim", box: "box1" })).toMatchObject({ ok: true });
     expect(Math.abs((await reading("distance", "distance_cm")) - far)).toBeLessThan(3);
     await p.act({ t: "box_add", id: "r1-sim", x: 85, y: 50, w: 10, h: 20 });
     await p.act({ t: "carry", id: "r1-sim", x: 30, y: 30, heading_deg: 45 });
@@ -209,17 +209,134 @@ describe("the view listener", () => {
     const { connect, reading } = await rig();
     const p = await connect();
     await p.act({ t: "box_add", id: "r1-sim", x: 10, y: 10, w: 10, h: 10 });
-    expect(await p.act({ t: "box_move", id: "r1-sim", index: 0, x: 85, y: 50, w: 10, h: 20 })).toMatchObject({
+    expect(await p.act({ t: "box_move", id: "r1-sim", box: "box1", x: 85, y: 50, w: 10, h: 20 })).toMatchObject({
       ok: true,
     });
     expect(Math.abs((await reading("distance", "distance_cm")) - 17)).toBeLessThan(3);
-    const refused = await p.act({ t: "box_move", id: "r1-sim", index: 0, x: 55, y: 55, w: 10, h: 10 });
+    const refused = await p.act({ t: "box_move", id: "r1-sim", box: "box1", x: 55, y: 55, w: 10, h: 10 });
     expect(refused).toMatchObject({ ok: false, code: "box_on_robot" });
-    expect(await p.act({ t: "box_move", id: "r1-sim", index: 3, x: 5, y: 5, w: 5, h: 5 })).toMatchObject({
+    expect(await p.act({ t: "box_move", id: "r1-sim", box: "box9", x: 5, y: 5, w: 5, h: 5 })).toMatchObject({
       ok: false,
       code: "no_such_box",
     });
     await p.next((m) => m.t === "boxes" && m.boxes.length === 1 && m.boxes[0]!.x === 85, 0);
+  });
+
+  test("every obstacle reaches the page whole, by id; a push moves it on every page alike", async () => {
+    const { connect, tool, fleet } = await rig();
+    const w = fleet.bricks.get("r1-sim")!.world;
+    w.addObstacle({ id: "cup", x: 80, y: 55, w: 8, h: 10, height_cm: 9, mass_g: 50, ir_reflectivity: 0.21 });
+    const a = await connect(),
+      b = await connect();
+    const hello = await a.next<Extract<ServerMessage, { t: "hello" }>>((m) => m.t === "hello", 0);
+    expect(hello.robots[0]!.world.boxes).toEqual([
+      { id: "cup", x: 80, y: 55, w: 8, h: 10, height_cm: 9, mass_g: 50, ir_reflectivity: 0.21 },
+    ]);
+    expect(hello.robots[0]!.world.body.distance_sensor_z_cm).toBe(w.cfg.body.distance_sensor_z_cm);
+    // the robot drives into the cup and pushes it: both pages get the box where the world has it
+    const from = a.got.length;
+    expect((await tool("drive", { distance_cm: 25, speed_pct: 30 })).ok).toBe(true);
+    const moved = (m: ServerMessage) => m.t === "boxes" && m.boxes[0]!.x > 80.5;
+    const ma = await a.next<Extract<ServerMessage, { t: "boxes" }>>(moved, from);
+    await b.next(moved, 0);
+    const last = (p: typeof a) => p.got.filter((m) => m.t === "boxes").at(-1) as Extract<ServerMessage, { t: "boxes" }>;
+    await until(
+      "both pages at the world's last revision",
+      () => last(a).rev === w.obstacles_rev && last(b).rev === w.obstacles_rev,
+    );
+    expect(last(a).boxes).toEqual(w.cfg.boxes as never);
+    expect(last(b).boxes).toEqual(last(a).boxes);
+    expect(ma.boxes[0]).toMatchObject({ id: "cup", height_cm: 9, mass_g: 50 });
+    // the push reaches the page as world events, and a page that opens late sees them in its hello
+    await a.next((m) => m.t === "events" && m.events.some((e) => e.kind === "push_began" && e.box === "cup"), from);
+    const late = await connect();
+    const lateHello = await late.next<Extract<ServerMessage, { t: "hello" }>>((m) => m.t === "hello", 0);
+    expect(lateHello.events[0]!.events.some((e) => e.kind === "push_began" && e.box === "cup")).toBe(true);
+    // a page moves it by id: its height and mass stay; an id no box has is refused
+    expect(await b.act({ t: "box_move", id: "r1-sim", box: "cup", x: 20, y: 20, w: 8, h: 10 })).toMatchObject({
+      ok: true,
+    });
+    expect(w.obstacle("cup")).toMatchObject({ x: 20, y: 20, height_cm: 9, mass_g: 50, ir_reflectivity: 0.21 });
+    expect(await a.act({ t: "box_remove", id: "r1-sim", box: "nope" })).toMatchObject({
+      ok: false,
+      code: "no_such_box",
+    });
+    expect(await a.act({ t: "box_remove", id: "r1-sim", box: "cup" })).toMatchObject({ ok: true });
+    await a.next((m) => m.t === "boxes" && m.boxes.length === 0, 0);
+    await b.next((m) => m.t === "boxes" && m.boxes.length === 0, 0);
+  });
+
+  test("the rays are the physics' own; on a world without noise every sensor the page shows reads what the tools read", async () => {
+    const { connect, tool, fleet } = await rig();
+    const world = JSON.parse(await Bun.file(join(import.meta.dir, "..", "examples", "room.json")).text());
+    world.name = "room-quiet";
+    world.noise = { ...NO_NOISE };
+    world.obstacles = [
+      { id: "post", x: 95, y: 58, w: 4, h: 4 },
+      { id: "low", x: 20, y: 90, w: 30, h: 8, height_cm: 4 },
+    ];
+    const loaded = await tool("command_device", {
+      device: "sim.world",
+      command: "load_world",
+      args: { world: JSON.stringify(world) },
+    });
+    expect(loaded.ok).toBe(true);
+    const p = await connect();
+    const w = fleet.bricks.get("r1-sim")!.world;
+    const ports: Record<string, [string, string]> = {
+      "1": ["ev3.S1", "pressed"],
+      "2": ["ev3.S2", "angle_deg"],
+      "3": ["ev3.S3", "reflected_pct"],
+      "4": ["ev3.S4", "distance_cm"],
+    };
+    for (const pose of [
+      { x: 60, y: 60, heading_deg: 0 },
+      { x: 40, y: 40, heading_deg: 90 },
+      { x: 30, y: 30, heading_deg: 30 },
+      { x: 100, y: 100, heading_deg: 45 },
+    ]) {
+      expect(await p.act({ t: "carry", id: "r1-sim", ...pose })).toMatchObject({ ok: true });
+      const from = p.got.length;
+      const st = await p
+        .next<Extract<ServerMessage, { t: "state" }>>((m) => m.t === "state", from)
+        .then((m) => m.robots[0]!);
+      for (const s of st.sensors) {
+        const [device, channel] = ports[s.port]!;
+        const r = await tool("read_device", { device, channels: [channel] });
+        const v = r.data.readings[0].value;
+        expect([s.port, s.values[0]]).toEqual([s.port, typeof v === "boolean" ? Number(v) : v]);
+      }
+      // the ultrasonic's mark is where its reading comes from: the echo's length is the reading (or none at 255)
+      const us = st.rays.ultrasonic!;
+      const reading = st.sensors.find((s) => s.kind === "ultrasonic")!.values[0]!;
+      if (reading === 255) expect(us.echo).toBeNull();
+      else expect(Math.abs(Math.max(3, us.echo!.cm) - reading)).toBeLessThanOrEqual(0.1);
+      expect(us.rays).toHaveLength(ULTRASONIC_RAYS);
+      expect(st.rays.ir).toBeNull(); // no infrared on this robot: no rays invented for it
+      expect(st.rays.color).toEqual({ ahead_cm: w.cfg.body.color_sensor_x_cm, r_cm: w.cfg.body.color_spot_radius_cm });
+      expect(st.rays.from).toEqual({
+        ahead_cm: w.cfg.body.distance_sensor_x_cm,
+        z_cm: w.cfg.body.distance_sensor_z_cm,
+      });
+    }
+  });
+
+  test("sensorRays: the infrared's rays share out its light, and an echo beyond range is none", async () => {
+    const w = new World({
+      ...(await loadWorldFile(join(import.meta.dir, "..", "examples", "room.json"))),
+      noise: NO_NOISE,
+    });
+    w.addObstacle({ id: "near", x: 80, y: 50, w: 10, h: 20 });
+    const r = sensorRays(w, ["ir", "ultrasonic"]);
+    expect(r.ir!.rays).toHaveLength(IR_RAYS);
+    expect(r.ir!.rays.reduce((a, b) => a + b.share, 0)).toBeCloseTo(1, 2);
+    expect(r.ir!.rays[(IR_RAYS - 1) / 2]!.deg).toBe(0);
+    expect(r.ultrasonic!.echo!.cm).toBeCloseTo(w.ultrasonicCm(), 0);
+    expect(r.color).toBeNull();
+    w.removeObstacle("near");
+    w.setPose({ x: 60, y: 60, th: Math.PI / 4 }); // square on to nothing near: a corner far away
+    const far = sensorRays(w, ["ultrasonic"]);
+    expect(far.ultrasonic!.echo === null).toBe(w.ultrasonicCm() === 255);
   });
 
   test("restore right after load_world, before any frame, brings that world's own boxes back", async () => {
@@ -276,7 +393,7 @@ describe("the view listener", () => {
     for (const bad of [
       { t: "carry", id: "r1-sim", x: "1", y: 2, heading_deg: 0 },
       { t: "carry", id: { toString: 1 }, x: 1, y: 2, heading_deg: 0 },
-      { t: "box_remove", id: "r1-sim", index: 0.5 },
+      { t: "box_remove", id: "r1-sim", box: 0 },
       { t: "button", id: "r1-sim", button: 2.5, down: true },
     ])
       expect(await good.act(bad)).toMatchObject({ ok: false });

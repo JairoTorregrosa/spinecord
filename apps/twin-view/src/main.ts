@@ -10,6 +10,8 @@ import { Cameras, CAMS, type Cam } from "./camera";
 import { ChatPanel } from "./chat";
 import { Hand, MODES, heading, type Mode } from "./hand";
 import * as hud from "./hud";
+import { draftLines } from "./draft";
+import { SensorRayView } from "./rays";
 import { Link, type LinkState } from "./link";
 import { lookOf } from "./look";
 import type { RobotMeta, RobotState, ServerMessage } from "./messages";
@@ -105,32 +107,10 @@ const chat = new ChatPanel({
   setVoice: (v) => (sound.voice = v),
 });
 
-// ---------------------------------------------------------------- the distance sensor's cone
-const conePos = new Float32Array(4 * 3);
-const coneGeo = new THREE.BufferGeometry();
-coneGeo.setAttribute("position", new THREE.BufferAttribute(conePos, 3));
-coneGeo.setIndex([0, 1, 2, 0, 2, 3]);
-const coneMat = new THREE.MeshBasicMaterial({
-  color: 0x3ccf7a,
-  transparent: true,
-  opacity: 0.16,
-  side: THREE.DoubleSide,
-  depthWrite: false,
-});
-const cone = new THREE.Mesh(coneGeo, coneMat);
-const rayPos = new Float32Array(6 * 3);
-const rayGeo = new THREE.BufferGeometry();
-rayGeo.setAttribute("position", new THREE.BufferAttribute(rayPos, 3));
-const rays = new THREE.LineSegments(
-  rayGeo,
-  new THREE.LineBasicMaterial({ color: 0x3ccf7a, transparent: true, opacity: 0.7 }),
-);
-const hitGeo = new THREE.SphereGeometry(0.9, 14, 10);
-const hits = [0, 1, 2].map(() => new THREE.Mesh(hitGeo, new THREE.MeshBasicMaterial({ color: 0x3ccf7a })));
-const coneGroup = new THREE.Group();
-coneGroup.add(cone, rays, ...hits);
+// ---------------------------------------------------------------- the sensors' rays, as the physics casts them
+const sensorRays = new SensorRayView();
+const coneGroup = sensorRays.group;
 robotRoot.add(coneGroup);
-cone.frustumCulled = rays.frustumCulled = false;
 
 // ---------------------------------------------------------------- trail
 const TRAIL_MAX = 6000;
@@ -179,9 +159,14 @@ function linkChanged(s: LinkState): void {
     offlineTimer = offlineClock = null;
     $("offline").hidden = true;
     hud.chip("chip-ws", ["Conectado", "ok"]);
+    // back after a loss: the robot may be anywhere now
+    if (cams.mode === "follow") cams.frame("ease");
     return;
   }
-  hud.chip("chip-ws", ["Reconectando…", "warn"]);
+  // at once: nothing the chips said is known any more; they come back with the first state after the return
+  hud.chip("chip-ws", ["Sin conexión · reintentando", "bad"]);
+  hud.chip("chip-link", ["—", ""]);
+  hud.chip("chip-activity", ["—", ""]);
   // a blink of the socket is not worth a curtain; a real loss is, with how long it has lasted
   offlineTimer ??= setTimeout(() => {
     $("offline").hidden = false;
@@ -205,6 +190,7 @@ function receive(m: ServerMessage): void {
       sel.value = keepId ?? "";
       hud.callsReset();
       for (const c of m.calls) hud.call(c);
+      for (const e of m.events.find((x) => x.id === keepId)?.events ?? []) hud.worldEvent(e);
       chat.hello(m.chat);
       for (const c of m.calls) chat.call(c);
       setFocus(keepId ?? null);
@@ -243,6 +229,9 @@ function receive(m: ServerMessage): void {
         missedSound();
       }
       break;
+    case "events":
+      if (m.id === focus?.id) for (const e of m.events) hud.worldEvent(e);
+      break;
     case "call_start":
     case "call_end":
       hud.call(m);
@@ -261,7 +250,21 @@ function receive(m: ServerMessage): void {
 
 // ---------------------------------------------------------------- focus: build the world and the robot
 /** The robot's name is the page's title, its id beside it; without a name, the page's own title. */
+/** The "borrador" chip, only for a twin whose build someone has yet to confirm. */
+function showDraft(r: RobotMeta | null): void {
+  const lines = r ? draftLines(r) : [];
+  $("chip-draft").hidden = lines.length === 0;
+  $("draft-items").replaceChildren(
+    ...lines.map((l) => {
+      const li = document.createElement("li");
+      li.textContent = l;
+      return li;
+    }),
+  );
+}
+
 function showTitle(r: RobotMeta | null): void {
+  showDraft(r);
   const title = $("title");
   if (!r?.name) {
     title.innerHTML = "EV3 <b>gemelo 3D</b>";
@@ -311,13 +314,23 @@ function setFocus(id: string | null): void {
   robotRoot.add(model.group);
   arena = buildArena(focus.world, model.height, renderer.capabilities.getMaxAnisotropy());
   scene.add(arena.group);
-  coneGroup.visible = model.rayOrigin !== null && $<HTMLInputElement>("opt-cone").checked;
+  coneGroup.visible = hasRays(focus) && $<HTMLInputElement>("opt-cone").checked;
   roles = {};
-  if (focus.drivetrain) {
-    const what = look.drive === "tracks" ? "oruga" : "rueda";
-    roles[focus.drivetrain.left] = `${what} izq.`;
-    roles[focus.drivetrain.right] = `${what} der.`;
+  // the drive motors say what they turn, as the build has it: tracks, wheels, or nothing (a build without a drive)
+  const turns = look.drive === "tracks" ? "oruga" : look.drive === "wheels" ? "rueda" : null;
+  if (focus.drivetrain && turns) {
+    roles[focus.drivetrain.left] = `${turns} izq.`;
+    roles[focus.drivetrain.right] = `${turns} der.`;
   }
+  // and the others what they move, as the look builds it
+  const MOVES: Record<string, string> = {
+    axle: "eje",
+    arm: "brazo",
+    lift: "elevador",
+    turntable: "plataforma",
+    gripper: "pinza",
+  };
+  for (const m of look.motors) roles[m.port] ??= MOVES[m.attachment] ?? "";
   $("pip").hidden = !$<HTMLInputElement>("opt-pip").checked;
   // light and fog to the size of the arena
   const w = focus.world,
@@ -334,29 +347,27 @@ function setFocus(id: string | null): void {
   fitFog();
   const key = `${focus.id}\n${w.name}`;
   const first = key !== framed;
+  // the robot whole, where it is (not where it started), in the part of the canvas no panel covers: behind it and
+  // to its right, or from the front when a phone looks ahead, where its face reads. A deep link's angle wins.
+  cams.extent = {
+    front_cm: w.body.front_cm,
+    back_cm: w.body.back_cm,
+    half_width_cm: w.body.half_width_cm,
+    height_cm: model?.height ?? 20,
+  };
+  cams.aim.az = look.phone && Math.cos(look.phone.yaw * DEG) > 0.5 ? -135 : -32;
   cams.fitArena(w, first);
-  if (first && cams.mode === "follow") {
-    // Close enough to see the robot's parts without touching the camera: behind it and to its right, or from the
-    // front when a phone looks ahead, where its face reads. A deep link's angle wins.
-    const s = toScene(w.start.x, w.start.y);
-    const h = w.start.heading_deg * DEG;
-    const az = (look.phone && Math.cos(look.phone.yaw * DEG) > 0.5 ? -135 : -32) * DEG;
-    const a = h + Math.PI - az,
-      d = 58,
-      el = 38 * DEG;
-    cams.controls.target.copy(s);
-    camera.position.set(s.x + Math.cos(a) * Math.cos(el) * d, Math.sin(el) * d, s.z - Math.sin(a) * Math.cos(el) * d);
-    placeCamera(camera, cams.controls.target, h);
-    cams.controls.update();
-  }
   framed = key;
 }
 
-/** The cone option names the distance sensor this robot has, and is not offered when it has none. */
+/** Does this robot have a sensor whose rays the page draws (ultrasonic, infrared, colour)? */
+function hasRays(m: RobotMeta | null): boolean {
+  return m !== null && Object.values(m.ports.sensors).some((k) => k === "ultrasonic" || k === "ir" || k === "color");
+}
+/** The rays option is offered only to a robot that has such a sensor. */
 function showConeOption(): void {
-  const kind = focus ? Object.values(focus.ports.sensors).find((k) => k === "ultrasonic" || k === "ir") : undefined;
-  $("opt-cone-row").hidden = kind === undefined;
-  $("opt-cone-label").textContent = kind ? hud.CONE[kind]! : "";
+  $("opt-cone-row").hidden = !hasRays(focus);
+  $("opt-cone-label").textContent = "Rayos de los sensores";
 }
 
 function onState(st: RobotState): void {
@@ -448,12 +459,14 @@ const cams = new Cameras(
   },
   freeArea,
 );
+// a deep link's angle, distance or height wins over the first framing
+cams.onSnap = (target, heading) => placeCamera(camera, target, heading);
 /** The canvas left uncovered by the panels, for the top view. */
 function freeArea(): { left: number; top: number; right: number; bottom: number } {
   const r = (id: string) => $(id).getBoundingClientRect();
   const c = canvas.getBoundingClientRect();
-  const hint = $("hint");
-  const top = Math.max(r("bar").bottom, hint.hidden ? 0 : hint.getBoundingClientRect().bottom) + 8;
+  // the hint floats over the scene and fades: it is not a panel, or the scene would jump when it goes
+  const top = r("bar").bottom + 8;
   const left = $("tools").classList.contains("folded") ? 12 : r("tools").right + 8;
   const right = $("brick").classList.contains("folded") ? c.width - 12 : r("brick").left - 8;
   const below = document.getElementById("chat") ?? $("callpanel"); // --chat: the chat takes the calls' place
@@ -487,7 +500,7 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#modes button"))
   b.addEventListener("click", () => hand.setMode(b.dataset.mode as Mode));
 for (const b of document.querySelectorAll<HTMLButtonElement>("#cams button"))
   b.addEventListener("click", () => setCam(b.dataset.cam as Cam));
-$("cam-reset").addEventListener("click", () => cams.reset(shownPose()));
+$("cam-reset").addEventListener("click", () => cams.reset());
 $("restore").addEventListener("click", () => {
   if (!focus) return;
   const id = focus.id;
@@ -500,7 +513,7 @@ $("restore").addEventListener("click", () => {
 $("trail-clear").addEventListener("click", () => trailReset());
 $<HTMLSelectElement>("robot").addEventListener("change", (e) => setFocus((e.target as HTMLSelectElement).value));
 $<HTMLInputElement>("opt-cone").addEventListener("change", (e) => {
-  coneGroup.visible = (e.target as HTMLInputElement).checked && model?.rayOrigin != null;
+  coneGroup.visible = (e.target as HTMLInputElement).checked && hasRays(focus);
 });
 $<HTMLInputElement>("opt-trail").addEventListener(
   "change",
@@ -624,21 +637,12 @@ window.addEventListener("keydown", (e) => {
   else if (k === "q" || k === "e") hand.turnKey(k === "q" ? 1 : -1);
   else if (k >= "1" && k <= "5") hand.setMode(MODES[Number(k) - 1]!);
   else if (k === "c") setCam(CAMS[(CAMS.indexOf(cams.mode) + 1) % CAMS.length]!);
-  else if (k === "0" || k === "home") cams.reset(shownPose());
+  else if (k === "0" || k === "home") cams.reset();
   else if (k === "m") void toggleSound();
   else return;
   e.preventDefault();
 });
 hud.callsInit();
-// the first visit opens with the help: most people here have never seen the page
-try {
-  if (localStorage.getItem("twin-view:helped") === null) {
-    localStorage.setItem("twin-view:helped", "1");
-    showHelp(true);
-  }
-} catch {
-  // storage blocked: the ? button is still there
-}
 // the panels start below the top bar, whose height grows when a narrow window wraps it
 new ResizeObserver(() => {
   const b = $("bar").getBoundingClientRect();
@@ -656,33 +660,11 @@ function resize(): void {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    cams.resized();
   }
 }
-const rayColour = new THREE.Color();
 function updateCone(st: RobotState): void {
-  if (!model?.rayOrigin || !coneGroup.visible) return;
-  const o = model.rayOrigin;
-  const a = 12 * DEG;
-  const dist = st.sensors.find((s) => s.kind === "ultrasonic" || s.kind === "ir");
-  const reading = dist?.values[0];
-  const near = typeof reading === "number" && dist?.kind === "ultrasonic" ? reading : Math.min(...st.rays_cm);
-  rayColour.setHSL(Math.min(0.36, Math.max(0, (near - 5) / 120) * 0.36), 0.85, 0.5);
-  coneMat.color.copy(rayColour);
-  (rays.material as THREE.LineBasicMaterial).color.copy(rayColour);
-  conePos.set([o.x, o.y, o.z], 0);
-  [-a, 0, a].forEach((off, i) => {
-    const L = Math.min(255, st.rays_cm[i]!);
-    const x = o.x + Math.cos(off) * L,
-      z = o.z - Math.sin(off) * L;
-    conePos.set([x, o.y, z], (i + 1) * 3);
-    rayPos.set([o.x, o.y, o.z, x, o.y, z], i * 6);
-    hits[i]!.position.set(x, o.y, z);
-    hits[i]!.visible = st.rays_cm[i]! <= 250;
-    (hits[i]!.material as THREE.MeshBasicMaterial).color.copy(rayColour);
-  });
-  coneGeo.attributes.position!.needsUpdate = true;
-  rayGeo.attributes.position!.needsUpdate = true;
-  coneGeo.computeBoundingSphere();
+  if (coneGroup.visible) sensorRays.update(st.rays);
 }
 
 function frame(now: number): void {

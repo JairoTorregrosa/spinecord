@@ -1532,18 +1532,30 @@ export class World {
    * nothing back (the sensor then reads 255).
    */
   coneDistance(p: Pose = this.pose): number {
+    return this.coneEcho(p).d;
+  }
+  /**
+   * coneDistance and the bearing (rad from the heading, counter-clockwise) its nearest echo came back along: NaN
+   * when none did. A display: it spends no noise.
+   */
+  coneEcho(p: Pose = this.pose): { d: number; off: number } {
     const minCos = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
-    let best = Infinity;
+    let best = Infinity,
+      bestOff = NaN;
     const cast = (off: number): void => {
       const h = this.rayHit(p, off);
-      if (h.cos >= minCos - 1e-12 && h.d < best) best = h.d;
+      if (h.cos >= minCos - 1e-12 && h.d < best) {
+        best = h.d;
+        bestOff = off;
+      }
     };
     const half = (CONE_HALF_DEG * Math.PI) / 180;
     for (let i = 0; i < ULTRASONIC_RAYS; i++) cast(((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * half);
     // then between them: only a box nearer than the echo found so far can send a nearer one (a face it hides is
     // farther still), so the rest need no rays
     for (const off of this.echoBearings(p, best)) cast(off);
-    return Math.min(best, this.cornerEcho(p));
+    const corner = this.cornerEcho(p);
+    return corner.d < best ? corner : { d: best, off: bestOff };
   }
   /**
    * The bearings (rad, from the heading) the cone is searched along besides its ULTRASONIC_RAYS even rays: where its
@@ -1611,11 +1623,12 @@ export class World {
     return out;
   }
   /** The nearest box corner that echoes whatever the angle (ULTRASONIC_EDGE_MAX_CM): inside the cone and in plain view. */
-  private cornerEcho(p: Pose): number {
+  private cornerEcho(p: Pose): { d: number; off: number } {
     const { width, height, boxes } = this.cfg;
     const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
     const half = (CONE_HALF_DEG * Math.PI) / 180;
-    let best = Infinity;
+    let best = Infinity,
+      bestOff = NaN;
     const look = (x: number, y: number, max: number): void => {
       const d = Math.hypot(x - ox, y - oy);
       if (!(d > 1e-9) || d > max || d >= best) return;
@@ -1624,7 +1637,10 @@ export class World {
       else if (off < -Math.PI) off += 2 * Math.PI;
       if (Math.abs(off) > half) return;
       // in plain view: the ray toward it meets nothing before it (the corner's own box is met at the corner)
-      if (this.rayHit(p, off).d >= d - 1e-6) best = d;
+      if (this.rayHit(p, off).d >= d - 1e-6) {
+        best = d;
+        bestOff = off;
+      }
     };
     const inside = (x: number, y: number, skip: Rect): boolean =>
       x <= 0 ||
@@ -1652,7 +1668,7 @@ export class World {
       [width, height],
     ] as Vec[])
       look(x, y, ULTRASONIC_CORNER_MAX_CM);
-    return best;
+    return { d: best, off: bestOff };
   }
   /** What the ultrasonic sensor reads without noise (a display): 3..250 cm, 255 with no echo in range. */
   ultrasonicCm(): number {
@@ -1677,18 +1693,30 @@ export class World {
   }
   /** irProximity before the sensor's 100 % cap: noise goes on this, so far from everything it still reads 100. */
   private irUncapped(): number {
+    return this.irBeam().pct;
+  }
+  /**
+   * The infrared beam as irProximity casts it: each ray's bearing (rad from the heading), length (cm) and share of
+   * the light that comes back (0..1, the shares sum to 1), and the reading before the 100 % cap. A display: it
+   * spends no noise.
+   */
+  irBeam(p: Pose = this.pose): { rays: { off: number; d: number; share: number }[]; pct: number } {
     let sum = 0,
       full = 0;
+    const rays: { off: number; d: number; share: number }[] = [];
     for (let i = 0; i < IR_RAYS; i++) {
       const u = (2 * i) / (IR_RAYS - 1) - 1,
         off = (u * IR_CONE_HALF_DEG * Math.PI) / 180,
         w = Math.cos((u * Math.PI) / 2) ** 2;
-      const h = this.rayHit(this.pose, off, (IR_CONE_HALF_DEG * Math.PI) / 180),
+      const h = this.rayHit(p, off, (IR_CONE_HALF_DEG * Math.PI) / 180),
         d = Math.max(h.d, 0.1);
-      sum += (w * h.cos * h.ir) / (d * d);
+      const back = (w * h.cos * h.ir) / (d * d);
+      sum += back;
       full += w * Math.cos(off) ** 3; // a square wall at distance 1
+      rays.push({ off, d: h.d, share: back });
     }
-    return IR_PCT_PER_CM * Math.sqrt(full / sum);
+    for (const r of rays) r.share = sum > 0 ? r.share / sum : 0;
+    return { rays, pct: IR_PCT_PER_CM * Math.sqrt(full / sum) };
   }
   /** Infrared proximity in % (0 touching, 100 far), with noise that grows with the reading. */
   senseIrProximity(): number {
