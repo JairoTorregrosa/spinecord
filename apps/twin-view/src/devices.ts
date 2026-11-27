@@ -5,12 +5,12 @@
 // Each sensor is built facing +x with its top at +z, its centre at the origin, then turned to its facing.
 import * as THREE from "three";
 import type { Fit } from "./attachments";
-import { placePart, type Mount, type Occupancy } from "./layout";
+import { hold, onGrid, placePart, type Mount, type Occupancy } from "./layout";
 import type { Look, MotorPlace, SensorPlace } from "./look";
 import type { RobotMeta, RobotState } from "./messages";
-import { DIMS, type Dim } from "./dims";
+import { MOTOR, SENSOR, type PartDims } from "./dims";
 import { largeMotor, largeMotorBox, mediumMotor, type MotorPart } from "./motors";
-import { facingDir, P, pointOf, type Kit } from "./parts";
+import { facingDir, P, pointOf, type Kit, type RealPart } from "./parts";
 
 /** The brick as the cables see it: where each port is, the way out of it, and the brick's box. */
 export interface BrickMount {
@@ -59,17 +59,29 @@ export interface Devices {
 }
 
 const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-/** Each sensor kind's box around its centre, facing +x. */
-const around = (d: Dim): [THREE.Vector3, THREE.Vector3] => [
-  v3(-d.l / 2, -d.w / 2, -d.h / 2),
-  v3(d.l / 2, d.w / 2, d.h / 2),
-];
-const SIZE: Record<SensorPlace["kind"], [THREE.Vector3, THREE.Vector3]> = {
-  ultrasonic: around(DIMS.ultrasonicSensor),
-  ir: around(DIMS.infraredSensor),
-  color: around(DIMS.colorSensor),
-  touch: around(DIMS.touchSensor),
-  gyro: around(DIMS.gyroSensor),
+/** A part's box around its centre (facing +x), and where its own origin (a sensor's axle hole, a motor's output)
+ *  lies from that centre: the look places a part by the centre of its box. */
+const around = (d: PartDims): { min: THREE.Vector3; max: THREE.Vector3; origin: THREE.Vector3 } => {
+  const c = v3((d.min[0] + d.max[0]) / 2, (d.min[1] + d.max[1]) / 2, (d.min[2] + d.max[2]) / 2);
+  return {
+    min: v3(...d.min).sub(c),
+    max: v3(...d.max).sub(c),
+    origin: c.negate(),
+  };
+};
+const SIZE: Record<SensorPlace["kind"], ReturnType<typeof around>> = {
+  ultrasonic: around(SENSOR.ultrasonic),
+  ir: around(SENSOR.ir),
+  color: around(SENSOR.color),
+  touch: around(SENSOR.touch),
+  gyro: around(SENSOR.gyro),
+};
+const LDRAW: Record<SensorPlace["kind"], string> = {
+  ultrasonic: SENSOR.ultrasonic.ldraw,
+  ir: SENSOR.ir.ldraw,
+  color: SENSOR.color.ldraw,
+  touch: SENSOR.touch.ldraw,
+  gyro: SENSOR.gyro.ldraw,
 };
 
 export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMount, occ: Occupancy): Devices {
@@ -90,7 +102,44 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
   // the parts the look places in full go first, so the defaults keep clear of them
   const byGiven = <T extends { x: number | null; y: number | null; z: number | null }>(a: T, b: T) =>
     Number(b.x !== null && b.y !== null && b.z !== null) - Number(a.x !== null && a.y !== null && a.z !== null);
-  for (const mp of [...look.motors].sort(byGiven)) motors.push(placeMotor(kit, mp, m, occ, { F, cx, cz, bb }));
+  // a motor that rides on another's arm or lift comes after the one that carries it
+  const order = [...look.motors].sort(byGiven).sort((a, b) => Number(a.on !== null) - Number(b.on !== null));
+  for (const mp of order) {
+    const carrier = mp.on ? motors.find((x) => x.port === mp.on) : undefined;
+    if (carrier?.end) {
+      // at the end of the carrier's arm or lift, hanging under it, facing ahead; it rides along from then on
+      group.updateMatrixWorld(true);
+      const e = carrier.end.getWorldPosition(new THREE.Vector3());
+      const tip = v3(e.x, -e.z, e.y);
+      const rider = placeMotor(
+        kit,
+        { ...mp, x: tip.x + 2, y: tip.y, z: tip.z - 1.5, facing: mp.facing ?? "forward" },
+        m,
+        occ,
+        {
+          F,
+          cx,
+          cz,
+          bb,
+        },
+      );
+      carrier.end.attach(rider.group);
+      motors.push(rider);
+      continue;
+    }
+    const part = placeMotor(kit, mp, m, occ, { F, cx, cz, bb });
+    const c = part.box.getCenter(new THREE.Vector3());
+    hold(
+      kit,
+      occ,
+      part.box,
+      v3(c.x, c.y, part.box.min.z + 0.4),
+      v3(0, 1, 0),
+      (part.box.max.y - part.box.min.y) / 2,
+      bb,
+    );
+    motors.push(part);
+  }
   for (const mo of motors) {
     cableTo(kit, m, mo.socket.at, mo.socket.dir, mo.port);
     height = Math.max(height, mo.box.max.z);
@@ -107,7 +156,7 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
       color: [0, 2.8, -2.8].map((y) => ({
         x: body.color_sensor_x_cm,
         y,
-        z: 0.6 + DIMS.colorSensor.l / 2,
+        z: 0.6 + (SENSOR.color.max[0] - SENSOR.color.min[0]) / 2,
         facing: "down" as const,
       })),
       touch: [
@@ -130,20 +179,53 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
       ],
     };
     mounts.ir = mounts.ultrasonic;
-    const [min, max] = SIZE[s.kind];
-    const pl = placePart(s, min, max, mounts[s.kind], occ);
+    const size = SIZE[s.kind];
+    const pl = placePart(s, size.min, size.max, mounts[s.kind], occ, s.kind === "gyro");
+    // a default mount puts the sensor's axle hole on the half-module grid (over the drive's top)
+    const hole0 = pointOf(size.origin, pl.q, pl.at);
+    if (s.x === null && s.y === null && s.z === null) {
+      const shift = v3(onGrid(hole0.x), onGrid(hole0.y), dt + onGrid(hole0.z - dt)).sub(hole0);
+      pl.at.add(shift);
+      pl.box.translate(shift);
+    }
     const g = new THREE.Group();
     g.position.copy(P(pl.at.x, pl.at.y, pl.at.z));
     g.quaternion.copy(pl.q);
     group.add(g);
-    const at = (x: number, y: number, z: number) => pointOf(v3(x, y, z), pl.q, pl.at);
+    // the part's own frame: its axle hole at the origin, the eye or face along +x (dims.ts SENSOR)
+    const o = kit.live(new THREE.Group());
+    o.position.copy(P(size.origin.x, size.origin.y, size.origin.z));
+    g.add(o);
+    const d = SENSOR[s.kind];
+    const roles: NonNullable<RealPart["roles"]> = {};
+    const f = (k: string) => {
+      const v = d.at[k];
+      if (!v) throw new Error(`the parts map gives the ${s.kind} sensor no ${k}`);
+      return v;
+    };
+    /** a point of the part's frame in the robot frame */
+    const at = (x: number, y: number, z: number) => pointOf(v3(x, y, z).add(size.origin), pl.q, pl.at);
     height = Math.max(height, pl.box.max.z);
+    const [x0, y0, z0] = d.min,
+      [x1, y1, z1] = d.max;
+    const W = y1 - y0,
+      H = z1 - z0;
+    const zc = (z0 + z1) / 2;
+    // the shell all EV3 sensors share: white above, light grey below, the socket at the back
+    const shell = (xf: number, w: number) => {
+      kit.box(xf - x0, w, H * 0.5, (x0 + xf) / 2, 0, z0 + H * 0.25, mats.light, 0.3, o);
+      kit.box(xf - x0, w, H * 0.5, (x0 + xf) / 2, 0, z1 - H * 0.25, mats.white, 0.35, o);
+      const [sx, , sz] = f("socket");
+      kit.box(0.2, 1.1, 0.8, sx + 0.08, 0, sz, mats.anthracite, 0.08, o);
+      // the axle hole through it, and the pin holes a module either side
+      for (const h of d.holes)
+        for (const side of [1, -1]) kit.axleCyl(0.24, 0.05, h.at[0], side * (w / 2 + 0.01), h.at[2], mats.black, o, 12);
+    };
     if (s.kind === "ultrasonic" || s.kind === "ir") {
-      // the body: grey below, a white cap, the front in anthracite
-      kit.box(2.0, 4.6, 1.4, -0.3, 0, -0.65, mats.light, 0.45, g);
-      kit.box(2.0, 4.6, 1.35, -0.3, 0, 0.7, mats.white, 0.5, g);
-      kit.box(0.6, 4.8, 2.8, 1.0, 0, 0, mats.anthracite, 0.35, g);
-      kit.studs(1, 2, -0.6, 0, 1.38, mats.white, g);
+      // a narrow body behind the wide front that holds the eyes or the windows
+      const xf = 1.2;
+      shell(xf, 2.4);
+      kit.box(x1 - xf, W, H, (xf + x1) / 2, 0, zc, s.kind === "ultrasonic" ? mats.black : mats.white, 0.35, o);
       if (s.kind === "ultrasonic") {
         const glow = kit.live(
           keep(
@@ -156,40 +238,53 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
           ),
         );
         usEyes.push({ port: s.port, mat: glow });
-        for (const [i, y] of [1.25, -1.25].entries()) {
+        // on the real mesh both transducers glow
+        const eyes = kit.live(new THREE.Group());
+        o.add(eyes);
+        roles.eye = { target: eyes, material: glow };
+        for (const [i, k] of ["transducer_left", "transducer_right"].entries()) {
+          const [ex, ey, ez] = f(k);
           const eye = new THREE.Group();
-          eye.position.copy(P(1.3, y, 0));
+          eye.position.copy(P(x1, ey, ez));
           eye.rotation.y = Math.PI / 2; // the eyes look along +x
-          g.add(eye);
-          kit.axleCyl(1.0, 0.3, 0, 0, 0, mats.red, eye, 28);
-          kit.axleCyl(0.75, 0.34, 0, 0, 0, mats.black, eye, 24);
-          kit.axleCyl(0.5, 0.36, 0, 0, 0, i === 0 ? glow : mats.anthracite, eye, 20);
+          o.add(eye);
+          const r = x1 - ex > 0 ? Math.min(1.25, W / 4 - 0.1) : 1;
+          kit.axleCyl(r, 0.3, 0, 0, 0, mats.red, eye, 28);
+          kit.axleCyl(r * 0.78, 0.34, 0, 0, 0, mats.black, eye, 24);
+          kit.axleCyl(r * 0.5, 0.36, 0, 0, 0, i === 0 ? glow : mats.anthracite, eye, 20);
         }
+        rayOrigin ??= at(...f("beam_centre"));
       } else {
-        // the infrared's dark red window, glossy
+        // the infrared's two dark red windows, glossy
         const win = keep(new THREE.MeshStandardMaterial({ color: 0x3c0508, roughness: 0.06, metalness: 0.1 }));
-        kit.box(0.2, 3.7, 1.5, 1.32, 0, 0.05, win, 0.5, g);
+        for (const y of [W / 4, -W / 4]) kit.box(0.2, W / 2 - 0.5, H - 0.8, x1 - 0.05, y, zc, win, 0.4, o);
+        rayOrigin ??= at(...f("front_face"));
       }
-      rayOrigin ??= at(1.4, 0, 0);
     } else if (s.kind === "color") {
-      kit.box(3.3, 2.3, 1.5, -0.25, 0, -0.75, mats.light, 0.35, g);
-      kit.box(3.3, 2.3, 1.5, -0.25, 0, 0.75, mats.white, 0.4, g);
+      shell(x1 - 0.3, W);
+      const [lx, ly, lz] = f("lens");
       const face = new THREE.Group();
-      face.position.copy(P(1.6, 0, 0));
+      face.position.copy(P(lx - 0.15, ly, lz));
       face.rotation.y = Math.PI / 2;
-      g.add(face);
-      kit.axleCyl(0.92, 0.6, 0, 0, 0, mats.black, face, 24);
+      o.add(face);
+      kit.axleCyl(0.6, 0.3, 0, 0, 0, mats.black, face, 24);
       const lens = kit.live(
         keep(
           new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xff2010, emissiveIntensity: 1, roughness: 0.1 }),
         ),
       );
+      // the lens lights up on the real mesh too: its LED and phototransistor take this material there
+      const lensHolder = kit.live(new THREE.Group());
+      lensHolder.position.copy(face.position);
+      lensHolder.rotation.copy(face.rotation);
+      o.add(lensHolder);
       const l = kit.add(
-        kit.cached("lens", () => new THREE.CylinderGeometry(0.42, 0.42, 0.1, 20).rotateX(Math.PI / 2)),
+        kit.cached("lens", () => new THREE.CylinderGeometry(0.3, 0.3, 0.1, 20).rotateX(Math.PI / 2)),
         lens,
-        P(0, 0, -0.32),
-        face,
+        P(0, 0, -0.17),
+        lensHolder,
       );
+      roles.lens = { target: lensHolder, material: lens };
       l.castShadow = false;
       // its light on the floor when it looks down, as wide as what it reads
       let spotMat: THREE.MeshBasicMaterial | null = null;
@@ -211,7 +306,7 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
           kit.cached("spot", () => new THREE.CircleGeometry(Math.max(0.6, body.color_spot_radius_cm * 1.2), 28)),
           spotMat,
         );
-        const lensAt = at(1.9, 0, 0);
+        const lensAt = at(lx, ly, lz);
         spot.rotation.x = -Math.PI / 2;
         spot.position.copy(P(lensAt.x, lensAt.y, 0.05));
         spot.raycast = () => {};
@@ -219,23 +314,28 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
       }
       colorLights.push({ port: s.port, lens, spotMat });
     } else if (s.kind === "touch") {
-      kit.box(2.8, 1.9, 1.2, -0.5, 0, -0.6, mats.light, 0.35, g);
-      kit.box(2.8, 1.9, 1.2, -0.5, 0, 0.6, mats.white, 0.4, g);
-      kit.box(0.5, 1.5, 1.5, 1.1, 0, 0, mats.anthracite, 0.2, g);
+      const [bx, , bz] = f("button");
+      // the red button (99386) stands 1.48 cm out of the body's front
+      const front = bx - 1.48;
+      shell(front, W);
       const plunger = kit.live(new THREE.Group());
-      plunger.position.copy(P(1.35, 0, 0));
-      g.add(plunger);
-      kit.box(0.9, 0.42, 1.3, 0.2, 0, 0, mats.red, 0.1, plunger);
-      kit.box(0.9, 1.3, 0.42, 0.2, 0, 0, mats.red, 0.1, plunger);
+      o.add(plunger);
+      kit.box(1.48, 0.42, 1.5, front + 0.74, 0, bz, mats.red, 0.08, plunger);
+      kit.box(1.48, 1.5, 0.42, front + 0.74, 0, bz, mats.red, 0.08, plunger);
       touchPlungers.push({ port: s.port, obj: plunger });
+      kit.real({ ldraw: LDRAW[s.kind], holder: o, frame: "front", roles: { plunger: { target: plunger } } });
     } else {
-      kit.box(1.2, 2.4, 2.4, -0.3, 0, 0, mats.light, 0.35, g);
-      kit.box(0.6, 2.4, 2.4, 0.6, 0, 0, mats.white, 0.35, g);
-      // the two red arrows of the axis it measures, printed on its face
-      kit.box(0.04, 1.7, 0.22, 0.92, 0, 0, mats.red, 0, g);
-      kit.box(0.04, 0.22, 1.0, 0.92, 0, 0.45, mats.red, 0, g);
+      shell(x1, W);
+      // the two red arrows of the axis it measures, printed on its top
+      const [, , az] = f("measured_axis");
+      kit.box(1.7, 0.22, 0.04, (x0 + x1) / 2, 0, Math.max(az, z1) + 0.01, mats.red, 0, o);
+      kit.box(0.22, 1.0, 0.04, (x0 + x1) / 2 + 0.6, 0, Math.max(az, z1) + 0.01, mats.red, 0, o);
     }
-    cableTo(kit, m, at(SIZE[s.kind][0].x, 0, 0), pl.dir.clone().negate(), s.port);
+    if (s.kind !== "touch") kit.real({ ldraw: LDRAW[s.kind], holder: o, frame: "front", roles });
+    // held by what it touches, or by a beam through its axle hole
+    const holeAxis = pointOf(v3(0, 1, 0), pl.q, v3(0, 0, 0));
+    hold(kit, occ, pl.box, pointOf(size.origin, pl.q, pl.at), holeAxis, W / 2, bb);
+    cableTo(kit, m, at(...f("socket")), pl.dir.clone().negate(), s.port);
   }
 
   return {
@@ -245,7 +345,7 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
       for (const mo of motors) mo.turn(tachos[mo.port] ?? 0);
       for (const sensor of s.sensors) {
         const tp = touchPlungers.find((x) => x.port === sensor.port);
-        if (tp) tp.obj.position.x = 1.35 - (sensor.mode === 0 && sensor.values[0] === 1 ? 0.5 : 0);
+        if (tp) tp.obj.position.x = sensor.mode === 0 && sensor.values[0] === 1 ? -0.4 : 0;
         const cl = colorLights.find((x) => x.port === sensor.port);
         if (cl) {
           // reflected light: the red LED; colour: white light; ambient: the LED nearly off (a dim blue)
@@ -283,13 +383,15 @@ function placeMotor(
     // an arm or a lift swings ahead from an axle across the robot; a turntable turns about an axle pointing up
     const facing =
       mp.attachment === "arm" || mp.attachment === "lift" ? "left" : mp.attachment === "turntable" ? "up" : "forward";
+    const size = around(MOTOR.medium);
     const pl = placePart(
       mp,
-      ...around(DIMS.mediumMotor),
+      size.min,
+      size.max,
       mounts.map((mo) => ({ ...mo, facing })),
       occ,
     );
-    return mediumMotor(kit, mp.port, pl.at, pl.dir, pl.up, fitOf(mp));
+    return mediumMotor(kit, mp.port, pointOf(size.origin, pl.q, pl.at), pl.dir, pl.up, fitOf(mp));
   }
   // a large motor: its output axle along `facing` (default to the left; up for a turntable, ahead for a gripper),
   // its body running back from the hub, or
@@ -302,16 +404,24 @@ function placeMotor(
   const body = back.addScaledVector(axis, -back.dot(axis));
   if (body.length() < 0.3) body.set(0, 0, 1);
   body.normalize();
-  const centreToHub = body.clone().multiplyScalar(-3.7);
+  // the motor's box from its hub (dims.ts MOTOR.large): its middle is this far along the body and up
+  const LM = MOTOR.large;
+  const upOf = new THREE.Vector3(0, 0, 1).addScaledVector(body, -body.z).normalize();
+  const centreToHub = body
+    .clone()
+    .multiplyScalar(-(LM.min[0] + LM.max[0]) / 2)
+    .addScaledVector(upOf.lengthSq() > 0.5 ? upOf : v3(-1, 0, 0), -(LM.min[2] + LM.max[2]) / 2);
+  const lift = -LM.min[2]; // the hub stands this far over what the case rests on
+  const halfW = (LM.max[1] - LM.min[1]) / 2;
   const hubs = [
-    v3(bb.max.x - 2.2, 0, bb.max.z + 2.15),
-    v3(cx + 3.7, bb.max.y + 1.6, cz),
-    v3(cx + 3.7, bb.min.y - 1.6, cz),
-    v3(bb.min.x - 2.2, 0, bb.max.z + 2.15),
+    v3(onGrid(bb.max.x - 2.2), 0, bb.max.z + lift),
+    v3(onGrid(cx + 3.7), bb.max.y + halfW, cz),
+    v3(onGrid(cx + 3.7), bb.min.y - halfW, cz),
+    v3(onGrid(bb.min.x - 2.2), 0, bb.max.z + lift),
   ];
   let hub: THREE.Vector3 | null = null;
   if (mp.x !== null || mp.y !== null || mp.z !== null) {
-    const c = v3(mp.x ?? cx, mp.y ?? 0, mp.z ?? bb.max.z + 2.15);
+    const c = v3(mp.x ?? cx, mp.y ?? 0, mp.z ?? bb.max.z - centreToHub.z);
     hub = c.add(centreToHub);
   } else {
     for (const h of hubs) if (!occ.hits(largeMotorBox(h, axis, body))) hub ??= h;
