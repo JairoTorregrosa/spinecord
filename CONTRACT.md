@@ -181,7 +181,7 @@ A device that a loop drives is claimed for the life of the loop: `command` on it
 
 Twin: `<profile.id>-sim` is a runtime whose EV3 provider talks to a **simulated brick** (byte-level EV3 direct-command emulator backed by 2D physics), so the twin runs exactly the real EV3 code path. Its motors and sensors are the ones its world file declares. It adds three devices that no hardware robot has: `sim.world`, `sim.camera` and `sim.speaker` (the only speaker of a twin with `speak`).
 
-The twin's physics keep the surprises of the real robot, so that what works on the twin works on the floor. A body that drives into a wall or an obstacle stops in contact with it, and its drive wheels stop there: their encoders count up to that point and no further, and the move ends `stalled`.
+The twin's physics keep the surprises of the real robot, so that what works on the twin works on the floor. A body that drives into a wall or an obstacle stops in contact with it, and its drive wheels stop there: their encoders count up to that point and no further, and the move ends `stalled`. Motors: a shaft follows a speed or power command as a first-order lag of 76 ms (`MOTOR_TAU_MS`, measured on EV3 large motors), so it is at 90 % of a new speed after 175 ms, and the speed a motor reports is the speed it turns at. A command that ends with brake stops the shaft where the brake came (the firmware holds it there; the tens of ms of overshoot and return are not modelled); one that ends without brake runs down for up to 200 ms from 100 % (`COAST_MS_AT_100`); a new command picks the shaft up at the speed it has. A degree-bounded step (never sent by the stock provider) ends exactly on its count.
 
 ## 5. Programs
 

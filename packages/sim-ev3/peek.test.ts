@@ -36,8 +36,8 @@ describe("peek", () => {
   });
   test("a turning pair shows its speed and tacho; the gyro follows the turn, clockwise-positive", async () => {
     const { brick, call, run } = rig();
-    await call(E.outputStepSync(E.OUTPUT_MASK.B | E.OUTPUT_MASK.C, 40, 200, 360, true));
-    run(100);
+    await call(E.outputStepSync(E.OUTPUT_MASK.B | E.OUTPUT_MASK.C, 40, 200, 3600, true));
+    run(600); // past the motors' lag
     const p = brick.peek();
     const b = p.motors[1]!,
       c = p.motors[2]!;

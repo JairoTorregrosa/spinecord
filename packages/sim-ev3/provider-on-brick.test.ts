@@ -10,7 +10,7 @@ import { World } from "../sim-world/world";
 import { SimWorldProvider } from "../sim-world/world-provider";
 import { quietWorld, EXAMPLES, config, DRIVE } from "../sim-world/testkit";
 import { SimBrick, LARGE_DEG_S, type BrickDrivetrain } from "./brick";
-import { DRIVETRAIN } from "./testkit";
+import { DRIVETRAIN, lagged } from "./testkit";
 
 // Kept low on purpose: the provider's polls ride on real timers, whose granularity (about 15 ms on Windows)
 // times this factor is how late the provider can see a target.
@@ -115,7 +115,7 @@ describe("Ev3Provider on SimBrick", () => {
     expect(op.reason).toBe("timeout");
     expect(op.measured.time_limited).toBe(true);
     const deg = op.measured.left_deg as number;
-    expect(Math.abs(deg - 0.5 * LARGE_DEG_S * 0.25)).toBeLessThan(8);
+    expect(Math.abs(deg - lagged(0.5 * LARGE_DEG_S, 250))).toBeLessThan(8); // a start from rest lags
     expect(world.pose.x - 43).toBeCloseTo(deg / DEG_PER_CM, 1);
     expect(brick.busy()).toBe(false);
     expectClean(brick);
@@ -216,7 +216,7 @@ describe("Ev3Provider on SimBrick", () => {
     const { ev3, brick, world } = twin();
     await ev3.devices();
     const move = ev3.command("ev3.pair", "run_pair", { left_deg: 3000, right_deg: 3000, speed_pct: 30 }, idle());
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 100)); // a start from rest turns little in its first tens of ms
     expect(await ev3.stop()).toEqual({ motors_stopped: true });
     const r = await move;
     expect(r.reason).toBe("preempted");
@@ -252,7 +252,7 @@ describe("Ev3Provider on SimBrick", () => {
     ).rejects.toMatchObject({ code: "unknown_device" });
     const op = await ev3.command("ev3.B", "run_time", { ms: 200, speed_pct: 50 }, idle());
     expect(op.reason).toBe("completed");
-    expect(op.measured.degrees as number).toBeGreaterThan(80);
+    expect(op.measured.degrees as number).toBeGreaterThan(50);
     expect(world.pose).toEqual({ x: 43, y: 25, th: 0 });
     expectClean(brick);
   });
