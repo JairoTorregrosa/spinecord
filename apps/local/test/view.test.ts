@@ -419,7 +419,9 @@ describe("the view listener", () => {
     const { connect, view } = await rig();
     const p = await connect();
     view.stop();
-    expect(await p.closed).toBe(1001);
+    // a normal close: CONTRACT §6 names no code for the view, and the page joins again after any close. The
+    // listener closes with 1001; bun 1.3.x, which stops the server at once, delivers it as 1000
+    expect([1000, 1001]).toContain(await p.closed);
     view.stop();
     expect(view.clients()).toBe(0);
     expect(
