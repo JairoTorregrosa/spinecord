@@ -131,11 +131,11 @@ export function robotArgs(
   return out;
 }
 
-/** The launch line of the person's terminal. */
+/** The launch line of the person's terminal: Sonnet, so that one robot session does not use up the credits. */
 export function launchLine(platform: string, profile: string): string {
   return platform === "win32"
-    ? `cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "${profile}"; claude`
-    : `cd ~/mi-robot && ANTHROPIC_PROFILE=${profile} claude`;
+    ? `cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "${profile}"; claude --model sonnet`
+    : `cd ~/mi-robot && ANTHROPIC_PROFILE=${profile} claude --model sonnet`;
 }
 
 // ---- probes ----

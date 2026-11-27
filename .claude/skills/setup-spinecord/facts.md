@@ -30,11 +30,13 @@ Read this file only when a step and the computer disagree. Then check the source
 | Claude Code: `curl -fsSL https://claude.ai/install.sh \| bash` (macOS, Linux), `irm https://claude.ai/install.ps1 \| iex` (PowerShell). It installs to `~/.local/bin` and does not add that folder to `PATH` | https://code.claude.com/docs/en/setup, run in `ubuntu:24.04` | 2026-11-27 |
 | bun: `curl -fsSL https://bun.com/install \| bash` (macOS, Linux, needs `unzip`), `powershell -c "irm bun.sh/install.ps1\|iex"` (Windows). The script installs to `~/.bun/bin` and adds it to `~/.bashrc` | https://bun.sh/docs/installation, run in `ubuntu:24.04` | 2026-11-27 |
 | On macOS with no `~/.zshrc`, the bun installer adds no `PATH` line. A new terminal then finds no `bun`, and a registration with a bare `bun` fails to start (`ENOENT`) | bun 1.4.5 install script, macOS 27.2, `claude mcp get spinecord` in a new `zsh -il` | 2026-11-27 |
-| spinecord needs bun 1.3.14 or later, and git | `package.json` `packageManager` of the clone, README.md | 2026-11-27 |
+| spinecord needs bun 1.3.14 or later, and git | `package.json` `packageManager` of the clone, `docs/manual.md` | 2026-11-27 |
 | git: `brew install git` or `xcode-select --install` (macOS), `winget install --id Git.Git -e --source winget` (Windows) | https://git-scm.com/install/mac, https://git-scm.com/install/windows | 2026-11-24 |
-| The repository is public: the clone and the raw URL of this skill need no login | `gh repo view`, `curl -I` of the raw README | 2026-11-27 |
+| The repository is public: the clone and the raw URL of this skill need no login | `gh repo view`, `curl -I` of the raw `README.md` | 2026-11-27 |
 | `--view` serves the 3D view on `http://127.0.0.1:8769/`. A page that opens later still sees the calls. The page joins its server again after a restart, but it must load while a server runs | `bun apps/local/main.ts --help`, `apps/local/src/view.ts`, `apps/twin-view/src/main.ts` | 2026-11-27 |
-| Local scope: only Claude Code sessions that start in `~/mi-robot` start a spinecord server. With `--ev3`, a second session cannot hold port 8767. With an EV3 on ev3dev, a second link can stop the motors during a move of the first | PR #51, README.md | 2026-11-24 |
+| Local scope: only Claude Code sessions that start in `~/mi-robot` start a spinecord server. With `--ev3`, a second session cannot hold port 8767. With an EV3 on ev3dev, a second link can stop the motors during a move of the first | PR #51, `docs/manual.md` | 2026-11-24 |
+| The launch line is `cd ~/mi-robot && ANTHROPIC_PROFILE=<profile> claude --model sonnet`, on Windows `cd $HOME\mi-robot; $env:ANTHROPIC_PROFILE = "<profile>"; claude --model sonnet`. Sonnet costs less than the largest model. The person can change the model in Claude Code with `/model` | `launchLine` in `scripts/setup.ts`, `claude --help` | 2026-11-27 |
+| `setup workshop` copies the skills `robot-twin` and `setup-spinecord` to `~/mi-robot/.claude/skills/` and prints the line `skills`. The robot's Claude Code loads them from there | `PERSON_SKILLS` in `scripts/setup.ts` | 2026-11-27 |
 
 Not verified:
 

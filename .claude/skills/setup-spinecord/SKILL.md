@@ -1,6 +1,6 @@
 ---
 name: setup-spinecord
-description: Set up spinecord from zero on macOS, Windows or Linux for a person who is not a developer and who received Claude API credits in a Console organization. Installs git, bun, the ant CLI and Claude Code, logs in with `ant auth login` so that the credits pay (no API key), clones spinecord, registers it in the folder mi-robot, and ends with Claude driving the robot - the simulated twin in a 3D view in the browser, or a LEGO EV3 over USB. Resumes from any state. Use it when a person asks to set up spinecord, to install the robot tools, or to prepare a computer for a robot workshop or an EV3.
+description: Set up spinecord from zero on macOS, Windows or Linux for a person who is not a developer and who received Claude API credits in a Console organization. Installs git, bun, the ant CLI and Claude Code, logs in with `ant auth login` so that the credits pay (no API key), clones spinecord, registers it in the folder mi-robot, and ends with Claude driving the robot - the simulated twin in a 3D view in the browser, or a LEGO EV3 over USB. Resumes from any state. Also does the later asks - a new name for the robot, adding an EV3, repairing a setup that stopped working. Use it when a person asks to set up spinecord, to install the robot tools, to prepare a computer for a robot workshop or an EV3, or says "call the robot Rayo", "ponle Rayo a mi robot", "cámbiale el nombre al robot", "I have an EV3 now", "ya tengo el EV3", "conecté el EV3", "spinecord does not work", "spinecord no funciona", "arregla spinecord".
 ---
 
 # Set up spinecord
@@ -11,7 +11,7 @@ The end: Claude Code moves the robot while the person looks. Without an EV3, the
 
 ## Files
 
-Read a file only when a step names it. They are next to this file.
+Read a file only when a step names it. They are next to this file, also in the copy in `~/mi-robot/.claude/skills/setup-spinecord/`.
 Before the clone exists, read them at `https://raw.githubusercontent.com/JairoTorregrosa/spinecord/main/.claude/skills/setup-spinecord/<file>`.
 
 | File | When |
@@ -21,7 +21,7 @@ Before the clone exists, read them at `https://raw.githubusercontent.com/JairoTo
 | facts.md | A step and the computer disagree: the facts, their sources and what is not verified |
 | robots.json | The robots that the workshop registers. Change only this file to use other robots |
 
-`setup <step>` in this file means this command, in any shell: `cd ~/spinecord; bun scripts/setup.ts <step>`.
+`setup <step>` in this file means this command, in any shell, from either copy: `cd ~/spinecord; bun scripts/setup.ts <step>`.
 If this session installed a tool, put the `PATH` line of install.md for this OS first in the same command.
 Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next action. The last line is `setup <step>: ok` or `setup <step>: not done`.
 `setup status` changes nothing. Its last line `next <STATE>` names the state to do.
@@ -99,7 +99,7 @@ If it says `fail`, use the row of fixes.md that it names after `->`.
 
 Run `setup workshop --ev3 yes` or `setup workshop --ev3 no`, from the answer of the start.
 If the person gave a name, add `--name "<name>"` to that command. The name stays when you run the step again.
-It makes `~/mi-robot`, allows the spinecord tools there, registers spinecord there with local scope, and runs the doctor.
+It makes `~/mi-robot`, allows the spinecord tools there, copies the skills there (line `skills`), registers spinecord with local scope, and runs the doctor.
 A doctor `warn` line does not stop this state. For a `fail` line, use fixes.md, then run the same command again.
 
 ### 6 SMOKE
@@ -137,9 +137,12 @@ Skip this state if the person has no EV3. The person keeps the Claude Code of st
 Run `setup report`. Give the person its lines, in their language. Add what the person must still do, if anything.
 Running the skill again changes nothing and ends here.
 
-## Later: a new name for the robot
+## Later asks
 
-The person asks for a new name, for example "ponle Rayo a mi robot".
-1. Run `setup name "<name>"`. To remove the name, run `setup name none`.
-2. If its line is `fail`, do the action after `->`.
-3. Say: "Type /exit in Claude Code. Then paste the launch line again." The next start shows the new name.
+The person asks for one of these after the setup, often in the robot's Claude Code in `~/mi-robot`. A registration change is read only at start. Then say: "Type /exit in Claude Code. Then paste the launch line again."
+
+| The person says | Do | Done when | Restart |
+|---|---|---|---|
+| A new name: "Call the robot Rayo", "ponle Rayo a mi robot" | `setup name "<name>"`, or `setup name none` for no name. A `fail` line: do the action after `->` | `setup name` ends `ok` | Yes. The next start shows the name |
+| "I have an EV3 now", "ya tengo el EV3" | `setup workshop --ev3 yes`. After the restart, do state 8 EV3 | `setup status` shows `EV3` `ok` | Yes, before state 8 |
+| "spinecord does not work. Run its doctor and fix it", "spinecord no funciona" | `setup workshop` runs the doctor. Fix each `fail` line with fixes.md. Then do the state that `setup status` names after `next` | `setup workshop: ok`, and `setup status` ends `next REPORT` | Yes, when a step changed the registration or the robot file |

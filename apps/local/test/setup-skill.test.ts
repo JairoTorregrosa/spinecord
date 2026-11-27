@@ -186,8 +186,8 @@ test("setup.ts registers absolute paths, the EV3 first, and prints a launch line
   expect(robotArgs(robots, "/m/r.json", "/r", "Doña Tuerca")).toEqual(named);
   expect(robotArgs(robots, "/m/r.json", "/r", "Rayo")).toEqual([...named.slice(0, -1), "Rayo"]);
   expect(robotArgs(robots, "/m/r.json", "/r")).toEqual(named.slice(0, -2));
-  expect(launchLine("linux", "credits")).toBe("cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude");
-  expect(launchLine("win32", "credits")).toBe('cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "credits"; claude');
+  expect(launchLine("linux", "credits")).toBe("cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude --model sonnet");
+  expect(launchLine("win32", "credits")).toBe('cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "credits"; claude --model sonnet');
   const json = JSON.parse(readFileSync(join(DIR, "robots.json"), "utf8")) as typeof robots;
   for (const p of [json.ev3, ...json.twin.filter((a) => a.endsWith(".json"))])
     expect(existsSync(join(DIR, "..", "..", "..", p))).toBe(true);
