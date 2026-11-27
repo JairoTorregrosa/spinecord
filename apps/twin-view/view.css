@@ -525,6 +525,17 @@ body:has(#pip:not([hidden])) .tools {
   cursor: pointer;
   border-radius: 6px;
 }
+.calls li.ev {
+  grid-template-columns: 16px 1fr auto;
+  padding: 3px 4px;
+  cursor: default;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.calls li.ev .ico {
+  font-size: 12px;
+  line-height: 18px;
+}
 .calls li:hover {
   background: rgba(255, 255, 255, 0.03);
 }

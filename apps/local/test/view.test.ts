@@ -247,6 +247,11 @@ describe("the view listener", () => {
     expect(last(a).boxes).toEqual(w.cfg.boxes as never);
     expect(last(b).boxes).toEqual(last(a).boxes);
     expect(ma.boxes[0]).toMatchObject({ id: "cup", height_cm: 9, mass_g: 50 });
+    // the push reaches the page as world events, and a page that opens late sees them in its hello
+    await a.next((m) => m.t === "events" && m.events.some((e) => e.kind === "push_began" && e.box === "cup"), from);
+    const late = await connect();
+    const lateHello = await late.next<Extract<ServerMessage, { t: "hello" }>>((m) => m.t === "hello", 0);
+    expect(lateHello.events[0]!.events.some((e) => e.kind === "push_began" && e.box === "cup")).toBe(true);
     // a page moves it by id: its height and mass stay; an id no box has is refused
     expect(await b.act({ t: "box_move", id: "r1-sim", box: "cup", x: 20, y: 20, w: 8, h: 10 })).toMatchObject({
       ok: true,

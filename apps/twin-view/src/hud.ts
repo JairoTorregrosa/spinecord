@@ -1,6 +1,7 @@
 // The panels around the 3D scene: the robot's state chips, its ports and screen, the MCP calls, and the notes
 // the page gives the person (toasts, hints). All copy is the page's own, in Spanish.
-import type { CallEnd, CallStart, MotorState, RefusalCode, RobotState, SensorState } from "./messages";
+import { eventRow } from "./events";
+import type { CallEnd, CallStart, MotorState, RefusalCode, RobotState, SensorState, WorldEventMsg } from "./messages";
 import { COLOR_RGB } from "./arena";
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -231,6 +232,34 @@ export function call(m: CallStart | CallEnd): void {
   if (reading) list.scrollTop += list.scrollHeight - before;
   showUnseen();
 }
+/** One world event as a compact row of the activity list (src/events.ts); nothing for one it does not show. */
+export function worldEvent(e: WorldEventMsg): void {
+  const r = eventRow(e);
+  if (!r) return;
+  const list = $<HTMLOListElement>("calls");
+  $("calls-hint").hidden = true;
+  const li = document.createElement("li");
+  li.className = "ev";
+  li.innerHTML = `<span class="ico" aria-hidden="true"></span><span class="what"></span><span class="ms"></span>`;
+  li.querySelector(".ico")!.textContent = r.icon;
+  li.querySelector(".what")!.textContent = r.text;
+  li.querySelector(".ms")!.textContent = `t ${(e.t_ms / 1000).toFixed(1)} s`;
+  li.title = JSON.stringify(e);
+  const reading = list.scrollTop > 4;
+  const before = list.scrollHeight;
+  list.prepend(li);
+  if (reading) {
+    unseen++;
+    list.scrollTop += list.scrollHeight - before;
+  }
+  while (list.children.length > MAX_CALLS) {
+    const last = list.lastElementChild as HTMLLIElement;
+    for (const [k, v] of rows) if (v.li === last) rows.delete(k);
+    last.remove();
+  }
+  showUnseen();
+}
+
 const REASON: Record<string, string> = {
   stalled: "se atascó",
   timeout: "se acabó el tiempo",

@@ -123,6 +123,21 @@ export interface SensorRays {
 /** Longest ray a page is sent (cm): past the ultrasonic's 255 nothing reads. */
 export const RAY_MAX_CM = 300;
 
+/** One event of a twin's world (sim-world's WorldEvent, sim.world `events`): `kind` and its own fields. */
+export interface WorldEventMsg {
+  n: number;
+  /** World time, ms. */
+  t_ms: number;
+  kind: string;
+  with?: string;
+  box?: string;
+  moved_cm?: number;
+  change?: "added" | "moved" | "removed";
+  how?: "reset" | "carried";
+  why?: string;
+  cm?: number;
+}
+
 export interface CallStart {
   t: "call_start";
   n: number;
@@ -152,6 +167,8 @@ export type ServerMessage =
       robots: RobotMeta[];
       rate_hz: number;
       calls: (CallStart | CallEnd)[];
+      /** The last world events of each twin, oldest first, for a page that opens late. */
+      events: { id: string; events: WorldEventMsg[] }[];
       /** Only with --chat (chat-messages.ts): its status and what a page that opens late missed. */
       chat?: { status: ChatStatus; history: ChatServerMessage[] };
     }
@@ -160,6 +177,8 @@ export type ServerMessage =
   /** Only the obstacles changed (`rev`: the world's obstacles_rev): a push, a page, or sim.world. */
   | { t: "boxes"; id: string; rev: number; boxes: Obstacle[] }
   | { t: "state"; robots: RobotState[] }
+  /** What happened in a twin's world since the last frame (pushes, contacts, box changes), oldest first. */
+  | { t: "events"; id: string; events: WorldEventMsg[] }
   | { t: "tone"; id: string; hz: number; ms: number; volume: number }
   | { t: "speak"; id: string; text: string }
   | CallStart

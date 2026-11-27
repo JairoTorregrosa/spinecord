@@ -185,6 +185,7 @@ function receive(m: ServerMessage): void {
       sel.value = keepId ?? "";
       hud.callsReset();
       for (const c of m.calls) hud.call(c);
+      for (const e of m.events.find((x) => x.id === keepId)?.events ?? []) hud.worldEvent(e);
       chat.hello(m.chat);
       for (const c of m.calls) chat.call(c);
       setFocus(keepId ?? null);
@@ -222,6 +223,9 @@ function receive(m: ServerMessage): void {
         say(`🗣 ${m.text}`, Math.max(2600, m.text.length * 75));
         missedSound();
       }
+      break;
+    case "events":
+      if (m.id === focus?.id) for (const e of m.events) hud.worldEvent(e);
       break;
     case "call_start":
     case "call_end":

@@ -27,6 +27,7 @@ import type {
   RobotState,
   SensorRays,
   ServerMessage,
+  WorldEventMsg,
   WorldShape,
 } from "../../twin-view/src/messages";
 import { RAY_MAX_CM } from "../../twin-view/src/messages";
@@ -38,6 +39,8 @@ import type { LocalRobot } from "./robot";
 export const VIEW_RATE_HZ = 30;
 /** Calls a page that opens late still sees. */
 const CALL_HISTORY = 40;
+/** World events of each twin a page that opens late still sees. */
+const EVENT_HISTORY = 40;
 /** Longest message a page may send: an action is a few numbers. A longer one closes that page's socket. */
 export const VIEW_MESSAGE_MAX = 2048;
 /** Actions one page may send in a second: far above a hand (a held button, a drag that ends), far below a flood. */
@@ -236,7 +239,9 @@ export function serveView(
   /** Actions of each page in the current second, for VIEW_ACTIONS_PER_S. */
   const rate = new Map<Socket, { second: number; n: number }>();
   /** What each twin looked like at the last tick: its world, its obstacles, its tone count. */
-  const seen = new Map<string, { world: World; rev: number; tones: number }>();
+  const seen = new Map<string, { world: World; rev: number; tones: number; events: number }>();
+  /** The last world events of each twin, for a page that opens late. */
+  const happened = new Map<string, WorldEventMsg[]>(twins.map((t) => [t.id, []]));
   /** The obstacles each world came with, for `restore`. */
   const original = new WeakMap<World, Obstacle[]>();
   const calls: (CallStart | CallEnd)[] = [];
@@ -275,6 +280,7 @@ export function serveView(
       world: t.brick.world,
       rev: t.brick.world.obstacles_rev,
       tones: t.brick.toneCount,
+      events: t.brick.world.eventsSince(0).next,
     });
   }
   const unsubscribe = [
@@ -300,11 +306,20 @@ export function serveView(
         remember(w);
         last.world = w;
         last.rev = w.obstacles_rev;
+        last.events = 0; // a new world keeps its own log
         broadcast({ t: "robot", robot: meta(t) });
       } else if (w.obstacles_rev !== last.rev) {
         // every change of the obstacles counts in obstacles_rev: a push, a page's action, sim.world
         last.rev = w.obstacles_rev;
         broadcast({ t: "boxes", id: t.id, rev: w.obstacles_rev, boxes: w.cfg.boxes.map((b) => ({ ...b })) });
+      }
+      const ev = w.eventsSince(last.events);
+      if (ev.events.length > 0) {
+        last.events = ev.next;
+        const kept = happened.get(t.id)!;
+        kept.push(...ev.events);
+        kept.splice(0, Math.max(0, kept.length - EVENT_HISTORY));
+        broadcast({ t: "events", id: t.id, events: ev.events });
       }
       const count = t.brick.toneCount;
       if (count > last.tones) {
@@ -439,6 +454,7 @@ export function serveView(
             robots: twins.map(meta),
             rate_hz: hz,
             calls,
+            events: [...happened].map(([id, events]) => ({ id, events })),
             ...(o.chat ? { chat: o.chat.hello() } : {}),
           });
         },
