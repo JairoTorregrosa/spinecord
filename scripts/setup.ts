@@ -292,20 +292,29 @@ async function checkPays(s: State): Promise<Line[]> {
         next: `fixes.md, row "Login method with the profile set"`,
       },
     ];
-  if (s.org !== org)
-    return [
-      {
-        status: "todo",
-        what: "pays",
-        why: org.startsWith("id ")
-          ? `Claude Code pays with the organization of the profile ${s.profile}, ${org}: ant shows no name`
-          : `Claude Code pays with the organization "${org}"`,
-        next: org.startsWith("id ")
-          ? "bun scripts/setup.ts confirm org, without a question: SMOKE shows if the credits pay"
-          : `ask the person if "${org}" holds the credits; if yes: bun scripts/setup.ts confirm org`,
-      },
-    ];
+  if (s.org !== org) return [paysTodo(s.profile, org)];
   return [{ status: "ok", what: "pays", why: `Claude Code pays with "${org}", profile ${s.profile}` }];
+}
+
+/** PAYS before the person confirmed: a name or only an id, the person compares it with the credits either way. */
+export function paysTodo(profile: string, org: string): Line {
+  const id = org.startsWith("id ") ? org.slice(3) : undefined;
+  return {
+    status: "todo",
+    what: "pays",
+    why: id
+      ? `Claude Code pays with the organization of the profile ${profile}, id ${id}: ant shows no name`
+      : `Claude Code pays with the organization "${org}"`,
+    next: id
+      ? `ask the person to open platform.claude.com, Settings, Organization, and compare its id with ${id}; if it is the organization with the credits: bun scripts/setup.ts confirm org; if not, or the person cannot find it: fixes.md, row "Wrong Console organization"`
+      : `ask the person if "${org}" holds the credits; if yes: bun scripts/setup.ts confirm org`,
+  };
+}
+
+/** The report's line on who pays: a name in quotes, an id as an id. */
+export function whoPays(org: string | undefined, profile: string): string {
+  const who = !org ? "not confirmed" : org.startsWith("id ") ? `with ${org}` : `"${org}"`;
+  return `Who pays: Console organization ${who}, ant profile ${profile}`;
 }
 
 /** The organization that pays: Claude Code's name for it, else ant's name, else `id <uuid>`, else nothing. */
@@ -638,7 +647,7 @@ async function report(s: State): Promise<string> {
   );
   return [
     `Installed: git ${v.git}, bun ${Bun.version}, ant ${v.ant}, Claude Code ${v.claude}`,
-    `Who pays: Console organization "${s.org ?? "not confirmed"}", ant profile ${s.profile}`,
+    whoPays(s.org, s.profile),
     `spinecord: ${REPO}, ${registered}`,
     `Robot name: ${s.name ?? "none"}`,
     `Smoke test: ${s.smoke ? `${s.smoke.answer} (USD ${s.smoke.cost_usd})` : "not run"}`,

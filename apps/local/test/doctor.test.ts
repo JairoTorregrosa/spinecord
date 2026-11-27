@@ -180,6 +180,13 @@ describe("--doctor", () => {
     expect(ports[1]!.reason).toContain("another spinecord");
     expect(ports[1]!.next).toContain("close the other Claude Code session");
     expect(line((await run([], probes())).lines, "ports")!.reason).toContain("no port");
+    // from inside a Claude Code session the holder is most likely its own spinecord: still a fail, told so
+    const inside = probes({ env: { CLAUDECODE: "1" }, portFree: async (port) => port !== 8769 });
+    const view = line((await run(["--twin", "--view"], inside)).lines, "port")!;
+    expect(view.reason).toStartWith("8769");
+    expect(view).toMatchObject({ status: "fail" });
+    expect(view.reason).toContain("this Claude Code session's own spinecord");
+    expect(view.next).toContain("list_robots");
     // a held port is the likely cause of a registration that does not start: one fail, not two
     const both = probes({
       portFree: async () => false,

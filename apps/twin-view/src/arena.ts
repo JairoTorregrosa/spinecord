@@ -36,6 +36,8 @@ export interface Arena {
 /** What lies just under the mat (its own edge, the wooden floor) is drawn as if a little farther away: seen
  *  from the top camera, a few metres up, the depth buffer cannot tell a millimetre apart and the mat's grey edge
  *  would cover its print. The offset grows with distance, so the mat wins from any height. */
+/** The person's words for the point names of the default world (apps/local/examples/room.json, English for the model). */
+const POINT_WORDS: Record<string, string> = { center: "centro" };
 const BEHIND = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 4 } as const;
 
 let seed = 1;
@@ -162,7 +164,7 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
     g.font = `700 ${Math.round(3.2 * scale)}px system-ui, sans-serif`;
     g.textAlign = "center";
     g.textBaseline = "top";
-    g.fillText(p.label, X(p.x), Y(p.y) + (p.radius + 1) * scale);
+    g.fillText(POINT_WORDS[p.label] ?? p.label, X(p.x), Y(p.y) + (p.radius + 1) * scale);
     g.textAlign = "start";
   }
   // rulers along every edge: a tick each cm, longer each 5 and 10, the number each 10
