@@ -9,6 +9,7 @@ import { homedir, networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { paysBeforeProfile, type Env } from "../../../examples/assistant/setup";
 import { loadConfig, REPO, type LocalConfig } from "./config";
+import { CHAT_SDK_INSTALL, chatSdkMissing } from "./chat-sdk";
 import { chooseInterface, defaultRouteAddress } from "./lan";
 import { describeTwin, describeUnconfirmed, footprintClash } from "./twin-build";
 
@@ -369,6 +370,8 @@ export interface DoctorOptions {
   filesOnly?: boolean;
   /** Per check, CHECK_MS; tests pass less. */
   checkMs?: number;
+  /** chat-sdk.ts chatSdkMissing; tests pass their own. */
+  chatSdkMissing?: () => string | null;
 }
 
 export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line[]; code: 0 | 1 }> {
@@ -410,6 +413,14 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
             next: "confirm each with the person, the brick or a calibration on the real robot, then take it out of twin.unconfirmed",
           });
       }
+    if (config.view?.chat) {
+      const missing = (o.chatSdkMissing ?? chatSdkMissing)();
+      add(
+        missing
+          ? { status: "fail", check: "chat", reason: missing, next: `in ${REPO} run ${CHAT_SDK_INSTALL}` }
+          : { status: "ok", check: "chat", reason: "the Claude Agent SDK of --chat is installed" },
+      );
+    }
   } catch (e) {
     add({
       status: "fail",

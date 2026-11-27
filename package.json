@@ -10,6 +10,7 @@
     "packages/*",
     "apps/local",
     "apps/twin-view",
+    "apps/chat-sdk",
     "examples/assistant"
   ],
   "type": "module",

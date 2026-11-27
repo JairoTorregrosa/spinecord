@@ -147,6 +147,39 @@ describe("the view listener", () => {
     expect((await fetch(view.url, { headers: { host: "rebound.example:80" } })).status).toBe(403);
   });
 
+  test("the page's text goes gzipped and revalidates by tag; the meshes go as they are", async () => {
+    const { view } = await rig();
+    const raw = { decompress: false } as RequestInit;
+    const plain = await fetch(`${view.url}view.js`, raw);
+    const body = new Uint8Array(await plain.arrayBuffer());
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    expect(plain.headers.get("cache-control")).toBe("no-cache");
+    expect(plain.headers.get("x-content-type-options")).toBe("nosniff");
+    const gz = await fetch(`${view.url}view.js`, { ...raw, headers: { "accept-encoding": "gzip, br" } });
+    expect(gz.headers.get("content-encoding")).toBe("gzip");
+    expect(gz.headers.get("vary")).toBe("accept-encoding");
+    const packed = new Uint8Array(await gz.arrayBuffer());
+    expect(packed.length).toBeLessThan(body.length / 2);
+    expect(Bun.gunzipSync(packed)).toEqual(body);
+    expect(gz.headers.get("etag")).not.toBe(plain.headers.get("etag"));
+    const again = await fetch(`${view.url}view.js`, {
+      ...raw,
+      headers: { "accept-encoding": "gzip", "if-none-match": gz.headers.get("etag")! },
+    });
+    expect(again.status).toBe(304);
+    expect(again.headers.get("x-content-type-options")).toBe("nosniff");
+    expect((await again.arrayBuffer()).byteLength).toBe(0);
+    const mesh = Object.keys((await buildViewPage()).files).find((n) => n.endsWith(".bin.gz"))!;
+    const m = await fetch(`${view.url}${mesh}`, { ...raw, headers: { "accept-encoding": "gzip" } });
+    expect(m.headers.get("content-encoding")).toBeNull();
+    expect(m.headers.get("content-type")).toBe("application/gzip");
+    expect(new Uint8Array(await m.arrayBuffer())).toEqual(
+      (await buildViewPage()).files[mesh]!.body as Uint8Array<ArrayBuffer>,
+    );
+    // another host still gets nothing, cached or not
+    expect((await fetch(`${view.url}view.js`, { headers: { host: "rebound.example:80" } })).status).toBe(403);
+  });
+
   test("hello names each twin with its world and ports, then the state streams", async () => {
     const { connect } = await rig();
     const p = await connect();

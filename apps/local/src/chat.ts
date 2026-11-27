@@ -120,8 +120,9 @@ export class NoLogin extends Error {}
 
 /** A brain on the Claude Agent SDK. `server` is the in-process MCP server of this process (buildServer). */
 export function sdkBrain(o: { model: string; prompt: string; server: unknown; usd: number }): Brain {
-  type SDK = typeof import("@anthropic-ai/claude-agent-sdk");
-  type UserMessage = import("@anthropic-ai/claude-agent-sdk").SDKUserMessage;
+  // the SDK comes from its own package (apps/chat-sdk), installed only for --chat (chat-sdk.ts)
+  type SDK = typeof import("../../chat-sdk");
+  type UserMessage = import("../../chat-sdk").SDKUserMessage;
   const env = chatEnv(process.env);
   const outbox: string[] = [];
   let wake = () => {};
@@ -138,7 +139,7 @@ export function sdkBrain(o: { model: string; prompt: string; server: unknown; us
   let session: ReturnType<SDK["query"]> | null = null;
   return {
     async start(onEvent) {
-      const { query } = (await import("@anthropic-ai/claude-agent-sdk")) as SDK;
+      const { query } = (await import("../../chat-sdk")) as SDK;
       session = query({
         prompt: input(),
         options: {

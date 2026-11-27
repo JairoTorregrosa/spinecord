@@ -17,7 +17,7 @@ protocol ← apps/peripheral-page   (types; its tests also use protocol's valida
 apps/twin-view ← apps/local   (its message types; the page itself imports only three.js)
 lego-parts ← apps/twin-view   (only src/lego.ts, a Bun macro run when the page is built; its tests may read the map too)
 examples/assistant/setup.ts ← apps/local   (only `--doctor --assistant`: which credential pays ahead of an ant profile; and `--chat`: who pays, and the spend of a session)
-@anthropic-ai/claude-agent-sdk ← apps/local   (only `--chat`, loaded by a dynamic import: the chat's Claude, experimental)
+@anthropic-ai/claude-agent-sdk ← apps/chat-sdk ← apps/local   (only `--chat`, loaded by a dynamic import: the chat's Claude, experimental; apps/chat-sdk is its own package, so the server's install leaves the SDK out)
 packages, apps/local, examples/assistant/setup.ts ← scripts/   (the repository's tools; nothing imports a script but its own test)
 ```
 

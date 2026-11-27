@@ -12,10 +12,15 @@
         "typescript": "7.0.2",
       },
     },
+    "apps/chat-sdk": {
+      "name": "@spinecord/chat-sdk",
+      "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "0.3.319",
+      },
+    },
     "apps/local": {
       "name": "@spinecord/local",
       "dependencies": {
-        "@anthropic-ai/claude-agent-sdk": "0.3.319",
         "@modelcontextprotocol/server": "2.4.0",
         "@spinecord/twin-view": "workspace:*",
       },
@@ -166,6 +171,8 @@
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.92.0", "", { "os": "win32", "cpu": "x64" }, "sha512-0AyhqX0ciFuEnHIL+B4PIMMX3s/IpGHNEbbUqwsNhSrzWUSlEOPw/q7qFnRsEJfiKedcqVfUE/aXYuSMtpiFyw=="],
 
     "@spinecord/assistant-example": ["@spinecord/assistant-example@workspace:examples/assistant"],
+
+    "@spinecord/chat-sdk": ["@spinecord/chat-sdk@workspace:apps/chat-sdk"],
 
     "@spinecord/driver-ev3": ["@spinecord/driver-ev3@workspace:packages/driver-ev3"],
 

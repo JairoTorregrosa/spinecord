@@ -74,7 +74,7 @@ cd spinecord
 bun install --filter @spinecord/local
 ```
 
-`--filter @spinecord/local` installs what the server needs and nothing of the development toolchain. That includes the Claude Agent SDK of `--chat`, with its own Claude Code, which is most of it: 113 packages, 744 MB on Linux arm64, 5.7 s with an empty cache (2026-11-27). A plain `bun install` adds the development toolchain and the [example assistant](../examples/assistant).
+`--filter @spinecord/local` installs what the server needs and nothing of the development toolchain: 11 packages, 46 MB, 0.7 s on macOS (Apple M1 Pro), measured by `bun bench/install.ts` on a fresh clone with an empty cache. It leaves out the Claude Agent SDK, which only the experimental `--chat` uses: `bun install --filter @spinecord/local --filter @spinecord/chat-sdk` adds it (112 packages, 403 MB on the same Mac, most of it the SDK's own Claude Code), and `--chat` without it ends the start with that command. A plain `bun install` adds the development toolchain, the chat's SDK and that of the [example assistant](../examples/assistant).
 
 ### 2. Ask for the command that registers it
 
@@ -272,7 +272,11 @@ bun fmt         # oxfmt (bun fmt:check only checks)
 bun check       # tsc on every package
 bun run test    # every package and app; SHARD=1/3 for one shard, --affected --base origin/main for what a diff reaches
 bun run bench   # latency of the path from a tool call to the robot, on the twin (bench/run.ts)
+bun bench/page.ts      # what a person waits for around the 3D view: start, first frame, bytes, frame time
+bun bench/install.ts   # clone and install as the setup skill does them
 ```
+
+What those measured, before and after each change: [`docs/performance.md`](performance.md).
 
 `bun install` also installs the git hooks (lefthook: format, lint and gitleaks on staged files).
 

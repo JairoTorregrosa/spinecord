@@ -9,6 +9,7 @@ import { linksText } from "./pages";
 import { buildFleet, type Fleet, type FleetOptions } from "./sources";
 import { buildViewPage } from "../../twin-view/view-build";
 import { serveView, type ViewServer } from "./view";
+import { chatSdkMissing } from "./chat-sdk";
 
 /** `fleetOptions`: what buildFleet takes besides `log`. main.ts passes none. */
 export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions, "log"> = {}): Promise<void> {
@@ -29,6 +30,8 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
         .map((r) => ({ id: r.id, brick: fleet.bricks.get(r.id)!, sim: fleet.sims.get(r.id)!, robot: r }));
       // --chat (experimental): loaded only with the flag; its MCP server is made once the view watches the calls
       if (config.view.chat) {
+        const missing = chatSdkMissing();
+        if (missing) throw new Error(missing);
         const { createChat } = await import("./chat");
         const robotId = twins[0]!.id;
         chat = createChat({ robots: fleet.robots, robotId, config: config.view.chat, log }, () =>

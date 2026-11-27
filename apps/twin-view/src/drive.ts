@@ -125,7 +125,10 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
         q.setFromAxisAngle(zAxis, phi);
         return m4.compose(v.set(x, z, lateral), q, one);
       };
+      let placed = NaN;
       const place = (travel: number) => {
+        if (travel === placed) return; // the links stand where they are: nothing to upload (still.ts)
+        placed = travel;
         for (let i = 0; i < count; i++) mesh.setMatrixAt(i, at(i * pitch - travel));
         mesh.instanceMatrix.needsUpdate = true;
       };
