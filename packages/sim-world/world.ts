@@ -4,8 +4,8 @@
 // No Math.random and no real clocks: everything comes from the seed, and time is virtual.
 //
 // The world file describes the environment and where the sensors sit on the body. It does NOT describe the
-// drivetrain: wheel size, axle track and which motors drive come from the robot profile, handed in by whoever
-// puts a robot body in this world (see `World.drive`).
+// drivetrain: wheel size, axle track, how much a turn scrubs and which motors drive belong to the robot, handed in
+// by whoever puts a robot body in this world (see `World.drive`).
 
 export type Vec = [number, number];
 export interface Pose {
@@ -66,9 +66,18 @@ export interface BodyShape {
   /** Distance sensor (ultrasonic or infrared): cm ahead of the axle, looking forward. */
   distance_sensor_x_cm: number;
 }
-/** Drivetrain geometry the physics needs. It comes from the robot profile, never from the world file. */
+/**
+ * The drivetrain as it physically is: what the body really does, which may differ from what the robot profile
+ * believes (a twin's `twin.drive`, else the profile). It belongs to the robot, never to the world file.
+ */
 export interface DriveGeometry {
   axle_track_cm: number;
+  /**
+   * Fraction of a turn that a skid-steer base (tracks) loses to the treads scrubbing sideways: it turns
+   * (1 - turn_scrub) of what its encoders say, while driving straight is untouched. 0 (the default) for wheels; below 1.
+   * A property of the robot's tracks on its floor, so it travels with the robot from room to room.
+   */
+  turn_scrub?: number;
 }
 
 export interface NoiseConfig {
@@ -78,11 +87,6 @@ export interface NoiseConfig {
   slip: number;
   /** Fixed bias between the wheels (relative std dev, drawn from the seed): the robot veers. */
   wheel_bias: number;
-  /**
-   * Fraction of a turn that a skid-steer base (tracks) loses to the treads scrubbing sideways: it turns
-   * (1 - turn_scrub) of what its encoders say, while driving straight is untouched. 0 for wheels; below 1.
-   */
-  turn_scrub: number;
   ultrasonic_cm: number;
   /** Std dev of infrared proximity at 40 %, in %; it grows in proportion to the reading (a weaker return is noisier). */
   ir_pct: number;
@@ -126,7 +130,6 @@ export const DEFAULT_NOISE: NoiseConfig = {
   motor: 0.01,
   slip: 0.01,
   wheel_bias: 0.003,
-  turn_scrub: 0,
   ultrasonic_cm: 0.3,
   ir_pct: 0.5,
   reflect_pct: 1,
@@ -138,7 +141,6 @@ export const NO_NOISE: NoiseConfig = {
   motor: 0,
   slip: 0,
   wheel_bias: 0,
-  turn_scrub: 0,
   ultrasonic_cm: 0,
   ir_pct: 0,
   reflect_pct: 0,
@@ -314,6 +316,12 @@ export function parseWorld(json: unknown): WorldConfig {
     "noise",
     "extensions",
   ];
+  const noise = root.noise as Record<string, unknown> | undefined;
+  if (noise && typeof noise === "object" && "turn_scrub" in noise)
+    fail(
+      "noise.turn_scrub",
+      "is not a field of the room: how much a tracked base loses on a turn belongs to the robot (its robot file's twin.drive.turn_scrub), so it goes with the robot into every world",
+    );
   for (const k of Object.keys(root)) {
     if (k === "robot")
       fail(
@@ -373,18 +381,21 @@ export function parseWorld(json: unknown): WorldConfig {
       };
     }),
     body: partial(root.body, "body", DEFAULT_BODY),
-    noise: ((n) =>
-      n.turn_scrub < 1
-        ? n
-        : fail("noise.turn_scrub", `must be below 1 (the share of a turn lost), got ${n.turn_scrub}`))(
-      partial(root.noise, "noise", DEFAULT_NOISE),
-    ),
+    noise: partial(root.noise, "noise", DEFAULT_NOISE),
     start: {
       x: num(start.x, "start.x"),
       y: num(start.y, "start.y"),
       th: (num(start.heading_deg, "start.heading_deg") * Math.PI) / 180,
     },
   };
+}
+
+/** Fails loud on a drivetrain the physics cannot roll. */
+export function checkDrive(d: DriveGeometry): void {
+  if (!(d.axle_track_cm > 0)) throw new Error(`world: drive.axle_track_cm must be > 0, got ${d.axle_track_cm}`);
+  const s = d.turn_scrub ?? 0;
+  if (!(s >= 0 && s < 1))
+    throw new Error(`world: drive.turn_scrub must be 0 or more and below 1 (the share of a turn lost), got ${s}`);
 }
 
 export interface AdvanceResult {
@@ -444,8 +455,7 @@ export class World {
 
   constructor(cfg: WorldConfig, seed = 1, drive: DriveGeometry | null = null) {
     if (!(cfg.width > 0 && cfg.height > 0)) throw new Error("world: the arena needs width and height > 0");
-    if (drive && !(drive.axle_track_cm > 0))
-      throw new Error(`world: drive.axle_track_cm must be > 0, got ${drive.axle_track_cm}`);
+    if (drive) checkDrive(drive);
     this.cfg = cfg;
     this.seed = seed;
     this.drive = drive;
@@ -690,13 +700,13 @@ export class World {
       throw new Error(
         "world: this body has no drivetrain geometry (set World.drive from the robot profile before rolling the wheels)",
       );
-    const nz = this.cfg.noise,
-      axle = this.drive.axle_track_cm;
+    const axle = this.drive.axle_track_cm,
+      scrub = this.drive.turn_scrub ?? 0;
     // Each slice of motion noise is its own arc, so the path does not depend on where steps begin and end.
     const arcs = this.wheelNoise(this.t_ms - dt_ms, dt_ms).map(({ w, l, r }) => {
       const tl = dl_cm * w * this.gainL * l,
         tr = dr_cm * w * this.gainR * r;
-      return { w, tl, tr, d: (tl + tr) / 2, th: ((tr - tl) / axle) * (1 - nz.turn_scrub) };
+      return { w, tl, tr, d: (tl + tr) / 2, th: ((tr - tl) / axle) * (1 - scrub) };
     });
     /** The pose after fraction `f` of this step's time, and the turn and travel done until then. */
     const at = (f: number): { pose: Pose; d: number; th: number; wheels: number } => {

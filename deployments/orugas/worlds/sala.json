@@ -77,7 +77,6 @@
     "motor": 0.02,
     "slip": 0.04,
     "wheel_bias": 0.006,
-    "turn_scrub": 0.2,
     "ultrasonic_cm": 0.5
   }
 }

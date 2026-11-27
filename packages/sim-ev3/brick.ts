@@ -15,7 +15,7 @@ import {
   readParam,
 } from "../driver-ev3/encode";
 import type { Transport } from "../driver-ev3/transport";
-import { World, DT_MS, COLOR_RGB } from "../sim-world/world";
+import { World, DT_MS, COLOR_RGB, checkDrive } from "../sim-world/world";
 import type { WorldHost } from "../sim-world/world-provider";
 import type { RobotProfile } from "../protocol/types";
 import {
@@ -93,7 +93,11 @@ export function motorStep(
   return { v: 0, d: 0 };
 }
 
-/** The drive wheels of the robot this brick sits in. It comes from the robot profile, never from the world file. */
+/**
+ * The drive wheels of the robot this brick sits in, as they physically are: the wheel that really rolls and the
+ * track the body really turns on. The runtime plans its moves with the profile's numbers, which may be wrong; the
+ * brick and the physics run on these, so calibrating the profile changes what the robot does, as on the floor.
+ */
 export interface BrickDrivetrain {
   left: MotorPort;
   right: MotorPort;
@@ -101,24 +105,38 @@ export interface BrickDrivetrain {
   axle_track_cm: number;
   /** 1 if positive motor rotation rolls the robot forward, -1 if the motors are mounted the other way. */
   forward_sign: 1 | -1;
+  /** Share of a turn a skid-steer base loses to its treads scrubbing sideways (World DriveGeometry). Default 0. */
+  turn_scrub?: number;
+}
+/** What a twin's build says the drivetrain physically is (a robot file's `twin.drive`); each absent field is the profile's. */
+export interface PhysicalDrive {
+  wheel_diameter_cm?: number;
+  axle_track_cm?: number;
+  turn_scrub?: number;
 }
 /**
  * Builds the brick's drivetrain from a robot profile plus the ports of its motor pair (the same `pair` the EV3
- * provider is configured with). A robot without a drivetrain or without a pair gives null: the twin's motors
- * turn, the robot stays.
+ * provider is configured with), with `physical` (a twin's build) in place of the profile's numbers where it gives
+ * them. A robot without a drivetrain or without a pair gives null: the twin's motors turn, the robot stays.
  */
 export function drivetrainFromProfile(
   profile: RobotProfile,
   pair: { left: MotorPort; right: MotorPort } | undefined,
+  physical: PhysicalDrive = {},
 ): BrickDrivetrain | null {
   const d = profile.drivetrain;
-  if (!d || !pair) return null;
+  if (!d || !pair) {
+    if (Object.keys(physical).length > 0)
+      throw new Error("a physical drive (twin.drive) needs a robot whose profile has a drivetrain and a pair");
+    return null;
+  }
   return {
     left: pair.left,
     right: pair.right,
-    wheel_diameter_cm: d.wheel_diameter_cm,
-    axle_track_cm: d.axle_track_cm,
+    wheel_diameter_cm: physical.wheel_diameter_cm ?? d.wheel_diameter_cm,
+    axle_track_cm: physical.axle_track_cm ?? d.axle_track_cm,
     forward_sign: d.forward_sign,
+    turn_scrub: physical.turn_scrub ?? 0,
   };
 }
 /** System reply with error: [len][counter][0x05][command][status]. */
@@ -274,6 +292,7 @@ export class SimBrick implements Transport, WorldHost {
         throw new Error(`SimBrick: drivetrain.forward_sign must be 1 or -1, got ${String(d.forward_sign)}`);
       if (!"ABCD".includes(d.left) || !"ABCD".includes(d.right) || d.left === d.right)
         throw new Error(`SimBrick: drivetrain needs two different motor ports A-D, got ${d.left} and ${d.right}`);
+      checkDrive({ axle_track_cm: d.axle_track_cm, turn_scrub: d.turn_scrub ?? 0 });
     }
     this.drivetrain = d ? { ...d } : null;
     this.world = opts.world;
@@ -305,8 +324,10 @@ export class SimBrick implements Transport, WorldHost {
 
   private plug(ports: BrickPorts): void {
     this.ports = ports;
-    // The physics gets the axle track from the profile's drivetrain; without one the body cannot roll.
-    this.world.drive = this.drivetrain ? { axle_track_cm: this.drivetrain.axle_track_cm } : null;
+    // The physics gets the axle track and the scrub of the physical drivetrain; without one the body cannot roll.
+    this.world.drive = this.drivetrain
+      ? { axle_track_cm: this.drivetrain.axle_track_cm, turn_scrub: this.drivetrain.turn_scrub ?? 0 }
+      : null;
     this.motors = (["A", "B", "C", "D"] as MotorPort[]).map((port) => {
       const plugged = ports.motors[port] ?? null;
       return {

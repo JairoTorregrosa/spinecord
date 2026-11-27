@@ -465,7 +465,7 @@ describe("the robot's geometry comes from the profile, not from the world", () =
     await wide.call(E.outputStepSync(BC, -30, 200, Math.round((Math.PI / 2) * 6 * DEG_PER_CM), true));
     wide.run(3000);
     expect((wide.world.pose.th * 180) / Math.PI).toBeCloseTo(45, 0);
-    expect(wide.world.drive).toEqual({ axle_track_cm: 24 });
+    expect(wide.world.drive).toEqual({ axle_track_cm: 24, turn_scrub: 0 });
   });
   test("forward_sign -1: positive motor rotation drives the robot backwards", async () => {
     const { call, run, world, brick } = rig(quietWorld(), { ...DRIVETRAIN, forward_sign: -1 });

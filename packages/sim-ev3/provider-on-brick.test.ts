@@ -6,7 +6,7 @@ import { test, expect, describe } from "bun:test";
 import { Ev3Provider, EXAMPLE_EV3_HARDWARE } from "../driver-ev3/provider";
 import * as E from "../driver-ev3/encode";
 import type { CommandResult } from "../protocol/types";
-import { NO_NOISE, World } from "../sim-world/world";
+import { World } from "../sim-world/world";
 import { SimWorldProvider } from "../sim-world/world-provider";
 import { quietWorld, EXAMPLES, config, DRIVE } from "../sim-world/testkit";
 import { SimBrick, LARGE_DEG_S, type BrickDrivetrain } from "./brick";
@@ -122,9 +122,8 @@ describe("Ev3Provider on SimBrick", () => {
   });
 
   test("a tracked base with noise off: 50 cm by its encoders ends within 1 cm of 50, a 90 deg encoder turn turns about 72", async () => {
-    const tracks: BrickDrivetrain = { ...DRIVETRAIN, wheel_diameter_cm: 3.5, axle_track_cm: 13.5 };
-    const world = quietWorld(EXAMPLES.lineOval, { noise: { ...NO_NOISE, turn_scrub: 0.2 } });
-    world.drive = { axle_track_cm: 13.5 };
+    const tracks: BrickDrivetrain = { ...DRIVETRAIN, wheel_diameter_cm: 3.5, axle_track_cm: 13.5, turn_scrub: 0.2 };
+    const world = quietWorld(EXAMPLES.lineOval);
     const { ev3, brick } = twin(world, tracks);
     await ev3.devices();
     const perCm = 360 / (Math.PI * 3.5);

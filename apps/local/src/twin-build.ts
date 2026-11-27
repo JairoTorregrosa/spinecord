@@ -4,12 +4,14 @@
 // here, before anything is built: the brick, the physics, `load_world` by name and the 3D view then all see the
 // robot's own build. Pure: no I/O.
 import type { RobotFile } from "../../../packages/driver-ev3/robot-file";
+import type { PhysicalDrive } from "../../../packages/sim-ev3/brick";
 import { parseBrickPorts, type BrickPorts } from "../../../packages/sim-ev3/ports";
 import { parseWorld, type BodyShape } from "../../../packages/sim-world/world";
 
 /** The top-level keys of a robot file; anything else is a typo that would otherwise go unnoticed. */
 const FILE_KEYS = ["description", "hardware", "profile", "pair", "twin"];
-const TWIN_KEYS = ["body", "ev3", "view", "unconfirmed"];
+const TWIN_KEYS = ["body", "ev3", "view", "drive", "unconfirmed"];
+const DRIVE_KEYS = ["wheel_diameter_cm", "axle_track_cm", "turn_scrub"] as const;
 
 /** What of a build nobody confirmed (CONTRACT §3, `twin.unconfirmed`). The ones that change how the robot moves first. */
 export const MOVES = [
@@ -34,6 +36,8 @@ export interface TwinBuild {
   body?: unknown;
   ev3?: unknown;
   view?: unknown;
+  /** The drivetrain as the robot physically is (CONTRACT §3, `twin.drive`), checked; absent fields are the profile's. */
+  drive?: PhysicalDrive;
   unconfirmed?: Unconfirmed[];
 }
 
@@ -69,7 +73,38 @@ export function readBuild(raw: unknown, where: string): TwinBuild | null {
     pair: raw.pair !== undefined,
     drivetrain: profile.drivetrain !== undefined,
   });
-  return { ...t, ...(unconfirmed === undefined ? {} : { unconfirmed }) };
+  const drive = readDrive(t.drive, where, profile.drivetrain !== undefined);
+  return {
+    ...t,
+    ...(drive === undefined ? {} : { drive }),
+    ...(unconfirmed === undefined ? {} : { unconfirmed }),
+  } as TwinBuild;
+}
+
+/**
+ * `twin.drive`: what the drivetrain physically is, where it differs from what the profile believes. The twin rolls
+ * on these and the runtime plans with the profile, so correcting the profile corrects the twin as it does the robot.
+ */
+function readDrive(v: unknown, where: string, hasDrivetrain: boolean): PhysicalDrive | undefined {
+  if (v === undefined) return undefined;
+  const at = `${where}: twin.drive`;
+  if (!isObj(v)) throw new Error(`${at} must be an object {${DRIVE_KEYS.join("?, ")}?}, got ${JSON.stringify(v)}`);
+  if (!hasDrivetrain)
+    throw new Error(
+      `${at} is how the drivetrain physically is, and this file has no profile.drivetrain: remove twin.drive`,
+    );
+  const out: PhysicalDrive = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (!(DRIVE_KEYS as readonly string[]).includes(k))
+      throw new Error(`${at}.${k} is not a part of twin.drive (${DRIVE_KEYS.join(", ")})`);
+    const scrub = k === "turn_scrub";
+    if (typeof x !== "number" || !Number.isFinite(x) || (scrub ? !(x >= 0 && x < 1) : !(x > 0)))
+      throw new Error(
+        `${at}.${k} must be ${scrub ? "a number from 0 up to (not including) 1, the share of a turn lost" : "a number > 0 (cm)"}, got ${JSON.stringify(x)}`,
+      );
+    out[k as (typeof DRIVE_KEYS)[number]] = x;
+  }
+  return out;
 }
 
 function readUnconfirmed(
@@ -230,7 +265,12 @@ function checkPorts(
 }
 
 /** One line of what a twin will have, for `--doctor`: ports, pair and drivetrain, footprint, and where they came from. */
-export function describeTwin(robot: RobotFile, world: unknown, ownBuild: boolean): string {
+export function describeTwin(
+  robot: RobotFile,
+  world: unknown,
+  ownBuild: boolean,
+  physical: PhysicalDrive = {},
+): string {
   const cfg = parseWorld(world);
   const ports = cfg.extensions.ev3 === undefined ? { motors: {}, sensors: {} } : parseBrickPorts(cfg.extensions.ev3);
   const roleOf = new Map(Object.entries(robot.profile.roles).map(([r, dev]) => [dev, r]));
@@ -239,8 +279,12 @@ export function describeTwin(robot: RobotFile, world: unknown, ownBuild: boolean
   const motors = Object.entries(ports.motors).map(([p, k]) => port(p, k));
   const sensors = Object.entries(ports.sensors).map(([p, k]) => port(`S${p}`, k));
   const d = robot.profile.drivetrain;
+  // what the twin physically has, where it is not what the profile believes (the profile is what a person calibrates)
+  const really = (k: "wheel_diameter_cm" | "axle_track_cm") =>
+    physical[k] !== undefined && physical[k] !== d?.[k] ? ` (really ${physical[k]} cm)` : "";
+  const scrub = physical.turn_scrub ? `, turns scrub ${physical.turn_scrub}` : "";
   const drive = d
-    ? `pair ${robot.pair!.left}+${robot.pair!.right}, wheel ${d.wheel_diameter_cm} cm, axle track ${d.axle_track_cm} cm, forward_sign ${d.forward_sign}, heading from ${d.heading ? `${d.heading.device}.${d.heading.channel}` : "the wheel encoders"}`
+    ? `pair ${robot.pair!.left}+${robot.pair!.right}, wheel ${d.wheel_diameter_cm} cm${really("wheel_diameter_cm")}, axle track ${d.axle_track_cm} cm${really("axle_track_cm")}${scrub}, forward_sign ${d.forward_sign}, heading from ${d.heading ? `${d.heading.device}.${d.heading.channel}` : "the wheel encoders"}`
     : robot.pair
       ? `pair ${robot.pair.left}+${robot.pair.right}, no drivetrain`
       : "no drivetrain";

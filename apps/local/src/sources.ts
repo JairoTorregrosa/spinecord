@@ -64,7 +64,8 @@ export function twinRuntime(
   const time = clock && { now: () => clock.now(), sleep: (ms: number) => clock.sleep(ms) };
   const brick = new SimBrick({
     world: new World(config, s.seed),
-    drivetrain: drivetrainFromProfile(profile, pair),
+    // the brick rolls on what the robot physically is; the runtime below plans with what its profile believes
+    drivetrain: drivetrainFromProfile(profile, pair, s.build?.drive),
     ...(time && { now: time.now }),
   });
   const sim = new SimWorldProvider({

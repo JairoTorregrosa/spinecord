@@ -109,7 +109,7 @@ describe("physics", () => {
     expect(Math.max(...v.corners().map(([x]) => x))).toBeGreaterThan(119.99);
   });
   test("a tracked base with turn_scrub 0.2 turns 80 % of what its encoders say; driving straight is untouched", () => {
-    const w = quietWorld(EXAMPLES.lineOval, { noise: { ...NO_NOISE, turn_scrub: 0.2 } });
+    const w = new World(config(EXAMPLES.lineOval, { noise: { ...NO_NOISE } }), 1, { ...DRIVE, turn_scrub: 0.2 });
     const arc = (Math.PI / 2) * (DRIVE.axle_track_cm / 2); // each wheel's travel for 90 deg by the encoders
     const r = w.advance(-arc, arc, 10);
     expect(r.right_cm).toBeCloseTo(arc, 6); // the encoders report what the motors turned
@@ -117,8 +117,12 @@ describe("physics", () => {
     w.setPose({ x: 43, y: 25, th: 0 });
     w.advance(30, 30, 20);
     expect(w.pose.x).toBeCloseTo(73, 6);
-    expect(() => parseWorld({ ...EXAMPLES.lineOval, noise: { turn_scrub: 1 } })).toThrow(
-      /noise.turn_scrub must be below 1/,
+    expect(() => new World(config(), 1, { ...DRIVE, turn_scrub: 1 })).toThrow(
+      /turn_scrub must be 0 or more and below 1/,
+    );
+    // the scrub belongs to the robot, not to the room: a world file that says it is refused, naming its new home
+    expect(() => parseWorld({ ...EXAMPLES.lineOval, noise: { turn_scrub: 0.2 } })).toThrow(
+      /noise.turn_scrub is not a field of the room.*twin.drive.turn_scrub/,
     );
   });
   test("an obstacle blocks too", () => {

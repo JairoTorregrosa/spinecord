@@ -1,5 +1,5 @@
 {
-  "description": "EV3 de orugas con un teléfono de pie al frente (su pantalla es la cara) y el sensor infrarrojo encima, mirando adelante. Motores grandes en B (oruga izquierda) y C (oruga derecha), infrarrojo en el puerto 4, sin giroscopio: el rumbo sale de los encoders. Las medidas son aproximadas: mide en el robot real y ajusta wheel_diameter_cm (avanza 50 cm y compara) y axle_track_cm (gira 360° y compara). `twin` es cómo está armado, para su gemelo: `body` la huella (8.5 cm por delante del eje, 13.5 por detrás con el parachoques, 9 a cada lado) y dónde mira el infrarrojo (6 cm por delante del eje), `ev3` qué hay en cada puerto y `view` cómo se ve en 3D (orugas, el ladrillo con la pantalla hacia delante, el teléfono, el infrarrojo sobre el teléfono, el parachoques y la etiqueta). El gemelo orugas-sim se construye con este mismo archivo, en cualquier mundo.",
+  "description": "EV3 de orugas con un teléfono de pie al frente (su pantalla es la cara) y el sensor infrarrojo encima, mirando adelante. Motores grandes en B (oruga izquierda) y C (oruga derecha), infrarrojo en el puerto 4, sin giroscopio: el rumbo sale de los encoders. Las medidas son aproximadas: mide en el robot real y ajusta wheel_diameter_cm (avanza 50 cm y compara) y axle_track_cm (gira 360° y compara). `twin` es cómo está armado, para su gemelo: `body` la huella (8.5 cm por delante del eje, 13.5 por detrás con el parachoques, 9 a cada lado) y dónde mira el infrarrojo (6 cm por delante del eje), `ev3` qué hay en cada puerto, `drive` la tracción como es de verdad (el gemelo gira un 20 % menos de lo que dicen los encoders, como las orugas que patinan; calibrar `profile` lo corrige) y `view` cómo se ve en 3D (orugas, el ladrillo con la pantalla hacia delante, el teléfono, el infrarrojo sobre el teléfono, el parachoques y la etiqueta). El gemelo orugas-sim se construye con este mismo archivo, en cualquier mundo.",
   "pair": {
     "left": "B",
     "right": "C"
@@ -47,6 +47,11 @@
       "color_sensor_x_cm": 7,
       "color_spot_radius_cm": 1,
       "distance_sensor_x_cm": 6
+    },
+    "drive": {
+      "wheel_diameter_cm": 3.5,
+      "axle_track_cm": 13.5,
+      "turn_scrub": 0.2
     },
     "ev3": {
       "motors": {
