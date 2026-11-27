@@ -173,7 +173,9 @@ describe("the view listener", () => {
     const m = await fetch(`${view.url}${mesh}`, { ...raw, headers: { "accept-encoding": "gzip" } });
     expect(m.headers.get("content-encoding")).toBeNull();
     expect(m.headers.get("content-type")).toBe("application/gzip");
-    expect(new Uint8Array(await m.arrayBuffer())).toEqual((await buildViewPage()).files[mesh]!.body as Uint8Array);
+    expect(new Uint8Array(await m.arrayBuffer())).toEqual(
+      (await buildViewPage()).files[mesh]!.body as Uint8Array<ArrayBuffer>,
+    );
     // another host still gets nothing, cached or not
     expect((await fetch(`${view.url}view.js`, { headers: { host: "rebound.example:80" } })).status).toBe(403);
   });
