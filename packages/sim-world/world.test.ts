@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { World, parseWorld, COLOR, WORLD_SCHEMA } from "./world";
+import { World, parseWorld, COLOR, NO_NOISE, WORLD_SCHEMA } from "./world";
 import { join } from "node:path";
 import { loadWorldFile } from "./world-file";
 import { EXAMPLES, DRIVE, config, quietWorld } from "./testkit";
@@ -107,6 +107,19 @@ describe("physics", () => {
     v.setPose({ x: 90, y: 40, th: Math.PI / 6 });
     expect(v.advance(50, 50, 25).stalled).toBe(true);
     expect(Math.max(...v.corners().map(([x]) => x))).toBeGreaterThan(119.99);
+  });
+  test("a tracked base with turn_scrub 0.2 turns 80 % of what its encoders say; driving straight is untouched", () => {
+    const w = quietWorld(EXAMPLES.lineOval, { noise: { ...NO_NOISE, turn_scrub: 0.2 } });
+    const arc = (Math.PI / 2) * (DRIVE.axle_track_cm / 2); // each wheel's travel for 90 deg by the encoders
+    const r = w.advance(-arc, arc, 10);
+    expect(r.right_cm).toBeCloseTo(arc, 6); // the encoders report what the motors turned
+    expect((w.pose.th * 180) / Math.PI).toBeCloseTo(72, 6);
+    w.setPose({ x: 43, y: 25, th: 0 });
+    w.advance(30, 30, 20);
+    expect(w.pose.x).toBeCloseTo(73, 6);
+    expect(() => parseWorld({ ...EXAMPLES.lineOval, noise: { turn_scrub: 1 } })).toThrow(
+      /noise.turn_scrub must be below 1/,
+    );
   });
   test("an obstacle blocks too", () => {
     const w = quietWorld();

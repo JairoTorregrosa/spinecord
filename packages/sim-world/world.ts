@@ -78,6 +78,11 @@ export interface NoiseConfig {
   slip: number;
   /** Fixed bias between the wheels (relative std dev, drawn from the seed): the robot veers. */
   wheel_bias: number;
+  /**
+   * Fraction of a turn that a skid-steer base (tracks) loses to the treads scrubbing sideways: it turns
+   * (1 - turn_scrub) of what its encoders say, while driving straight is untouched. 0 for wheels; below 1.
+   */
+  turn_scrub: number;
   ultrasonic_cm: number;
   reflect_pct: number;
   gyro_deg: number;
@@ -113,6 +118,7 @@ export const DEFAULT_NOISE: NoiseConfig = {
   motor: 0.01,
   slip: 0.01,
   wheel_bias: 0.003,
+  turn_scrub: 0,
   ultrasonic_cm: 0.3,
   reflect_pct: 1,
   gyro_deg: 0.3,
@@ -122,6 +128,7 @@ export const NO_NOISE: NoiseConfig = {
   motor: 0,
   slip: 0,
   wheel_bias: 0,
+  turn_scrub: 0,
   ultrasonic_cm: 0,
   reflect_pct: 0,
   gyro_deg: 0,
@@ -310,7 +317,12 @@ export function parseWorld(json: unknown): WorldConfig {
       };
     }),
     body: partial(root.body, "body", DEFAULT_BODY),
-    noise: partial(root.noise, "noise", DEFAULT_NOISE),
+    noise: ((n) =>
+      n.turn_scrub < 1
+        ? n
+        : fail("noise.turn_scrub", `must be below 1 (the share of a turn lost), got ${n.turn_scrub}`))(
+      partial(root.noise, "noise", DEFAULT_NOISE),
+    ),
     start: {
       x: num(start.x, "start.x"),
       y: num(start.y, "start.y"),
@@ -612,7 +624,7 @@ export class World {
     const tl = dl_cm * this.gainL * (1 + nz.motor * this.motionRng.gauss()) * (1 - nz.slip * 2 * this.motionRng.next());
     const tr = dr_cm * this.gainR * (1 + nz.motor * this.motionRng.gauss()) * (1 - nz.slip * 2 * this.motionRng.next());
     const full = (tl + tr) / 2,
-      fullTh = (tr - tl) / this.drive.axle_track_cm;
+      fullTh = ((tr - tl) / this.drive.axle_track_cm) * (1 - nz.turn_scrub);
     const at = (f: number): Pose => {
       const d = full * f,
         dth = fullTh * f,
