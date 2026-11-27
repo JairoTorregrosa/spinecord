@@ -1,5 +1,5 @@
 // spinecord on one computer: an MCP server over stdio with the runtime and the robots inside this process.
-//   claude mcp add -s user spinecord -- bun <repo>/apps/local/main.ts [robots...]
+//   claude mcp add -s local spinecord -- bun <repo>/apps/local/main.ts [robots...], in the folder Claude Code starts in
 // `bun apps/local/main.ts --print-add [robots...]` prints that command for this computer and starts nothing.
 // `bun apps/local/main.ts --doctor [robots...] [--assistant]` checks this computer for those robots (src/doctor.ts).
 // stdout carries JSON-RPC and nothing else; every log line is one JSON object on stderr, and `--log-file <path>`
@@ -28,8 +28,9 @@ try {
   if (printAdd) {
     process.stdout.write(`${addCommand({ platform: process.platform, repo: REPO, args: robotArgs })}\n`);
     process.stderr.write(
-      "spinecord: run the line above in a terminal. When spinecord is already registered, first run: " +
-        "claude mcp remove -s user spinecord\n",
+      "spinecord: run the line above in a terminal, in the folder you start Claude Code in (local scope: only " +
+        "sessions opened there start these robots). When spinecord is already registered there, first run: " +
+        "claude mcp remove -s local spinecord\n",
     );
     process.exit(0);
   }

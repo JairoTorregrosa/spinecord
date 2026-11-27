@@ -244,9 +244,11 @@ describe("--print-add", () => {
     const repo = "C:\\Users\\Ana Maria\\my code\\spinecord";
     const main = '"C:\\Users\\Ana Maria\\my code\\spinecord\\apps\\local\\main.ts"';
     // "--" in quotes: PowerShell keeps a bare one for itself when claude is a script
-    expect(addCommand({ platform: "win32", repo, args: [] })).toBe(`claude mcp add -s user spinecord "--" bun ${main}`);
+    expect(addCommand({ platform: "win32", repo, args: [] })).toBe(
+      `claude mcp add -s local spinecord "--" bun ${main}`,
+    );
     expect(addCommand({ platform: "win32", repo, args: ["--ev3", "--twin"] })).toBe(
-      `claude mcp add -s user spinecord "--" bun ${main} --ev3 --twin`,
+      `claude mcp add -s local spinecord "--" bun ${main} --ev3 --twin`,
     );
     expect(
       addCommand({
@@ -255,7 +257,7 @@ describe("--print-add", () => {
         args: ["--twin", "deployments/example/robots/r1.json", "--world=D:\\my worlds\\w.json", "--seed", "7"],
       }),
     ).toBe(
-      `claude mcp add -s user spinecord "--" bun ${main} ` +
+      `claude mcp add -s local spinecord "--" bun ${main} ` +
         '--twin "C:\\Users\\Ana Maria\\my code\\spinecord\\deployments\\example\\robots\\r1.json" ' +
         '--world "D:\\my worlds\\w.json" --seed 7',
     );
@@ -266,13 +268,13 @@ describe("--print-add", () => {
         args: ["--ev3dev", "--ssh", "robot@ev3dev.local", "--ssh-key", "C:\\Users\\Ana Maria\\.ssh\\id_ed25519"],
       }),
     ).toBe(
-      `claude mcp add -s user spinecord "--" bun ${main} --ev3dev --ssh robot@ev3dev.local ` +
+      `claude mcp add -s local spinecord "--" bun ${main} --ev3dev --ssh robot@ev3dev.local ` +
         '--ssh-key "C:\\Users\\Ana Maria\\.ssh\\id_ed25519"',
     );
     expect(
       addCommand({ platform: "win32", repo, args: ["--pages", "--page-ext", "deployments/example/page-ext"] }),
     ).toBe(
-      `claude mcp add -s user spinecord "--" bun ${main} --pages ` +
+      `claude mcp add -s local spinecord "--" bun ${main} --pages ` +
         '--page-ext "C:\\Users\\Ana Maria\\my code\\spinecord\\deployments\\example\\page-ext"',
     );
     // what PowerShell and cmd.exe read differently inside double quotes is refused, never printed
@@ -282,7 +284,7 @@ describe("--print-add", () => {
   test("macOS and Linux: absolute paths with spaces, quoted for sh, bash and zsh", () => {
     for (const platform of ["darwin", "linux"]) {
       expect(addCommand({ platform, repo: "/Users/ana maria/spinecord", args: ["--ev3"] })).toBe(
-        'claude mcp add -s user spinecord -- bun "/Users/ana maria/spinecord/apps/local/main.ts" --ev3',
+        'claude mcp add -s local spinecord -- bun "/Users/ana maria/spinecord/apps/local/main.ts" --ev3',
       );
       expect(
         addCommand({
@@ -291,12 +293,12 @@ describe("--print-add", () => {
           args: ["--config", "deployments/example/local.json"],
         }),
       ).toBe(
-        'claude mcp add -s user spinecord -- bun "/home/ana/spinecord/apps/local/main.ts" ' +
+        'claude mcp add -s local spinecord -- bun "/home/ana/spinecord/apps/local/main.ts" ' +
           '--config "/home/ana/spinecord/deployments/example/local.json"',
       );
       // a character a shell expands inside double quotes: single quotes
       expect(addCommand({ platform, repo: "/home/ana/$5 robot's", args: [] })).toBe(
-        "claude mcp add -s user spinecord -- bun '/home/ana/$5 robot'\\''s/apps/local/main.ts'",
+        "claude mcp add -s local spinecord -- bun '/home/ana/$5 robot'\\''s/apps/local/main.ts'",
       );
     }
   });
@@ -307,7 +309,7 @@ describe("--print-add", () => {
         "/Users/ana",
       ),
     ).toBe(
-      'claude mcp add -s user spinecord -- bun "/Users/ana/spinecord/apps/local/main.ts" --log-file "/Users/ana/spinecord.log"',
+      'claude mcp add -s local spinecord -- bun "/Users/ana/spinecord/apps/local/main.ts" --log-file "/Users/ana/spinecord.log"',
     );
     expect(
       addCommand(
@@ -315,7 +317,7 @@ describe("--print-add", () => {
         "C:\\Users\\Ana",
       ),
     ).toBe(
-      'claude mcp add -s user spinecord "--" bun "C:\\Users\\Ana\\spinecord\\apps\\local\\main.ts" --ev3 ' +
+      'claude mcp add -s local spinecord "--" bun "C:\\Users\\Ana\\spinecord\\apps\\local\\main.ts" --ev3 ' +
         '--log-file "C:\\Users\\Ana\\spinecord.log"',
     );
     expect(addCommand({ platform: "linux", repo: "/home/ana/spinecord", args: ["--log-file=logs/s.log"] })).toEndWith(
@@ -332,10 +334,10 @@ describe("--print-add", () => {
       expect(run.out).toContain(` bun "${MAIN}" --ev3 --twin --world "${EXAMPLE.world}"`);
       expect(run.out).toStartWith(
         process.platform === "win32"
-          ? 'claude mcp add -s user spinecord "--" bun '
-          : "claude mcp add -s user spinecord -- bun ",
+          ? 'claude mcp add -s local spinecord "--" bun '
+          : "claude mcp add -s local spinecord -- bun ",
       );
-      expect(run.err).toContain("claude mcp remove -s user spinecord");
+      expect(run.err).toContain("claude mcp remove -s local spinecord");
       expect(run.code).toBe(0);
       const logFile = join(elsewhere, "logs", "server.log");
       const logged = main(elsewhere, "--print-add", "--log-file", logFile);

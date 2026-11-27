@@ -38,10 +38,10 @@ Confirm "Yes, turn on Code Mode" on first use. The session shows `Code Mode (exp
 The server is a process on this computer, with the robots inside (README, "Use it from Claude Code"):
 
 ```bash
-claude mcp add -s user spinecord -- bun "<repo>/apps/local/main.ts"
+claude mcp add -s local spinecord -- bun "<repo>/apps/local/main.ts"
 ```
 
-`bun apps/local/main.ts --print-add`, run in the clone, prints that line with the absolute path for the computer it runs on; on Windows use the printed line (it quotes the separator, `"--"`, for PowerShell). Start `claude` in a folder outside the clone.
+`bun apps/local/main.ts --print-add`, run in the clone, prints that line with the absolute path for the computer it runs on; on Windows use the printed line (it quotes the separator, `"--"`, for PowerShell). Run it in a folder outside the clone and start `claude` there: local scope, so only that folder's sessions start the robots (CONTRACT §6).
 
 Check with `/mcp` inside Claude Code: `spinecord` is connected and lists its tools. Then ask for `list_robots`.
 
