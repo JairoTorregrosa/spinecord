@@ -323,6 +323,35 @@ describe("--doctor", () => {
     }
   }, 30_000);
 
+  test("an axle track wider than the footprint: a warn line, and the doctor still says ok", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spinecord-doctor-"));
+    try {
+      const r1 = JSON.parse(readFileSync(join(REPO, "deployments", "example", "robots", "r1.json"), "utf8"));
+      const wide = join(dir, "wide.json");
+      const drivetrain = { ...r1.profile.drivetrain, axle_track_cm: 20 };
+      const body = { ...r1.twin?.body, half_width_cm: 9 };
+      writeFileSync(wide, JSON.stringify({ ...r1, profile: { ...r1.profile, drivetrain }, twin: { ...r1.twin, body } }));
+      const quiet = probes({ which: () => null, portFree: async () => false });
+      const only = await doctor({ robotArgs: ["--twin", wide], assistant: false, filesOnly: true }, quiet);
+      expect(line(only.lines, "footprint r1-sim")).toMatchObject({
+        status: "warn",
+        reason: "axle track 20 cm is wider than the footprint (18 cm wide)",
+      });
+      expect(only.code).toBe(0);
+      const fine = await doctor(
+        { robotArgs: ["--twin", join(REPO, "deployments", "example", "robots", "r1.json")], assistant: false, filesOnly: true },
+        quiet,
+      );
+      expect(fine.lines.some((l) => l.check.startsWith("footprint"))).toBe(false);
+      const cli = Bun.spawnSync(["bun", MAIN, "--doctor", "--files-only", "--twin", wide], { cwd: REPO, stdout: "pipe" });
+      expect(cli.stdout.toString()).toMatch(/^warn {2}footprint r1-sim {2}axle track 20 cm/m);
+      expect(cli.stdout.toString().trimEnd().split("\n").at(-1)).toBe("doctor: ok");
+      expect(cli.exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test("--help lists --doctor", () => {
     expect(USAGE).toContain("--doctor [robots...]");
     expect(USAGE).toContain("--assistant");

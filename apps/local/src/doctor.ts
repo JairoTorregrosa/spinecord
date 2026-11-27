@@ -10,7 +10,7 @@ import { join, posix, win32 } from "node:path";
 import { paysBeforeProfile, type Env } from "../../../examples/assistant/setup";
 import { loadConfig, REPO, type LocalConfig } from "./config";
 import { chooseInterface, defaultRouteAddress } from "./lan";
-import { describeTwin, describeUnconfirmed } from "./twin-build";
+import { describeTwin, describeUnconfirmed, footprintClash } from "./twin-build";
 
 export type Status = "ok" | "warn" | "fail";
 export interface Line {
@@ -383,6 +383,14 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
           check: `twin ${r.id}`,
           reason: describeTwin(r.robot, r.world, r.ownBuild === true, r.build?.drive),
         });
+        const clash = footprintClash(r.robot, r.world);
+        if (clash)
+          add({
+            status: "warn",
+            check: `footprint ${r.id}`,
+            reason: clash,
+            next: "a measured value wins; else the footprint read from the photo wins: axle_track_cm = the footprint width minus one wheel or track width",
+          });
         if (r.unconfirmed?.length)
           add({
             status: "warn",

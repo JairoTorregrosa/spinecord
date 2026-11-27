@@ -284,6 +284,15 @@ function checkPorts(
 }
 
 /** One line of what a twin will have, for `--doctor`: ports, pair and drivetrain, footprint, and where they came from. */
+/** A build no robot can have: wheels further apart than the body is wide. Null when the file is consistent. */
+export function footprintClash(robot: RobotFile, world: unknown): string | null {
+  const track = robot.profile.drivetrain?.axle_track_cm;
+  const width = 2 * parseWorld(world).body.half_width_cm;
+  return track !== undefined && track > width
+    ? `axle track ${track} cm is wider than the footprint (${width} cm wide)`
+    : null;
+}
+
 export function describeTwin(
   robot: RobotFile,
   world: unknown,
