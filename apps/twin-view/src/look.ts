@@ -1,57 +1,94 @@
-// How a twin's body looks in 3D: the optional `extensions.view` section of its world file. The parts themselves
-// come from the robot's ports (which motor and which sensor is on each port) and its drivetrain (wheel diameter,
-// axle track); this section only says how the person assembled them. Every field is optional: a missing or bad
-// field takes its default, and the defaults always give a plausible robot whose parts do not overlap.
+// How a twin's body looks in 3D: the look. It is written in the robot file's `twin.view` (CONTRACT §3: the build
+// of the robot, so its twin is that robot in any world); apps/local/src/twin-build.ts merges it into the world
+// the page receives as `extensions.view`. A robot file without `twin` takes the look from its world's
+// `extensions.view`. The parts themselves come from the robot's ports (which motor and which sensor is on each
+// port) and its drivetrain (wheel diameter, axle track); the look only says how the person assembled them. Every
+// field is optional: a missing or bad field takes its default, and the defaults always give a plausible robot
+// whose parts do not overlap and where nothing floats.
 //
-// Lengths in cm, from the centre of the drive axle on the floor: x ahead, y to the left, z up. A position is the
-// centre of the part's box, except the brick's z, which is its bottom.
+// Every part is a real LEGO part at its real size (packages/lego-parts, through dims.ts) and sits on the LEGO grid.
+// Places: from the centre of the drive axle on the floor, x ahead, y to the left, z up. A place is given in
+// modules (`x`, `y`, `z`: 1 module = 8 mm, the pitch of studs and holes; halves allowed, anything finer is rounded
+// to a half module), or in centimetres where the person measured it (`x_cm`, `y_cm`, `z_cm`, taken as they are).
+// A place is the centre of the part's box, except the brick's z, which is its bottom. A part with no place goes to
+// a default mount of its kind on the grid; a part that touches nothing that holds it is held by a beam pinned
+// through its own holes to the nearest part below or behind it.
 //
 //   "view": {
 //     "drive": "tracks" | "wheels" | "none"
-//         tracks: wide tread links around two sprockets, as long as the world's body; wheels: two tyres with a
-//         ball caster; none: no drive (a stationary arm). Default: wheels with a drivetrain, none without.
-//     "caster": "ball" | "none"                         with wheels; default "ball"
+//         tracks: two tracks; wheels: tyres on rims; none: no drive (a stationary arm, which stands on a base
+//         frame of beams on the floor). Default: wheels with a drivetrain, none without.
+//     "track": "rubber" | "links"                       the home set's rubber band 53992 on two rims 56145 9.6 cm
+//                                                       apart, or the Education set's links 88323 on sprockets
+//                                                       57519; default: whichever rolls nearest the profile's
+//                                                       wheel diameter (3.68 cm rubber, 5.52 cm links)
+//     "wheels_per_side": 1 | 2 | 3                      with wheels: wheels in a row on each side, all turning with
+//                                                       that side's motor (geared or chained); default 1
+//     "caster": "ball" | "wheel" | "skid" | "none"      what holds up the back with wheels: the steel ball 99948,
+//                                                       a small passive wheel (tyre 89201), or a skid sliding on
+//                                                       the floor; default "ball" with one wheel per side, "none"
+//                                                       with more
+//     "shell": "beams" | "panels"                       a frame of beams round the robot, or panels on its sides
 //     "brick": {
-//       "x_cm": n, "y_cm": n, "z_cm": n,                its centre ahead and across, its bottom; default: centred
-//                                                       on the body, resting on a frame of beams over the drive
-//       "pose": "flat" | "standing",                    lying (screen up) or upright (screen to one end); "flat"
-//       "screen": "front" | "back"                      where the screen's top edge (ports A-D) points when
-//                                                       flat, or which way the screen faces when standing; "back"
+//       "x" | "x_cm", "y" | "y_cm", "z" | "z_cm",       its centre ahead and across, its bottom; default: centred
+//                                                       on the body, on beams pinned into its bottom holes
+//       "pose": "flat" | "standing",                    lying (screen up) or upright; default "flat"
+//       "screen": "front" | "back",                     where the screen's top edge (ports A-D) points when flat, or
+//                                                       which way the screen faces when standing; default "back"
+//       "motor_ports": "up" | "down",                   standing: which end the motor ports A-D are at; "up"
+//       "battery": "aa" | "rechargeable"                the rechargeable battery makes it 5.08 cm high, AA 4.36
 //     },
-//     "motors": { "A": PLACE & {"attachment": ATTACHMENT}, ... },
+//     "motors": { "A": PLACE & {"attachment": ATTACHMENT, "on": "B"}, ... },
 //                                                       a motor that does not drive (any port, either size): where
 //                                                       it sits and what it moves; the drive motors sit on the
-//                                                       drive's axles
+//                                                       drive's axles. "on": the port of another motor whose arm or
+//                                                       lift carries this one at its end (a claw on a lift): it
+//                                                       rides along as that one turns
 //         ATTACHMENT = "axle" | "arm" | "lift" | "turntable" | "gripper", default "axle":
 //           axle       an axle with a short beam on the hub, turning with the motor
-//           arm        a long beam from the hub (as long as "length_cm", default 12) that swings with the motor
+//           arm        a long beam from the hub (as long as "length" modules or "length_cm", default 15
+//                      modules) that swings with the motor
 //           lift       two parallel beams to a fork at their end, swinging with the motor
 //           turntable  a turntable on the hub with a beam across it, turning with the motor
 //           gripper    two claws on the front of the motor that open as the tacho grows (fully open at
 //                      "open_deg", default 90), the way a motor's gripper opens with positive degrees
 //     "sensors": { "1": PLACE, ... },                   where each sensor sits
-//         PLACE = {"x_cm": n, "y_cm": n, "z_cm": n, "facing": FACING, "yaw_deg": n}
-//         FACING = "forward" | "back" | "left" | "right" | "up" | "down": where a sensor's eye, lens, plunger or
-//         face points, or a motor's output axle; yaw_deg turns that about the vertical, counter-clockwise from
-//         above. A position given in part only fills the rest from the default; no position at all puts the
-//         part at a default mount for its kind (colour: down under the front; touch: forward at the front;
-//         ultrasonic and infrared: forward where the world's body says the distance sensor reads; gyro: up at
-//         the back; medium motor: forward on the front of the brick; large motor: on top of the brick, its axle
-//         to the left), moved along a short list of mounts, then upward, until it touches nothing placed.
+//         PLACE = {"x" | "x_cm", "y" | "y_cm", "z" | "z_cm", "facing": FACING, "yaw_deg": n}
+//         FACING = "forward" | "back" | "left" | "right" | "up" | "down": where a sensor's eye, lens, button or
+//         face points (a gyro: its top, the face with the arrows, whose axis it measures), or a motor's output
+//         axle; yaw_deg turns that about the vertical, counter-clockwise from above. A place given in part fills
+//         the rest from the default. Default mounts: colour down under the front; touch forward at the front;
+//         ultrasonic and infrared forward where the world's body says the distance sensor reads; gyro top up on
+//         the brick or the frame; medium motor forward on the front of the brick; large motor on top of the
+//         brick, its axle to the left; each moved along a short list of mounts, then upward, until it touches
+//         nothing placed.
 //     "phone": {                                        a phone standing on the robot, its screen showing a face
-//                                                       with two eyes; default: no phone
+//                                                       with two eyes (not a LEGO part: centimetres); default none
 //       "x_cm": n, "y_cm": n, "bottom_cm": n,           where it stands and how high its lower edge is; default:
 //                                                       over the front of the brick, just above it
 //       "screen": "front" | "back" | "left" | "right",  which way its screen (the face) looks; default "front"
 //       "yaw_deg": n,                                   turned from that about the vertical
 //       "orientation": "landscape" | "portrait"         default "landscape"
 //     },
-//     "bumper": {"x_cm": n},                            a bar of beams and bricks across the body; default none
-//     "label": "3"                                      a paper label on the brick's left side (4 characters)
+//     "bumper": {"x" | "x_cm": n},                      a bar of beams and bricks across the body; default none
+//     "label": "3",                                     a paper label on the brick's left side (4 characters)
+//     "unconfirmed": [...]                              reserved, not a bad field: the server copies the build's
+//                                                       twin.unconfirmed here (CONTRACT §3) and refuses it written in
+//                                                       twin.view; the look reads nothing from it
 //   }
 //
-// The physics reads none of this: the distance sensor's rays start at the world's `body.distance_sensor_x_cm`
-// and look ahead, and the colour sensor reads the floor at `body.color_sensor_x_cm`, wherever the look puts them.
+// What the look cannot show:
+//   - The physics reads none of this. The distance sensor's rays start at the world's `body.distance_sensor_x_cm`
+//     and always look ahead, and the colour sensor reads the floor at `body.color_sensor_x_cm`, wherever the look
+//     puts them; so the distance cone is drawn where the twin measures, ahead, even for a sensor drawn facing
+//     sideways or back (the page shows what the twin reads, never a direction it does not read).
+//   - Only parts of the EV3 sets' electronics, beams, axles, wheels, tracks and casters are drawn; any other
+//     LEGO part (gears, panels' shapes, plates with studs, bespoke chassis) is drawn as beams of the same extent.
+//   - Gears or a chain between wheels of one side are not drawn: the wheels just turn together.
+//   - A cable between a riding motor and the brick is drawn where the motor rests, not following it.
+//   - A brick lying on its side (screen to the left or right) and robots of two or more bricks.
+//   - Free-form shapes: a sensor tilted at an angle other than a right angle (yaw_deg turns it about the
+//     vertical only).
 import { MODULE, TRACKS } from "./dims";
 import type { LookSection, RobotMeta } from "./messages";
 
