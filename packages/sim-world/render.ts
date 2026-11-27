@@ -1,6 +1,14 @@
 // Pictures of the world. One renderer: a plain RGBA buffer (usable in tests and on a server); the canvas path
 // only does putImageData and writes the labels. `snapshotPNG` gives a PNG with no dependencies.
-import { World, COLOR_RGB, ULTRASONIC_MAX_CM, CONE_HALF_DEG, type Vec } from "./world";
+import {
+  World,
+  COLOR_RGB,
+  ULTRASONIC_MAX_CM,
+  CONE_HALF_DEG,
+  ULTRASONIC_RAYS,
+  ULTRASONIC_ECHO_DEG,
+  type Vec,
+} from "./world";
 
 export interface Image {
   width: number;
@@ -21,18 +29,21 @@ const WALL: RGB = [60, 60, 70],
   BODY: RGB = [235, 140, 40],
   NOSE: RGB = [120, 60, 10];
 const RAY: RGB = [230, 40, 60],
+  /** A ray of the cone whose surface sends no echo back (met too far off square). */
+  SILENT_RAY: RGB = [235, 175, 180],
   SPOT: RGB = [20, 160, 230],
   POINT: RGB = [40, 40, 40],
   TRAIL: RGB = [150, 90, 200];
 
-const floorCache = new WeakMap<object, Map<number, Uint8ClampedArray>>();
+/** Floor and boxes per world and scale, kept while the obstacles stay the same list (a moved box is a new list). */
+const floorCache = new WeakMap<object, Map<number, { boxes: object; buf: Uint8ClampedArray }>>();
 
 function floorLayer(world: World, scale: number, W: number, H: number): Uint8ClampedArray {
   let per = floorCache.get(world.cfg);
   if (!per) floorCache.set(world.cfg, (per = new Map()));
-  let buf = per.get(scale);
-  if (buf) return buf;
-  buf = new Uint8ClampedArray(W * H * 4);
+  const kept = per.get(scale);
+  if (kept && kept.boxes === world.cfg.boxes) return kept.buf;
+  const buf = new Uint8ClampedArray(W * H * 4);
   const c = world.cfg;
   for (let py = 0; py < H; py++) {
     const y = c.height - (py + 0.5) / scale;
@@ -52,7 +63,7 @@ function floorLayer(world: World, scale: number, W: number, H: number): Uint8Cla
       buf[i + 3] = 255;
     }
   }
-  per.set(scale, buf);
+  per.set(scale, { boxes: c.boxes, buf });
   return buf;
 }
 
@@ -116,11 +127,20 @@ export function renderWorld(world: World, opts: RenderOptions = {}): Image {
     }
   if (opts.rays ?? true) {
     const [ox, oy] = world.pointAhead(g.distance_sensor_x_cm);
-    // The three rays of the distance sensor's cone, each up to what it hits.
-    for (const deg of [-CONE_HALF_DEG, 0, CONE_HALF_DEG]) {
-      const off = (deg * Math.PI) / 180,
-        d = Math.min(world.rayDistance(p, off), ULTRASONIC_MAX_CM);
-      line(ox, oy, ox + d * Math.cos(p.th + off), oy + d * Math.sin(p.th + off), RAY);
+    // Every ray of the ultrasonic cone, each up to what it hits: dark where that surface echoes, pale where it is
+    // met too far off square to send the sound back (world.ts, ULTRASONIC_ECHO_DEG).
+    const echo = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
+    for (let i = 0; i < ULTRASONIC_RAYS; i++) {
+      const off = (((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * CONE_HALF_DEG * Math.PI) / 180,
+        h = world.rayHit(p, off),
+        d = Math.min(h.d, ULTRASONIC_MAX_CM);
+      line(
+        ox,
+        oy,
+        ox + d * Math.cos(p.th + off),
+        oy + d * Math.sin(p.th + off),
+        h.cos >= echo - 1e-12 ? RAY : SILENT_RAY,
+      );
     }
     const [sx, sy] = world.pointAhead(g.color_sensor_x_cm);
     disc(sx, sy, g.color_spot_radius_cm, SPOT);

@@ -37,6 +37,15 @@ describe("overhead render (pure RGBA buffer)", () => {
     const img = renderWorld(w, { scale: 4 });
     expect(px(img, 80 * 4, (90 - 25) * 4)).toEqual([230, 40, 60]); // on the ray, ahead of the robot, over the black line
   });
+  test("every ray of the ultrasonic cone is drawn, not three: one 6 deg off the axis is there too", () => {
+    const img = renderWorld(quietWorld(), { scale: 4 });
+    const off = (6 * Math.PI) / 180;
+    const [x, y] = [51 + 30 * Math.cos(off), 25 + 30 * Math.sin(off)];
+    const near = [-1, 0, 1].flatMap((dx) =>
+      [-1, 0, 1].map((dy) => px(img, Math.floor(x * 4) + dx, Math.floor((90 - y) * 4) + dy)),
+    );
+    expect(near).toContainEqual([230, 40, 60]);
+  });
   test("snapshotPNG is a valid PNG whose pixels decode back to the buffer", () => {
     const w = quietWorld(EXAMPLES.wallsMaze);
     const img = renderWorld(w, { scale: 2 });

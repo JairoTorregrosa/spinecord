@@ -268,6 +268,22 @@ describe("sensors", () => {
     w.setPose({ x: 0 + 10.5, y: 150, th: 0 });
     expect(w.senseUltrasonic()).toBe(255);
   });
+  test("ultrasonic: a box corner echoes at any angle within reach, where its slanted faces give nothing back", () => {
+    const w = quietWorld({
+      ...EXAMPLES.lineOval,
+      arena: { width_cm: 300, height_cm: 300 },
+      obstacles: [{ x: 150, y: 140, w: 20, h: 20 }],
+    });
+    /** Sensor `cm` from the box's lower left corner, looking straight at it at 45 deg to both its faces. */
+    const at = (cm: number) => {
+      const ahead = w.cfg.body.distance_sensor_x_cm + cm;
+      w.setPose({ x: 150 - ahead * Math.SQRT1_2, y: 140 - ahead * Math.SQRT1_2, th: Math.PI / 4 });
+      return w.senseUltrasonic();
+    };
+    expect(at(40)).toBeCloseTo(40, 1);
+    expect(at(25)).toBeCloseTo(25, 1);
+    expect(at(70)).toBe(255); // past ULTRASONIC_EDGE_MAX_CM an edge is too faint, and the faces stay silent
+  });
   test("a gyro reset while the robot turns drifts by the rate it had; reset while still, it does not", () => {
     const w = quietWorld();
     w.stepWheels(-0.5, 0.5, 20); // turning left at about 240 deg/s

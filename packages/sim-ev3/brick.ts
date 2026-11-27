@@ -31,8 +31,20 @@ export const TYPE_LARGE_MOTOR = 7;
 export const TYPE_MEDIUM_MOTOR = 8;
 /** Large motor at 100 % speed, deg/s (about 170 rpm). */
 export const LARGE_DEG_S = 1020;
-/** Medium motor at 100 % speed, deg/s (about 260 rpm). */
+/**
+ * Medium motor at 100 % speed, deg/s (about 260 rpm): ev3dev's max_speed of lego-ev3-m-motor. LEGO states 240-250 rpm
+ * under load (https://robolab.inf.tu-dresden.de/hardware/motors).
+ */
 export const MEDIUM_DEG_S = 1560;
+/**
+ * Degrees per second at 100 % of the motors the EV3 provider speaks to: the drive pair's when it has one, else the
+ * motors' when they are all of one type; the large motor's otherwise. The provider takes one rate for every motor,
+ * so a twin whose wheels are medium motors must say so, or it sizes each move for the slower large motor.
+ */
+export function providerRate(ports: BrickPorts, pair?: { left: MotorPort; right: MotorPort }): number {
+  const types = pair ? [ports.motors[pair.left], ports.motors[pair.right]] : Object.values(ports.motors);
+  return types.length > 0 && types.every((t) => t === "medium") ? MEDIUM_DEG_S : LARGE_DEG_S;
+}
 /** The fastest loop rate the twin declares: a tick is an exchange with this emulator in the same process. */
 export const SIM_BRICK_LOOP_RATE_HZ = 100;
 /**
@@ -46,24 +58,34 @@ export const COAST_MS_AT_100 = 200;
  * 76 ms (median of four EV3 large motors at 40-100 % input, bare shaft):
  * https://thingsdaq.org/2022/08/26/dc-motor-characterization-2-of-2/ . A load slows it (86-98 ms there with
  * 0.00023-0.00045 kg m2 on the shaft, about a 1 kg robot on small sprockets); the twin does not add a robot's
- * inertia, and the medium motor uses the same number (not measured).
+ * inertia. This is the large motor's; the medium motor has MEDIUM_MOTOR_TAU_MS.
  */
 export const MOTOR_TAU_MS = 76;
+/**
+ * The medium motor's time constant. No measurement found (Things DAQ measured only the large motor): the large
+ * motor's number, named apart so that a measurement can replace it. A lighter rotor would answer faster, and a twin
+ * that answers no faster than the robot keeps a strategy from depending on a quicker response than it will get.
+ */
+export const MEDIUM_MOTOR_TAU_MS = 76;
 /**
  * The lag reaches the commanded speed within this fraction of full speed, and from then on runs at it exactly: the
  * speed the brick reports (whole percent) is then the commanded one, and a stopping motor reads exactly 0.
  */
 const SETTLE_FRACTION = 0.002;
 
-/** One motor's speed (deg/s) over `h` ms, integrated exactly so that the result does not depend on how time is cut. */
+/**
+ * One motor's speed (deg/s) over `h` ms, integrated exactly so that the result does not depend on how time is cut.
+ * `tauMs` is that motor's time constant (MOTOR_TAU_MS, MEDIUM_MOTOR_TAU_MS).
+ */
 export function motorStep(
   v0: number,
   how: { run: number } | "brake" | "coast",
   h: number,
   rate: number,
+  tauMs: number = MOTOR_TAU_MS,
 ): { v: number; d: number } {
   const t = h / 1000,
-    tau = MOTOR_TAU_MS / 1000,
+    tau = tauMs / 1000,
     f = rate / (COAST_MS_AT_100 / 1000);
   if (typeof how === "object") {
     // Regulated speed: a first-order lag to the commanded speed.
@@ -159,6 +181,7 @@ interface Motor {
   plugged: MotorType | null; // null = nothing plugged in
   type: number;
   rate: number; // deg/s at 100 %
+  tau: number; // time constant of its lag, ms
   pos: number; // tacho degrees, fractional
   speedPct: number; // signed commanded speed while a command runs, 0 when none does
   setPct: number; // speed/power stored by A4/A5, used by A6
@@ -335,6 +358,7 @@ export class SimBrick implements Transport, WorldHost {
         plugged,
         type: plugged === null ? TYPE_NONE : plugged === "medium" ? TYPE_MEDIUM_MOTOR : TYPE_LARGE_MOTOR,
         rate: plugged === "medium" ? MEDIUM_DEG_S : LARGE_DEG_S,
+        tau: plugged === "medium" ? MEDIUM_MOTOR_TAU_MS : MOTOR_TAU_MS,
         pos: 0,
         speedPct: 0,
         setPct: 0,
@@ -478,19 +502,19 @@ export class SimBrick implements Transport, WorldHost {
       ri = dt ? "ABCD".indexOf(dt.right) : -1;
     this.motors.forEach((m, i) => {
       if (m.speedPct === 0) {
-        const r = motorStep(m.vel, m.braking ? "brake" : "coast", h, m.rate);
+        const r = motorStep(m.vel, m.braking ? "brake" : "coast", h, m.rate, m.tau);
         want[i] = r.d;
         vEnd[i] = r.v;
         return;
       }
       // A time bound can end the command inside this step: the rest of the step is its brake or run-down.
       const active = m.until !== null ? Math.max(0, Math.min(h, m.until - at)) : h;
-      const run = motorStep(m.vel, { run: (m.speedPct / 100) * m.rate }, active, m.rate);
+      const run = motorStep(m.vel, { run: (m.speedPct / 100) * m.rate }, active, m.rate, m.tau);
       let d = run.d,
         v = run.v;
       if (m.until !== null && at + h >= m.until - 1e-9) {
         ends[i] = true;
-        const after = motorStep(v, m.holdBrake ? "brake" : "coast", h - active, m.rate);
+        const after = motorStep(v, m.holdBrake ? "brake" : "coast", h - active, m.rate, m.tau);
         d += after.d;
         v = after.v;
       }

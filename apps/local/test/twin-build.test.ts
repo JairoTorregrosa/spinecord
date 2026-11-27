@@ -117,6 +117,40 @@ describe("a robot file's twin", () => {
       expect(loaded.ok).toBe(true);
       expect(brick.ports).toEqual({ motors: { B: "large", C: "large" }, sensors: { "4": "ir" } });
       expect(brick.world.cfg.body.front_cm).toBe(8.5);
+      // a room handed over whole, as JSON, keeps the robot's build too
+      const whole = await tool("command_device", {
+        device: "sim.world",
+        command: "load_world",
+        args: { world: JSON.stringify({ ...ROOM, name: "pasted" }) },
+      });
+      expect(whole.ok).toBe(true);
+      expect(brick.world.cfg.name).toBe("pasted");
+      expect(brick.ports).toEqual({ motors: { B: "large", C: "large" }, sensors: { "4": "ir" } });
+      expect(brick.world.cfg.body.front_cm).toBe(8.5);
+      expect(brick.world.cfg.extensions.view).toEqual(TRACKED.twin.view);
+    } finally {
+      await fleet.shutdown();
+    }
+  }, 30_000);
+
+  test("a pair of medium motors: the provider sizes moves and reports speed for medium motors, not large ones", async () => {
+    const medium = {
+      ...TRACKED,
+      twin: { ...TRACKED.twin, ev3: { motors: { B: "medium", C: "medium" }, sensors: { "4": "ir" } } },
+    };
+    const fleet = await buildFleet(loadConfig(["--twin", file("medium.json", medium), "--world", room]), {
+      log: () => {},
+    });
+    try {
+      const tool = toolsOf(fleet.robots, "tracked-sim");
+      const b = await tool("describe_device", { device: "ev3.B" });
+      const speed = (b.data.channels as { name: string; range: number[] }[]).find((c) => c.name === "speed_deg_s")!;
+      expect(speed.range).toEqual([-1560, 1560]);
+      const world = fleet.bricks.get("tracked-sim")!.world;
+      const x0 = world.pose.x;
+      const r = await tool("drive", { distance_cm: 20, speed_pct: 40 });
+      expect(r.ok).toBe(true);
+      expect(Math.abs(world.pose.x - x0 - 20)).toBeLessThan(1.5);
     } finally {
       await fleet.shutdown();
     }

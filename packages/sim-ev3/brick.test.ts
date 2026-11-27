@@ -8,6 +8,8 @@ import {
   LARGE_DEG_S,
   COAST_MS_AT_100,
   MOTOR_TAU_MS,
+  MEDIUM_MOTOR_TAU_MS,
+  MEDIUM_DEG_S,
   drivetrainFromProfile,
 } from "./brick";
 import { World, parseWorld } from "../sim-world/world";
@@ -193,6 +195,17 @@ describe("motors drive the world", () => {
     expect(Math.abs((await speed()) - 0.9 * 60)).toBeLessThanOrEqual(1);
     run(500);
     expect(await speed()).toBe(60);
+  });
+  test("the medium motor on A lags by its own constant (MEDIUM_MOTOR_TAU_MS) and runs at its own speed", async () => {
+    const { call, run, brick } = rig();
+    await call(E.outputTimeSpeed(E.OUTPUT_MASK.A, 60, 0, 2000, 0, true));
+    const speed = async () => E.readI8((await call(E.outputRead(0, 0, 1), 5)).globals, 0);
+    run(MEDIUM_MOTOR_TAU_MS);
+    expect(Math.abs((await speed()) - 0.63 * 60)).toBeLessThanOrEqual(1);
+    run(1000 - MEDIUM_MOTOR_TAU_MS);
+    const t = brick.tacho("A");
+    run(1000);
+    expect(Math.abs(brick.tacho("A") - t - 0.6 * MEDIUM_DEG_S)).toBeLessThan(2);
   });
   test("AF runs for a time and then stops; AE on port A turns the medium motor without moving the robot", async () => {
     const { call, run, brick, world } = rig();

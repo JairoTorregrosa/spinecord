@@ -31,6 +31,12 @@ export interface SimWorldProviderOptions {
   host: WorldHost;
   /** World files by name (parsed JSON), offered to `load_world`. */
   worlds?: Record<string, unknown>;
+  /**
+   * What every world `load_world` takes goes through before it is parsed, by name or as JSON: whoever assembles the
+   * twin puts the robot's own build into it there (CONTRACT §3, `twin`), so a loaded room never brings another
+   * robot's ports, footprint or look. Throws, naming what is wrong, for a world this robot cannot live in.
+   */
+  prepare?: (world: unknown) => unknown;
   /** Seed for worlds loaded later. Default: the current world's seed. */
   seed?: number;
   /** Overhead picture scale, px per cm (default 4). */
@@ -50,6 +56,7 @@ export class SimWorldProvider implements Provider {
   readonly stop_worst_ms = 50;
   private readonly host: WorldHost;
   private readonly worlds: Record<string, unknown>;
+  private readonly prepare: (world: unknown) => unknown;
   private readonly seed: number;
   private readonly scale: number;
   private readonly now: () => number;
@@ -62,6 +69,7 @@ export class SimWorldProvider implements Provider {
       );
     this.host = opts.host;
     this.worlds = opts.worlds ?? {};
+    this.prepare = opts.prepare ?? ((w) => w);
     this.seed = opts.seed ?? opts.host.world.seed;
     this.scale = opts.scale ?? 4;
     this.now = opts.now ?? (() => Date.now());
@@ -125,7 +133,7 @@ export class SimWorldProvider implements Provider {
             name: "load_world",
             moves: true,
             bound: { kind: "instant", max: 0 },
-            description: `Replaces the world and puts the robot at that world's start pose; motors stop, tachos and sensors reset, and sim.speaker forgets what it said. "world" is one of: ${names.join(", ") || "(no named worlds registered)"}, or a whole world file as a JSON string (schema spinecord/world@1).`,
+            description: `Replaces the world and puts the robot at that world's start pose; motors stop, tachos and sensors reset, and sim.speaker forgets what it said. "world" is one of: ${names.join(", ") || "(no named worlds registered)"}, or a whole world file as a JSON string (schema spinecord/world@1). A robot whose file describes its own build keeps it (what is plugged into each port, its footprint, its look): the world gives the room.`,
             params: {
               type: "object",
               properties: { world: { type: "string" } },
@@ -341,7 +349,7 @@ export class SimWorldProvider implements Provider {
         );
       let next: World;
       try {
-        next = new World(parseWorld(json), this.seed);
+        next = new World(parseWorld(this.prepare(json)), this.seed);
       } catch (e) {
         throw new RuntimeError("invalid_argument", (e as Error).message);
       }

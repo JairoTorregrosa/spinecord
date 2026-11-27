@@ -174,6 +174,17 @@ export const ULTRASONIC_RAYS = 9;
  */
 export const ULTRASONIC_ECHO_DEG = 13;
 /**
+ * A convex corner of a box (an edge, seen from above) scatters sound back from every direction, where a flat face
+ * returns it only near square on: sonar finds edges over a wide range of bearings, more weakly than planes
+ * (Leonard and Durrant-Whyte, "Directed Sonar Sensing for Mobile Robot Navigation", 1992, ch. 2: planes, corners
+ * and edges as the three target types; https://ecse.monash.edu/centres/irrc/LKPubs/IJRR95.PDF summarises). So a box
+ * corner inside the cone and in plain view echoes whatever the angle. How far an edge still returns enough for the
+ * EV3 sensor is not measured: this short range is chosen so that a strategy that relies on seeing a corner sees it
+ * on the robot too. Where two walls meet (a concave corner, a corner reflector) the twin gives no echo of its own: the
+ * faces' rule decides there, as before.
+ */
+export const ULTRASONIC_EDGE_MAX_CM = 60;
+/**
  * Infrared proximity (45509) per cm of a large light surface square on: the stock firmware (EV3-G) read 40-41 % with
  * a white wall at 38 cm, 88-90 % with black on it (https://github.com/ev3dev/ev3dev-lang-python/issues/518); ev3dev's
  * guide: "for large white objects the proximity value is VERY roughly equal to the distance in cm". 100 % with
@@ -979,6 +990,39 @@ export class World {
       const h = this.rayHit(p, off);
       if (h.cos >= minCos - 1e-12 && h.d < best) best = h.d;
     }
+    return Math.min(best, this.cornerEcho(p));
+  }
+  /** The nearest box corner that echoes whatever the angle (ULTRASONIC_EDGE_MAX_CM): inside the cone and in plain view. */
+  private cornerEcho(p: Pose): number {
+    const { width, height, boxes } = this.cfg;
+    const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
+    const half = (CONE_HALF_DEG * Math.PI) / 180;
+    let best = Infinity;
+    const look = (x: number, y: number, max: number): void => {
+      const d = Math.hypot(x - ox, y - oy);
+      if (!(d > 1e-9) || d > max || d >= best) return;
+      let off = (Math.atan2(y - oy, x - ox) - p.th) % (2 * Math.PI);
+      if (off > Math.PI) off -= 2 * Math.PI;
+      else if (off < -Math.PI) off += 2 * Math.PI;
+      if (Math.abs(off) > half) return;
+      // in plain view: the ray toward it meets nothing before it (the corner's own box is met at the corner)
+      if (this.rayHit(p, off).d >= d - 1e-6) best = d;
+    };
+    const inside = (x: number, y: number, skip: Rect): boolean =>
+      x <= 0 ||
+      x >= width ||
+      y <= 0 ||
+      y >= height ||
+      boxes.some((b) => b !== skip && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+    for (const b of boxes)
+      for (const [x, y] of [
+        [b.x, b.y],
+        [b.x + b.w, b.y],
+        [b.x, b.y + b.h],
+        [b.x + b.w, b.y + b.h],
+      ] as Vec[])
+        // a corner on a wall or in another box is no edge: the surfaces meet there flush or hollow
+        if (!inside(x, y, b)) look(x, y, ULTRASONIC_EDGE_MAX_CM);
     return best;
   }
   /** What the ultrasonic sensor reads without noise (a display): 3..250 cm, 255 with no echo in range. */
