@@ -26,7 +26,7 @@ Talk to the person in the language the person uses. Keep commands, file names an
 
 ## States
 
-Start at the first state whose exit check fails. If `~/mi-robot/robot.json` exists, states 0-2 are done: read it; if its `twin.unconfirmed` lists a token and a person or the brick is here, go to state 1 for those tokens only, else go to state 3. If a step fails 2 times, stop and show the exact error.
+Start at the first state whose exit check fails. If `~/mi-robot/robot.json` exists, states 0-2 are done: read it; if its `twin.unconfirmed` lists a token and a person or the brick is here, go to state 1 for those tokens only, else go to state 3. If a step fails 2 times, end there and show the person the exact error.
 
 | State | Exit check |
 |---|---|
@@ -52,7 +52,7 @@ Read [reference/identify.md](reference/identify.md), "What the photo shows". Cla
 | One EV3 robot whose brick or drive (wheels, tracks, none) is hidden, cropped or blurred | "I can see <what you see>, but not <what is hidden>. Please send <the views of identify.md "More photos">." **stop** until the photos or the brick come |
 | One EV3 robot, readable | Go on |
 
-**stop** writes no file and ends at state 7 with that message as the report.
+**stop** writes no file and ends at state 7 with that message as the report. With no person, a **stop** is final; with a person, their answer or new photos start state 0 again.
 
 **Official model.** When the robot looks like a model of identify.md "Official models" (the Education Driving Base, TRACK3R, Gyro Boy, …), add to the first questions: "Is this the <model>, built as in the instructions, with <attachments>?" A yes makes its row's ports and geometry source person; with no person they are the assumed values, tokens kept.
 
@@ -69,14 +69,14 @@ Sources, best first; a later source never overrides an earlier one.
 
 | Value | Token | Confirmed by | Not by |
 |---|---|---|---|
-| What is on each port (and, for a motor that does not drive, what it does) | `A`-`D`, `S1`-`S4` | the brick; the person; a photo where the port's letter is legible and its cable can be followed to the part | a port you cannot read |
+| What is on each port (and, for a motor that does not drive, what it does) | `A`-`D`, `S1`-`S4` | the brick; the person; a photo where the port's label is legible and its cable can be followed to the part, or its socket is visibly empty | a port you cannot read; a kind you chose between two |
 | Which pair motor drives the left side, seen from behind | `left_right` | the person; state 6 | a photo |
 | Which end is the front | `front` | the person; state 6 | a photo |
 | Wheels, tracks, or no drive | `drive` | a photo showing what touches the floor; the person | |
 | Wheel diameter | `wheel_diameter` | the size printed on the tire, legible; a row of parts.md the person picks; a measurement; state 6 | a row you picked by eye |
 | Axle track | `axle_track` | the person's measurement; state 6 | |
-| Footprint (`twin.body` lengths) | `footprint` | a photo with a scale (a ruler, or the brick, identify.md "Scale"); the person | |
-| Where the brick, sensors and phone sit | `places` | a photo with a scale; the person | |
+| Footprint (`twin.body` lengths) | `footprint` | the person's measurement; a photo with a ruler beside the robot | a length scaled from a part (identify.md "Scale"): use it, keep the token |
+| Where the brick, sensors and phone sit | `places` | the person; a photo with a ruler | the same |
 
 Keep each value with its source: state 7 needs them.
 
@@ -92,7 +92,7 @@ Keep each value with its source: state 7 needs them.
 
 1. Run the check. A `fail` on `robots` names the field and the fix: fix the file and run it again.
 2. Compare the `twin <id>-sim` line with state 1: each port and role, the pair, wheel and axle track, the footprint, the look.
-3. **Draft gate.** A `draft <id>-sim` line lists the tokens left. For each one that changes how the robot moves, either you asked the person (or read the brick) for it in this session and it stayed open, or state 6 will confirm it on the real robot. If neither holds and a person or the brick is here, go back to state 1 for it. With no person and no brick, the outcome is **draft twin**: go to state 7.
+3. **Draft gate.** A `draft <id>-sim` line lists the tokens left. For each one that changes how the robot moves: if a source of its "Confirmed by" is here (the brick, the person) and you have not used it for that token yet, go back to state 1 for it. A token only state 6 can confirm waits for state 6. No token left: the outcome is **twin**. Tokens left: the outcome is **draft twin**; tell the person so now, and with no person go to state 7.
 
 ## 4 SHOW (human step)
 
