@@ -15,7 +15,7 @@ export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
 | Tool | Command |
 |---|---|
 | git, with Homebrew (`brew --version` prints a version) | `brew install git` |
-| git, without Homebrew | `xcode-select --install`. PERSON: "A window opens. Click Install, then wait until it says done." |
+| git, without Homebrew | `xcode-select --install`. PERSON: "A window opens. Click Install, then wait until it says done." On such a Mac, `git --version` itself opens the same window |
 | bun | `curl -fsSL https://bun.com/install \| bash` |
 | ant, with Homebrew | `brew install anthropics/tap/ant` |
 | ant, without Homebrew | the zip below |
@@ -106,4 +106,4 @@ Then, in both cases, install the server's packages (6 packages, about 16 MB):
 cd ~/spinecord; bun install --filter @spinecord/local
 ```
 
-Exit check: `cd ~/spinecord; bun scripts/setup.ts status` prints lines and a last line `next`.
+Exit check: `cd ~/spinecord; bun scripts/setup.ts status` prints lines, and its last line starts with `next`.

@@ -306,11 +306,15 @@ async function status(s: State): Promise<Line[]> {
   per.push(["SEE IT", [checkMoved(s)]]);
   per.push(["EV3", [checkEv3(s)]]);
   const next = per.find(([, ls]) => ls.some((l) => l.status !== "ok"))?.[0] ?? "REPORT";
-  const lines = per.map(([name, ls]) => ({
-    status: ls.every((l) => l.status === "ok") ? ("ok" as Status) : ("todo" as Status),
-    what: name,
-    why: ls.map((l) => `${l.what}: ${l.why}`).join("; "),
-  }));
+  const lines = per.map(([name, ls]): Line => {
+    const open = ls.find((l) => l.status !== "ok");
+    return {
+      status: open ? (ls.some((l) => l.status === "fail") ? "fail" : "todo") : "ok",
+      what: name,
+      why: ls.map((l) => `${l.what}: ${l.why}`).join("; "),
+      next: open?.next,
+    };
+  });
   return [...lines, { status: "ok", what: "next", why: next }];
 }
 
@@ -506,8 +510,8 @@ export async function main(argv: string[]): Promise<number> {
   switch (step) {
     case "status": {
       const lines = await status(s);
-      const w = Math.max(...lines.map((l) => l.what.length));
-      for (const l of lines) console.log(`${l.status.padEnd(4)}  ${l.what.padEnd(w)}  ${l.why}`);
+      print(step, lines.slice(0, -1));
+      console.log(`next ${lines.at(-1)!.why}`);
       return 0;
     }
     case "login": {

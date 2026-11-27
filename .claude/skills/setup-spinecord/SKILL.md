@@ -22,7 +22,9 @@ Before the clone exists, read them at `https://raw.githubusercontent.com/JairoTo
 | robots.json | The robots that the workshop registers. Change only this file to use other robots |
 
 `setup <step>` in this file means this command, in any shell: `cd ~/spinecord; bun scripts/setup.ts <step>`.
+If this session installed a tool, put the `PATH` line of install.md for this OS first in the same command.
 Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next action. The last line is `setup <step>: ok` or `setup <step>: not done`.
+`setup status` changes nothing. Its last line `next <STATE>` names the state to do.
 
 ## Rules
 
@@ -32,7 +34,7 @@ Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next
 - Never put `ANTHROPIC_PROFILE` in a settings file. Claude Code ignores it there.
 - Never register spinecord with user scope. Never start the robot's Claude Code in the clone.
 - Before `sudo`, say why. Change a shell profile only as install.md says, after the approval of the plan.
-- Give `setup login` a command timeout of 6 minutes. Every other command ends within 2 minutes.
+- Give installs and `setup login` a command timeout of 10 minutes. The other `setup` steps end within 2 minutes.
 - If the same step fails 2 times, stop. Show the error line and the row of fixes.md, in the person's language.
 - On Windows, use PowerShell for all commands.
 
@@ -42,6 +44,7 @@ Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next
 2. Send the person one message with these two parts. Then wait for the answer.
    - "Do you have a LEGO EV3 robot with you? Without one, Claude drives a robot on the screen."
    - The plan: the missing tools by name, the folders `~/spinecord` and `~/mi-robot`, one sign-in in the browser. Ask for one yes.
+   - On macOS and Linux, the plan also names one line in `~/.zshrc` or `~/.bashrc` for new terminals.
 3. Remember the EV3 answer. State WORKSHOP needs it.
 4. After each state, show the person the progress list. Mark the states that are done:
 
@@ -52,12 +55,12 @@ Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next
 
 ## States
 
-Do the first state that is not done. To resume, run `setup status` once the clone exists: its last line `next` names that state.
+Do the first state that is not done. To resume once the clone exists, run `setup status` and do the state that its line `next` names.
 
 | # | State | Done when |
 |---|---|---|
 | 1 | TOOLS | `git --version`, `bun --version` (1.3.14 or later), `ant --version`, `claude --version` each print a version |
-| 2 | CLONE | `setup status` prints its lines, and its last line is `next` |
+| 2 | CLONE | `setup status` prints its lines, and its last line starts with `next` |
 | 3 | LOGIN | `setup status` shows `LOGIN` `ok` |
 | 4 | PAYS | `setup status` shows `PAYS` `ok` |
 | 5 | WORKSHOP | `setup workshop` ends with `setup workshop: ok`, after the line `doctor: ok` |
@@ -88,7 +91,7 @@ Exit check: `setup login: ok`. Else use fixes.md.
 Run `setup status`. Read the line `PAYS`.
 If it says `todo` with an organization name, ask the person: "Claude will use the credits of "<name>". Is that the organization with your credits?"
 If yes, run `setup confirm org`. If no, use the row "Wrong Console organization" of fixes.md.
-If it says `fail`, use the row of fixes.md that it names.
+If it says `fail`, use the row of fixes.md that it names after `->`.
 
 ### 5 WORKSHOP
 

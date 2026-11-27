@@ -46,13 +46,21 @@ One process on your laptop: the MCP server, the runtime and the robots. No accou
 
 ### Set up with your coding agent
 
-A coding agent (Claude Code, Codex, or another one) can do the whole setup on macOS, Windows or Linux: it installs git, bun, the [`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart) and Claude Code, logs in to the Console organization that holds your API credits with `ant auth login` (no API key is made or copied), registers spinecord in a folder of your own, runs the doctor and drives the twin. Give it this prompt:
+A coding agent (Claude Code, Codex, or another one) can do the whole setup on macOS, Windows or Linux. It installs git, bun, the [`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart) and Claude Code, and logs in to the Console organization that holds your API credits with `ant auth login`, so no API key is made or copied. It registers spinecord in a folder of your own, `~/mi-robot`, and runs the doctor. It ends with Claude driving the robot while you watch. Without an EV3 you watch the tracked robot of [`deployments/orugas`](deployments/orugas) in its room, in the [3D view](#3d-view-of-the-twins). With an EV3, the robot goes on to USB. Give the agent this prompt:
 
 ```text
 Read https://raw.githubusercontent.com/JairoTorregrosa/spinecord/main/.claude/skills/setup-spinecord/SKILL.md and follow it.
 ```
 
-It asks before each install and tells you what to click when the browser opens. The steps are in [`.claude/skills/setup-spinecord/SKILL.md`](.claude/skills/setup-spinecord/SKILL.md).
+You act only at these moments:
+
+1. Say if you have an EV3, and say yes to the whole plan, in one answer.
+2. Sign in on the platform.claude.com page that opens, pick the organization with the credits, and click Authorize.
+3. Say yes when the agent names the organization that pays.
+4. Paste the launch line it gives you into a new terminal, and choose Yes when Claude Code asks if you trust the folder.
+5. Type the request it gives you, watch the robot move on the 3D page that opens, and say that it moved.
+
+The states and their checks are in [`.claude/skills/setup-spinecord/SKILL.md`](.claude/skills/setup-spinecord/SKILL.md). The steps after the clone are one script, `bun scripts/setup.ts <step>`. Each step checks first and acts only when needed, so a second run changes nothing. `bun scripts/setup.ts status` names the next step. The robots it registers are in [`robots.json`](.claude/skills/setup-spinecord/robots.json) next to the skill.
 
 No coding agent yet? Install Claude Code ([setup](https://code.claude.com/docs/en/setup)), run `claude`, choose the Console account at the login, then "Sign in with your Console account", and pick the organization with the credits. That sign-in makes no API key ([authentication](https://code.claude.com/docs/en/authentication#sign-in-without-an-api-key)).
 
