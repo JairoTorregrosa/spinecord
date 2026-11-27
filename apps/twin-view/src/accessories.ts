@@ -2,7 +2,7 @@
 // screen shows a face), a bumper of beams and red bricks, a paper label on the brick.
 import * as THREE from "three";
 import type { BrickMount } from "./devices";
-import { OTHER } from "./dims";
+import { BEAM, MODULE, OTHER } from "./dims";
 import type { Look } from "./look";
 import type { RobotMeta, RobotState } from "./messages";
 import { P, type Kit } from "./parts";
@@ -187,6 +187,35 @@ export function buildAccessories(kit: Kit, meta: RobotMeta, look: Look, m: Brick
     for (const y of [span / 2 - 0.6, -span / 2 + 0.6]) {
       const n = Math.max(3, Math.round((Math.abs(bx) - 5) / 0.8) + 1);
       kit.beam(n, bx - out * (((n - 1) * 0.8) / 2), y, 4.2, mats.black);
+    }
+  }
+  if (look.shell) {
+    // round the robot: a ring of beams at the drive's top and at the brick's middle, or a panel on each side
+    const F = body.front_cm,
+      Bk = body.back_cm,
+      HW = body.half_width_cm;
+    const lenN = Math.max(3, Math.round((F + Bk - BEAM.across) / MODULE) + 1),
+      widN = Math.max(3, Math.round((2 * HW - BEAM.across) / MODULE) + 1);
+    const xc = (F - Bk) / 2,
+      xe = ((lenN - 1) * MODULE) / 2,
+      ye = ((widN - 1) * MODULE) / 2;
+    const z0 = Math.max(m.driveTop, 2 * MODULE),
+      z1 = Math.max(z0 + 2 * MODULE, (m.box.min.z + m.box.max.z) / 2);
+    if (look.shell === "beams") {
+      for (const z of [z0, z1]) {
+        for (const y of [ye, -ye]) kit.beam(lenN, xc, y, z, mats.dark);
+        for (const x of [xc + xe, xc - xe]) kit.beam(widN, x, 0, z, mats.dark).rotation.y = Math.PI / 2;
+      }
+      // the corners held by upright beams
+      const up = Math.round((z1 - z0) / MODULE) + 1;
+      for (const x of [xc + xe, xc - xe])
+        for (const y of [ye, -ye]) kit.beam(up, x, y, (z0 + z1) / 2, mats.dark).rotation.z = Math.PI / 2;
+    } else {
+      // Technic panels half a module thick, as long as the body and from the floor's clearance to the brick
+      for (const y of [ye + MODULE / 2, -ye - MODULE / 2])
+        kit.box(2 * xe + MODULE, MODULE / 2, z1 - MODULE, xc, y, (z1 + MODULE) / 2, mats.red, 0.15);
+      // held by a beam across the robot at its front and its back, panel to panel
+      for (const x of [xc + xe, xc - xe]) kit.beam(widN + 1, x, 0, z0, mats.dark).rotation.y = Math.PI / 2;
     }
   }
   if (look.label) {

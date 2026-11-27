@@ -3,7 +3,7 @@
 // open and close on the front of the motor as its tacho grows and falls.
 import * as THREE from "three";
 import type { Attachment } from "./look";
-import type { Kit } from "./parts";
+import { P, type Kit } from "./parts";
 
 export interface Fit {
   kind: Attachment;
@@ -17,7 +17,8 @@ export interface Fit {
  * Builds `fit` on a motor. `spin` turns with the hub, its three.js Z along the axle, `outZ` the side of it the
  * axle comes out of; `base` turns the attachment's beams from the spin's X to where they rest at tacho 0.
  * `front` is a frame that does not turn, at the hub, its X along the axle out of the motor and its Y up.
- * Returns what moves the gripper with the tacho (the others move with the hub).
+ * Returns what moves the gripper with the tacho (the others move with the hub), and the end of an arm or a lift
+ * (a frame that swings with it, where another part can ride), or null.
  */
 export function attach(
   kit: Kit,
@@ -25,7 +26,7 @@ export function attach(
   spin: THREE.Object3D,
   outZ: number,
   front: THREE.Object3D,
-): ((tachoDeg: number) => void) | null {
+): { grip: ((tachoDeg: number) => void) | null; end: THREE.Object3D | null } {
   const { mats } = kit;
   const a = new THREE.Group();
   a.rotation.z = restAngle(spin);
@@ -48,13 +49,18 @@ export function attach(
       kit.box(0.8, 1.6, 0.8, 4.0, -side * 0.7, 0, mats.red, 0.2, pivot);
       claws.push(pivot);
     }
-    return (deg) => {
-      const open = Math.min(1, Math.max(0, deg / fit.openDeg));
-      // closed the claws meet; open each swings 35° out
-      claws[0]!.rotation.y = -0.05 + open * 0.6;
-      claws[1]!.rotation.y = 0.05 - open * 0.6;
+    return {
+      grip: (deg) => {
+        const open = Math.min(1, Math.max(0, deg / fit.openDeg));
+        // closed the claws meet; open each swings 35° out
+        claws[0]!.rotation.y = -0.05 + open * 0.6;
+        claws[1]!.rotation.y = 0.05 - open * 0.6;
+      },
+      end: null,
     };
   }
+  let end: THREE.Object3D | null = null;
+  let tip: THREE.Object3D | null = null;
   if (fit.kind === "axle") {
     kit.axleCyl(0.24, 2.4, 0, along(1.2), 0, mats.dark, spin, 12);
     kit.beam(5, 1.6, along(1.5), 0, mats.dark, "y", a);
@@ -63,22 +69,28 @@ export function attach(
     kit.axleCyl(0.24, 1.6, 0, along(0.8), 0, mats.dark, spin, 12);
     kit.beam(n, ((n - 1) * 0.8) / 2, along(1.0), 0, mats.dark, "y", a);
     kit.axleCyl(0.3, 0.9, (n - 1) * 0.8, along(1.0), 0, mats.red, a, 12);
+    end = new THREE.Group();
+    end.position.copy(P((n - 1) * 0.8, along(1.0), 0));
+    a.add(end);
   } else if (fit.kind === "lift") {
     const n = holesFor(fit.length);
     kit.axleCyl(0.24, 3.6, 0, along(1.8), 0, mats.dark, spin, 12);
     for (const d of [0.7, 3.1]) kit.beam(n, ((n - 1) * 0.8) / 2, along(d), 0, mats.dark, "y", a);
-    const end = (n - 1) * 0.8;
-    kit.axleCyl(0.24, 3.4, end, along(1.9), 0, mats.dark, a, 12);
+    const reach = (n - 1) * 0.8;
+    kit.axleCyl(0.24, 3.4, reach, along(1.9), 0, mats.dark, a, 12);
     // the fork: a plate across the beams' ends with two prongs reaching on
-    kit.box(0.6, 3.2, 2.4, end + 0.6, along(1.9), -0.8, mats.black, 0.1, a);
-    for (const d of [1.0, 2.8]) kit.box(4, 0.6, 0.35, end + 2.6, along(d), -1.85, mats.black, 0.1, a);
+    kit.box(0.6, 3.2, 2.4, reach + 0.6, along(1.9), -0.8, mats.black, 0.1, a);
+    for (const d of [1.0, 2.8]) kit.box(4, 0.6, 0.35, reach + 2.6, along(d), -1.85, mats.black, 0.1, a);
+    tip = new THREE.Group();
+    tip.position.copy(P(reach + 0.6, along(1.9), 0));
+    a.add(tip);
   } else {
     // turntable: a big ring turning on the hub, a beam across its top
     kit.axleCyl(2.8, 0.8, 0, along(0.6), 0, mats.dark, spin, 36);
     kit.axleCyl(2.3, 0.84, 0, along(0.6), 0, mats.light, spin, 36);
     kit.beam(7, 0, along(1.4), 0, mats.dark, "y", a);
   }
-  return null;
+  return { grip: null, end: end ?? tip };
 }
 
 /** The angle about the spin's Z that turns its X ahead (robot +x), or up when the axle itself points ahead. The

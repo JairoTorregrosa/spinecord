@@ -48,17 +48,21 @@ export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
 
   // ---------------------------------------------------------------- the brick, on a frame of beams
   // flat: its screen up, the screen's top edge (ports A-D) to the front or the back; standing: upright, ports
-  // A-D on top, the screen facing the front or the back
+  // A-D at the top or the bottom, the screen facing the front or the back
   const lb = look.brick;
   const towards = lb.screen === "front" ? 1 : -1;
-  const q = lb.pose === "flat" ? orient(v3(towards, 0, 0), v3(0, 0, 1)) : orient(v3(0, 0, 1), v3(towards, 0, 0));
+  const q =
+    lb.pose === "flat"
+      ? orient(v3(towards, 0, 0), v3(0, 0, 1))
+      : orient(v3(0, 0, lb.motorPorts === "up" ? 1 : -1), v3(towards, 0, 0));
   const bd = brickDims(lb.battery);
   const lmin = v3(...bd.min),
     lmax = v3(...bd.max);
   const at0 = boxOf(lmin, lmax, q, v3(0, 0, 0));
   const bx = lb.x ?? (body.front_cm - body.back_cm) / 2 - 1;
-  // lying flat, it sits on two beams across its bottom pinned into its bottom holes (one module thick)
-  const bz = lb.z ?? drive.top + (lb.pose === "flat" ? BEAM.along : 0);
+  // lying flat, it sits on two beams across its bottom pinned into its bottom holes (one module thick); standing,
+  // it is held two modules over the frame by beams through its side holes, so the cables leave its lower end
+  const bz = lb.z ?? drive.top + (lb.pose === "flat" ? BEAM.along : BEAM.along + 2 * MODULE);
   const origin = v3(bx - (at0.min.x + at0.max.x) / 2, lb.y - (at0.min.y + at0.max.y) / 2, bz - at0.min.z);
   const brick = buildBrick(kit, lb.battery);
   brick.group.position.copy(P(origin.x, origin.y, origin.z));
@@ -72,15 +76,34 @@ export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
   const across = Math.max(3, 2 * Math.round(reach / MODULE) + 1);
   const bottomHoles =
     lb.pose === "flat" ? [...new Set(bd.holes.filter((h) => h.axis[2] > 0.9).map((h) => h.at[0]))] : [];
+  // the frame's top: the brick's bottom when it lies on it, else a module over the drive
+  const frameTop = lb.pose === "flat" ? frameZ : drive.top + BEAM.along;
+  const posts = drive.motors.map((mo) => (mo.box.min.y + mo.box.max.y) / 2);
   for (const hx of bottomHoles.length ? bottomHoles : [lmin.x + MODULE, lmax.x - MODULE]) {
     const c = pointOf(v3(hx, 0, 0), q, origin);
-    const beam = kit.beam(across, c.x, lb.y, frameZ - BEAM.along / 2, mats.dark);
+    // a brick placed higher than the drive stands on upright beams from the drive's motors to the frame
+    const gap = frameTop - BEAM.along - drive.top;
+    if (gap > 0.2)
+      for (const y of posts.length ? posts : [box.max.y - MODULE, box.min.y + MODULE]) {
+        const n = Math.max(2, Math.round(gap / MODULE) + 1);
+        kit.beam(n, c.x, y, drive.top + gap / 2, mats.dark).rotation.z = Math.PI / 2;
+      }
+    const beam = kit.beam(across, c.x, lb.y, frameTop - BEAM.along / 2, mats.dark);
     // its length across the robot (three.js Z), its holes up (three.js Y)
     beam.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(v3(0, 0, 1), v3(1, 0, 0), v3(0, 1, 0)));
   }
+  if (lb.pose === "standing") {
+    // two upright beams either side, from the frame up through the brick's side holes
+    const sideHoles = bd.holes.filter((h) => h.axis[1] > 0.9);
+    const top = Math.max(...sideHoles.map((h) => pointOf(v3(...h.at), q, origin).z));
+    const hx = pointOf(v3(...sideHoles[0]!.at), q, origin).x;
+    const n = Math.max(3, Math.round((top - frameTop) / MODULE) + 1);
+    for (const y of [box.max.y + BEAM.along / 2, box.min.y - BEAM.along / 2])
+      kit.beam(n, hx, y, top - ((n - 1) * MODULE) / 2, mats.dark).rotation.z = Math.PI / 2;
+  }
   occ.add(box.clone().expandByPoint(v3(box.min.x, box.min.y, frameZ - BEAM.along)));
   // nothing is mounted over the screen and the buttons (in front of them when the brick stands): a person needs them
-  occ.add(boxOf(v3(bd.at.buttons![0] - 2, lmin.y, lmax.z), v3(lmax.x, lmax.y, lmax.z + 3), q, origin));
+  occ.add(boxOf(v3(bd.at.buttons![0] - 2, lmin.y, lmax.z), v3(lmax.x, lmax.y, lmax.z + 3), q, origin), false);
 
   const mount: BrickMount = {
     port(p) {

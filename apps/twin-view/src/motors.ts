@@ -10,6 +10,10 @@ import { boxOf, orient, P, pointOf, upFor, type Kit } from "./parts";
 
 export interface MotorPart {
   port: string;
+  /** Its group in the robot's (live: it can be carried by another motor's arm). */
+  group: THREE.Object3D;
+  /** The end of its arm or lift, where another part can ride, or null. */
+  end: THREE.Object3D | null;
   /** The part's box in the robot frame. */
   box: THREE.Box3;
   /** Where its cable leaves it, robot frame, and the way it leaves. */
@@ -60,20 +64,24 @@ export function largeMotor(
   // the spin turns about the group's three.js Z, which is the robot's -ey
   const k = -ey.dot(ref.clone().normalize()) >= 0 ? 1 : -1;
   let grip: ((deg: number) => void) | null = null;
+  let end: THREE.Object3D | null = null;
   if (fit) {
-    // what rides on the hub starts outside the case, on the side the axle points to
-    const out = new THREE.Group();
+    // what rides on the hub starts outside the case, on the side the axle points to (live groups: the real mesh
+    // replaces the motor's boxes, never what it moves)
+    const out = kit.live(new THREE.Group());
     out.position.copy(P(0, side * halfW, 0));
     spin.add(out);
-    const front = new THREE.Group();
+    const front = kit.live(new THREE.Group());
     front.position.copy(P(0, side * halfW, 0));
     front.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
     g.add(front);
-    grip = attach(kit, fit, out, -side, front);
+    ({ grip, end } = attach(kit, fit, out, -side, front));
   }
   kit.real({ ldraw: LM.ldraw, holder: g, frame: "front", roles: { hub: { target: spin } } });
   return {
     port,
+    group: g,
+    end,
     box: largeMotorBox(hub, axis, body),
     socket: { at: pointOf(v3(sx + 0.1, 0, sz), q, hub), dir: body.clone().normalize() },
     turn(deg) {
@@ -115,22 +123,25 @@ export function mediumMotor(
   kit.box(0.3, w, h, -0.15, 0, (z0 + z1) / 2, mats.light, 0.3, g);
   const [sx, , sz] = MM.at.socket!;
   kit.box(0.3, 1.2, 0.9, sx + 0.1, 0, sz, mats.anthracite, 0.1, g);
-  const hubBase = new THREE.Group();
+  const hubBase = kit.live(new THREE.Group());
   hubBase.rotation.y = Math.PI / 2; // three.js Z along the output (+x)
   g.add(hubBase);
   const spin = hubOn(kit, hubBase, MM.hub.d / 2, 0.3);
   spin.position.z = 0.02;
   let grip: ((deg: number) => void) | null = null;
+  let end: THREE.Object3D | null = null;
   if (fit) {
     // out of the hub is the hub base's +Z
-    const front = new THREE.Group();
+    const front = kit.live(new THREE.Group());
     front.rotation.y = -Math.PI / 2;
     hubBase.add(front);
-    grip = attach(kit, fit, spin, 1, front);
+    ({ grip, end } = attach(kit, fit, spin, 1, front));
   }
   kit.real({ ldraw: MM.ldraw, holder: g, frame: "front", roles: { hub: { target: spin } } });
   return {
     port,
+    group: g,
+    end,
     box: boxOf(v3(...MM.min), v3(...MM.max), q, at),
     socket: { at: pointOf(v3(sx - 0.1, 0, sz), q, at), dir: dir.clone().normalize().negate() },
     turn(deg) {

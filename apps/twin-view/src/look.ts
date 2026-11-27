@@ -52,12 +52,12 @@
 //
 // The physics reads none of this: the distance sensor's rays start at the world's `body.distance_sensor_x_cm`
 // and look ahead, and the colour sensor reads the floor at `body.color_sensor_x_cm`, wherever the look puts them.
-import { TRACKS } from "./dims";
+import { MODULE, TRACKS } from "./dims";
 import type { LookSection, RobotMeta } from "./messages";
 
 export type SensorKind = "touch" | "color" | "ultrasonic" | "gyro" | "ir";
 export type Facing = "forward" | "back" | "left" | "right" | "up" | "down";
-/** Where a part sits; a null field is left to the default mount. */
+/** Where a part sits, cm; a null field is left to the default mount. */
 export interface Place {
   x: number | null;
   y: number | null;
@@ -70,14 +70,17 @@ export interface SensorPlace extends Place {
   kind: SensorKind;
 }
 export type Attachment = "axle" | "arm" | "lift" | "turntable" | "gripper";
+export type MotorPort = "A" | "B" | "C" | "D";
 export interface MotorPlace extends Place {
-  port: "A" | "B" | "C" | "D";
+  port: MotorPort;
   size: "large" | "medium";
   attachment: Attachment;
   /** The arm's or the lift's length, cm. */
   length: number;
   /** The gripper's tacho at which it is fully open, degrees. */
   openDeg: number;
+  /** The motor whose arm or lift carries this one, or null. */
+  on: MotorPort | null;
 }
 export interface PhonePlace {
   x: number | null;
@@ -91,13 +94,16 @@ export interface Look {
   drive: "tracks" | "wheels" | "none";
   /** Which tracks: the home set's rubber band on two rims, or the Education set's links on sprockets. */
   track: "rubber" | "links";
-  caster: boolean;
+  wheelsPerSide: 1 | 2 | 3;
+  caster: "ball" | "wheel" | "skid" | "none";
+  shell: "beams" | "panels" | null;
   brick: {
     x: number | null;
     y: number;
     z: number | null;
     pose: "flat" | "standing";
     screen: "front" | "back";
+    motorPorts: "up" | "down";
     battery: "aa" | "rechargeable";
   };
   phone: PhonePlace | null;
@@ -115,19 +121,26 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 const n = (v: unknown, fallback: number): number => num(v) ?? fallback;
 const oneOf = <T extends string>(v: unknown, of: readonly T[], fallback: T): T =>
   of.includes(v as T) ? (v as T) : fallback;
+/** A length given in modules (rounded to a half module) or in cm, in cm; null when neither is given. */
+const len = (at: Record<string, unknown>, k: string): number | null => {
+  const cm = num(at[`${k}_cm`]);
+  if (cm !== null) return cm;
+  const m = num(at[k]);
+  return m === null ? null : (Math.round(m * 2) / 2) * MODULE;
+};
 
 function place(v: unknown): Place {
   const at = obj(v) ?? {};
   return {
-    x: num(at.x_cm),
-    y: num(at.y_cm),
-    z: num(at.z_cm),
+    x: len(at, "x"),
+    y: len(at, "y"),
+    z: len(at, "z"),
     facing: FACINGS.includes(at.facing as Facing) ? (at.facing as Facing) : null,
     yaw: n(at.yaw_deg, 0),
   };
 }
 
-/** The look of a robot: its world's `extensions.view` over defaults. Never throws: a bad field keeps its default. */
+/** The look of a robot over defaults. Never throws: a bad field keeps its default. */
 export function lookOf(robot: RobotMeta): Look {
   const view: LookSection = robot.world.look;
   const v = view ?? {};
@@ -139,18 +152,33 @@ export function lookOf(robot: RobotMeta): Look {
   const d = robot.drivetrain;
   const drive = d ? oneOf(v.drive, ["tracks", "wheels", "none"] as const, "wheels") : "none";
   const driving = new Set(drive !== "none" && d ? [d.left, d.right] : []);
+  const ports = Object.keys(robot.ports.motors);
   const motors: MotorPlace[] = [];
-  for (const [port, size] of Object.entries(robot.ports.motors) as [MotorPlace["port"], "large" | "medium"][]) {
+  for (const [port, size] of Object.entries(robot.ports.motors) as [MotorPort, "large" | "medium"][]) {
     if (driving.has(port)) continue;
     const pm = obj(placedMotors[port]) ?? {};
+    const on = oneOf(pm.on, ["A", "B", "C", "D"] as const, port);
     motors.push({
       port,
       size,
       ...place(pm),
       attachment: oneOf(pm.attachment, ["axle", "arm", "lift", "turntable", "gripper"] as const, "axle"),
-      length: Math.min(40, Math.max(3, n(pm.length_cm, 12))),
+      length: Math.min(40, Math.max(3 * MODULE, len(pm, "length") ?? 15 * MODULE)),
       openDeg: Math.max(5, n(pm.open_deg, 90)),
+      // a motor rides on another that is there and does not drive, never on itself
+      on: on !== port && ports.includes(on) && !driving.has(on) ? on : null,
     });
+  }
+  // a chain of riders that loops back is no build: the first of the loop stands on its own
+  for (const m of motors) {
+    const seen = new Set<string>([m.port]);
+    for (let c = m.on; c; c = motors.find((x) => x.port === c)?.on ?? null) {
+      if (seen.has(c)) {
+        m.on = null;
+        break;
+      }
+      seen.add(c);
+    }
   }
   const sensors: SensorPlace[] = [];
   for (const [port, kind] of Object.entries(robot.ports.sensors) as [SensorPlace["port"], SensorKind][])
@@ -160,16 +188,25 @@ export function lookOf(robot: RobotMeta): Look {
     d && Math.abs(d.wheel_diameter_cm - TRACKS.rubber.d) <= Math.abs(d.wheel_diameter_cm - TRACKS.links.d)
       ? "rubber"
       : "links";
+  const wps = num(v.wheels_per_side);
+  const wheelsPerSide: 1 | 2 | 3 = drive === "wheels" && (wps === 2 || wps === 3) ? wps : 1;
+  const brickAt = place(brick);
   return {
     drive,
     track: oneOf(v.track, ["rubber", "links"] as const, nearest),
-    caster: drive === "wheels" && v.caster !== "none",
+    wheelsPerSide,
+    caster:
+      drive === "wheels"
+        ? oneOf(v.caster, ["ball", "wheel", "skid", "none"] as const, wheelsPerSide === 1 ? "ball" : "none")
+        : "none",
+    shell: v.shell === "beams" || v.shell === "panels" ? v.shell : null,
     brick: {
-      x: num(brick.x_cm),
-      y: n(brick.y_cm, 0),
-      z: num(brick.z_cm),
+      x: brickAt.x,
+      y: brickAt.y ?? 0,
+      z: brickAt.z,
       pose: oneOf(brick.pose, ["flat", "standing"] as const, "flat"),
       screen: oneOf(brick.screen, ["front", "back"] as const, "back"),
+      motorPorts: oneOf(brick.motor_ports, ["up", "down"] as const, "up"),
       battery: oneOf(brick.battery, ["aa", "rechargeable"] as const, "aa"),
     },
     phone: phone
@@ -186,7 +223,7 @@ export function lookOf(robot: RobotMeta): Look {
       : null,
     motors,
     sensors,
-    bumper: bumper ? { x: n(bumper.x_cm, -robot.world.body.back_cm + 1) } : null,
+    bumper: bumper ? { x: len(bumper, "x") ?? -robot.world.body.back_cm + 1 } : null,
     label: typeof v.label === "string" && v.label !== "" ? v.label.slice(0, 4) : null,
   };
 }

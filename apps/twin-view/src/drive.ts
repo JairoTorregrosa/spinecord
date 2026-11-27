@@ -15,7 +15,7 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { Look } from "./look";
 import type { RobotMeta } from "./messages";
-import { CASTER, MOTOR, MODULE, TRACKS, wheelFor } from "./dims";
+import { BEAM, CASTER, MOTOR, MODULE, SMALL_WHEEL, TRACKS, wheelFor } from "./dims";
 import { largeMotor, type MotorPart } from "./motors";
 import { P, type Kit } from "./parts";
 
@@ -40,7 +40,7 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
   const { mats, keep, group } = kit;
   const body = meta.world.body;
   const d = meta.drivetrain;
-  if (look.drive === "none" || !d) return { top: 0, motors: [], boxes: [], update() {} };
+  if (look.drive === "none" || !d) return standingBase(kit, meta);
   const D = d.wheel_diameter_cm;
   const sign = d.forward_sign;
   const sides = [
@@ -57,6 +57,8 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
 
   let hubX: number, hubZ: number, bodyDir: number, motorY: number;
   let caster: { x: number; top: number } | null = null;
+  /** passive wheels: they roll as the robot moves ahead */
+  const passive: { obj: THREE.Object3D; r: number }[] = [];
   if (look.drive === "tracks") {
     // the loop the tread runs on: two circles of radius `r` (its pitch line) `span` apart, centred on x = 0
     let r: number, span: number, zc: number, width: number;
@@ -152,43 +154,88 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
     bodyDir = 1;
     motorY = d.axle_track_cm / 2 - width / 2 - GAP - MODULE - MOTOR_HALF;
   } else {
-    // the real wheel nearest the profile's diameter; it turns so its tread keeps pace with the floor
+    // the real wheel nearest the profile's diameter; it turns so its tread keeps pace with the floor. With more
+    // than one per side they stand in a row a module apart, centred on the axle, all turning with that side
     const real = wheelFor(D);
     const tyreR = real.d / 2;
     wheelR = tyreR;
     const tyre = kit.cached(`tyre ${real.part}`, () => tyreGeometry(tyreR, real.w, real.rim / 2));
     const rim = kit.cached(`rim ${real.rimPart}`, () => rimGeometry(real.rim / 2, real.w - 0.2, 6));
+    const pitchW = Math.ceil(real.d / MODULE + 1) * MODULE;
+    const xs = Array.from({ length: look.wheelsPerSide }, (_, i) => (i - (look.wheelsPerSide - 1) / 2) * pitchW);
     for (const dr of sides) {
-      const wheel = kit.live(new THREE.Group());
-      wheel.position.copy(P(0, dr.y, tyreR));
-      group.add(wheel);
-      kit.add(tyre, mats.rubber, v3(0, 0, 0), wheel);
-      kit.add(rim, mats.light, v3(0, 0, 0), wheel);
-      spinners.push({ port: dr.port, obj: wheel });
-      boxes.push(new THREE.Box3(v3(-tyreR, dr.y - real.w / 2 - 0.3, 0), v3(tyreR, dr.y + real.w / 2 + 0.3, 2 * tyreR)));
+      for (const wx of xs) {
+        const wheel = kit.live(new THREE.Group());
+        wheel.position.copy(P(wx, dr.y, tyreR));
+        group.add(wheel);
+        kit.add(tyre, mats.rubber, v3(0, 0, 0), wheel);
+        kit.add(rim, mats.light, v3(0, 0, 0), wheel);
+        spinners.push({ port: dr.port, obj: wheel });
+        boxes.push(
+          new THREE.Box3(
+            v3(wx - tyreR, dr.y - real.w / 2 - 0.3, 0),
+            v3(wx + tyreR, dr.y + real.w / 2 + 0.3, 2 * tyreR),
+          ),
+        );
+      }
+      if (xs.length > 1) {
+        // the beam that holds the row's axles, inside the wheels
+        const n = Math.round((xs[xs.length - 1]! - xs[0]!) / MODULE) + 3;
+        kit.beam(n, 0, dr.y - dr.out * (real.w / 2 + GAP + MODULE / 2), tyreR, mats.dark);
+      }
     }
-    hubX = 0;
+    // the motor drives the middle wheel (or the rear one of two)
+    hubX = xs.length === 2 ? xs[0]! : 0;
     hubZ = tyreR;
-    bodyDir = -1;
-    motorY = d.axle_track_cm / 2 - real.w / 2 - GAP - MOTOR_HALF;
-    if (look.caster) {
-      // the ball caster at the back: the steel ball in its receptacle, a beam up to the frame
+    bodyDir = xs.length === 2 ? 1 : -1;
+    motorY = d.axle_track_cm / 2 - real.w / 2 - GAP - (xs.length > 1 ? MODULE : 0) - MOTOR_HALF;
+    if (look.caster !== "none") {
+      // what holds up the back: the steel ball in its receptacle, a small passive wheel on a fork, or a skid
       const bx = -body.back_cm + CASTER.socket.d / 2 + 0.6;
-      const rb = CASTER.ball / 2;
-      kit.add(
-        kit.cached("ball", () => new THREE.SphereGeometry(rb, 24, 16)),
-        mats.metal,
-        P(bx, 0, rb),
-      );
-      const top = rb + CASTER.socket.w * 0.75;
-      kit.add(
-        kit.cached(
-          "ball socket",
-          () => new THREE.CylinderGeometry(CASTER.socket.d / 2, CASTER.socket.d / 2, top - rb * 0.9, 20),
-        ),
-        mats.dark,
-        P(bx, 0, (top + rb * 0.9) / 2),
-      );
+      let top: number;
+      if (look.caster === "ball") {
+        const rb = CASTER.ball / 2;
+        kit.add(
+          kit.cached("ball", () => new THREE.SphereGeometry(rb, 24, 16)),
+          mats.metal,
+          P(bx, 0, rb),
+        );
+        top = rb + CASTER.socket.w * 0.75;
+        kit.add(
+          kit.cached(
+            "ball socket",
+            () => new THREE.CylinderGeometry(CASTER.socket.d / 2, CASTER.socket.d / 2, top - rb * 0.9, 20),
+          ),
+          mats.dark,
+          P(bx, 0, (top + rb * 0.9) / 2),
+        );
+      } else if (look.caster === "wheel") {
+        const r = SMALL_WHEEL.d / 2;
+        const w = kit.live(new THREE.Group());
+        w.position.copy(P(bx, 0, r));
+        group.add(w);
+        kit.add(
+          kit.cached("small tyre", () => tyreGeometry(r, SMALL_WHEEL.w, r * 0.6)),
+          mats.rubber,
+          v3(0, 0, 0),
+          w,
+        );
+        kit.add(
+          kit.cached("small rim", () => rimGeometry(r * 0.6, SMALL_WHEEL.w - 0.2, 4)),
+          mats.light,
+          v3(0, 0, 0),
+          w,
+        );
+        passive.push({ obj: w, r });
+        // the fork: a beam either side up to the frame
+        for (const side of [1, -1])
+          kit.beam(3, bx, side * (SMALL_WHEEL.w / 2 + BEAM.along / 2 + 0.1), r, mats.dark).rotation.z = Math.PI / 2;
+        top = r + MODULE * 1.5;
+      } else {
+        // a skid: a beam on its edge whose rounded end slides on the floor
+        kit.beam(3, bx, 0, MODULE, mats.dark).rotation.z = Math.PI / 2;
+        top = MODULE * 2.4;
+      }
       boxes.push(new THREE.Box3(v3(bx - 1.3, -1.3, 0), v3(bx + 1.3, 1.3, top)));
       caster = { x: bx, top };
     }
@@ -222,9 +269,54 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
       for (const t of treads) t.place((tachos[t.port] ?? 0) * cmPerDeg);
       for (const sp of spinners) sp.obj.rotation.z = -((tachos[sp.port] ?? 0) * cmPerDeg) / wheelR;
       for (const m of motors) m.turn((tachos[m.port] ?? 0) * sign);
+      // a passive wheel rolls as far as the robot's middle moved: the mean of the two sides
+      const mean = (((tachos[d.left] ?? 0) + (tachos[d.right] ?? 0)) / 2) * cmPerDeg;
+      for (const p of passive) p.obj.rotation.z = -mean / p.r;
     },
   };
 }
+/** No drive: the robot stands on a base, a frame of beams lying flat on the floor as long and wide as the body,
+ *  two layers (along, then across) so the holes of the top layer face up for what stands on it. */
+function standingBase(kit: Kit, meta: RobotMeta): Drive {
+  const b = meta.world.body;
+  const { mats } = kit;
+  const len = b.front_cm + b.back_cm,
+    wid = 2 * b.half_width_cm;
+  const xc = (b.front_cm - b.back_cm) / 2;
+  const along = Math.max(3, Math.round((len - BEAM.across) / MODULE) + 1);
+  const across = Math.max(3, Math.round((wid - BEAM.across) / MODULE) + 1);
+  const flat = (holes: number, x: number, y: number, z: number, turn: boolean) => {
+    const beam = kit.beam(holes, x, y, z, mats.dark);
+    // holes up (three.js Y); along x, or across the robot
+    beam.quaternion.setFromRotationMatrix(
+      turn
+        ? new THREE.Matrix4().makeBasis(
+            new THREE.Vector3(0, 0, 1),
+            new THREE.Vector3(1, 0, 0),
+            new THREE.Vector3(0, 1, 0),
+          )
+        : new THREE.Matrix4().makeBasis(
+            new THREE.Vector3(1, 0, 0),
+            new THREE.Vector3(0, 0, -1),
+            new THREE.Vector3(0, 1, 0),
+          ),
+    );
+  };
+  const yEdge = ((across - 1) * MODULE) / 2,
+    xEdge = ((along - 1) * MODULE) / 2;
+  for (const y of [yEdge, -yEdge]) flat(along, xc, y, BEAM.along / 2, false);
+  for (const x of [xc + xEdge, xc - xEdge, xc]) flat(across, x, 0, BEAM.along * 1.5, true);
+  const top = 2 * BEAM.along;
+  return {
+    top,
+    motors: [],
+    boxes: [
+      new THREE.Box3(new THREE.Vector3(xc - len / 2, -wid / 2, 0), new THREE.Vector3(xc + len / 2, wid / 2, top)),
+    ],
+    update() {},
+  };
+}
+
 /** One wide tread link (88323) in its own frame: x along the travel, y toward the sprocket (in), z across. A plate
  *  with a bar across its outer face and two guide lugs on its inner face, the sprocket's teeth between; the plate
  *  sits outside the pitch line, its outer face at the rolling radius. */
