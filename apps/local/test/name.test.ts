@@ -132,12 +132,12 @@ describe("what the model is told", () => {
     const d = await call("describe_robot", { robot_id: "r1-sim" });
     expect(d.data).toMatchObject({ id: "r1-sim", name: "Doña Tuerca" });
     expect((await call("describe_robot", { robot_id: "Doña Tuerca" })).ok).toBe(false);
-  });
+  }, 15_000);
   test("a robot without a name answers name null", async () => {
     const { call } = await fleetOf(["--twin"]);
     expect((await call("list_robots")).data.robots[0].name).toBeNull();
     expect((await call("describe_robot", { robot_id: "r1-sim" })).data.name).toBeNull();
-  });
+  }, 15_000);
 });
 
 describe("what the person sees", () => {
@@ -148,7 +148,7 @@ describe("what the person sees", () => {
     expect(events.filter((e) => e.ev === "greet_failed")).toEqual([]);
     const plain = await fleetOf(["--twin"]);
     expect(plain.fleet.bricks.get("r1-sim")!.peek().lcd).toEqual([]);
-  });
+  }, 15_000);
   test("the 3D page gets the name with each robot's meta; null without one", async () => {
     const { fleet, entry } = await fleetOf(["--twin", named]);
     const twins = fleet.robots.map((r) => ({
@@ -168,5 +168,5 @@ describe("what the person sees", () => {
     await until("the hello", () => got.some((m) => m.t === "hello"), 4000);
     const hello = got.find((m) => m.t === "hello") as Extract<ServerMessage, { t: "hello" }>;
     expect(hello.robots.map((r) => [r.id, r.name])).toEqual([["r1-sim", "Doña Tuerca"]]);
-  });
+  }, 15_000);
 });

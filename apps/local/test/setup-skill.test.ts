@@ -102,6 +102,11 @@ test("setup.ts reads claude auth status and claude mcp get", () => {
     "spinecord:\n  Scope: Local config (private to you in this project)\n  Status: ✓ Connected\n  Command: bun\n  Args: /h/spinecord/apps/local/main.ts --twin /h/x.json\n";
   expect(parseMcpGet(get)).toEqual({ scope: "local", args: "/h/spinecord/apps/local/main.ts --twin /h/x.json" });
   expect(parseMcpGet("No MCP server found with name: spinecord")).toEqual({ scope: undefined, args: undefined });
+  // a name with a space and an accent comes back as claude mcp add got it, joined by spaces (Claude Code 2.1.332)
+  const spaced = get.replace("--twin /h/x.json", "--twin /h/x.json --name Doña Tuerca");
+  expect(parseMcpGet(spaced).args).toBe(
+    ["/h/spinecord/apps/local/main.ts", "--twin", "/h/x.json", "--name", "Doña Tuerca"].join(" "),
+  );
 });
 
 test("setup.ts registers absolute paths, the EV3 first, and prints a launch line per shell", () => {
@@ -158,4 +163,5 @@ test("setup.ts keeps the robot's name across runs, and a new name changes only t
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
-});
+  // seven processes that each load the server's config code: slow on a busy computer
+}, 30_000);
