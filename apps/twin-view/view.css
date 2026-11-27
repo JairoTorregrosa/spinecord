@@ -965,3 +965,20 @@ body.no-hud .tag3d {
   padding: 3px 10px 3px 0;
   white-space: nowrap;
 }
+
+/* no WebGL (src/no3d.ts): the message where the scene would be; the panels stay */
+.no3d-msg {
+  top: 45%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 460px;
+  padding: 16px 20px;
+  z-index: 5;
+}
+.no3d-msg p {
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+body.no3d #scene {
+  visibility: hidden;
+}
