@@ -115,6 +115,24 @@
           "unknown": true,
           "reason": "LDraw does not model the speaker grille as a sub-part and no source found gives its position; the EV3 user guide only names it."
         },
+        "screen_across_mm": {
+          "value": 52,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/11036.dat",
+          "note": "The LCD (11036) across the brick: 130 LDU in X. LDraw says its shape is highly simplified; it sits under the window of the screen shield 99148p01."
+        },
+        "screen_along_mm": {
+          "value": 40,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/11036.dat",
+          "note": "The LCD along the brick: 100 LDU in Z, centred on the screen feature."
+        },
+        "top_shell_bottom_ldu": {
+          "value": 49,
+          "unit": "LDU",
+          "source": "https://library.ldraw.org/library/official/parts/99141p01.dat",
+          "note": "The white top shell (99141p01) reaches from the top (Y = -19) down to Y = 49; the light grey bottom shell 11025p01 is below it."
+        },
         "screen_px": {
           "value": "178 x 128",
           "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
@@ -327,6 +345,18 @@
           "unit": "N cm",
           "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
         },
+        "hub_diameter_mm": {
+          "value": 23.2,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/99617c01.dat",
+          "note": "The red output hub (99617c01, two 99617 halves): its LDraw box is 58 LDU across the axle and 60 LDU along it."
+        },
+        "hub_width_mm": {
+          "value": 24,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/99617c01.dat",
+          "note": "Along the output axle: 60 LDU, 3 modules, as deep as the axle hole through it."
+        },
         "encoder_resolution_deg": {
           "value": 1,
           "unit": "degree",
@@ -397,6 +427,18 @@
           "value": 12,
           "unit": "N cm",
           "source": "https://robots.acadiau.ca/files/sites/robots/Uploaded%20Pictures%20and%20Materials/2021-2022%20Files/May%202021%20BottleSumo%20time%20trial%20event/ev3_userguide_enus.pdf"
+        },
+        "hub_diameter_mm": {
+          "value": 16,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/99543.dat",
+          "note": "The red axle hub on the output end (99543): its LDraw box is 40 LDU across the axle."
+        },
+        "hub_length_mm": {
+          "value": 12.4,
+          "unit": "mm",
+          "source": "https://library.ldraw.org/library/official/parts/99543.dat",
+          "note": "Along the output axle: 31 LDU from the motor's front face."
         },
         "encoder_resolution_deg": {
           "value": 1,

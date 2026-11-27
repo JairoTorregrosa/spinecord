@@ -52,6 +52,7 @@
 //
 // The physics reads none of this: the distance sensor's rays start at the world's `body.distance_sensor_x_cm`
 // and look ahead, and the colour sensor reads the floor at `body.color_sensor_x_cm`, wherever the look puts them.
+import { TRACKS } from "./dims";
 import type { LookSection, RobotMeta } from "./messages";
 
 export type SensorKind = "touch" | "color" | "ultrasonic" | "gyro" | "ir";
@@ -88,8 +89,17 @@ export interface PhonePlace {
 }
 export interface Look {
   drive: "tracks" | "wheels" | "none";
+  /** Which tracks: the home set's rubber band on two rims, or the Education set's links on sprockets. */
+  track: "rubber" | "links";
   caster: boolean;
-  brick: { x: number | null; y: number; z: number | null; pose: "flat" | "standing"; screen: "front" | "back" };
+  brick: {
+    x: number | null;
+    y: number;
+    z: number | null;
+    pose: "flat" | "standing";
+    screen: "front" | "back";
+    battery: "aa" | "rechargeable";
+  };
   phone: PhonePlace | null;
   /** The motors that do not drive, with where the look puts them. */
   motors: MotorPlace[];
@@ -145,8 +155,14 @@ export function lookOf(robot: RobotMeta): Look {
   const sensors: SensorPlace[] = [];
   for (const [port, kind] of Object.entries(robot.ports.sensors) as [SensorPlace["port"], SensorKind][])
     sensors.push({ port, kind, ...place(placedSensors[port]) });
+  // the tracks whose rolling diameter is nearest the profile's: 3.68 cm over the rubber band, 5.52 over links
+  const nearest =
+    d && Math.abs(d.wheel_diameter_cm - TRACKS.rubber.d) <= Math.abs(d.wheel_diameter_cm - TRACKS.links.d)
+      ? "rubber"
+      : "links";
   return {
     drive,
+    track: oneOf(v.track, ["rubber", "links"] as const, nearest),
     caster: drive === "wheels" && v.caster !== "none",
     brick: {
       x: num(brick.x_cm),
@@ -154,6 +170,7 @@ export function lookOf(robot: RobotMeta): Look {
       z: num(brick.z_cm),
       pose: oneOf(brick.pose, ["flat", "standing"] as const, "flat"),
       screen: oneOf(brick.screen, ["front", "back"] as const, "back"),
+      battery: oneOf(brick.battery, ["aa", "rechargeable"] as const, "aa"),
     },
     phone: phone
       ? {

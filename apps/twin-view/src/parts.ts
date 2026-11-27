@@ -6,7 +6,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { DIMS, MODULE } from "./dims";
+import { BEAM, MODULE, OTHER, STUD as STUD_SIZE, type Frame } from "./dims";
 
 /** A point of the robot frame (x ahead, y left, z up) in the group's three.js frame. */
 export const P = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, z, -y);
@@ -71,8 +71,21 @@ export const COL = {
   rubber: 0x202224,
   anthracite: 0x34393e,
 };
-/** One LEGO stud: 0.8 cm between studs, a stud 0.48 across and 0.17 high. */
+/** The pitch of studs and holes: one module. */
 export const STUD = MODULE;
+
+/** A part the page can draw from its real LDraw mesh (meshes.ts) once that has loaded: the mesh's body replaces
+ *  the procedural children of `holder`, each role's sub-part those of its target. Children that are `live` (they
+ *  move or change) stay: they are what the state drives. */
+export interface RealPart {
+  ldraw: string;
+  /** A live group in the part's frame (dims.ts: x ahead, y left, z up), its origin where `frame` puts LDraw's. */
+  holder: THREE.Object3D;
+  frame: Frame;
+  /** For the brick: the LDraw Y of its bottom. */
+  bottomLdu?: number;
+  roles?: Record<string, { target: THREE.Object3D; material?: THREE.Material }>;
+}
 
 export interface Kit {
   group: THREE.Group;
@@ -82,6 +95,7 @@ export interface Kit {
   cached(key: string, make: () => THREE.BufferGeometry): THREE.BufferGeometry;
   /** Marks an object that moves or a material that changes: never merged. */
   live<T extends THREE.Object3D | THREE.Material>(x: T): T;
+  isLive(x: THREE.Object3D | THREE.Material): boolean;
   add(geo: THREE.BufferGeometry, mat: THREE.Material, at: THREE.Vector3, parent?: THREE.Object3D): THREE.Mesh;
   /** A box lx (ahead) × ly (across) × lz (up) centred at (x, y, z), its edges rounded by `radius`. */
   box(
@@ -120,6 +134,10 @@ export interface Kit {
   studs(nx: number, ny: number, x: number, y: number, z: number, mat: THREE.Material, parent?: THREE.Object3D): void;
   /** A flat EV3 cable along the points (robot frame), with a plug at each end. */
   cable(points: THREE.Vector3[]): void;
+  /** Registers a part to draw from its real mesh when it loads. */
+  real(part: RealPart): void;
+  /** The parts registered with `real`, each with each role's place in its holder at rest. */
+  readonly reals: (RealPart & { rest: Record<string, THREE.Matrix4> })[];
 }
 
 export function makeKit(group: THREE.Group): Kit {
@@ -154,7 +172,20 @@ export function makeKit(group: THREE.Group): Kit {
     return m;
   };
   const r2 = (v: number) => Math.round(v * 100) / 100;
+  const reals: Kit["reals"] = [];
   const kit: Kit = {
+    reals,
+    real(part) {
+      if (!liveSet.has(part.holder)) throw new Error(`the holder of ${part.ldraw} must be live`);
+      part.holder.updateWorldMatrix(true, true);
+      const inv = part.holder.matrixWorld.clone().invert();
+      const rest: Record<string, THREE.Matrix4> = {};
+      for (const [role, r] of Object.entries(part.roles ?? {})) {
+        if (!liveSet.has(r.target)) throw new Error(`the ${role} of ${part.ldraw} must be live`);
+        rest[role] = inv.clone().multiply(r.target.matrixWorld);
+      }
+      reals.push({ ...part, rest });
+    },
     group,
     mats,
     keep,
@@ -163,6 +194,7 @@ export function makeKit(group: THREE.Group): Kit {
       liveSet.add(x);
       return x;
     },
+    isLive: (x) => liveSet.has(x),
     add,
     box(lx, ly, lz, x, y, z, mat, radius = 0, parent = group) {
       const rr = Math.min(radius, lx / 2, ly / 2, lz / 2);
@@ -186,7 +218,7 @@ export function makeKit(group: THREE.Group): Kit {
     },
     studs(nx, ny, x, y, z, mat, parent = group) {
       const geo = cached("stud", () =>
-        new THREE.CylinderGeometry(DIMS.stud.w / 2, DIMS.stud.w / 2, DIMS.stud.h, 12).translate(0, DIMS.stud.h / 2, 0),
+        new THREE.CylinderGeometry(STUD_SIZE.d / 2, STUD_SIZE.d / 2, STUD_SIZE.h, 12).translate(0, STUD_SIZE.h / 2, 0),
       );
       for (let i = 0; i < nx; i++)
         for (let j = 0; j < ny; j++)
@@ -199,7 +231,7 @@ export function makeKit(group: THREE.Group): Kit {
         "centripetal",
       );
       // a flat ribbon, as the EV3's RJ12 cables are
-      const [ct, cw] = [DIMS.cable.h / 2, DIMS.cable.w / 2];
+      const [ct, cw] = [OTHER.cable.h / 2, OTHER.cable.w / 2];
       const shape = new THREE.Shape();
       shape.moveTo(-ct, -cw);
       shape.lineTo(ct, -cw);
@@ -234,9 +266,12 @@ export function makeKit(group: THREE.Group): Kit {
 export const disposeKit = (k: Kit): void => (k as Kit & { _dispose: () => void })._dispose();
 export const mergeKit = (k: Kit): void => (k as Kit & { _merge: () => void })._merge();
 
-/** A Technic beam: 0.72 cm thick and high, holes 0.8 apart, Ø 0.48, the ends round. Length along X, holes along Z. */
+/** A Technic beam (dims.ts BEAM): 0.72 cm across its holes, a module along them, holes a module apart Ø 0.48, the
+ *  ends round. Length along X, holes along Z. */
 function beamGeometry(holes: number): THREE.BufferGeometry {
-  const h = DIMS.beam.h / 2,
+  // the bevel grows the outline and shrinks the holes by its size: drawn that much inside, so they end exact
+  const bevel = 0.04;
+  const h = BEAM.across / 2 - bevel,
     len = (holes - 1) * STUD;
   const s = new THREE.Shape();
   s.moveTo(-len / 2, -h);
@@ -246,18 +281,18 @@ function beamGeometry(holes: number): THREE.BufferGeometry {
   s.absarc(-len / 2, 0, h, Math.PI / 2, (3 * Math.PI) / 2, false);
   for (let i = 0; i < holes; i++) {
     const hole = new THREE.Path();
-    hole.absarc(-len / 2 + i * STUD, 0, DIMS.beam.hole / 2, 0, Math.PI * 2, true);
+    hole.absarc(-len / 2 + i * STUD, 0, BEAM.hole / 2 + bevel, 0, Math.PI * 2, true);
     s.holes.push(hole);
   }
   const g = new THREE.ExtrudeGeometry(s, {
-    depth: DIMS.beam.w - 0.08,
+    depth: BEAM.along - 2 * bevel,
     bevelEnabled: true,
-    bevelThickness: 0.04,
-    bevelSize: 0.04,
+    bevelThickness: bevel,
+    bevelSize: bevel,
     bevelSegments: 1,
     curveSegments: 10,
   });
-  g.translate(0, 0, -(DIMS.beam.w - 0.08) / 2);
+  g.translate(0, 0, -(BEAM.along - 2 * bevel) / 2);
   return g;
 }
 

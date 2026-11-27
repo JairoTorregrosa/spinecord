@@ -2,7 +2,7 @@
 // screen shows a face), a bumper of beams and red bricks, a paper label on the brick.
 import * as THREE from "three";
 import type { BrickMount } from "./devices";
-import { DIMS } from "./dims";
+import { OTHER } from "./dims";
 import type { Look } from "./look";
 import type { RobotMeta, RobotState } from "./messages";
 import { P, type Kit } from "./parts";
@@ -26,8 +26,8 @@ export function buildAccessories(kit: Kit, meta: RobotMeta, look: Look, m: Brick
   if (look.phone) {
     // a phone 14.7 × 7.15 × 0.95 cm in a case, built with its screen looking along +x, then turned to its yaw
     const ph = look.phone;
-    const T = DIMS.phone.h;
-    const [W, H] = ph.portrait ? [DIMS.phone.w, DIMS.phone.l] : [DIMS.phone.l, DIMS.phone.w];
+    const T = OTHER.phone.h;
+    const [W, H] = ph.portrait ? [OTHER.phone.w, OTHER.phone.l] : [OTHER.phone.l, OTHER.phone.w];
     const bb = m.box;
     const px = ph.x ?? Math.min(body.front_cm - 1.5, bb.max.x - 1);
     const bottom = ph.bottom ?? bb.max.z + 1.2;

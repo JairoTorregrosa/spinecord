@@ -1,96 +1,145 @@
-// The EV3 Intelligent Brick (45500): 11.9 × 7.6 × 4.8 cm, a white top over a light bluish grey body, pin holes
-// along its long sides, ports A-D at the screen end and 1-4 at the other. On top: the 178 × 128 screen in its dark
-// window, the six buttons on a pad whose light guide is the status LED.
+// The EV3 Intelligent Brick (45500, LDraw 95646): 11.12 × 7.2 × 4.36 cm with the AA cover (5.08 with the
+// rechargeable battery 95646c01), every size and position from the LEGO parts map (dims.ts). A white top shell over
+// a light grey bottom shell, the through pin holes of its sides, motor ports A-D and the PC port at the screen end,
+// sensor ports 1-4 at the other; on top the LCD (drawn from the state), the six buttons on the pad whose light
+// guide is the status LED. Drawn from boxes first; the real LDraw mesh replaces the shells once it has loaded
+// (meshes.ts), the screen, the buttons and the LED stay alive on it.
 //
 // Inside the brick's group: x toward the screen end, y to the left, z up, the bottom at z = 0.
 import * as THREE from "three";
-import { DIMS } from "./dims";
+import { BEAM, BRICK as B, type PartDims } from "./dims";
 import { COL, P, type Kit } from "./parts";
 import type { RobotState } from "./messages";
 
-export const BRICK = { L: DIMS.brick.l, W: DIMS.brick.w, H: DIMS.brick.h };
+export type Battery = "aa" | "rechargeable";
+/** The brick's box in its group, for a battery. */
+export const brickDims = (battery: Battery): PartDims => B[battery];
 const LCD_W = 178,
   LCD_H = 128;
 const LED_RGB = [0x000000, 0x1fe05a, 0xff2a1f, 0xff9a1a];
 
 export interface Brick {
   group: THREE.Group;
-  /** Where port `p` (1..4 of the sensors, A..D of the motors) is, inside the brick's group. */
+  dims: PartDims;
+  /** Where port `p` (1..4 of the sensors, A..D of the motors) is, inside the brick's group: its socket's face. */
   portAt(p: string): THREE.Vector3;
   update(s: RobotState, timeS: number): void;
 }
 
-export function buildBrick(kit: Kit): Brick {
+export function buildBrick(kit: Kit, battery: Battery): Brick {
   const { mats, keep } = kit;
-  const { L, W, H } = BRICK;
-  const g = new THREE.Group();
-  // the body: light grey below, the white top cap over it, the port ends in anthracite
-  kit.box(L - 0.3, W, H * 0.55, 0, 0, H * 0.275, mats.light, 0.45, g);
-  kit.box(L, W - 0.02, H * 0.52, 0, 0, H * 0.74, mats.white, 0.6, g);
-  for (const end of [1, -1]) kit.box(0.5, W - 0.9, H * 0.5, end * (L / 2 - 0.3), 0, H * 0.3, mats.anthracite, 0.15, g);
-  // pin holes along both long sides, where beams are pinned to the brick
-  for (const x of [-4.0, -2.4, 2.4, 4.0]) kit.axleCyl(0.25, W + 0.04, x, 0, H * 0.3, mats.black, g, 14);
-  // the ports: four sockets at each end
-  const portY = (i: number) => (1.5 - i) * 1.55;
-  for (let i = 0; i < 4; i++)
-    for (const end of [1, -1]) kit.box(0.2, 1.1, 0.75, end * (L / 2 - 0.02), portY(i), H * 0.3, mats.black, 0.08, g);
+  const d = B[battery];
+  const [x0, y0] = d.min,
+    [x1, y1, H] = d.max;
+  const L = x1 - x0,
+    W = y1 - y0;
+  const v = (k: string) => {
+    const a = d.at[k];
+    if (!a) throw new Error(`the parts map gives the brick no ${k}`);
+    return a;
+  };
+  const g = kit.live(new THREE.Group());
+  // the shells: light grey bottom, white top (from the top down as far as the map says)
+  const split = H - B.topShell;
+  kit.box(L - 0.2, W - 0.1, split, (x0 + x1) / 2, 0, split / 2, mats.light, 0.35, g);
+  kit.box(L, W, B.topShell, (x0 + x1) / 2, 0, split + B.topShell / 2, mats.white, 0.6, g);
+  // the port ends in anthracite, as deep as the sockets
+  for (const end of [x0, x1])
+    kit.box(0.4, W - 1.0, 1.4, end - Math.sign(end) * 0.15, 0, v("port_1")[2], mats.anthracite, 0.12, g);
+  // the side and bottom pin holes the map lists
+  for (const h of d.holes) {
+    if (h.axis[1] > 0.9) {
+      // through the brick across: a dark ring on either side
+      for (const side of [1, -1])
+        kit.axleCyl(BEAM.hole / 2, 0.06, h.at[0], side * (W / 2 + 0.01), h.at[2], mats.black, g, 12);
+    } else if (h.axis[2] > 0.9) {
+      const down = kit.cached("hole down", () => new THREE.CylinderGeometry(BEAM.hole / 2, BEAM.hole / 2, 0.06, 12));
+      kit.add(down, mats.black, P(h.at[0], h.at[1], -0.02), g);
+    }
+  }
+  // the sockets: motor ports and PC at the screen end, sensor ports at the other
+  for (const k of ["port_A", "port_B", "port_C", "port_D", "port_1", "port_2", "port_3", "port_4"]) {
+    const [px, py, pz] = v(k);
+    kit.box(0.2, 0.9, 0.7, px - Math.sign(px) * 0.08, py, pz, mats.black, 0.08, g);
+  }
+  {
+    const [px, py, pz] = v("pc_usb");
+    kit.box(0.2, 0.7, 0.3, px - Math.sign(px) * 0.08, py, pz, mats.black, 0.05, g);
+  }
   // the print on the top: logo and name, at the end away from the screen
   const top = new THREE.Mesh(
-    keep(new THREE.PlaneGeometry(4.2, W - 1.4)),
+    keep(new THREE.PlaneGeometry(3.8, W - 1.4)),
     keep(new THREE.MeshStandardMaterial({ map: keep(brickTopTexture()), roughness: 0.35, transparent: true })),
   );
   top.rotation.x = -Math.PI / 2;
-  top.position.copy(P(-L / 2 + 2.6, 0, H + 0.005));
+  top.position.copy(P(x0 + 2.3, 0, H + 0.005));
   g.add(top);
-  // the screen in its window
-  const sx = L / 2 - 2.75;
-  kit.box(4.1, 5.6, 0.12, sx, 0, H - 0.02, mats.anthracite, 0.3, g);
+  // the screen in its window: the LCD where the map puts it, drawn from the state (it stays on the real mesh)
+  const [sx, sy, sz] = v("screen");
+  kit.box(B.screen.along + 0.4, B.screen.across + 0.5, 0.12, sx, sy, H - 0.04, mats.anthracite, 0.2, g);
   const lcdCanvas = document.createElement("canvas");
   lcdCanvas.width = LCD_W * 2;
   lcdCanvas.height = LCD_H * 2;
   const lcdTex = keep(new THREE.CanvasTexture(lcdCanvas));
   lcdTex.colorSpace = THREE.SRGBColorSpace;
   lcdTex.anisotropy = 4;
-  const lcd = new THREE.Mesh(
-    keep(new THREE.PlaneGeometry(4.27, 3.07)),
-    kit.live(
-      keep(
-        new THREE.MeshStandardMaterial({
-          map: lcdTex,
-          roughness: 0.18,
-          emissive: 0xa4ad98,
-          emissiveMap: lcdTex,
-          emissiveIntensity: 0.25,
-        }),
+  const lcd = kit.live(
+    new THREE.Mesh(
+      keep(new THREE.PlaneGeometry(B.screen.across, B.screen.along)),
+      kit.live(
+        keep(
+          new THREE.MeshStandardMaterial({
+            map: lcdTex,
+            roughness: 0.18,
+            emissive: 0xa4ad98,
+            emissiveMap: lcdTex,
+            emissiveIntensity: 0.25,
+          }),
+        ),
       ),
     ),
   );
   lcd.rotation.x = -Math.PI / 2;
   lcd.rotation.z = -Math.PI / 2; // its width runs across the brick
-  lcd.position.copy(P(sx, 0, H + 0.05));
+  // just over the LCD's own face, under the shield's window
+  lcd.position.copy(P(sx, sy, Math.max(sz, H - 0.1) + 0.02));
   g.add(lcd);
-  // the button pad: its rim is the LED's light guide
-  const cx = -0.95;
+  // the button pad: the map gives its centre and the buttons' places; its rim is the LED's light guide
+  const [cx, cy] = v("buttons");
+  // the arrows sit 13.2 LDU either side of the centre, the D-shaped buttons 40 LDU (brick.features.buttons)
   const ledMat = kit.live(
     keep(new THREE.MeshStandardMaterial({ color: 0x3a3f44, emissive: 0x000000, roughness: 0.3 })),
   );
-  kit.box(3.7, 4.3, 0.1, cx, 0, H + 0.02, ledMat, 0.9, g);
-  kit.box(3.3, 3.9, 0.12, cx, 0, H + 0.04, mats.anthracite, 0.8, g);
+  const led = kit.live(new THREE.Group());
+  g.add(led);
+  kit.box(3.5, 4.3, 0.1, cx, cy, H + 0.02, ledMat, 0.9, led);
+  kit.box(3.1, 3.9, 0.12, cx, cy, H + 0.04, mats.anthracite, 0.8, g);
   const btnMats = new Map<number, THREE.MeshStandardMaterial>();
+  const buttons = new Map<number, THREE.Object3D>();
   const button = (id: number, lx: number, ly: number, x: number, y: number, color: number) => {
     const m = kit.live(keep(new THREE.MeshStandardMaterial({ color, roughness: 0.35, emissive: 0x000000 })));
     btnMats.set(id, m);
-    kit.box(lx, ly, 0.28, x, y, H + 0.18, m, 0.12, g);
+    const holder = kit.live(new THREE.Group());
+    g.add(holder);
+    buttons.set(id, holder);
+    kit.box(lx, ly, 0.24, x, y, H + 0.16, m, 0.12, holder);
   };
-  button(2, 1.05, 1.05, cx, 0, COL.dark); // enter
-  button(1, 0.75, 1.5, cx + 1.15, 0, COL.light); // up
-  button(3, 0.75, 1.5, cx - 1.15, 0, COL.light); // down
-  button(5, 1.5, 0.75, cx, 1.25, COL.light); // left
-  button(4, 1.5, 0.75, cx, -1.25, COL.light); // right
-  button(6, 0.9, 1.0, sx - 2.55, 2.65, COL.dark); // back, under the screen at the left
-  // the speaker grille on the right of the print
-  for (let i = 0; i < 5; i++)
-    kit.box(0.14, 1.6, 0.04, -L / 2 + 1.0 + i * 0.32, -W / 2 + 1.5, H + 0.01, mats.light, 0, g);
+  button(2, 0.8, 0.8, cx, cy, COL.dark); // enter
+  button(1, 0.6, 1.9, cx + 0.53, cy, COL.light); // up, toward the screen
+  button(3, 0.6, 1.9, cx - 0.53, cy, COL.light); // down
+  button(5, 0.8, 0.6, cx, cy + 1.6, COL.light); // left
+  button(4, 0.8, 0.6, cx, cy - 1.6, COL.light); // right
+  button(6, 0.8, 1.5, cx + 1.6, cy + 2.0, COL.light); // back, at the pad's top left (11030 at x -50 LDU)
+  kit.real({
+    ldraw: d.ldraw,
+    holder: g,
+    frame: "brick",
+    bottomLdu: B.bottomLdu[battery],
+    roles: {
+      led: { target: led, material: ledMat },
+      ...Object.fromEntries([...buttons].map(([id, h]) => [`button${id}`, { target: h, material: btnMats.get(id)! }])),
+    },
+  });
 
   let lcdKey = "";
   const drawLcd = (s: RobotState) => {
@@ -122,11 +171,12 @@ export function buildBrick(kit: Kit): Brick {
 
   return {
     group: g,
+    dims: d,
     portAt(p) {
-      const i = "1234".includes(p) ? Number(p) - 1 : "ABCD".indexOf(p);
-      if (i < 0) throw new Error(`the brick has no port ${p}`);
-      const end = "1234".includes(p) ? -1 : 1;
-      return new THREE.Vector3(end * (L / 2 + 0.1), portY(i), H * 0.3);
+      const k = "1234".includes(p) ? `port_${p}` : "ABCD".includes(p) ? `port_${p}` : null;
+      if (!k || !d.at[k]) throw new Error(`the brick has no port ${p}`);
+      const [px, py, pz] = d.at[k]!;
+      return new THREE.Vector3(px + Math.sign(px) * 0.05, py, pz);
     },
     update(s, timeS) {
       // the LED: 0 off, 1-3 steady green/red/orange, 4-6 flashing, 7-9 pulsing
@@ -145,37 +195,39 @@ export function buildBrick(kit: Kit): Brick {
       ledMat.emissive.setHex(LED_RGB[colour]!);
       ledMat.emissiveIntensity = 3 * level;
       for (const [id, m] of btnMats) m.emissive.setHex(s.buttons.includes(id) ? 0x553311 : 0x000000);
+      // a pressed button sinks a little, as the real one does
+      for (const [id, b] of buttons) b.position.y = s.buttons.includes(id) ? -0.08 : 0;
       drawLcd(s);
     },
   };
 }
 
 function brickTopTexture(): THREE.CanvasTexture {
-  // seen from above with the screen end on the right: 4.2 cm along x is 420 px, the brick's width 620 px
+  // seen from above with the screen end on the right: 3.8 cm along x is 380 px, the brick's width 580 px
   const c = document.createElement("canvas");
-  c.width = 420;
-  c.height = 620;
+  c.width = 380;
+  c.height = 580;
   const g = c.getContext("2d")!;
   g.clearRect(0, 0, c.width, c.height);
   g.fillStyle = "#d01012";
-  g.fillRect(40, 30, 64, 64);
+  g.fillRect(30, 26, 60, 60);
   g.fillStyle = "#fff";
-  g.font = "bold 22px Arial, sans-serif";
+  g.font = "bold 20px Arial, sans-serif";
   g.textAlign = "center";
   g.textBaseline = "middle";
   g.save();
-  g.translate(72, 62);
+  g.translate(60, 56);
   g.rotate(-Math.PI / 2);
   g.fillText("LEGO", 0, 1);
   g.restore();
   g.fillStyle = "#8a8f94";
   g.save();
-  g.translate(150, 310);
+  g.translate(140, 290);
   g.rotate(-Math.PI / 2);
-  g.font = "600 30px Arial, sans-serif";
+  g.font = "600 28px Arial, sans-serif";
   g.fillText("MINDSTORMS", 0, 0);
-  g.font = "bold 64px Arial, sans-serif";
-  g.fillText("EV3", 0, 62);
+  g.font = "bold 60px Arial, sans-serif";
+  g.fillText("EV3", 0, 58);
   g.restore();
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
