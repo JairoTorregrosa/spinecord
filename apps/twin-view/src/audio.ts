@@ -4,6 +4,8 @@
 export class Sound {
   private ctx: AudioContext | null = null;
   enabled = false;
+  /** The robot's one voice when the chat picked it (src/chat.ts); else the browser's for the language. */
+  voice: SpeechSynthesisVoice | null = null;
 
   /**
    * Turns the sound on or off. Call it from the person's click: browsers start audio only inside a gesture.
@@ -45,6 +47,7 @@ export class Sound {
     if (!this.enabled || !("speechSynthesis" in window)) return;
     const u = new SpeechSynthesisUtterance(text);
     u.lang = looksSpanish(text) ? "es-ES" : "en-US";
+    if (this.voice && this.voice.lang.slice(0, 2) === u.lang.slice(0, 2)) u.voice = this.voice;
     speechSynthesis.speak(u);
   }
 }

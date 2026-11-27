@@ -21,12 +21,21 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
     process.exit(1);
   }
   let view: ViewServer | null = null;
+  let chat: import("./chat").Chat | null = null;
   if (config.view) {
     try {
       const twins = fleet.robots
         .filter((r) => fleet.bricks.has(r.id))
         .map((r) => ({ id: r.id, brick: fleet.bricks.get(r.id)!, sim: fleet.sims.get(r.id)!, robot: r }));
-      view = serveView(twins, config.view.port, { page: await buildViewPage(), log });
+      // --chat (experimental): loaded only with the flag; its MCP server is made once the view watches the calls
+      if (config.view.chat) {
+        const { createChat } = await import("./chat");
+        const robotId = twins[0]!.id;
+        chat = createChat({ robots: fleet.robots, robotId, config: config.view.chat, log }, () =>
+          buildServer(fleet.robots, view ?? undefined),
+        );
+      }
+      view = serveView(twins, config.view.port, { page: await buildViewPage(), log, ...(chat ? { chat } : {}) });
     } catch (e) {
       await fleet.shutdown();
       process.stderr.write(`spinecord: ${(e as Error).message}\n`);
@@ -38,6 +47,7 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
     process.stderr.write(`spinecord: the 3D view of the twins is on ${view.url}: open it in a browser\n`);
     log("view", { url: view.url });
   }
+  void chat?.start();
   if (fleet.bridge)
     process.stderr.write(
       `spinecord: to lend the EV3, open ${fleet.bridge.url} in Chrome or Edge and press "Connect EV3"\n`,
@@ -74,6 +84,7 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
   function end(why: string, code = 0): Promise<never> {
     ending ??= (async () => {
       log("ending", { why });
+      chat?.close();
       const stopped = await fleet.shutdown();
       view?.stop();
       for (const s of stopped) log("stopped", s);

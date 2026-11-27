@@ -126,13 +126,15 @@ export interface CallWatcher {
   }): void;
 }
 
+/** Calls answered in this process. One sequence for every server it builds (the chat's in-process one too): a watcher keys calls by `n`. */
+let calls = 0;
+
 export function buildServer(robots: readonly LocalRobot[], watcher?: CallWatcher): Server {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
   server.setRequestHandler("tools/list", async () => ({ tools: LISTED_TOOLS as never }));
-  let calls = 0;
   const watch = (f: (w: CallWatcher) => void): void => {
     if (!watcher) return;
     try {

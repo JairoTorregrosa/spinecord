@@ -52,6 +52,13 @@ export class Link {
     return new Promise((resolve) => this.pending.set(req, resolve));
   }
 
+  /** Sends one message that waits for no reply (the chat's); false when there is no socket. */
+  send(m: object): boolean {
+    if (this.state !== "open" || !this.ws) return false;
+    this.ws.send(JSON.stringify(m));
+    return true;
+  }
+
   private timer: ReturnType<typeof setTimeout> | null = null;
   private connect(): void {
     if (this.timer) clearTimeout(this.timer);

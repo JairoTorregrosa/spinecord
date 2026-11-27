@@ -15,6 +15,7 @@
     "apps/local": {
       "name": "@spinecord/local",
       "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "0.3.319",
         "@modelcontextprotocol/server": "2.4.0",
         "@spinecord/twin-view": "workspace:*",
       },

@@ -7,6 +7,7 @@ import { buildArena, toScene, type Arena } from "./arena";
 import { applyLink, frameStats, placeCamera } from "./deeplink";
 import { Sound } from "./audio";
 import { Cameras, CAMS, type Cam } from "./camera";
+import { ChatPanel } from "./chat";
 import { Hand, MODES, heading, type Mode } from "./hand";
 import * as hud from "./hud";
 import { Link, type LinkState } from "./link";
@@ -75,6 +76,12 @@ let from: Shown | null = null;
 let shown: Shown | null = null;
 let roles: Record<string, string> = {};
 const sound = new Sound();
+/** --chat: the panel is built only when the process's hello says the chat is on. */
+const chat = new ChatPanel({
+  send: (m) => link.send(m),
+  toast: (text, kind) => hud.toast(text, kind),
+  setVoice: (v) => (sound.voice = v),
+});
 
 // ---------------------------------------------------------------- the distance sensor's cone
 const conePos = new Float32Array(4 * 3);
@@ -142,6 +149,7 @@ const link = new Link(`ws://${location.host}/ws`, (m) => receive(m), linkChanged
 let offlineTimer: ReturnType<typeof setTimeout> | null = null;
 let offlineClock: ReturnType<typeof setInterval> | null = null;
 function linkChanged(s: LinkState): void {
+  chat.linkState(s === "open");
   document.body.classList.toggle("stale", s !== "open");
   if (s === "open") {
     if (offlineTimer) clearTimeout(offlineTimer);
@@ -175,6 +183,8 @@ function receive(m: ServerMessage): void {
       sel.value = keepId ?? "";
       hud.callsReset();
       for (const c of m.calls) hud.call(c);
+      chat.hello(m.chat);
+      for (const c of m.calls) chat.call(c);
       setFocus(keepId ?? null);
       break;
     }
@@ -214,6 +224,15 @@ function receive(m: ServerMessage): void {
     case "call_start":
     case "call_end":
       hud.call(m);
+      chat.call(m);
+      break;
+    case "chat":
+    case "chat_user":
+    case "chat_delta":
+    case "chat_end":
+    case "chat_stopped":
+    case "chat_refused":
+      chat.receive(m);
       break;
   }
 }
@@ -415,7 +434,13 @@ function freeArea(): { left: number; top: number; right: number; bottom: number 
   const top = Math.max(r("bar").bottom, hint.hidden ? 0 : hint.getBoundingClientRect().bottom) + 8;
   const left = $("tools").classList.contains("folded") ? 12 : r("tools").right + 8;
   const right = $("brick").classList.contains("folded") ? c.width - 12 : r("brick").left - 8;
-  return { left: left - c.left, top: top - c.top, right: right - c.left, bottom: r("callpanel").top - 8 - c.top };
+  const below = document.getElementById("chat") ?? $("callpanel"); // --chat: the chat takes the calls' place
+  return {
+    left: left - c.left,
+    top: top - c.top,
+    right: right - c.left,
+    bottom: below.getBoundingClientRect().top - 8 - c.top,
+  };
 }
 const shownPose = () => shown ?? (cur ? { x: cur.pose.x, y: cur.pose.y, th: cur.pose.heading_deg * DEG } : null);
 const hand = new Hand({
