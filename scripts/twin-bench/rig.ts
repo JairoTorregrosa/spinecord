@@ -22,6 +22,7 @@ import {
   World,
 } from "../../packages/sim-world/world";
 import { SimWorldProvider } from "../../packages/sim-world/world-provider";
+import { prng } from "../../bench/stats";
 import { LocalRobot } from "../../apps/local/src/robot";
 import { callTool } from "../../apps/local/src/tools";
 
@@ -59,7 +60,8 @@ export interface RigOptions {
   arena?: { width_cm: number; height_cm: number };
   start?: { x: number; y: number; heading_deg: number };
   body?: Record<string, number>;
-  rtt_ms?: number;
+  /** Round trip of every packet, ms: a constant, or [lo, hi] for one seeded uniform draw per packet (jitter). */
+  rtt_ms?: number | [number, number];
   /** Real time instead of the FakeClock (the wall-clock rows only). */
   real?: boolean;
 }
@@ -84,16 +86,22 @@ export interface Rig {
 
 class Cable implements Transport {
   packets = 0;
+  private readonly draw: () => number;
   constructor(
     private readonly brick: SimBrick,
     private readonly clock: Clock,
-    private readonly rtt: number,
-  ) {}
+    rtt: number | [number, number],
+    seed: number,
+  ) {
+    const rand = prng(seed ^ 0x6361626c);
+    this.draw = typeof rtt === "number" ? () => rtt : () => rtt[0] + (rtt[1] - rtt[0]) * rand();
+  }
   async send(bytes: Uint8Array): Promise<Uint8Array> {
-    if (this.rtt > 0) await this.clock.sleep(this.rtt / 2);
+    const rtt = this.draw();
+    if (rtt > 0) await this.clock.sleep(rtt / 2);
     this.packets++;
     const reply = await this.brick.send(bytes);
-    if (this.rtt > 0) await this.clock.sleep(this.rtt / 2);
+    if (rtt > 0) await this.clock.sleep(rtt / 2);
     return reply;
   }
 }
@@ -142,7 +150,7 @@ export async function rig(o: RigOptions): Promise<Rig> {
     drivetrain: drivetrainFromProfile(profile, file.pair),
     ...(fake ? { now: time.now } : {}),
   });
-  const cable = new Cable(brick, clock, o.rtt_ms ?? 0);
+  const cable = new Cable(brick, clock, o.rtt_ms ?? 0, o.seed ?? 1);
   let ev3: Ev3Provider | null = null;
   const runtime = createRuntime({
     profile,

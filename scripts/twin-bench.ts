@@ -201,44 +201,76 @@ async function hardwareLogRows(): Promise<void> {
       note: "real is ev3dev: its own regulator, 1050 deg/s per 100 %",
     });
   }
-  for (const rtt of [0, 6, 50]) {
-    const r = await rig({ base: "r1-encoders", rtt_ms: rtt });
-    const e = await r.call("drive", { distance_cm: 5, speed_pct: 25 });
+  // a constant round trip is the provider's best case (its poll and the runtime's link estimate predict the stop
+  // exactly); the ev3dev runs had 21-149 ms of WiFi jitter, so jittered links (seeded) run beside the constant ones
+  const links: [string, number | [number, number]][] = [
+    ["rtt 0", 0],
+    ["rtt 6", 6],
+    ["rtt 50", 50],
+    ["rtt 2-10", [2, 10]],
+    ["rtt 21-149", [21, 149]],
+  ];
+  for (const [name, rtt] of links) {
+    const r = await rig({ base: "r1-encoders", rtt_ms: rtt, seed: 3 });
+    // how the runtime ran the move: brake on every operation (a slow or unknown link) or coast between them
+    let coastSeen = 0,
+      brakeSeen = 0;
+    const mode = () => {
+      const m = (r.brick as any).motors[1] as { speedPct: number; holdBrake: boolean };
+      if (m.speedPct !== 0) {
+        if (m.holdBrake) brakeSeen++;
+        else coastSeen++;
+      }
+      return 0;
+    };
+    const { out: e } = await during(r, 2, r.call("drive", { distance_cm: 5, speed_pct: 25 }), mode);
     await settle(r);
     const target = (5 / (Math.PI * 5.6)) * 360;
     const m = e.data.measured;
+    const chunking = () =>
+      coastSeen > 0
+        ? `coasting chunks (${Math.round((100 * coastSeen) / (coastSeen + brakeSeen))} % of the time)`
+        : "every chunk braked";
     add(
       "hw-log",
       "hw_drive5_overshoot",
-      `drive 5 cm @25, rtt ${rtt} ms: encoder degrees past the target`,
+      `drive 5 cm @25, ${name} ms: encoder degrees past the target`,
       r1(Math.max(m.left_deg, m.right_deg) - target, 0),
-      { note: `encoders ${m.left_deg}/${m.right_deg} for ${r1(target, 0)}` },
+      { note: `encoders ${m.left_deg}/${m.right_deg} for ${r1(target, 0)}; ${chunking()}` },
     );
+    coastSeen = brakeSeen = 0;
     const sides: number[] = [],
       turns: number[] = [];
-    for (let i = 0; i < 4; i++) {
-      const d = await r.call("drive", { distance_cm: 15, speed_pct: 30 });
-      sides.push(d.data.measured.distance_cm);
-      const t = await r.call("turn", { angle_deg: 90, speed_pct: 30 });
-      turns.push(t.data.measured.heading_change_deg);
-    }
-    add("hw-log", "hw_square_side", `square, rtt ${rtt} ms: encoder side for 15 cm (max)`, Math.max(...sides), {
-      note: `sides ${sides.join(", ")}`,
+    await during(
+      r,
+      2,
+      (async () => {
+        for (let i = 0; i < 4; i++) {
+          const d = await r.call("drive", { distance_cm: 15, speed_pct: 30 });
+          sides.push(d.data.measured.distance_cm);
+          const t = await r.call("turn", { angle_deg: 90, speed_pct: 30 });
+          turns.push(t.data.measured.heading_change_deg);
+        }
+      })(),
+      mode,
+    );
+    add("hw-log", "hw_square_side", `square, ${name} ms: encoder side for 15 cm (max)`, Math.max(...sides), {
+      note: `sides ${sides.join(", ")}; ${chunking()}`,
     });
-    add("hw-log", "hw_square_turn", `square, rtt ${rtt} ms: encoder turn for 90 (max)`, Math.max(...turns), {
+    add("hw-log", "hw_square_turn", `square, ${name} ms: encoder turn for 90 (max)`, Math.max(...turns), {
       note: `turns ${turns.join(", ")}`,
     });
   }
 }
 
 async function tachoTarget(): Promise<void> {
-  for (const rtt of [0, 6]) {
+  for (const rtt of [0, 6, [2, 10], [21, 149]] as (number | [number, number])[]) {
     for (const [degrees, pct] of [
       [90, 50],
       [360, 50],
       [360, 100],
     ] as const) {
-      const r = await rig({ base: "r1-encoders", rtt_ms: rtt });
+      const r = await rig({ base: "r1-encoders", rtt_ms: rtt, seed: 3 });
       let done = 0,
         reason = "";
       // degree targets past one 250 ms operation are sent again for the rest, as the model is told to
@@ -256,7 +288,7 @@ async function tachoTarget(): Promise<void> {
       add(
         "motor",
         "tacho_target",
-        `run_degrees ${degrees} @${pct}, rtt ${rtt} ms: final error`,
+        `run_degrees ${degrees} @${pct}, rtt ${Array.isArray(rtt) ? rtt.join("-") : rtt} ms: final error`,
         r1(final - degrees, 1),
         {
           note: `reported ${done}, last reason ${reason}`,

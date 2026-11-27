@@ -14,69 +14,72 @@ Noise-off rows give identical output on every run; noise-on rows are seeded. The
 Two kinds of evidence carry caveats:
 
 - The only real-robot runs (`docs/hardware-log.md`) used **ev3dev**, not stock firmware. They have their own speed regulator and a 21–600 ms link, so they show direction and size, not exact values.
-- The workshop files cap speed at 60 %. The bench raises the cap to 100 to reach the 75 % and 100 % rows.
+- The workshop files cap speed at 60 %. The bench raises the cap to 100 to reach the 75 % and 100 % rows; those rows, and the gyro's 440 deg/s limit (r1 spins at about 285 deg/s at 60 %), matter only for a robot with a higher cap.
+
+Each finding names its owner. **physics** is `packages/sim-ev3` and `packages/sim-world`, the twin's alone. **provider** is `packages/driver-ev3/provider.ts`, which a real robot runs too. **data** is a deployment file.
 
 ## What misleads someone who develops on the twin, worst first
 
 1. **Turns on tracks are an assumption.** For orugas, by encoders, `turn 90` turns the body 72.2° and `turn 360` turns it 288.5°. That comes from `noise.turn_scrub` 0.2 (`deployments/orugas/worlds/sala.json:80`). The 0.2 was taken from a four-wheel Pioneer P3-AT on tiles (ICR 1.47, which would give 61°), not from an EV3 on treads. A program tuned on the twin, such as "turn 112 to get 90", is wrong by the difference.
-   - Class: wrong constant, unmeasured.
+   - Class: wrong constant, unmeasured. Owner: data.
    - Fix: run `turn 360` on the real orugas, measure the angle with a protractor or a line on the floor, and set `turn_scrub = 1 - true/360`.
 2. **A stop is dead on the spot in the twin. Real robots overshoot.**
    - Twin: brake travel is 0° at every speed (`packages/sim-ev3/brick.ts:90-93`).
    - Real, ev3dev with the same motors and 5.6 cm wheels:
      - `drive 5` @25 overshoots 13–20° of wheel; the twin overshoots 0–3°.
      - Square sides read 15.7–16.1 cm by encoders; the twin reads 15.1.
-     - Square turns read 91.5–99.6°; the twin reads 90.1–92.2.
+     - Square turns read 91.5–99.6°; the twin reads 90.1–92.4.
    - First principles for stock firmware: `BrakeMotor` drives full reverse only 25 counts past the stop point, then returns. With the measured 76 ms time constant that is about 2–6° at 25 %, 7–15° at 50 % and 23–35° at 100 %.
+   - Link jitter does not explain the ev3dev overshoot. With a seeded round trip of 2–10 ms or 21–149 ms per packet, the twin's `drive 5` still overshoots only 1°, its square sides read 15.0–15.3 and degree targets land within 1.6°. Moves end on operations the brick times itself, and the twin's motor turns at exactly the rate the provider predicts, so a late answer changes nothing. On a robot the rate varies with load and battery, so this is the twin's best case.
    - Where it shows: accumulated position error, in squares, in line-up moves, and at the end of `until`.
-   - Class: missing effect.
+   - Class: missing effect. Owner: physics.
    - Fix: in `motorStep` brake, run the shaft on with a reverse-power deceleration (v0·τ − τ·vmax·ln(1+v0/vmax)), then spring back. Calibrate it on a real brake.
 3. **Coast runs down about 6–9 times too fast.**
    - Twin: `COAST_MS_AT_100` is 200 ms (`brick.ts:42`), so 95° from 100 % and 24° from 50 %. Nothing backs that number; its comment says "to be calibrated".
    - First principles, from Philo's no-load current and stall figures and Things DAQ's inertia: 1.1–1.7 s and 550–860° from 100 %.
    - This matters because the runtime coasts between the 200 ms chunks of every move. On ev3dev the coast overshoot reversed the robot (`docs/hardware-log.md`, 2026-11-21).
-   - Class: wrong constant, unmeasured.
+   - Class: wrong constant, unmeasured. Owner: physics.
    - Fix: measure `run_time` 250 @100 with `brake:false` on a free motor and a loaded wheel, then set the constant from it.
 4. **A wheel against a wall freezes in the twin. A real one probably spins.**
    - Twin: tacho 10°, speed 0, `stalled true`, reason `stalled` (`brick.ts:487-494`).
    - First principles: the motor's 0.4 N·m stall torque against a tyre's grip of about 0.07 N·m on a 0.7 kg base means the wheel slips. The encoder would keep counting, the regulator would hold speed, there would be no stall, and `drive` would report distance it never covered.
-   - Class: wrong structure, unmeasured.
+   - Class: wrong structure, unmeasured. Owner: physics.
    - Fix: measure `drive 20` into a wall. If it slips, model slip when the tyre's force limit is exceeded.
 5. **The ultrasonic sensor is blind between its 9 rays.**
    - A 5 cm post inside the ±12° cone at 100–250 cm goes unseen at 171 of 300 positions. Example: at 150 cm, 3 cm off-axis reads 255 while 6 cm off-axis reads 150.2 (`world.ts:163-165`, `world.ts:964`).
    - A room corner seen at 45° reads 255. Two walls at 90° are a corner reflector, which echoes strongly.
-   - Class: wrong structure.
+   - Class: wrong structure. Owner: physics.
    - Fix: replace discrete rays with an angular integral (the nearest surface whose angular extent intersects the cone). Treat a concave corner (two hits within a few cm whose normals differ by about 90°) as an echo.
 6. **Short commands start about 25 % slower than on a real motor.**
    - Twin, 250 ms after the start: `run_degrees 90 @20` reaches 36°, `run_pair @25` reaches 45°.
    - Real (ev3dev), same window: 47° and 59–60°, which is about 90 % of the full-speed distance.
    - Cause: the twin applies the open-loop 76 ms lag (Things DAQ, duty cycle, bare shaft) to *regulated* speed commands (`brick.ts:51`, `motorStep`). A speed regulator drives full power until the setpoint, so it rises faster.
-   - Class: wrong structure.
-   - Fix: keep 76 ms for `power`. For speed commands, use a shorter effective constant (about 25–35 ms fits both rows) and confirm it on stock firmware.
+   - Class: wrong structure. Owner: physics.
+   - Fix: keep 76 ms for `power`. For speed commands, use a shorter effective constant (15–25 ms fits both rows, depending on whether 20 % means 201 or 210 deg/s) and confirm it on stock firmware.
 7. **The provider reports a medium motor's speed about 35 % low, on the twin and on a real robot alike.**
    - At 50 %: true 780 deg/s on the twin and about 796 real, but `speed_deg_s` reads 510.
    - Cause: one `degPerSecAt100` for every motor (`packages/driver-ev3/provider.ts:901-903`, `:1295`, `:2010`).
    - The scales also disagree. The real default is 1050 (`provider.ts:674`); the firmware's own scale works out to 1007 for a large motor and 1591 for a medium one (lms2012 `d_pwm.c`, derived). The twin uses 1020.
-   - Class: wrong constant, a provider bug.
+   - Class: wrong constant. Owner: provider; it misleads on the real robot too.
    - Fix: a per-type scale chosen from the port's type (7 large, 8 medium). Set 1007 and 1591, or calibrate.
 8. **Infrared ignores surface colour, and its range claims about 95 cm.**
    - A black surface at 38 cm reads 41 in the twin; on the stock firmware it reads 88–90 (issue 518).
    - The twin reads 100 only from 94 cm. LEGO and ev3dev say about 70 cm.
    - Orugas steers by this sensor, which sits about 20 cm above the floor; the 2D twin has no floor return.
-   - Class: missing effect (albedo), plus a disputed constant.
+   - Class: missing effect (albedo), plus a disputed constant. Owner: physics; the 95 cm in the provider's note is the provider's.
    - Fix: add a per-box albedo (default white) that scales the return. Measure the 70–100 cm part of the curve on a real sensor.
-9. **The gyro exceeds its 440 deg/s range and never under-counts slow turns.**
-   - Spinning at 100 % on r1, `rate_deg_s` reads 476. The real sensor saturates at 440 (`world.ts:562`, no clamp), and the angle would then fall behind.
+9. **The gyro never under-counts slow turns and exceeds its 440 deg/s range.**
+   - Spinning at 100 % on r1, `rate_deg_s` reads 476. The real sensor saturates at 440 (`world.ts:562`, no clamp), and the angle would then fall behind. The workshop's 60 % cap keeps r1 near 285 deg/s, so it cannot happen there.
    - At 5 % the twin reads 358.9 for a 360° turn. One real sensor read 326–353, and its clockwise reading is 2 % short in general.
    - At rest, drift is 0 (`gyro_drift_deg_s` 0 by default).
-   - Class: missing effect. Fix: clamp the rate at ±440 and integrate the clamped rate.
+   - Class: missing effect. Owner: physics. Fix: clamp the rate at ±440 and integrate the clamped rate.
    - The deadband and the asymmetry come from one unit: "the real robot varies; measure it".
 10. **The colour sensor has no height, no room light and no in-between colours.**
     - Reflected light has no height dependence. The edge profile is 1.5 cm wide, set only by `color_spot_radius_cm`.
     - Ambient is a constant 5 (`brick.ts:655`).
     - Colour id is the floor exactly under the spot's centre: never the blue or green misread at an edge.
     - RGB is the floor's sRGB × 400/255, not sensor counts.
-    - Class: missing effect. Fix: measure on the workshop floor first.
+    - Class: missing effect. Owner: physics. Fix: measure on the workshop floor first.
 
 ## Suspicions that were disproved
 
@@ -88,7 +91,6 @@ Two kinds of evidence carry caveats:
 - **Infrared.** A white wall at 38 cm reads 41 (real 40–41). Its noise std is 0.57 (real about 0.5, "always 40 or 41").
 - **Gyro.** A 90° turn is off by 1.5° at the median and 3.5° at the 95th percentile against LEGO's ±3: the twin's gyro is marginally worse than spec. Counter-clockwise 360 reads 359.8 (real 359–363).
 - **Battery and tone.** The battery reads 7.9 V (real robot R: 8.06–8.27). The tone call returns at once, as on the firmware.
-- **Degree targets.** Tacho targets end within 0.4–1.6° at 0 and 6 ms round trips. Host-decided stops do not get worse at 6 or 50 ms, because the runtime plans for the link.
 
 ## Sources that disagree
 
@@ -123,6 +125,9 @@ Two kinds of evidence carry caveats:
 - Gyro saturation, deadband, temperature and bias drift (unless `noise.gyro_drift_deg_s` is set).
 - Room light.
 - The medium motor's own time constant: it uses the large motor's 76 ms.
+- Gyro lag: the angle and rate follow the body in the same step.
+- Link jitter: the app's twin talks to its brick through a microtask, so every answer is immediate. Only the bench's cable adds a round trip.
+- Any spread in motor speed: a motor turns at exactly the commanded rate, which is why stops land exactly.
 
 ## Honesty of what the model is told (`packages/driver-ev3/provider.ts`)
 
@@ -179,17 +184,29 @@ Two kinds of evidence carry caveats:
 | motor | run_degrees 90 @50, rtt 6 ms: final error | - | none: lms2012 | 0.8 | - | MEASURE | reported 91, last reason completed |
 | motor | run_degrees 360 @50, rtt 6 ms: final error | - | none: lms2012 | 0.4 | - | MEASURE | reported 360, last reason completed |
 | motor | run_degrees 360 @100, rtt 6 ms: final error | - | none: lms2012 | 1.6 | - | MEASURE | reported 362, last reason completed |
+| motor | run_degrees 90 @50, rtt 2-10 ms: final error | - | none: lms2012 | 0.8 | - | MEASURE | reported 91, last reason completed |
+| motor | run_degrees 360 @50, rtt 2-10 ms: final error | - | none: lms2012 | 0.4 | - | MEASURE | reported 360, last reason completed |
+| motor | run_degrees 360 @100, rtt 2-10 ms: final error | - | none: lms2012 | 1.6 | - | MEASURE | reported 362, last reason completed |
+| motor | run_degrees 90 @50, rtt 21-149 ms: final error | - | none: lms2012 | 0.8 | - | MEASURE | reported 91, last reason completed |
+| motor | run_degrees 360 @50, rtt 21-149 ms: final error | - | none: lms2012 | 0.4 | - | MEASURE | reported 360, last reason completed |
+| motor | run_degrees 360 @100, rtt 21-149 ms: final error | - | none: lms2012 | 1.6 | - | MEASURE | reported 362, last reason completed |
 | hw-log | ev3.B run_degrees 90 @20: degrees 250 ms after the start | 47 deg | measured: hwlog | 36 | -23.4 % | OFF | real is ev3dev: its own regulator, 1050 deg/s per 100 % |
 | hw-log | ev3.pair run_pair 180/180 @25: degrees 250 ms after the start | 59..60 deg | measured: hwlog | 45 | -24.4 % | OFF | real is ev3dev: its own regulator, 1050 deg/s per 100 % |
-| hw-log | drive 5 cm @25, rtt 0 ms: encoder degrees past the target | 13..20 deg | measured: hwlog | 3 | -81.8 % | OFF | encoders 105/105 for 102 |
-| hw-log | square, rtt 0 ms: encoder side for 15 cm (max) | 15.7..16.1 cm | measured: hwlog | 15.1 | -5 % | OFF | sides 15.1, 15.1, 15.1, 15 |
+| hw-log | drive 5 cm @25, rtt 0 ms: encoder degrees past the target | 13..20 deg | measured: hwlog | 3 | -81.8 % | OFF | encoders 105/105 for 102; coasting chunks (90 % of the time) |
+| hw-log | square, rtt 0 ms: encoder side for 15 cm (max) | 15.7..16.1 cm | measured: hwlog | 15.1 | -5 % | OFF | sides 15.1, 15.1, 15.1, 15; coasting chunks (91 % of the time) |
 | hw-log | square, rtt 0 ms: encoder turn for 90 (max) | 91.5..99.6 deg | measured: hwlog | 91 | -4.8 % | ok | turns 90.5, 90.5, 91, 91 |
-| hw-log | drive 5 cm @25, rtt 6 ms: encoder degrees past the target | 13..20 deg | measured: hwlog | 0 | -100 % | OFF | encoders 102/102 for 102 |
-| hw-log | square, rtt 6 ms: encoder side for 15 cm (max) | 15.7..16.1 cm | measured: hwlog | 15.1 | -5 % | OFF | sides 15.1, 15, 15.1, 15.1 |
+| hw-log | drive 5 cm @25, rtt 6 ms: encoder degrees past the target | 13..20 deg | measured: hwlog | 0 | -100 % | OFF | encoders 102/102 for 102; coasting chunks (100 % of the time) |
+| hw-log | square, rtt 6 ms: encoder side for 15 cm (max) | 15.7..16.1 cm | measured: hwlog | 15.1 | -5 % | OFF | sides 15.1, 15, 15.1, 15.1; coasting chunks (85 % of the time) |
 | hw-log | square, rtt 6 ms: encoder turn for 90 (max) | 91.5..99.6 deg | measured: hwlog | 92.2 | -3.5 % | ok | turns 91, 91.2, 92.2, 91.2 |
-| hw-log | drive 5 cm @25, rtt 50 ms: encoder degrees past the target | 13..20 deg | measured: hwlog | 0 | -100 % | OFF | encoders 102/102 for 102 |
-| hw-log | square, rtt 50 ms: encoder side for 15 cm (max) | 15.7..16.1 cm | measured: hwlog | 15.1 | -5 % | OFF | sides 15.1, 15.1, 15, 15.1 |
+| hw-log | drive 5 cm @25, rtt 50 ms: encoder degrees past the target | 13..20 deg | measured: hwlog | 0 | -100 % | OFF | encoders 102/102 for 102; every chunk braked |
+| hw-log | square, rtt 50 ms: encoder side for 15 cm (max) | 15.7..16.1 cm | measured: hwlog | 15.1 | -5 % | OFF | sides 15.1, 15.1, 15, 15.1; every chunk braked |
 | hw-log | square, rtt 50 ms: encoder turn for 90 (max) | 91.5..99.6 deg | measured: hwlog | 90.8 | -5 % | ok | turns 90.8, 90.1, 90.5, 90.1 |
+| hw-log | drive 5 cm @25, rtt 2-10 ms: encoder degrees past the target | 13..20 deg | measured: hwlog | 1 | -93.9 % | OFF | encoders 103/103 for 102; coasting chunks (95 % of the time) |
+| hw-log | square, rtt 2-10 ms: encoder side for 15 cm (max) | 15.7..16.1 cm | measured: hwlog | 15.3 | -3.8 % | OFF | sides 15.1, 15.1, 15.3, 15.1; coasting chunks (90 % of the time) |
+| hw-log | square, rtt 2-10 ms: encoder turn for 90 (max) | 91.5..99.6 deg | measured: hwlog | 92.4 | -3.3 % | ok | turns 90.1, 90.5, 92.4, 90.5 |
+| hw-log | drive 5 cm @25, rtt 21-149 ms: encoder degrees past the target | 13..20 deg | measured: hwlog | 1 | -93.9 % | OFF | encoders 103/103 for 102; every chunk braked |
+| hw-log | square, rtt 21-149 ms: encoder side for 15 cm (max) | 15.7..16.1 cm | measured: hwlog | 15 | -5.7 % | OFF | sides 15, 15, 15, 15; every chunk braked |
+| hw-log | square, rtt 21-149 ms: encoder turn for 90 (max) | 91.5..99.6 deg | measured: hwlog | 90.8 | -5 % | ok | turns 90.1, 90.1, 90.5, 90.8 |
 | regulation | drive 20 cm @30 against a wall: encoders, speed, stall | - | estimate: first_principles | tacho 10 deg, speed 0, stalled true | - | SUSPECT | reason stalled; body moved 0.5 cm |
 | drive | r1, rtt 0: drive 50 @50, true distance (cm) | - | none: hwlog | 50.11 | - | MEASURE | reported 50.1 cm by gyro, 2095 ms |
 | drive | r1, rtt 0: turn 90 @30, true heading change (deg) | - | none: hwlog | 90.9 | - | MEASURE | reported 91 by gyro, 714 ms |
@@ -247,8 +264,8 @@ Two kinds of evidence carry caveats:
 | rates | ultrasonic read at 50 Hz while moving: reads that changed / reads | - | none: ev3dev | 38/39 | - | MEASURE | smallest step 0.1 cm: a fresh value on every read, at any rate |
 | battery | battery voltage_v at rest | 8.06..8.27 V | measured: hwlog | 7.9 | -3.2 % | ok |  |
 | battery | battery voltage_v with both drive motors at 100 % | - | none: hwlog | 7.9 | - | MEASURE | motor speed never depends on it in the twin |
-| link | read_device round trip, twin in-process, real clock: p50 / p95 ms | - | none: hwlog | 0.12 / 4.25 | - | MEASURE | the twin's cable is a microtask: a real USB round trip adds to every read and to every host-decided stop |
-| link | tone 440 Hz 500 ms: how long the call takes (ms) | 0..30 ms | derived: lms2012 | 1.1 | 0 ms | ok | reason completed; tones logged 1 |
+| link | read_device round trip, twin in-process, real clock: p50 / p95 ms | - | none: hwlog | 0.1 / 2.68 | - | MEASURE | the twin's cable is a microtask: a real USB round trip adds to every read and to every host-decided stop |
+| link | tone 440 Hz 500 ms: how long the call takes (ms) | 0..30 ms | derived: lms2012 | 6.5 | 0 ms | ok | reason completed; tones logged 1 |
 | time | simulated / wall-clock time over 15 s, reading at 50 Hz | 1 x | spec: first_principles | 1 | 0 % | ok |  |
 | time | simulated / wall-clock time over 15 s, reading at 1 Hz | 1 x | spec: first_principles | 1 | 0 % | ok |  |
 | time | pose difference, drive 60 cm unwatched vs read at 50 Hz (cm) | 0 cm | spec: first_principles | 0.0004 | 0 cm | ok | noise on, seed 7, orugas in its room's noise |
