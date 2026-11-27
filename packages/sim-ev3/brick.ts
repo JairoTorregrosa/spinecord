@@ -572,6 +572,10 @@ export class SimBrick implements Transport, WorldHost {
     m.until = null;
     m.blocked = false;
     m.braking = brake;
+    // Both drive wheels held: the body stops turning now, so a gyro reset at this instant sees a still robot.
+    const d = this.drivetrain;
+    if (d && this.motors["ABCD".indexOf(d.left)]!.vel === 0 && this.motors["ABCD".indexOf(d.right)]!.vel === 0)
+      this.world.rate_deg_s = 0;
   }
   /** A new command takes the motor over, also in the middle of a run-down: the shaft goes on from its speed. */
   private drive(m: Motor, speed: number, brake: boolean): void {

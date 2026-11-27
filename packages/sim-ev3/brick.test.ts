@@ -604,6 +604,16 @@ describe("sensor mode switches behave like the real sensors", () => {
     expect(await read(0)).toBe(0); // back to angle: it restarted from zero
     expect((await call(E.inputGetTypeMode(1, 0, 1), 2)).globals[1]).toBe(0);
   });
+  test("a gyro reset right after a braked spin takes a still zero: it does not drift", async () => {
+    const { call, run } = rig();
+    await call(E.outputTimeSync(BC, 40, 200, 2000, true));
+    run(500);
+    await call(E.outputStop(BC, true));
+    await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 1, 1, 0), 4); // rate mode: a reset, in the same instant
+    await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 0, 1, 0), 4);
+    run(1000);
+    expect(E.readF32((await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 0, 1, 0), 4)).globals, 0)).toBe(0);
+  });
   test("switching other sensors' modes keeps their state: the touch bump count survives", async () => {
     const { call, run } = rig();
     await call(E.outputStepSync(BC, 50, 0, Math.round(150 * DEG_PER_CM), true));
