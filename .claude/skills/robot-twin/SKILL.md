@@ -10,6 +10,7 @@ This file lives in the clone, at `<clone>/.claude/skills/robot-twin/`; its refer
 spinecord is set up (skill `setup-spinecord`): a clone, and a workshop folder where Claude Code runs.
 You write one robot file that is this robot, so that the twin (`<id>-sim`) is the same robot: the same ports, drive, footprint and look.
 Talk to the person in the language the person uses. Keep commands, file names and JSON keys as written here.
+In every line you run or hand the person, write `<clone>` and `~/mi-robot` as full paths of this computer (on Windows, `C:\Users\<name>\mi-robot`).
 
 ## Words
 
@@ -19,7 +20,7 @@ Talk to the person in the language the person uses. Keep commands, file names an
 | workshop folder | `~/mi-robot`, outside the clone. Never write in the clone |
 | robot file | `~/mi-robot/robot.json` |
 | the brick | the EV3 itself, when it is connected to this computer |
-| check | `bun <clone>/apps/local/main.ts --doctor --twin ~/mi-robot/robot.json` |
+| check | `bun <clone>/apps/local/main.ts --doctor --twin ~/mi-robot/robot.json`, always with `--twin` alone: read only its `robots` and `twin <id>-sim` lines |
 
 ## States
 
@@ -41,7 +42,7 @@ If a step fails 2 times, stop and show the person the exact error.
 
 Sources, best first. A later source never overrides an earlier one.
 
-1. **The brick**, when the person has the EV3 here. Spinecord must be registered with `--ev3` and the EV3 `online` (setup skill state 8). Call the MCP tool `list_robots`, then `describe_robot` on the robot whose source is `ev3`. Each `ev3.A`..`ev3.D` and `ev3.S1`..`ev3.S4` device is what is plugged in; map it with [reference/brick.md](reference/brick.md). It cannot see what a motor does or where things sit.
+1. **The brick**, when the person has the EV3 here. Spinecord must be registered with `--ev3` and the EV3 `online` (setup skill state 8). The robot file it was registered with does not matter: the brick reports what is really plugged in. Call the MCP tool `list_robots`, then `describe_robot` on the robot whose source is `ev3`. Each `ev3.A`..`ev3.D` and `ev3.S1`..`ev3.S4` device is what is plugged in; map it with [reference/brick.md](reference/brick.md). It cannot see what a motor does or where things sit.
 2. **The photos.** Ask for two: one from above, and one from the side, with a ruler or a 30 cm school ruler next to the robot if the person has one. Read them yourself. Find: wheels or tracks, the tire size printed on the tire wall, which ports have cables (the letters A-D are on the top edge of the brick, the numbers 1-4 on the bottom edge), sensors and their kind, a phone, the front. When the brick reported, use the photos only for what it cannot see.
 3. **The person**, only for what neither shows. Ask one question at a time, in this order, and skip what you already know:
    1. "Which end is the front: the end it drives toward?"
@@ -66,8 +67,8 @@ Write down each answer with its source (brick, photo, person). You need them in 
 
 ## 3 CHECK
 
-1. Run the check. It starts nothing and takes about 2 seconds.
-2. Read the `robots` line and the `twin <id>-sim` line. Ignore a `fail` on `claude code` until state 5.
+1. Run the check. It starts nothing and takes a few seconds.
+2. Read the `robots` line and the `twin <id>-sim` line. The other lines check this computer, not the file: ignore them here.
 3. A `fail` on `robots` names the file, the field and how to fix it. Fix the file and run the check again.
 4. Compare the `twin` line with state 1: each port and its role, the pair, wheel and axle track, the footprint, the look's parts, and "build from the robot file's twin".
 
@@ -86,10 +87,12 @@ bun <clone>/apps/local/main.ts --twin ~/mi-robot/robot.json --view --view-port 8
 
 ## 5 REGISTER
 
-1. In the workshop folder, run `bun <clone>/apps/local/main.ts --print-add --twin ~/mi-robot/robot.json --view`. With an EV3 on USB, add `--ev3 ~/mi-robot/robot.json` before `--view`. Write full paths.
+1. In the workshop folder, run `bun <clone>/apps/local/main.ts --print-add --twin ~/mi-robot/robot.json --view`. Add, before `--view`:
+   - with an EV3 on USB: `--ev3 ~/mi-robot/robot.json`;
+   - with a phone on the robot: `--pages --lan`. The phone then joins robot `<id>` and lends its camera, screen and speaker: README "Peripheral pages on a phone" pairs it.
 2. Take the first line it prints. Change `-s user` to `-s local`.
 3. Run `claude mcp remove -s local spinecord` (a "not found" answer is fine), then the line.
-4. Run the check again with the same robot flags. The `claude code` line is now `ok`.
+4. Run `claude mcp get spinecord`: it shows `--twin` with the robot file.
 5. Tell the person: "Close Claude Code and start it again in the workshop folder. Your robot is `<id>-sim` in the simulation, and `<id>` when the EV3 is connected. The 3D view is at http://127.0.0.1:8769/."
 
 ## 6 CALIBRATE (human step)

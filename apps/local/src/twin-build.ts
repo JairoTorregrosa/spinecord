@@ -129,6 +129,10 @@ function checkPorts(
       .join(", ") || "nothing";
   const plugged = `motors: ${list(ports.motors)}; sensors: ${list(ports.sensors)}`;
   const need = (field: string, device: string) => {
+    if (device === "ev3.pair" && !robot.pair)
+      throw new Error(
+        `${at.robot}: ${field} names ev3.pair, and the file has no pair: add "pair": {"left": <port>, "right": <port>} with the two drive motors, or change ${field}`,
+      );
     const m = /^ev3\.([A-D])$/.exec(device);
     if (m && !ports.motors[m[1] as keyof BrickPorts["motors"]])
       throw new Error(

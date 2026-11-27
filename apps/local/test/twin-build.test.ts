@@ -216,6 +216,13 @@ describe("refused at start, naming the field", () => {
     expect(fails(arm)).toThrow("profile.roles.arm names ev3.A, and the twin has no motor on port A");
   });
 
+  test("a role on ev3.pair in a file without pair", () => {
+    const { pair: _p, ...noPair } = TRACKED;
+    const profile = { ...TRACKED.profile, roles: { drive: "ev3.pair" } };
+    delete (profile as Record<string, unknown>).drivetrain;
+    expect(fails({ ...noPair, profile })).toThrow("profile.roles.drive names ev3.pair, and the file has no pair");
+  });
+
   test("a pair on a port with no motor", () => {
     const e = fails({ ...TRACKED, pair: { left: "A", right: "C" }, profile: { ...TRACKED.profile, roles: {} } });
     expect(e).toThrow("pair.left is port A, and the twin has no motor there");

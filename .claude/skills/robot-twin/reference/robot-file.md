@@ -102,7 +102,7 @@ A sensor that sits elsewhere or faces elsewhere: write where in `notes`, and use
 ## `twin.view`: the look
 
 The fields are listed in the header comment of `<clone>/apps/twin-view/src/look.ts`. Read that header now; it is the only list, and it changes.
-At the time of writing it has: `drive` (`"tracks"` or `"wheels"`), `brick` (where the brick sits, which end its screen faces), `phone` (a phone standing across the body: where, how high its bottom edge, which end its screen faces), `sensors` (where each sensor port's sensor sits, by port), `bumper` and `label`.
+Use only the fields that header lists, with the units it gives.
 The page never fails on a bad look field: it draws the default instead. Check the look by eye in state 5 SHOW.
 
 ## A phone as the robot's eyes
