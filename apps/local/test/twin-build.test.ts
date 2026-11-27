@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_BODY } from "../../../packages/sim-world/world";
-import { EXAMPLE, loadConfig, type RobotSource } from "../src/config";
+import { EXAMPLE, REPO, loadConfig, type RobotSource } from "../src/config";
 import { buildFleet } from "../src/sources";
 import { describeTwin, describeUnconfirmed, MOVES } from "../src/twin-build";
 import { toolsOf } from "./arm";
@@ -117,6 +117,40 @@ describe("a robot file's twin", () => {
       expect(loaded.ok).toBe(true);
       expect(brick.ports).toEqual({ motors: { B: "large", C: "large" }, sensors: { "4": "ir" } });
       expect(brick.world.cfg.body.front_cm).toBe(8.5);
+      // a room handed over whole, as JSON, keeps the robot's build too
+      const whole = await tool("command_device", {
+        device: "sim.world",
+        command: "load_world",
+        args: { world: JSON.stringify({ ...ROOM, name: "pasted" }) },
+      });
+      expect(whole.ok).toBe(true);
+      expect(brick.world.cfg.name).toBe("pasted");
+      expect(brick.ports).toEqual({ motors: { B: "large", C: "large" }, sensors: { "4": "ir" } });
+      expect(brick.world.cfg.body.front_cm).toBe(8.5);
+      expect(brick.world.cfg.extensions.view).toEqual(TRACKED.twin.view);
+    } finally {
+      await fleet.shutdown();
+    }
+  }, 30_000);
+
+  test("a pair of medium motors: the provider sizes moves and reports speed for medium motors, not large ones", async () => {
+    const medium = {
+      ...TRACKED,
+      twin: { ...TRACKED.twin, ev3: { motors: { B: "medium", C: "medium" }, sensors: { "4": "ir" } } },
+    };
+    const fleet = await buildFleet(loadConfig(["--twin", file("medium.json", medium), "--world", room]), {
+      log: () => {},
+    });
+    try {
+      const tool = toolsOf(fleet.robots, "tracked-sim");
+      const b = await tool("describe_device", { device: "ev3.B" });
+      const speed = (b.data.channels as { name: string; range: number[] }[]).find((c) => c.name === "speed_deg_s")!;
+      expect(speed.range).toEqual([-1560, 1560]);
+      const world = fleet.bricks.get("tracked-sim")!.world;
+      const x0 = world.pose.x;
+      const r = await tool("drive", { distance_cm: 20, speed_pct: 40 });
+      expect(r.ok).toBe(true);
+      expect(Math.abs(world.pose.x - x0 - 20)).toBeLessThan(1.5);
     } finally {
       await fleet.shutdown();
     }
@@ -179,7 +213,7 @@ describe("refused at start, naming the field", () => {
   test("twin itself: not an object, a key it does not have, a view that is not an object", () => {
     expect(fails({ ...r1Bare, twin: [] })).toThrow("twin must be an object");
     expect(fails({ ...r1Bare, twin: { look: {} } })).toThrow(
-      "twin.look is not a part of twin (body, ev3, view, unconfirmed)",
+      "twin.look is not a part of twin (body, ev3, view, drive, unconfirmed)",
     );
     expect(fails({ ...r1Bare, twin: { ...r1.twin, view: "tracks" } })).toThrow("twin.view must be an object");
   });
@@ -333,5 +367,104 @@ describe("the robot-twin skill", () => {
       for (const [, link] of text.matchAll(/\]\(((?:reference\/)?[a-z-]+\.md)\)/g))
         expect(Bun.file(join(skill, md.includes("reference") ? "reference" : "", link)).size).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("twin.drive: the drivetrain as it physically is, apart from what the profile believes", () => {
+  const ORUGAS = join(REPO, "deployments", "orugas", "robots", "orugas.json");
+  const SALA = join(REPO, "deployments", "orugas", "worlds", "sala.json");
+  const orugas = JSON.parse(readFileSync(ORUGAS, "utf8"));
+  /** One `turn 360` on the orugas twin in sala, with `axle_track_cm` as the person wrote it: degrees it really turned. */
+  const turn360 = async (axle_track_cm: number): Promise<{ real: number; reported: number }> => {
+    const robot = {
+      ...orugas,
+      profile: { ...orugas.profile, drivetrain: { ...orugas.profile.drivetrain, axle_track_cm } },
+    };
+    const fleet = await buildFleet(loadConfig(["--twin", file("orugas.json", robot), "--world", SALA]), {
+      log: () => {},
+    });
+    try {
+      const world = fleet.bricks.get("orugas-sim")!.world;
+      const th0 = world.pose.th;
+      const r = await toolsOf(fleet.robots, "orugas-sim")("turn", { angle_deg: 360, speed_pct: 40 });
+      expect(r.ok).toBe(true);
+      // the unwrapped heading: the pose channel wraps to +-180, and 288 deg would read as -72
+      return { real: ((world.pose.th - th0) * 180) / Math.PI, reported: r.data.measured.heading_change_deg };
+    } finally {
+      await fleet.shutdown();
+    }
+  };
+
+  test("a person who measures turn 360, corrects axle_track_cm and turns again sees the turn come right", async () => {
+    const before = await turn360(orugas.profile.drivetrain.axle_track_cm);
+    // the tracks scrub (twin.drive.turn_scrub 0.2) and slip: the encoders say 360, the robot turns about 280
+    expect(Math.abs(before.reported - 360)).toBeLessThan(5);
+    expect(before.real).toBeLessThan(300);
+    expect(before.real).toBeGreaterThan(260);
+    // the correction a person makes on the real robot: the wheels must travel more per degree
+    const corrected = orugas.profile.drivetrain.axle_track_cm * (360 / before.real);
+    const after = await turn360(corrected);
+    // motor noise and wheel bias of sala stay (about 1 % each); what was a 70-80 deg error is now a few degrees
+    expect(Math.abs(after.real - 360)).toBeLessThan(10);
+  }, 30_000);
+
+  test("without twin.drive the profile is the physical truth too, as before", () => {
+    const { twin: t, ...rest } = orugas;
+    const { drive: _drive, ...build } = t;
+    expect(twinOf({ ...rest, twin: build }).build?.drive).toBeUndefined();
+    expect(twinOf(orugas).build?.drive).toEqual({ wheel_diameter_cm: 3.5, axle_track_cm: 13.5, turn_scrub: 0.2 });
+  });
+
+  test("twin.drive is refused, naming the field, when it is not a drivetrain", () => {
+    const withDrive = (drive: unknown, over: object = {}) =>
+      fails({ ...orugas, ...over, twin: { ...orugas.twin, drive } });
+    expect(withDrive([])).toThrow("twin.drive must be an object");
+    expect(withDrive({ wheel_cm: 3 })).toThrow("twin.drive.wheel_cm is not a part of twin.drive");
+    expect(withDrive({ axle_track_cm: 0 })).toThrow("twin.drive.axle_track_cm must be a number > 0");
+    expect(withDrive({ turn_scrub: 1 })).toThrow(
+      "twin.drive.turn_scrub must be a number from 0 up to (not including) 1",
+    );
+    const { drivetrain: _d, ...noDrivetrain } = orugas.profile;
+    expect(withDrive({ turn_scrub: 0.1 }, { profile: noDrivetrain })).toThrow(
+      /no profile.drivetrain: remove twin.drive/,
+    );
+  });
+
+  test("twin.drive.tread names the tread's grip (TREAD_GRIP): with the weight it decides slip or stall at a wall", async () => {
+    const withDrive = (drive: object) => ({
+      ...orugas,
+      twin: { ...orugas.twin, drive: { ...orugas.twin.drive, ...drive } },
+    });
+    expect(twinOf(withDrive({ tread: "tracks", mass_g: 900 })).build?.drive).toMatchObject({ grip: 0.25, mass_g: 900 });
+    expect(twinOf(withDrive({ tread: "tyres", mass_g: 900 })).build?.drive).toMatchObject({ grip: 1, mass_g: 900 });
+    expect(fails(withDrive({ tread: "wheels", mass_g: 900 }))).toThrow("twin.drive.tread must be one of tyres, tracks");
+    expect(fails(withDrive({ tread: "tracks", grip: 0.3, mass_g: 900 }))).toThrow("give tread or grip, not both");
+    expect(fails(withDrive({ tread: "tracks" }))).toThrow("mass_g and grip (or tread) go together");
+    // orugas on its plastic tracks, 900 g, driven into sala's wall: the tracks slip, the encoders keep counting
+    const fleet = await buildFleet(
+      loadConfig(["--twin", file("orugas-tracks.json", withDrive({ tread: "tracks", mass_g: 900 })), "--world", SALA]),
+      { log: () => {} },
+    );
+    try {
+      const w = fleet.bricks.get("orugas-sim")!.world;
+      w.setPose({ x: w.cfg.width - w.cfg.body.front_cm - 3, y: w.cfg.height / 2, th: 0 });
+      const r = await toolsOf(fleet.robots, "orugas-sim")("drive", { distance_cm: 20, speed_pct: 40 });
+      expect(r.ok).toBe(true);
+      expect(r.data.reason).toBe("completed"); // the encoders say 20 cm; the body stopped at the wall
+      expect(w.eventsSince(0).events.map((e) => e.kind)).toContain("slip_began");
+    } finally {
+      await fleet.shutdown();
+    }
+  }, 30_000);
+
+  test("--doctor shows what the twin physically has where it is not what the profile believes", () => {
+    const robot = {
+      ...orugas,
+      profile: { ...orugas.profile, drivetrain: { ...orugas.profile.drivetrain, axle_track_cm: 16 } },
+    };
+    const t = twinOf(robot, SALA);
+    expect(describeTwin(t.robot, t.world, true, t.build?.drive)).toContain(
+      "wheel 3.5 cm, axle track 16 cm (really 13.5 cm), turns scrub 0.2,",
+    );
   });
 });

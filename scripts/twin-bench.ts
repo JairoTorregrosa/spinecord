@@ -487,7 +487,18 @@ async function infrared(): Promise<void> {
     curve.push(`${d}:${v}`);
     if (d === 38) {
       add("infrared", "ir_38", "white wall at 38 cm", v);
-      add("infrared", "ir_38_black", "black wall at 38 cm (the twin has no surface colour)", v);
+      // the same wall, black: an obstacle's ir_reflectivity 0.21 (the world file's way to say it)
+      const k = await rig({ base: "orugas", boxes: [{ x: WALL, y: 0, w: 20, h: 800, ir_reflectivity: 0.21 }] });
+      place(k, WALL - d - sx, 400, 0);
+      add(
+        "infrared",
+        "ir_38_black",
+        "black wall at 38 cm (ir_reflectivity 0.21)",
+        await read(k, "ev3.S4", "proximity_pct"),
+        {
+          note: "0.21 is (41/89)^2, from this same measurement: one point, so this row checks the model, not the value",
+        },
+      );
     }
     if (d === 70) add("infrared", "ir_70", "wall at 70 cm", v);
   }

@@ -164,6 +164,11 @@ export type RobotSource = (
       ownBuild?: boolean;
       /** What of the build nobody confirmed (its file's `twin.unconfirmed`); empty for a twin that is not a draft. */
       unconfirmed?: Unconfirmed[];
+      /**
+       * The robot file's `twin`, checked (null without one): its `drive` is what the drivetrain physically is, and
+       * every world `load_world` takes gets its build, like the one the twin started in.
+       */
+      build?: TwinBuild | null;
     }
   | { source: "ev3"; id: string; robot: RobotFile }
   | {
@@ -337,9 +342,10 @@ function twinWorld(
   r: ReadRobot,
   where: string,
   path: string,
-): Pick<Source<"twin">, "world" | "ownBuild" | "unconfirmed"> {
+): Pick<Source<"twin">, "world" | "ownBuild" | "unconfirmed" | "build"> {
   return {
     world: withBuild(world(where, path), r.build, r.file, { robot: r.path, world: `${where} ${path}` }),
+    build: r.build,
     ownBuild: r.build !== null,
     unconfirmed: r.build?.unconfirmed ?? [],
   };

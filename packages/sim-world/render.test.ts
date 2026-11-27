@@ -37,6 +37,23 @@ describe("overhead render (pure RGBA buffer)", () => {
     const img = renderWorld(w, { scale: 4 });
     expect(px(img, 80 * 4, (90 - 25) * 4)).toEqual([230, 40, 60]); // on the ray, ahead of the robot, over the black line
   });
+  test("every ray of the ultrasonic cone is drawn, not three: one 6 deg off the axis is there too", () => {
+    const img = renderWorld(quietWorld(), { scale: 4 });
+    const off = (6 * Math.PI) / 180;
+    const [x, y] = [51 + 30 * Math.cos(off), 25 + 30 * Math.sin(off)];
+    const near = [-1, 0, 1].flatMap((dx) =>
+      [-1, 0, 1].map((dy) => px(img, Math.floor(x * 4) + dx, Math.floor((90 - y) * 4) + dy)),
+    );
+    expect(near).toContainEqual([230, 40, 60]);
+  });
+  test("a box that moved is drawn where it is now, not where the first picture had it", () => {
+    const w = quietWorld();
+    expect(px(renderWorld(w, { rays: false }), 60 * 4, (90 - 45) * 4)).toEqual([110, 110, 125]);
+    w.moveObstacle(w.cfg.boxes[0]!.id, { x: 95, y: 60, w: 10, h: 10 });
+    const img = renderWorld(w, { rays: false });
+    expect(px(img, 60 * 4, (90 - 45) * 4)).not.toEqual([110, 110, 125]);
+    expect(px(img, 100 * 4, (90 - 65) * 4)).toEqual([110, 110, 125]);
+  });
   test("snapshotPNG is a valid PNG whose pixels decode back to the buffer", () => {
     const w = quietWorld(EXAMPLES.wallsMaze);
     const img = renderWorld(w, { scale: 2 });
@@ -107,6 +124,18 @@ describe("first-person render", () => {
     const h = hashImage(img);
     w.advance(-3, 3, 20);
     expect(hashImage(renderFirstPerson(w))).not.toBe(h);
+  });
+  test("a low box is as tall as it is: the floor shows beyond it, below the horizon", () => {
+    const wall = quietWorld(EXAMPLES.lineOval, { boxes: [{ id: "b", x: 80, y: 15, w: 5, h: 20 }] });
+    const low = quietWorld(EXAMPLES.lineOval, { boxes: [{ id: "b", x: 80, y: 15, w: 5, h: 20, height_cm: 4 }] });
+    // 29 cm ahead of the camera, 8 cm up: the top of a 4 cm box is 16 px under the horizon, a wall-high box's 24 px over it
+    const grey = (img: ReturnType<typeof renderFirstPerson>, y: number) => {
+      const [r, g, b] = px(img, 80, y);
+      return r! < 125 && Math.abs(r! - g!) < 6 && b! > r!;
+    };
+    expect(grey(renderFirstPerson(wall), 64)).toBe(true);
+    expect(grey(renderFirstPerson(low), 64)).toBe(false);
+    expect(grey(renderFirstPerson(low), 80)).toBe(true);
   });
   test("a wall right in front fills the view", () => {
     const w = quietWorld();

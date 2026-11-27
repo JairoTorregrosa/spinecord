@@ -15,10 +15,17 @@ import type { Clock } from "../../../packages/runtime/clock";
 import { PageHub, type PageHubOptions } from "../../../packages/page-hub/hub";
 import type { Provider } from "../../../packages/protocol/types";
 import { createRuntime, type LocalRuntime } from "../../../packages/runtime/runtime";
-import { LARGE_DEG_S, SIM_BRICK_LOOP_RATE_HZ, SimBrick, drivetrainFromProfile } from "../../../packages/sim-ev3/brick";
+import {
+  LARGE_DEG_S,
+  MEDIUM_DEG_S,
+  SIM_BRICK_LOOP_RATE_HZ,
+  SimBrick,
+  drivetrainFromProfile,
+} from "../../../packages/sim-ev3/brick";
 import { World, parseWorld } from "../../../packages/sim-world/world";
 import { SimWorldProvider } from "../../../packages/sim-world/world-provider";
 import { buildPeripheralPage } from "../../peripheral-page/page-build";
+import { withBuild } from "./twin-build";
 import { buildBridgePage } from "../../robot-page/bridge-build";
 import type { LocalConfig, RobotSource } from "./config";
 import { serveBridge, type BridgePageFiles, type BridgeServer } from "./hid-bridge";
@@ -85,12 +92,15 @@ export function twinRuntime(
   const time = clock && { now: () => clock.now(), sleep: (ms: number) => clock.sleep(ms) };
   const brick = new SimBrick({
     world: new World(config, s.seed),
-    drivetrain: drivetrainFromProfile(profile, pair),
+    // the brick rolls on what the robot physically is; the runtime below plans with what its profile believes
+    drivetrain: drivetrainFromProfile(profile, pair, s.build?.drive),
     ...(time && { now: time.now }),
   });
   const sim = new SimWorldProvider({
     host: brick,
     worlds: { [config.name]: s.world },
+    // a room loaded later, by name or as JSON, gets this robot's build as the one it started in did
+    prepare: (w) => withBuild(w, s.build ?? null, s.robot, { robot: s.id, world: "load_world" }),
     seed: s.seed,
     ...(time && { now: time.now }),
   });
@@ -105,7 +115,9 @@ export function twinRuntime(
           hardware,
           pair,
           roles: profile.roles,
+          // the twin's motors, each type at its own speed
           degPerSecAt100: LARGE_DEG_S,
+          mediumDegPerSecAt100: MEDIUM_DEG_S,
           loopRateHz: SIM_BRICK_LOOP_RATE_HZ,
           ...time,
         }),

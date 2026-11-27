@@ -38,9 +38,9 @@
     "obstacles": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/rect"
+        "$ref": "#/$defs/obstacle"
       },
-      "description": "Solid boxes: the robot stalls against them and the distance sensor sees them."
+      "description": "Solid boxes: the robot stalls against them and the distance sensor sees them. Each has an id (given here, or box1, box2, ... in order) that names it while it exists."
     },
     "zones": {
       "type": "array",
@@ -202,6 +202,53 @@
         "h": {
           "type": "number",
           "minimum": 0
+        }
+      }
+    },
+    "obstacle": {
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "w": {
+          "type": "number",
+          "minimum": 0
+        },
+        "h": {
+          "type": "number",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,32}$",
+          "description": "Names the box in events and in a page's messages; unique within the world."
+        },
+        "height_cm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "How tall it stands. Absent: higher than any sensor looks over. A distance sensor sees it only where its beam comes down to this height (body.distance_sensor_z_cm); the touch sensor only when it reaches the bumper (body.touch_z_cm). Every box stops the body."
+        },
+        "mass_g": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "A box the robot can push (cardboard, a cup): it slides when pushed harder than 0.4 x its weight. Absent: fixed in place."
+        },
+        "ir_reflectivity": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "How much of the infrared sensor's light it sends back, relative to a white wall (absent: 1). Black is about 0.21: the stock firmware reads 88-90 % from black at 38 cm, 40-41 % from white. Only the infrared sensor sees it."
         }
       }
     }

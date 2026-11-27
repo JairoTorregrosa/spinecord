@@ -117,8 +117,16 @@ export interface Ev3ProviderOptions {
   pair?: { left: OutputPort; right: OutputPort };
   /** role -> device id (from the robot profile); copied into DeviceSpec.roles. */
   roles?: Record<string, string>;
-  /** Calibration: motor speed at 100 %, deg/s. Sizes the time bound of degree targets and speed_deg_s. Default 1050. */
+  /**
+   * Calibration: a large motor's speed at 100 %, deg/s. Sizes the time bound of degree targets and speed_deg_s.
+   * Default 1050 (ev3dev's max_speed of lego-ev3-l-motor).
+   */
   degPerSecAt100?: number;
+  /**
+   * The same for a medium motor (type 8), whose 100 % is faster. Default 1560 (ev3dev's max_speed of
+   * lego-ev3-m-motor): read with the large motor's scale, a medium motor's speed would be a third too low.
+   */
+  mediumDegPerSecAt100?: number;
   /** Reply timeout per brick command, ms. Default 300. */
   timeoutMs?: number;
   /** Reply timeout for a command that switches a sensor mode, ms. Default 1000. */
@@ -313,7 +321,8 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
           range: [0, 100],
           noise: 5,
           max_rate_hz: 20,
-          approx: "Depends on distance and surface; calibrate on the actual floor.",
+          approx:
+            "Depends on the surface and, on a robot, on the sensor's height above it; calibrate on the actual floor.",
           description: "Reflected red light, 0 dark to 100 bright.",
         }),
         ch(1, {
@@ -323,7 +332,7 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
           range: [0, 100],
           noise: 5,
           max_rate_hz: 5,
-          approx: MODE_NOTE,
+          approx: `Room light; a simulated twin has none and reads a dim constant. ${MODE_NOTE}`,
           description: "Ambient light, 0 dark to 100 bright.",
         }),
         ch(2, {
@@ -331,7 +340,7 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
           type: "number",
           range: [0, 7],
           max_rate_hz: 5,
-          approx: `LEGO colors only, unreliable beyond 2 cm. ${MODE_NOTE}`,
+          approx: `LEGO colors only; on a robot unreliable beyond 2 cm from the surface. ${MODE_NOTE}`,
           description: "Color id: 0 none, 1 black, 2 blue, 3 green, 4 yellow, 5 red, 6 white, 7 brown.",
         }),
         ch(
@@ -364,7 +373,8 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
             range: [3, 255],
             noise: 2,
             max_rate_hz: 20,
-            approx: "About +-1 cm from 3 to 250 cm; 255 means nothing detected; soft or angled surfaces read long.",
+            approx:
+              "About +-1 cm from 3 to 250 cm; 255 means nothing detected; a surface angled away reads long or gives no echo (255), a soft one may too.",
             description: "Distance to the nearest object in front.",
           },
           num(1),
@@ -385,7 +395,8 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
             range: [-32767, 32768],
             noise: 2,
             max_rate_hz: 20,
-            approx: "About +-3 deg per 90 deg turn; drifts over time.",
+            approx:
+              "About +-3 deg per 90 deg turn; drifts if it was reset or powered while the robot moved (and, on a robot, slowly anyway); the angle falls behind on spins faster than 440 deg/s.",
             description:
               "Accumulated rotation since the last reset. Positive = counter-clockwise (left) seen from above, with the sensor mounted flat, arrows up; the provider negates the sensor's native clockwise-positive value. A condition compares it as it reads, not relative to the start of a call: send reset first, or compare against a value read just before. turn measures the change of heading itself.",
           },
@@ -420,7 +431,7 @@ function sensorEntries(ir: IrChannel): Record<number, SensorEntry> {
           noise: 3,
           max_rate_hz: 20,
           approx:
-            "Not a distance: roughly 1 cm per unit against a large light wall square on, farther for dark, slanted or narrow things; depends strongly on surface colour; 100 means nothing in range (beyond about 95 cm).",
+            "Not a distance: roughly 1 cm per unit against a large white wall square on (41 at 38 cm), farther for dark, slanted or narrow things (black reads about 89 at 38 cm); 100 means nothing in range, which for a white wall LEGO and ev3dev put at about 70 cm and a linear reading at about 94 cm (sources disagree).",
           description: "Proximity of the nearest object, 0 touching to 100 far.",
         }),
         ch(
@@ -603,6 +614,7 @@ export class Ev3Provider implements Provider {
     boundMs: number;
     hw: Ev3Hardware;
     degPerSecAt100: number;
+    mediumDegPerSecAt100: number;
     timeoutMs: number;
     modeSwitchTimeoutMs: number;
     stopSettleMs: number;
@@ -613,6 +625,10 @@ export class Ev3Provider implements Provider {
   private readonly roles: Record<string, string>;
   private specs: Map<string, DeviceSpec> | null = null;
   private types: number[] = []; // ports 1-4 then A-D
+  /** deg/s at 100 % of the motor on output index `i`, by the type the brick reports there (8 = medium). */
+  private rateAt100(i: number): number {
+    return this.types[4 + i] === 8 ? this.o.mediumDegPerSecAt100 : this.o.degPerSecAt100;
+  }
   private modes: number[] = [0, 0, 0, 0]; // current mode of sensor ports 1-4
   /** Sensor entries by firmware type id, for this robot's infrared channel. */
   private readonly entries: Record<number, SensorEntry>;
@@ -672,6 +688,7 @@ export class Ev3Provider implements Provider {
         ...(hw.ir_channel === undefined ? {} : { ir_channel: hw.ir_channel }),
       },
       degPerSecAt100: opts.degPerSecAt100 ?? 1050,
+      mediumDegPerSecAt100: opts.mediumDegPerSecAt100 ?? 1560,
       timeoutMs: opts.timeoutMs ?? 300,
       modeSwitchTimeoutMs: opts.modeSwitchTimeoutMs ?? 1000,
       stopSettleMs: opts.stopSettleMs ?? 300,
@@ -686,7 +703,14 @@ export class Ev3Provider implements Provider {
         fail("pair needs two different ports A-D");
       if (left === right) fail("pair needs two different ports A-D");
     }
-    for (const k of ["degPerSecAt100", "timeoutMs", "modeSwitchTimeoutMs", "stopSettleMs", "pollMs"] as const)
+    for (const k of [
+      "degPerSecAt100",
+      "mediumDegPerSecAt100",
+      "timeoutMs",
+      "modeSwitchTimeoutMs",
+      "stopSettleMs",
+      "pollMs",
+    ] as const)
       if (!positive(this.o[k])) fail(`${k} must be > 0`);
     this.stop_worst_ms = Math.ceil(
       Math.max(this.o.timeoutMs, this.o.modeSwitchTimeoutMs) +
@@ -898,9 +922,9 @@ export class Ev3Provider implements Provider {
               name: "speed_deg_s",
               type: "number",
               unit: "deg_s",
-              range: [-o.degPerSecAt100, o.degPerSecAt100],
+              range: [-this.rateAt100(outputIndex(p)), this.rateAt100(outputIndex(p))],
               max_rate_hz: 50,
-              approx: `Derived from the brick's -100..100 speed reading at ${o.degPerSecAt100} deg/s per 100 %; coarse.`,
+              approx: `Derived from the brick's -100..100 speed reading at ${this.rateAt100(outputIndex(p))} deg/s per 100 % (a ${MOTOR_TYPES[type]} motor); coarse.`,
               description: "Current rotation speed.",
             },
             {
@@ -1292,7 +1316,7 @@ export class Ev3Provider implements Provider {
           const g = await this.link.read((b) => outputRead(i, b + 4, b), 5);
           return {
             position_deg: { value: readI32(g, 0) },
-            speed_deg_s: { value: Math.round((readI8(g, 4) / 100) * this.o.degPerSecAt100) },
+            speed_deg_s: { value: Math.round((readI8(g, 4) / 100) * this.rateAt100(i)) },
             stalled: { value: this.stalled[i] },
             power_pct: { value: this.powerNow(i) },
           };
@@ -1469,7 +1493,7 @@ export class Ev3Provider implements Provider {
           }
           const total = Math.abs(degrees);
           const dir = degrees < 0 ? -1 : 1;
-          const rate = (s.v / 100) * o.degPerSecAt100;
+          const rate = (s.v / 100) * this.rateAt100(i);
           const opMs = this.timeFor(total, rate);
           return this.operate(
             {
@@ -1516,8 +1540,8 @@ export class Ev3Provider implements Provider {
               leadDir: v < 0 ? -1 : 1,
               targetDeg: null,
               opMs,
-              expectDeg: ((Math.abs(v) / 100) * o.degPerSecAt100 * opMs) / 1000,
-              rate: (Math.abs(v) / 100) * o.degPerSecAt100,
+              expectDeg: ((Math.abs(v) / 100) * this.rateAt100(i) * opMs) / 1000,
+              rate: (Math.abs(v) / 100) * this.rateAt100(i),
               brake,
               start: outputTimeSpeed(mask, v, 0, opMs, 0, brake),
               measure: (d) => ({ degrees: d[0] }),
@@ -1551,8 +1575,8 @@ export class Ev3Provider implements Provider {
                 leadDir: v < 0 ? -1 : 1,
                 targetDeg: null,
                 opMs,
-                expectDeg: ((Math.abs(v) / 100) * o.degPerSecAt100 * opMs) / 1000,
-                rate: (Math.abs(v) / 100) * o.degPerSecAt100,
+                expectDeg: ((Math.abs(v) / 100) * this.rateAt100(i) * opMs) / 1000,
+                rate: (Math.abs(v) / 100) * this.rateAt100(i),
                 brake: true,
                 start: outputTimePower(mask, v, 0, opMs, 0, true),
                 measure: (d) => ({ degrees: d[0] }),
@@ -1595,7 +1619,7 @@ export class Ev3Provider implements Provider {
           const magnitude = Math.round(100 * (1 - ratio)); // 0..200
           const leadIsLower = (leftLeads ? li : ri) < (leftLeads ? ri : li);
           const turn = leadIsLower ? magnitude : -magnitude;
-          const rate = (s.v / 100) * o.degPerSecAt100;
+          const rate = (s.v / 100) * Math.min(this.rateAt100(li), this.rateAt100(ri));
           const opMs = this.timeFor(total, rate);
           return this.operate(
             {
@@ -2007,7 +2031,7 @@ export class Ev3Provider implements Provider {
         return {
           size: 5,
           bc: (b) => outputRead(i, b + 4, b),
-          value: (g) => Math.round((readI8(g, 4) / 100) * this.o.degPerSecAt100),
+          value: (g) => Math.round((readI8(g, 4) / 100) * this.rateAt100(i)),
         };
       if (r.channel === "stalled") return { ...none, value: () => (this.stalled[i] ? 1 : 0) };
       if (r.channel === "power_pct") return { ...none, value: () => this.powerNow(i) };

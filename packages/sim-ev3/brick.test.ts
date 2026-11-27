@@ -8,11 +8,16 @@ import {
   LARGE_DEG_S,
   COAST_MS_AT_100,
   MOTOR_TAU_MS,
+  MEDIUM_MOTOR_TAU_MS,
+  MEDIUM_DEG_S,
+  LARGE_STALL_NCM,
+  MEDIUM_STALL_NCM,
+  GYRO_MAX_DEG_S,
   drivetrainFromProfile,
 } from "./brick";
-import { World, parseWorld } from "../sim-world/world";
+import { BOX_FLOOR_FRICTION, DEFAULT_PUSH_N, World, parseWorld } from "../sim-world/world";
 import { EXAMPLES, config, quietWorld } from "../sim-world/testkit";
-import { rig, DRIVETRAIN, lagged } from "./testkit";
+import { rig, DRIVETRAIN, regulated } from "./testkit";
 import { DRIVE } from "../sim-world/testkit";
 
 const BC = E.OUTPUT_MASK.B | E.OUTPUT_MASK.C;
@@ -129,7 +134,7 @@ describe("motors drive the world", () => {
     await call(E.outputStepSync(BC, 50, 0, 720, true));
     const total = (720 / (rate * 0.5)) * 1000;
     run(total / 2);
-    expect(Math.abs(brick.tacho("B") - lagged(rate * 0.5, total / 2))).toBeLessThanOrEqual(1);
+    expect(Math.abs(brick.tacho("B") - regulated(rate * 0.5, total / 2, rate))).toBeLessThanOrEqual(1);
     expect((await call(E.outputTest(BC, 0), 1)).globals[0]).toBe(1);
     run(total / 2 + MOTOR_TAU_MS + 30);
     expect((await call(E.outputTest(BC, 0), 1)).globals[0]).toBe(0);
@@ -183,9 +188,9 @@ describe("motors drive the world", () => {
     run(2000);
     expect(world.pose.x).toBe(x);
   });
-  test("a speed command reaches 90 % of its speed after 2.3 lag constants (about 0.2 s), and exactly its speed later", async () => {
+  test("a power command reaches 90 % of its speed after 2.3 lag constants (about 0.2 s), and exactly its speed later", async () => {
     const { call, run } = rig();
-    await call(E.outputTimeSpeed(E.OUTPUT_MASK.B, 60, 0, 2000, 0, true));
+    await call(E.outputTimePower(E.OUTPUT_MASK.B, 60, 0, 2000, 0, true));
     const speed = async () => E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0);
     run(MOTOR_TAU_MS);
     expect(Math.abs((await speed()) - 0.63 * 60)).toBeLessThanOrEqual(1);
@@ -194,6 +199,36 @@ describe("motors drive the world", () => {
     run(500);
     expect(await speed()).toBe(60);
   });
+  test("a speed command rises at full power until it reaches its speed: 60 % after tau ln(1 / 0.4), about 70 ms", async () => {
+    const { call, run } = rig();
+    await call(E.outputTimeSpeed(E.OUTPUT_MASK.B, 60, 0, 2000, 0, true));
+    const speed = async () => E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0);
+    run(30);
+    expect(Math.abs((await speed()) - 100 * (1 - Math.exp(-30 / MOTOR_TAU_MS)))).toBeLessThanOrEqual(1); // full power
+    run(MOTOR_TAU_MS * Math.log(1 / 0.4) - 30 + 1);
+    expect(await speed()).toBe(60); // there, and no overshoot
+    run(500);
+    expect(await speed()).toBe(60);
+  });
+  test("a speed lowered under regulation comes down at full reverse power, as fast as it rose", async () => {
+    const { call, run } = rig();
+    await call([...E.outputSpeed(E.OUTPUT_MASK.B, 80), ...E.outputStart(E.OUTPUT_MASK.B)]);
+    run(1000);
+    await call(E.outputSpeed(E.OUTPUT_MASK.B, 20));
+    run(MOTOR_TAU_MS * Math.log(180 / 120) + 1);
+    expect(E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0)).toBe(20);
+  });
+  test("the medium motor on A lags by its own constant (MEDIUM_MOTOR_TAU_MS) and runs at its own speed", async () => {
+    const { call, run, brick } = rig();
+    await call(E.outputTimePower(E.OUTPUT_MASK.A, 60, 0, 2000, 0, true));
+    const speed = async () => E.readI8((await call(E.outputRead(0, 0, 1), 5)).globals, 0);
+    run(MEDIUM_MOTOR_TAU_MS);
+    expect(Math.abs((await speed()) - 0.63 * 60)).toBeLessThanOrEqual(1);
+    run(1000 - MEDIUM_MOTOR_TAU_MS);
+    const t = brick.tacho("A");
+    run(1000);
+    expect(Math.abs(brick.tacho("A") - t - 0.6 * MEDIUM_DEG_S)).toBeLessThan(2);
+  });
   test("AF runs for a time and then stops; AE on port A turns the medium motor without moving the robot", async () => {
     const { call, run, brick, world } = rig();
     await call(E.outputTimeSpeed(E.OUTPUT_MASK.B | E.OUTPUT_MASK.C, 20, 0, 250, 0, true));
@@ -201,7 +236,7 @@ describe("motors drive the world", () => {
     expect(brick.busy(BC)).toBe(true);
     run(20);
     expect(brick.busy(BC)).toBe(false);
-    expect(Math.abs(brick.tacho("B") - lagged(0.2 * 1020, 250))).toBeLessThanOrEqual(1); // behind by the lag
+    expect(Math.abs(brick.tacho("B") - regulated(0.2 * 1020, 250, 1020))).toBeLessThanOrEqual(1); // behind by the rise
     const pose = { ...world.pose };
     await call(E.outputStepSpeed(E.OUTPUT_MASK.A, -30, 0, 45, 0, true));
     run(1000);
@@ -214,7 +249,7 @@ describe("motors drive the world", () => {
     run(3000);
     expect(brick.busy(E.OUTPUT_MASK.A)).toBe(true);
     expect(brick.unboundedMoves).toBe(1);
-    expect(Math.abs(brick.tacho("A") - lagged(0.5 * 1560, 3000))).toBeLessThanOrEqual(1);
+    expect(Math.abs(brick.tacho("A") - regulated(0.5 * 1560, 3000, 1560))).toBeLessThanOrEqual(1);
     await call(E.outputStop(E.OUTPUT_MASK.A, false));
     expect(brick.busy()).toBe(false);
   });
@@ -320,6 +355,15 @@ describe("sensors on ports come from the world", () => {
     expect(await read()).toBe(0);
     expect((await call(E.inputStopAll())).ok).toBe(true);
   });
+  test("gyro rate saturates at 440 deg/s (GYRO_MAX_DEG_S): a spin at 100 % turns the body at 476", async () => {
+    const { call, run, world } = rig();
+    await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 1, 1, 0), 4); // rate mode while still (a switch resets it)
+    await call(E.outputTimeSync(BC, 100, 200, 2000, true)); // B forward, C back: a right (clockwise) spin
+    run(500);
+    expect(world.gyroRateDegS()).toBeLessThan(-470); // the body, clockwise
+    const rate = E.readF32((await call(E.inputReadySi(1, E.SENSOR_TYPE.gyro, 1, 1, 0), 4)).globals, 0);
+    expect(rate).toBe(GYRO_MAX_DEG_S); // native clockwise-positive, clamped
+  });
   test("gyro rate (mode 1) is non-zero only while turning", async () => {
     const { call, run } = rig();
     const rate = async () => E.readF32((await call(E.inputReadySi(1, 0, 1, 1, 0), 4)).globals, 0);
@@ -366,7 +410,7 @@ describe("real time by default", () => {
     const deg = brick.tacho("B"),
       elapsed = performance.now() - t0; // 510 deg/s at 50 %
     expect(deg).toBeGreaterThan(5);
-    expect(deg).toBeLessThanOrEqual(Math.ceil(lagged(510, elapsed)) + 1);
+    expect(deg).toBeLessThanOrEqual(Math.ceil(regulated(510, elapsed, 1020)) + 1);
     expect(new VirtualClock().now()).toBe(0);
   });
   test("setWorld re-plugs: motors stop, tachos reset, sensors follow the new port map", async () => {
@@ -465,7 +509,7 @@ describe("the robot's geometry comes from the profile, not from the world", () =
     await wide.call(E.outputStepSync(BC, -30, 200, Math.round((Math.PI / 2) * 6 * DEG_PER_CM), true));
     wide.run(3000);
     expect((wide.world.pose.th * 180) / Math.PI).toBeCloseTo(45, 0);
-    expect(wide.world.drive).toEqual({ axle_track_cm: 24 });
+    expect(wide.world.drive).toMatchObject({ axle_track_cm: 24, turn_scrub: 0 });
   });
   test("forward_sign -1: positive motor rotation drives the robot backwards", async () => {
     const { call, run, world, brick } = rig(quietWorld(), { ...DRIVETRAIN, forward_sign: -1 });
@@ -511,7 +555,7 @@ describe("time-bounded motion and the end flag (brake or coast)", () => {
     run(1);
     expect(brick.busy(BC)).toBe(false);
     const atBound = brick.tacho("B");
-    expect(Math.abs(atBound - lagged(0.5 * LARGE_DEG_S, 250))).toBeLessThanOrEqual(1);
+    expect(Math.abs(atBound - regulated(0.5 * LARGE_DEG_S, 250, LARGE_DEG_S))).toBeLessThanOrEqual(1);
     const deg = brick.tacho("B");
     expect(brick.tacho("C")).toBe(deg);
     run(1000);
@@ -546,7 +590,7 @@ describe("time-bounded motion and the end flag (brake or coast)", () => {
     run(250);
     await call(E.outputTimeSync(BC, 50, 0, 250, true));
     run(249);
-    expect(Math.abs(brick.tacho("B") - lagged(0.5 * LARGE_DEG_S, 499))).toBeLessThanOrEqual(1); // as one 500 ms move
+    expect(Math.abs(brick.tacho("B") - regulated(0.5 * LARGE_DEG_S, 499, LARGE_DEG_S))).toBeLessThanOrEqual(1); // as one 500 ms move
     run(500);
     expect(brick.busy()).toBe(false);
     await call(E.outputTimeSync(BC, 50, 0, 100, false));
@@ -623,5 +667,60 @@ describe("sensor mode switches behave like the real sensors", () => {
     expect(await read(1)).toBe(1);
     expect(await read(0)).toBe(1);
     expect(await read(1)).toBe(1);
+  });
+});
+
+describe("pushing and grip: the motors feel the load", () => {
+  /** lineOval's walls with one box 10 cm ahead of the robot's front, of sliding friction `n` newtons. */
+  const boxAhead = (n: number) =>
+    quietWorld(EXAMPLES.lineOval, {
+      boxes: [{ id: "box", x: 61, y: 20, w: 8, h: 10, mass_g: (n / (BOX_FLOOR_FRICTION * 9.81)) * 1000 }],
+    });
+  const speedB = async (call: ReturnType<typeof rig>["call"]) =>
+    E.readI8((await call(E.outputRead(1, 0, 1), 5)).globals, 0);
+
+  test("a heavy box slows a robot at full speed along its motors' torque line; at half speed it holds its speed", async () => {
+    const full = rig(boxAhead(4.5));
+    await full.call(E.outputTimeSync(BC, 100, 0, 3000, true));
+    full.run(700); // in contact since about 0.3 s, pushing, 20 cm short of the wall
+    expect(full.world.obstacle("box")!.x).toBeGreaterThan(61);
+    // each motor turns against 4.5 N / 2 on a 2.8 cm wheel: 6.3 N·cm of LARGE_STALL_NCM's 40
+    expect(Math.abs((await speedB(full.call)) - 100 * (1 - (2.25 * 2.8) / LARGE_STALL_NCM))).toBeLessThanOrEqual(1);
+    const half = rig(boxAhead(4.5));
+    await half.call(E.outputTimeSync(BC, 50, 0, 3000, true));
+    half.run(1500);
+    expect(half.world.obstacle("box")!.x).toBeGreaterThan(61);
+    expect(await speedB(half.call)).toBe(50);
+  });
+  test("a tread that grips less than its motors push slips at a wall: the wheels keep turning, the robot stays", async () => {
+    const plastic = rig(quietWorld(), { ...DRIVETRAIN, mass_g: 1000, grip: 0.25 });
+    await plastic.call(E.outputTimeSync(BC, 50, 0, 5000, true));
+    plastic.run(4000); // at the wall at x 120 since about 2.8 s
+    const [x, tacho] = [plastic.world.pose.x, plastic.brick.tacho("B")];
+    expect(x + 8).toBeCloseTo(120, 2);
+    plastic.run(500);
+    expect(plastic.world.pose.x).toBeCloseTo(x, 6);
+    expect(plastic.brick.tacho("B") - tacho).toBeGreaterThan(0.95 * 0.5 * 0.5 * LARGE_DEG_S);
+    expect(plastic.brick.peek().motors[1]!.blocked).toBe(false);
+    // a build that does not say how it grips stalls there, as before
+    const told = rig(quietWorld());
+    await told.call(E.outputTimeSync(BC, 50, 0, 5000, true));
+    told.run(4000);
+    const t = told.brick.tacho("B");
+    told.run(500);
+    expect(told.brick.tacho("B")).toBe(t);
+    expect(told.brick.peek().motors[1]!.blocked).toBe(true);
+  });
+  test("what the robot can push is what its tread grips with, never more than its motors turn against", async () => {
+    const heavy = rig(quietWorld(), { ...DRIVETRAIN, mass_g: 1200, grip: 1.2 });
+    expect(heavy.world.drive!.push_n).toBeCloseTo(1.2 * 1.2 * 9.81, 6);
+    // medium motors on small wheels: their torque is the limit, and they stall at a wall rather than slip
+    const medium = rig(
+      quietWorld(EXAMPLES.lineOval, { extensions: { ev3: { motors: { B: "medium", C: "medium" } } } }),
+      { ...DRIVETRAIN, mass_g: 1200, grip: 1.2 },
+    );
+    expect(medium.world.drive!.push_n).toBeCloseTo((2 * MEDIUM_STALL_NCM) / 2.8, 6);
+    expect(rig(quietWorld()).world.drive!.push_n).toBeCloseTo(DEFAULT_PUSH_N, 9);
+    expect(() => rig(quietWorld(), { ...DRIVETRAIN, mass_g: 1000 })).toThrow(/mass_g and grip both > 0, or neither/);
   });
 });

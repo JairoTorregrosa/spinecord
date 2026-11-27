@@ -18,7 +18,7 @@ import {
   NO_NOISE,
   type NoiseConfig,
   parseWorld,
-  type Rect,
+  type ObstacleInput,
   World,
 } from "../../packages/sim-world/world";
 import { SimWorldProvider } from "../../packages/sim-world/world-provider";
@@ -50,12 +50,12 @@ export type Base = "r1" | "r1-encoders" | "orugas";
 
 export interface RigOptions {
   base: Base;
-  /** "off": NO_NOISE (but a tracked base keeps its turn_scrub: that is structure, not noise). Default "off". */
+  /** "off": NO_NOISE (a tracked base keeps its turn_scrub: that is the robot's twin.drive, not noise). Default "off". */
   noise?: "off" | NoiseConfig;
   seed?: number;
   /** Override what is plugged in (default: the robot file's twin.ev3, plus a free large motor on D). */
   ev3?: { motors: Record<string, string>; sensors: Record<string, string> };
-  boxes?: Rect[];
+  boxes?: ObstacleInput[];
   lines?: { points: [number, number][]; width_cm: number }[];
   arena?: { width_cm: number; height_cm: number };
   start?: { x: number; y: number; heading_deg: number };
@@ -124,8 +124,7 @@ export async function rig(o: RigOptions): Promise<Rig> {
     limits: { ...file.profile.limits, ...BENCH_LIMITS },
     drivetrain: { ...file.profile.drivetrain!, max_drive_cm: 250, max_turn_deg: 360 },
   };
-  const scrub = o.base === "orugas" ? SALA_NOISE.turn_scrub : 0;
-  const noise = o.noise === undefined || o.noise === "off" ? { ...NO_NOISE, turn_scrub: scrub } : o.noise;
+  const noise = o.noise === undefined || o.noise === "off" ? { ...NO_NOISE } : o.noise;
   const ports = o.ev3 ?? {
     motors: { ...file.twin.ev3.motors, D: "large" },
     sensors: file.twin.ev3.sensors,
@@ -147,7 +146,8 @@ export async function rig(o: RigOptions): Promise<Rig> {
   const config = parseWorld(worldJson);
   const brick = new SimBrick({
     world: new World(config, o.seed ?? 1),
-    drivetrain: drivetrainFromProfile(profile, file.pair),
+    // what the robot physically is (its twin.drive: orugas' scrub); the runtime plans with the profile
+    drivetrain: drivetrainFromProfile(profile, file.pair, file.twin?.drive),
     ...(fake ? { now: time.now } : {}),
   });
   const cable = new Cable(brick, clock, o.rtt_ms ?? 0, o.seed ?? 1);

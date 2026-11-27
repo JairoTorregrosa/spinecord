@@ -16,6 +16,8 @@ describe("world files", () => {
         color_sensor_x_cm: 7,
         color_spot_radius_cm: 1,
         distance_sensor_x_cm: 8,
+        distance_sensor_z_cm: 6,
+        touch_z_cm: 0,
       });
       expect(JSON.stringify(cfg)).not.toMatch(/wheel_diameter|axle_track/);
       expect(new World(cfg, 1).drive).toBeNull();
@@ -109,7 +111,7 @@ describe("physics", () => {
     expect(Math.max(...v.corners().map(([x]) => x))).toBeGreaterThan(119.99);
   });
   test("a tracked base with turn_scrub 0.2 turns 80 % of what its encoders say; driving straight is untouched", () => {
-    const w = quietWorld(EXAMPLES.lineOval, { noise: { ...NO_NOISE, turn_scrub: 0.2 } });
+    const w = new World(config(EXAMPLES.lineOval, { noise: { ...NO_NOISE } }), 1, { ...DRIVE, turn_scrub: 0.2 });
     const arc = (Math.PI / 2) * (DRIVE.axle_track_cm / 2); // each wheel's travel for 90 deg by the encoders
     const r = w.advance(-arc, arc, 10);
     expect(r.right_cm).toBeCloseTo(arc, 6); // the encoders report what the motors turned
@@ -117,8 +119,12 @@ describe("physics", () => {
     w.setPose({ x: 43, y: 25, th: 0 });
     w.advance(30, 30, 20);
     expect(w.pose.x).toBeCloseTo(73, 6);
-    expect(() => parseWorld({ ...EXAMPLES.lineOval, noise: { turn_scrub: 1 } })).toThrow(
-      /noise.turn_scrub must be below 1/,
+    expect(() => new World(config(), 1, { ...DRIVE, turn_scrub: 1 })).toThrow(
+      /turn_scrub must be 0 or more and below 1/,
+    );
+    // the scrub belongs to the robot, not to the room: a world file that says it is refused, naming its new home
+    expect(() => parseWorld({ ...EXAMPLES.lineOval, noise: { turn_scrub: 0.2 } })).toThrow(
+      /noise.turn_scrub is not a field of the room.*twin.drive.turn_scrub/,
     );
   });
   test("an obstacle blocks too", () => {
@@ -239,6 +245,35 @@ describe("sensors", () => {
     expect(b.rayDistance()).toBeCloseTo(20, 6);
     expect(b.irProximity()).toBeGreaterThan(20 * (40.5 / 38) + 1); // about 10 % farther than a wall at 20 cm
   });
+  test("IR proximity depends on what the surface sends back: black (ir_reflectivity 0.21) reads 88-90 at 38 cm", () => {
+    // a wide box against the room's far wall, faced square on: it fills the beam as the wall does
+    const wall = (ir?: number) =>
+      quietWorld({
+        ...EXAMPLES.lineOval,
+        arena: { width_cm: 300, height_cm: 300 },
+        obstacles: [{ id: "panel", x: 290, y: 0, w: 10, h: 300, ...(ir === undefined ? {} : { ir_reflectivity: ir }) }],
+      });
+    const at = (w: World, cm: number) => {
+      const ahead = w.cfg.body.distance_sensor_x_cm;
+      w.setPose({ x: 290 - ahead - cm, y: 150, th: 0 });
+      return w.senseIrProximity();
+    };
+    expect(at(wall(), 38)).toBe(41); // absent: white, as before
+    expect(at(wall(1), 38)).toBe(41);
+    const black = at(wall(0.21), 38);
+    expect(black).toBeGreaterThanOrEqual(88); // EV3-G read 88-90 from black at 38 cm (issue518)
+    expect(black).toBeLessThanOrEqual(90);
+    expect(at(wall(0.21), 60)).toBe(100); // a dark thing goes out of range sooner
+    // the ultrasonic and the camera do not see the colour
+    const w = wall(0.21);
+    at(w, 38);
+    expect(w.rayDistance()).toBeCloseTo(38, 6);
+    expect(() => wall(0)).toThrow(/ir_reflectivity/);
+    expect(() => wall(1.5)).toThrow(/at most 1/);
+    expect(() => wall(1).addObstacle({ x: 10, y: 10, w: 5, h: 5, ir_reflectivity: 2 })).toThrow(/ir_reflectivity/);
+    const id = wall(1).addObstacle({ x: 10, y: 10, w: 5, h: 5, ir_reflectivity: 0.5 });
+    expect(id).toBe("box1");
+  });
   test("IR noise grows with the reading", () => {
     const spread = (cm: number) => {
       const w = room(7);
@@ -263,6 +298,55 @@ describe("sensors", () => {
     // and nothing in range reads 255 too: the far wall 292 cm away
     w.setPose({ x: 0 + 10.5, y: 150, th: 0 });
     expect(w.senseUltrasonic()).toBe(255);
+  });
+  test("ultrasonic: a box corner echoes at any angle within reach, where its slanted faces give nothing back", () => {
+    const w = quietWorld({
+      ...EXAMPLES.lineOval,
+      arena: { width_cm: 300, height_cm: 300 },
+      obstacles: [{ x: 150, y: 140, w: 20, h: 20 }],
+    });
+    /** Sensor `cm` from the box's lower left corner, looking straight at it at 45 deg to both its faces. */
+    const at = (cm: number) => {
+      const ahead = w.cfg.body.distance_sensor_x_cm + cm;
+      w.setPose({ x: 150 - ahead * Math.SQRT1_2, y: 140 - ahead * Math.SQRT1_2, th: Math.PI / 4 });
+      return w.senseUltrasonic();
+    };
+    expect(at(40)).toBeCloseTo(40, 1);
+    expect(at(25)).toBeCloseTo(25, 1);
+    expect(at(70)).toBe(255); // past ULTRASONIC_EDGE_MAX_CM an edge is too faint, and the faces stay silent
+  });
+  test("ultrasonic: a 5 cm post anywhere inside the cone is seen, also between the cone's evenly spaced rays", () => {
+    const at = (d: number, lateral: number) => {
+      const w = quietWorld({
+        ...EXAMPLES.lineOval,
+        arena: { width_cm: 600, height_cm: 300 },
+        obstacles: [{ x: 100 + d, y: 150 + lateral - 2.5, w: 5, h: 5 }],
+      });
+      w.setPose({ x: 100 - w.cfg.body.distance_sensor_x_cm, y: 150, th: 0 });
+      return w.ultrasonicCm();
+    };
+    let missed = 0,
+      tried = 0;
+    for (const d of [100, 150, 200, 250 - 6])
+      for (let lat = -d * Math.tan((11 * Math.PI) / 180); lat <= d * Math.tan((11 * Math.PI) / 180); lat += 0.5) {
+        tried++;
+        if (at(d, lat) > Math.hypot(d, Math.max(0, Math.abs(lat) - 2.5)) + 1) missed++; // its near face echoes
+      }
+    expect(tried).toBeGreaterThan(200);
+    expect(missed).toBe(0);
+    expect(at(150, 0)).toBeCloseTo(150, 0);
+  });
+  test("ultrasonic: a room corner (two walls square to each other) echoes from any angle within reach", () => {
+    const w = quietWorld({ ...EXAMPLES.lineOval, arena: { width_cm: 300, height_cm: 300 }, obstacles: [] });
+    /** Sensor `cm` from the room's corner at (300, 300), looking straight into it at 45 deg to both walls. */
+    const at = (cm: number) => {
+      const ahead = w.cfg.body.distance_sensor_x_cm + cm;
+      w.setPose({ x: 300 - ahead * Math.SQRT1_2, y: 300 - ahead * Math.SQRT1_2, th: Math.PI / 4 });
+      return w.ultrasonicCm();
+    };
+    expect(at(40)).toBeCloseTo(40, 0); // the walls alone, at 45 deg, give nothing back
+    expect(at(55)).toBeCloseTo(55, 0);
+    expect(at(80)).toBe(255); // past ULTRASONIC_CORNER_MAX_CM (not measured, kept short)
   });
   test("a gyro reset while the robot turns drifts by the rate it had; reset while still, it does not", () => {
     const w = quietWorld();

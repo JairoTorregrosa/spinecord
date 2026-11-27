@@ -14,7 +14,7 @@ import {
   type BackendKind,
   type ImagePayload,
 } from "../protocol/types";
-import { World, parseWorld } from "./world";
+import { EVENT_LOG_MAX, World, parseWorld } from "./world";
 import { readWorldChannel, worldChannelSpecs } from "./channels";
 import { renderWorld, renderFirstPerson, encodePNG, toBase64 } from "./render";
 
@@ -31,6 +31,12 @@ export interface SimWorldProviderOptions {
   host: WorldHost;
   /** World files by name (parsed JSON), offered to `load_world`. */
   worlds?: Record<string, unknown>;
+  /**
+   * What every world `load_world` takes goes through before it is parsed, by name or as JSON: whoever assembles the
+   * twin puts the robot's own build into it there (CONTRACT §3, `twin`), so a loaded room never brings another
+   * robot's ports, footprint or look. Throws, naming what is wrong, for a world this robot cannot live in.
+   */
+  prepare?: (world: unknown) => unknown;
   /** Seed for worlds loaded later. Default: the current world's seed. */
   seed?: number;
   /** Overhead picture scale, px per cm (default 4). */
@@ -39,6 +45,7 @@ export interface SimWorldProviderOptions {
 }
 
 const DEVICE_IDS = "sim.world, sim.camera, sim.speaker";
+const EVENTS_DESCRIPTION = `What happened in the world after event number "since" (default 0: every event still kept, at most ${EVENT_LOG_MAX}), oldest first. Changes nothing and spends no sensor noise. measured.events holds one JSON object per event, as a string: {n, t_ms (simulated time), kind, ...}. kind is contact_began or contact_ended {with: a box id, or the wall it touches: wall_west (x 0), wall_east, wall_south (y 0), wall_north}; push_began {box} and push_ended {box, moved_cm}: the robot slid a box; stall_began and stall_ended: a drive wheel held by what the body is against, its encoder stopped; slip_began and slip_ended: the drive wheels turn while the body is held; echo_lost {why: slant (a surface in range met too far off square to echo) or range (nothing within 250 cm)} and echo_back {cm}, only with an ultrasonic sensor plugged in; placed {how: reset or carried (a person moved the robot)}; obstacle_changed {box, change: added, moved or removed} (by a person). measured.next is the number to pass as since next time, measured.dropped how many events after since are no longer kept, measured.t_ms the world's time now. Contacts are timed to a fraction of a ms; the other events to the end of the physics step (at most 20 ms) they happen in.`;
 /** speak limits of the simulated speaker: the same shape a real text-to-speech speaker declares (CONTRACT §2.3). */
 export const SIM_SPEAK = { max_chars: 200, max_ms: 15000, rate_wpm: { min: 80, max: 300, default: 140 } } as const;
 const SPEAKER_CHANNELS = ["last_spoken", "spoken_count"];
@@ -50,6 +57,7 @@ export class SimWorldProvider implements Provider {
   readonly stop_worst_ms = 50;
   private readonly host: WorldHost;
   private readonly worlds: Record<string, unknown>;
+  private readonly prepare: (world: unknown) => unknown;
   private readonly seed: number;
   private readonly scale: number;
   private readonly now: () => number;
@@ -62,6 +70,7 @@ export class SimWorldProvider implements Provider {
       );
     this.host = opts.host;
     this.worlds = opts.worlds ?? {};
+    this.prepare = opts.prepare ?? ((w) => w);
     this.seed = opts.seed ?? opts.host.world.seed;
     this.scale = opts.scale ?? 4;
     this.now = opts.now ?? (() => Date.now());
@@ -125,7 +134,7 @@ export class SimWorldProvider implements Provider {
             name: "load_world",
             moves: true,
             bound: { kind: "instant", max: 0 },
-            description: `Replaces the world and puts the robot at that world's start pose; motors stop, tachos and sensors reset, and sim.speaker forgets what it said. "world" is one of: ${names.join(", ") || "(no named worlds registered)"}, or a whole world file as a JSON string (schema spinecord/world@1).`,
+            description: `Replaces the world and puts the robot at that world's start pose; motors stop, tachos and sensors reset, and sim.speaker forgets what it said. "world" is one of: ${names.join(", ") || "(no named worlds registered)"}, or a whole world file as a JSON string (schema spinecord/world@1). A robot whose file describes its own build keeps it (what is plugged into each port, its footprint, its look): the world gives the room.`,
             params: {
               type: "object",
               properties: { world: { type: "string" } },
@@ -145,6 +154,17 @@ export class SimWorldProvider implements Provider {
               additionalProperties: false,
             },
           },
+          {
+            name: "events",
+            moves: false,
+            bound: { kind: "instant", max: 0 },
+            description: EVENTS_DESCRIPTION,
+            params: {
+              type: "object",
+              properties: { since: { type: "integer", minimum: 0 } },
+              additionalProperties: false,
+            },
+          },
         ],
       },
       {
@@ -157,7 +177,8 @@ export class SimWorldProvider implements Provider {
           {
             name: "frame",
             type: "image",
-            approx: "flat-shaded render: floor colours are exact, walls and obstacles are plain grey",
+            approx:
+              "flat-shaded render: floor colours are exact, walls and obstacles are plain grey, a low box as tall as it is, with the floor beyond it and sky above",
             description: "First-person picture from the robot's pose, 160x120, about 70 deg wide. PNG.",
           },
         ],
@@ -306,8 +327,12 @@ export class SimWorldProvider implements Provider {
     if (device === "sim.speaker") return this.speak(command, args, signal);
     if (device !== "sim.world")
       throw new RuntimeError("unknown_device", `the simulation has no device "${device}"; its devices: ${DEVICE_IDS}`);
+    if (command === "events") return this.events(args);
     if (command !== "load_world" && command !== "reset")
-      throw new RuntimeError("unknown_command", `sim.world has no command "${command}"; commands: load_world, reset`);
+      throw new RuntimeError(
+        "unknown_command",
+        `sim.world has no command "${command}"; commands: load_world, reset, events`,
+      );
     const result = (reason: CommandResult["reason"]): CommandResult => ({
       requested: { ...args },
       measured: { world: this.world.cfg.name, pose: this.pose() },
@@ -341,7 +366,7 @@ export class SimWorldProvider implements Provider {
         );
       let next: World;
       try {
-        next = new World(parseWorld(json), this.seed);
+        next = new World(parseWorld(this.prepare(json)), this.seed);
       } catch (e) {
         throw new RuntimeError("invalid_argument", (e as Error).message);
       }
@@ -380,6 +405,30 @@ export class SimWorldProvider implements Provider {
     this.world.setPose(pose);
     this.forgetSpeech();
     return result("completed");
+  }
+
+  /** sim.world events: the world's log after `since`, with the physics run up to now first. Changes nothing. */
+  private events(args: Record<string, Value>): CommandResult {
+    const extra = Object.keys(args).filter((k) => k !== "since");
+    if (extra.length)
+      throw new RuntimeError("invalid_argument", `events takes only "since"; unknown: ${extra.join(", ")}`);
+    const since = args.since ?? 0;
+    if (typeof since !== "number" || !Number.isInteger(since) || since < 0)
+      throw new RuntimeError("invalid_argument", `since must be a whole number >= 0, got ${JSON.stringify(since)}`);
+    this.host.tick();
+    const log = this.world.eventsSince(since);
+    return {
+      requested: { ...args },
+      measured: {
+        events: log.events.map((e) => JSON.stringify({ ...e, t_ms: Math.round(e.t_ms * 100) / 100 })),
+        next: log.next,
+        dropped: log.dropped,
+        t_ms: Math.round(this.world.t_ms),
+      },
+      clamped: false,
+      reason: "completed",
+      ms: 0,
+    };
   }
 
   /** load_world and reset start a scene over, so what the speaker said before does not leak into the next trial. */
