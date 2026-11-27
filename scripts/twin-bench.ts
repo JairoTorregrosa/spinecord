@@ -395,6 +395,32 @@ async function ultrasonic(): Promise<void> {
     add("ultrasonic", "us_post", `5 cm post at ${d} cm, lateral offset cm:reading`, out.join(" "));
   }
   {
+    // where inside the cone a 5 cm post goes unseen: every 0.5 cm of lateral offset within the cone's half width
+    let seen = 0,
+      inside = 0;
+    const blind: string[] = [];
+    for (const d of [100, 150, 200, 250]) {
+      const half = d * Math.tan((12 * Math.PI) / 180);
+      for (let off = 0; off <= half; off += 0.5) {
+        const p = await rig({ base: "r1", boxes: [{ x: 300 + d, y: 400 + off - 2.5, w: 5, h: 5 }] });
+        place(p, 300 - sx, 400, 0);
+        inside++;
+        if ((await read(p, "ev3.S4", "distance_cm")) !== 255) seen++;
+        else blind.push(`${d}/${off}`);
+      }
+    }
+    add(
+      "ultrasonic",
+      "us_post_blind",
+      "5 cm post anywhere inside the +-12 deg cone at 100-250 cm: positions missed",
+      `${inside - seen}/${inside}`,
+      {
+        agrees: inside === seen,
+        note: `missed at distance/offset cm ${blind.slice(0, 8).join(" ")}${blind.length > 8 ? " ..." : ""}`,
+      },
+    );
+  }
+  {
     // a room corner straight ahead along the diagonal, the sensor 70 cm from it
     const c = await rig({
       base: "r1",
@@ -561,7 +587,18 @@ async function colour(): Promise<void> {
     note: `spot radius ${r.world.cfg.body.color_spot_radius_cm} cm (body.color_spot_radius_cm), no height`,
   });
   add("colour", "color_white_black", "reflected on white / on black", `${white} / ${black}`);
+  const ids: string[] = [];
+  for (let x = 297 - 7; x <= 300 - 7; x += 0.5) {
+    place(r, x, 400, 0);
+    ids.push(`${r1(x + 7 - 300, 1)}:${await read(r, "ev3.S3", "color")}`);
+  }
+  add("colour", "color_id_edge", "color id approaching the line, cm from its centre:id", ids.join(" "), {
+    note: "the floor under the spot's centre: black or white, never an in-between colour",
+  });
   place(r, 200, 400, 0);
+  add("colour", "color_rgb_white", "rgb on white", JSON.stringify(await read(r, "ev3.S3", "rgb")), {
+    note: "the floor colour's sRGB scaled by 400/255, not a sensor's raw counts",
+  });
   add("colour", "color_ambient", "ambient_pct anywhere", await read(r, "ev3.S3", "ambient_pct"), {
     note: "a constant: the world has no light",
   });

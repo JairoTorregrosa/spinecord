@@ -379,6 +379,13 @@
       "src": "lego_ug",
       "how": "LEGO only says an object can be too small to detect; no measured width/range"
     },
+    "us_post_blind": {
+      "unit": "cm",
+      "kind": "estimate",
+      "src": "first_principles",
+      "text": "seen wherever it sits inside the cone",
+      "how": "a real sensor's beam is continuous: an object inside it returns some echo; whether a 5 cm post at 2 m is above its threshold is unmeasured"
+    },
     "us_inner_corner": {
       "unit": "cm",
       "kind": "estimate",
@@ -502,6 +509,18 @@
       "kind": "none",
       "src": "lego_ug",
       "how": "the reflected profile across a line edge versus height is unpublished; robolab recommends 8-12 mm"
+    },
+    "color_id_edge": {
+      "unit": "id",
+      "kind": "none",
+      "src": "ev3dev",
+      "how": "what colour mode reports while the spot straddles a black-white edge: unmeasured (often reported as blue or green; not a measurement)"
+    },
+    "color_rgb_white": {
+      "unit": "count",
+      "kind": "none",
+      "src": "ev3dev",
+      "how": "RGB-RAW on white paper: unmeasured; ev3dev lists 0-1020"
     },
     "color_ambient": {
       "unit": "pct",
