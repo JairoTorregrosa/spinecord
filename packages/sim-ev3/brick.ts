@@ -55,7 +55,7 @@ export const SIM_BRICK_LOOP_RATE_HZ = 100;
  * friction torque is the no-load current times the torque constant, 0.06 A x 0.43 N m / 1.8 A = 0.014 N m
  * (Philo's EV3 motor figures), against a shaft inertia of 0.0009-0.0014 kg m2 (Things DAQ) at 17.6 rad/s:
  * 1.1-1.7 s. The middle of that. A wheel under a robot coasts differently (more inertia, rolling friction); not
- * measured either. The same friction ends a brake's spring-back (brakeRun).
+ * measured either.
  */
 export const COAST_MS_AT_100 = 1400;
 /**
@@ -80,95 +80,6 @@ export const MEDIUM_MOTOR_TAU_MS = 76;
 const SETTLE_FRACTION = 0.002;
 
 /**
- * The stock firmware's brake is a position hold (lms2012 d_pwm.c, state BRAKED: BrakeMotor sets Power =
- * -TachoCnt * 400 of a full 10000, counted from where the brake came): reverse power in proportion to how far the
- * shaft ran past the stop point, full reverse from this many counts (degrees) past it. So a braked shaft runs on,
- * stops, springs back and rests at the stop point, within what friction leaves (see brakeRun).
- */
-export const BRAKE_FULL_COUNTS = 25;
-/**
- * A held shaft comes to rest within this many degrees of its stop point: there the hold's power, through the lag,
- * no longer beats the friction of a coast. 25 x 76 / 1400 = 1.4 deg (the medium motor's lag is the same).
- */
-export const BRAKE_REST_DEG = (BRAKE_FULL_COUNTS * MOTOR_TAU_MS) / COAST_MS_AT_100;
-/** The grid a brake's run is integrated on, ms. Its run is a function of the time since the brake came only. */
-const BRAKE_DT_MS = 0.25;
-/** A brake that has not come to rest by then is ended there (none of the motors' runs comes near it). */
-const BRAKE_MAX_MS = 2000;
-
-/** A brake's run: the shaft's offset from the stop point (deg) and its speed (deg/s), every BRAKE_DT_MS after it came. */
-export interface BrakeRun {
-  /** Brick time (ms) the brake came. */
-  t0: number;
-  xs: Float64Array;
-  vs: Float64Array;
-}
-
-/**
- * The run of a shaft braked at speed `v0` (deg/s): the hold's power (BRAKE_FULL_COUNTS) through the motor's lag
- * (`tauMs`, full power reaching `rate`), against the friction that also slows a coast (COAST_MS_AT_100). From 100 %
- * the shaft runs on about 30 deg and springs back about 10 past the stop point, from 50 % about 14 and 4, from 25 %
- * about 7 and 1, and comes to rest within about 1.4 deg of it (where the hold's power no longer beats friction)
- * after 200-500 ms. docs/twin-fidelity.md estimated the run-on from the full-reverse part alone: 2-6, 7-15, 14-25
- * and 23-35 deg from 25, 50, 75 and 100 %. No measurement of a stock-firmware brake was found. The medium motor's
- * power has a 10 % floor in the firmware (SetRegulationPower), so its real hold has no friction band and rings a
- * little longer; the twin gives it the large motor's band. null: nothing to run.
- */
-export function brakeRun(v0: number, t0: number, rate: number, tauMs: number): BrakeRun | null {
-  if (v0 === 0) return null;
-  const s = Math.sign(v0),
-    tau = tauMs / 1000,
-    f = rate / (COAST_MS_AT_100 / 1000),
-    dt = BRAKE_DT_MS / 1000;
-  const xs = [0],
-    vs = [Math.abs(v0)];
-  let x = 0,
-    v = Math.abs(v0);
-  for (let n = 0; n * BRAKE_DT_MS < BRAKE_MAX_MS; n++) {
-    const u = Math.max(-1, Math.min(1, -x / BRAKE_FULL_COUNTS)),
-      push = (u * rate) / tau;
-    let a: number;
-    if (v === 0) {
-      if (Math.abs(push) <= f) break; // at rest: the hold no longer beats friction
-      a = push - f * Math.sign(u);
-    } else a = (u * rate - v) / tau - f * Math.sign(v);
-    let vn = v + a * dt;
-    if (v !== 0 && vn * v < 0) vn = 0; // friction stops it at the turn; the next step decides whether it moves again
-    x += ((v + vn) / 2) * dt;
-    v = vn;
-    xs.push(s * x);
-    vs.push(s * v);
-  }
-  vs[vs.length - 1] = 0;
-  return { t0, xs: Float64Array.from(xs), vs: Float64Array.from(vs) };
-}
-/**
- * The longest a brake's run lasts, ms: from 100 % on either motor type (about 490 ms, a large motor). A provider
- * that verifies a stop by a speed of 0 waits at least this long (both on a twin and, by the same firmware, on a robot).
- */
-export const BRAKE_SETTLE_MS = Math.max(
-  ...(
-    [
-      [LARGE_DEG_S, MOTOR_TAU_MS],
-      [MEDIUM_DEG_S, MEDIUM_MOTOR_TAU_MS],
-    ] as const
-  ).map(([rate, tau]) => (brakeRun(rate, 0, rate, tau)!.xs.length - 1) * BRAKE_DT_MS),
-);
-/** Where a brake's run has the shaft `e` ms after the brake came: offset from the stop point and speed. */
-export function brakeAt(b: BrakeRun, e: number): { x: number; v: number; done: boolean } {
-  const last = b.xs.length - 1,
-    k = Math.max(0, e) / BRAKE_DT_MS;
-  if (k >= last) return { x: b.xs[last]!, v: 0, done: true };
-  const i = Math.floor(k),
-    w = k - i;
-  return {
-    x: b.xs[i]! + (b.xs[i + 1]! - b.xs[i]!) * w,
-    v: b.vs[i]! + (b.vs[i + 1]! - b.vs[i]!) * w,
-    done: false,
-  };
-}
-
-/**
  * One motor's speed (deg/s) over `h` ms, integrated exactly so that the result does not depend on how time is cut.
  * `tauMs` is that motor's time constant (MOTOR_TAU_MS, MEDIUM_MOTOR_TAU_MS).
  *
@@ -182,7 +93,7 @@ export function brakeAt(b: BrakeRun, e: number): { x: number; v: number; done: b
  */
 export function motorStep(
   v0: number,
-  how: { run: number; full?: number } | "coast",
+  how: { run: number; full?: number } | "brake" | "coast",
   h: number,
   rate: number,
   tauMs: number = MOTOR_TAU_MS,
@@ -214,12 +125,18 @@ export function motorStep(
     return { v: vt, d: vt * t + e0 * tau * (1 - eps / Math.abs(e0)) };
   }
   if (v0 === 0) return { v: 0, d: 0 };
-  // Coast: friction alone. (A brake is its own run, brakeRun.)
-  const s = Math.sign(v0),
-    u0 = Math.abs(v0),
-    ts = u0 / f,
-    tt = Math.min(t, ts);
-  return { v: t >= ts ? 0 : s * (u0 - f * t), d: s * (u0 * tt - (f * tt * tt) / 2) };
+  if (how === "coast") {
+    // Friction alone.
+    const s = Math.sign(v0),
+      u0 = Math.abs(v0),
+      ts = u0 / f,
+      tt = Math.min(t, ts);
+    return { v: t >= ts ? 0 : s * (u0 - f * t), d: s * (u0 * tt - (f * tt * tt) / 2) };
+  }
+  // Brake: the firmware holds the shaft where the brake came (lms2012 d_pwm.c, state BRAKED: BrakeMotor sets
+  // Power = -TachoCnt * 400, full reverse power one degree past the stop point). The overshoot and return of that
+  // hold last some tens of ms and end on the stop point: the twin skips them and stops there.
+  return { v: 0, d: 0 };
 }
 
 /**
@@ -311,8 +228,7 @@ interface Motor {
   regulated: boolean; // the running command holds a speed (the SPEED and SYNC opcodes), not a power
   setRegulated: boolean; // the level stored by A4/A5 is a speed (A5), not a power (A4)
   vel: number; // deg/s (signed) the shaft really turns at: it lags the command and runs down after it
-  braking: boolean; // with no command running: true = the brake holds it, false = it coasts
-  brake: BrakeRun | null; // braking and not yet at rest: the brake's run (braking with none: the shaft is still)
+  braking: boolean; // with no command running: true = the brake slows it, false = it coasts
 }
 interface Sensor {
   kind: SensorKindName;
@@ -347,8 +263,6 @@ export interface MotorPeek {
   /** A drive wheel held by a wall or obstacle: the command runs, the tacho does not move. */
   blocked: boolean;
   coasting: boolean;
-  /** Braked and not yet at rest: the brake's hold runs the shaft on and springs it back to the stop point. */
-  settling: boolean;
 }
 /** One input port as a viewer shows it. */
 export interface SensorPeek {
@@ -521,7 +435,6 @@ export class SimBrick implements Transport, WorldHost {
         setRegulated: false,
         vel: 0,
         braking: false,
-        brake: null,
       };
     });
     this.sensors = (["1", "2", "3", "4"] as const).map((p) => {
@@ -581,7 +494,6 @@ export class SimBrick implements Transport, WorldHost {
         speed_pct: this.speedNow(m),
         blocked: m.blocked,
         coasting: m.speedPct === 0 && m.vel !== 0 && !m.braking,
-        settling: m.brake !== null,
       })),
       sensors: this.sensors.map((s, i) => ({
         port: String(i + 1) as SensorPort,
@@ -635,8 +547,7 @@ export class SimBrick implements Transport, WorldHost {
     if (!(dt > 0)) return;
     let at = this.last;
     this.last = t;
-    // a brake's run passes through speed 0 where it turns back: it is still moving
-    const turning = (): boolean => this.motors.some((m) => m.speedPct !== 0 || m.vel !== 0 || m.brake !== null);
+    const turning = (): boolean => this.motors.some((m) => m.speedPct !== 0 || m.vel !== 0);
     if (!turning()) {
       this.world.wait(dt);
       return;
@@ -656,25 +567,13 @@ export class SimBrick implements Transport, WorldHost {
   private substep(at: number, h: number): void {
     const want = [0, 0, 0, 0],
       vEnd = [0, 0, 0, 0],
-      ends = [false, false, false, false],
-      brakes: (BrakeRun | null | undefined)[] = [undefined, undefined, undefined, undefined];
+      ends = [false, false, false, false];
     const dt = this.drivetrain;
     const li = dt ? "ABCD".indexOf(dt.left) : -1,
       ri = dt ? "ABCD".indexOf(dt.right) : -1;
     this.motors.forEach((m, i) => {
       if (m.speedPct === 0) {
-        if (m.braking) {
-          if (!m.brake) {
-            if (m.vel !== 0) throw new Error(`motor ${m.port} braking at ${m.vel} deg/s with no brake run`);
-            return;
-          }
-          const a = brakeAt(m.brake, at - m.brake.t0),
-            b = brakeAt(m.brake, at + h - m.brake.t0);
-          want[i] = b.x - a.x;
-          vEnd[i] = b.v;
-          return;
-        }
-        const r = motorStep(m.vel, "coast", h, m.rate, m.tau);
+        const r = motorStep(m.vel, m.braking ? "brake" : "coast", h, m.rate, m.tau);
         want[i] = r.d;
         vEnd[i] = r.v;
         return;
@@ -693,17 +592,9 @@ export class SimBrick implements Transport, WorldHost {
         v = run.v;
       if (m.until !== null && at + h >= m.until - 1e-9) {
         ends[i] = true;
-        if (m.holdBrake) {
-          // the brake comes at the bound: its run starts there (halt below keeps it)
-          brakes[i] = brakeRun(v, m.until, m.rate, m.tau);
-          const b = brakes[i] ? brakeAt(brakes[i]!, at + h - m.until) : { x: 0, v: 0 };
-          d += b.x;
-          v = b.v;
-        } else {
-          const after = motorStep(v, "coast", h - active, m.rate, m.tau);
-          d += after.d;
-          v = after.v;
-        }
+        const after = motorStep(v, m.holdBrake ? "brake" : "coast", h - active, m.rate, m.tau);
+        d += after.d;
+        v = after.v;
       }
       // A step ends on its count: the twin lands on it exactly (CONTRACT §4 Twin).
       if (m.target !== null && (m.speedPct > 0 ? m.pos + d >= m.target : m.pos + d <= m.target)) {
@@ -728,23 +619,10 @@ export class SimBrick implements Transport, WorldHost {
       // A drive wheel held by a wall stops: its tacho counts up to where the body came to rest, then stays.
       m.pos += held ? want[i]! * this.world.last_step_fraction : want[i]!;
       m.vel = held ? 0 : vEnd[i]!;
-      if (m.speedPct === 0) {
-        // a brake at rest, or one the wall stopped (the shaft is then at or short of its stop point): it holds still
-        if (m.brake && (held || brakeAt(m.brake, at + h - m.brake.t0).done)) {
-          m.brake = null;
-          m.vel = 0;
-        }
-        return;
-      }
+      if (m.speedPct === 0) return;
       m.blocked = held;
       // A time bound ends on time even against a wall; a step ends on its count (never, while blocked).
-      if (ends[i] && !(held && m.target !== null)) {
-        this.halt(m, m.holdBrake, held ? null : brakes[i]);
-        if (m.brake && brakeAt(m.brake, at + h - m.brake.t0).done) {
-          m.brake = null;
-          m.vel = 0;
-        }
-      }
+      if (ends[i] && !(held && m.target !== null)) this.halt(m, m.holdBrake);
     });
     // slipping while the wheels still turn after this step (a command that ended here has stopped them)
     const turns = (i: number) => this.motors[i]!.speedPct !== 0 || this.motors[i]!.vel !== 0;
@@ -817,23 +695,9 @@ export class SimBrick implements Transport, WorldHost {
 
   // ------------------------------------------------------------- motors
   /** Ends a motor's command. brake = true stops it where it is; false lets it run down (unless it is blocked). */
-  /**
-   * Ends what the motor does. With brake the hold begins: at the shaft's speed now (or, `run`, the run of a brake
-   * that came inside the physics step that ended the command); a blocked shaft is already still.
-   */
-  private halt(m: Motor, brake: boolean, run?: BrakeRun | null): void {
-    if (m.speedPct === 0 && !brake) {
-      // a held shaft is let go (lms2012 StopAndFloatMotor): it coasts on from the speed it has
-      m.braking = false;
-      m.brake = null;
-      return;
-    }
-    if (m.speedPct === 0 && m.braking) return; // already held: its stop point stays where it was
-    if (m.blocked) m.vel = 0;
-    if (brake) {
-      m.brake = run !== undefined ? run : brakeRun(m.vel, this.last, m.rate, m.tau);
-      if (!m.brake) m.vel = 0;
-    } else m.brake = null;
+  private halt(m: Motor, brake: boolean): void {
+    if (m.speedPct === 0 && !brake) return; // already stopped or running down: releasing it changes nothing
+    if (m.blocked || brake) m.vel = 0; // a brake holds the shaft where it is (see motorStep)
     m.speedPct = 0;
     m.target = null;
     m.until = null;
@@ -862,21 +726,13 @@ export class SimBrick implements Transport, WorldHost {
   }
   /** A new command takes the motor over, also in the middle of a run-down: the shaft goes on from its speed. */
   private drive(m: Motor, speed: number, brake: boolean, regulated: boolean): void {
-    m.brake = null; // a brake still running on or springing back: the new command takes the shaft at its speed
     m.speedPct = speed;
     m.holdBrake = brake;
     m.regulated = regulated;
   }
-  /**
-   * Speed in percent as OUTPUT_READ reports it: what the shaft really does (it lags the command), 0 if blocked.
-   * The firmware's speed is measured between encoder pulses and kept until the next one comes, and reads 0 only
-   * when none has come for a while (lms2012 d_pwm.c, dCalculateSpeed: CountsPerPulse timer ticks, about 99 ms):
-   * so a braked shaft that turns back reads at least 1 % until its brake's run is over, never 0 at the turn.
-   */
+  /** Speed in percent as OUTPUT_READ reports it: what the shaft really does (it lags the command), 0 if blocked. */
   private speedNow(m: Motor): number {
-    if (m.blocked) return 0;
-    const pct = (m.vel / m.rate) * 100;
-    return m.brake && Math.abs(pct) < 1 ? (pct < 0 ? -1 : 1) : pct;
+    return m.blocked ? 0 : (m.vel / m.rate) * 100;
   }
   private masked(mask: number): Motor[] {
     if (mask < 0 || mask > 0x0f) throw new Error(`bad output mask ${mask}`);

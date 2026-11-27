@@ -25,7 +25,6 @@ import { SimWorldProvider } from "../../packages/sim-world/world-provider";
 import { prng } from "../../bench/stats";
 import { LocalRobot } from "../../apps/local/src/robot";
 import { callTool } from "../../apps/local/src/tools";
-import { EV3_STOP_SETTLE_MS } from "../../apps/local/src/sources";
 
 export const ROOT = join(import.meta.dir, "..", "..");
 const readJson = (...p: string[]): any => JSON.parse(readFileSync(join(ROOT, ...p), "utf8"));
@@ -169,7 +168,6 @@ export async function rig(o: RigOptions): Promise<Rig> {
           pair: file.pair,
           roles: profile.roles,
           degPerSecAt100: LARGE_DEG_S,
-          stopSettleMs: EV3_STOP_SETTLE_MS, // as the app builds it
           loopRateHz: SIM_BRICK_LOOP_RATE_HZ,
           ...(fake ? time : {}),
         })),
@@ -240,7 +238,7 @@ export async function settle(r: Rig, max_ms = 5000): Promise<number> {
   const t0 = r.now();
   while (r.now() - t0 < max_ms) {
     const m = r.brick.peek().motors;
-    if (m.every((x) => x.speed_pct === 0 && !x.coasting && !x.settling)) return r.now() - t0;
+    if (m.every((x) => x.speed_pct === 0 && !x.coasting)) return r.now() - t0;
     await r.sleep(1);
   }
   return r.now() - t0;
