@@ -1425,23 +1425,30 @@ export class World {
     return this.rayHit(p, offset_rad, vHalfRad).d;
   }
   /**
-   * One ray from the distance sensor: how far it goes (cm, no noise, no clamp) and the cosine of the angle between
-   * it and the normal of the surface it hits (1 = square on).
+   * One ray from the distance sensor: how far it goes (cm, no noise, no clamp), the cosine of the angle between
+   * it and the normal of the surface it hits (1 = square on), and how tall that is (Infinity: a wall, a box
+   * without a height).
    */
-  rayHit(p: Pose = this.pose, offset_rad = 0, vHalfRad = (CONE_HALF_DEG * Math.PI) / 180): { d: number; cos: number } {
+  rayHit(
+    p: Pose = this.pose,
+    offset_rad = 0,
+    vHalfRad = (CONE_HALF_DEG * Math.PI) / 180,
+  ): { d: number; cos: number; top_cm: number } {
     const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
     const z = this.cfg.body.distance_sensor_z_cm,
       spread = vHalfRad >= Math.PI / 2 ? Infinity : Math.tan(vHalfRad);
     const dx = Math.cos(p.th + offset_rad),
       dy = Math.sin(p.th + offset_rad);
     const { width, height, boxes } = this.cfg;
-    if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return { d: 0, cos: 1 };
+    if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return { d: 0, cos: 1, top_cm: Infinity };
     let best = Infinity,
-      cos = 1;
-    const take = (t: number, c: number): void => {
+      cos = 1,
+      top = Infinity;
+    const take = (t: number, c: number, h = Infinity): void => {
       if (t < best) {
         best = t;
         cos = c;
+        top = h;
       }
     };
     if (dx > 1e-12) take((width - ox) / dx, Math.abs(dx));
@@ -1483,12 +1490,12 @@ export class World {
       }
       if (!hit) continue;
       const below = b.height_cm === undefined ? 0 : z - b.height_cm;
-      if (below <= 0) take(t0, c0);
+      if (below <= 0 || spread === Infinity) take(t0, c0, b.height_cm);
       // a box lower than the sensor: seen only once the beam's lower edge comes down to its top, and then where the
       // beam meets its top edge, slanted down (the slant counts against the echo as a sideways one does)
-      else if (below <= t0 * spread) take(Math.hypot(t0, below), c0 * Math.cos(Math.atan2(below, t0)));
+      else if (below <= t0 * spread) take(Math.hypot(t0, below), c0 * Math.cos(Math.atan2(below, t0)), b.height_cm);
     }
-    return { d: best, cos };
+    return { d: best, cos, top_cm: top };
   }
 
   /**

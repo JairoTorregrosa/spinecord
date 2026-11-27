@@ -177,7 +177,8 @@ export class SimWorldProvider implements Provider {
           {
             name: "frame",
             type: "image",
-            approx: "flat-shaded render: floor colours are exact, walls and obstacles are plain grey",
+            approx:
+              "flat-shaded render: floor colours are exact, walls and obstacles are plain grey, a low box as tall as it is, with the floor beyond it and sky above",
             description: "First-person picture from the robot's pose, 160x120, about 70 deg wide. PNG.",
           },
         ],

@@ -178,19 +178,23 @@ export function renderFirstPerson(world: World, opts: CameraOptions = {}): Image
     const dx = Math.cos(p.th + off),
       dy = Math.sin(p.th + off),
       cosOff = Math.cos(off);
-    const wall = world.rayDistance(p, off, Math.PI / 2) * cosOff; // distance perpendicular to the image plane
-    const top = horizon - ((wallH - camH) * focal) / Math.max(wall, 0.01),
+    const hit = world.rayHit(p, off, Math.PI / 2),
+      wall = hit.d * cosOff; // distance perpendicular to the image plane
+    // a box as tall as it is; above a low one the camera sees the floor beyond it and sky, not what stands behind
+    // it (one hit per column)
+    const top = horizon - ((Math.min(wallH, hit.top_cm) - camH) * focal) / Math.max(wall, 0.01),
       bottom = horizon + (camH * focal) / Math.max(wall, 0.01);
     const shade = Math.max(0.35, 1 - wall / 220);
     for (let py = 0; py < H; py++) {
       let r: number, g: number, b: number;
-      if (py + 0.5 >= bottom) {
-        const d = (camH * focal) / (py + 0.5 - horizon) / cosOff;
-        [r, g, b] = COLOR_RGB[world.floorColorAt(ox + dx * d, oy + dy * d)]!;
-      } else if (py + 0.5 > top) {
+      if (py + 0.5 > top && py + 0.5 < bottom) {
         r = 120 * shade;
         g = 122 * shade;
         b = 140 * shade;
+      } else if (py + 0.5 > horizon) {
+        // the floor: in front of what the column hit, or beyond a low box
+        const d = (camH * focal) / (py + 0.5 - horizon) / cosOff;
+        [r, g, b] = COLOR_RGB[world.floorColorAt(ox + dx * d, oy + dy * d)]!;
       } else {
         r = 196;
         g = 222;

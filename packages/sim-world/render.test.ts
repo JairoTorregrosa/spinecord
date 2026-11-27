@@ -125,6 +125,18 @@ describe("first-person render", () => {
     w.advance(-3, 3, 20);
     expect(hashImage(renderFirstPerson(w))).not.toBe(h);
   });
+  test("a low box is as tall as it is: the floor shows beyond it, below the horizon", () => {
+    const wall = quietWorld(EXAMPLES.lineOval, { boxes: [{ id: "b", x: 80, y: 15, w: 5, h: 20 }] });
+    const low = quietWorld(EXAMPLES.lineOval, { boxes: [{ id: "b", x: 80, y: 15, w: 5, h: 20, height_cm: 4 }] });
+    // 29 cm ahead of the camera, 8 cm up: the top of a 4 cm box is 16 px under the horizon, a wall-high box's 24 px over it
+    const grey = (img: ReturnType<typeof renderFirstPerson>, y: number) => {
+      const [r, g, b] = px(img, 80, y);
+      return r! < 125 && Math.abs(r! - g!) < 6 && b! > r!;
+    };
+    expect(grey(renderFirstPerson(wall), 64)).toBe(true);
+    expect(grey(renderFirstPerson(low), 64)).toBe(false);
+    expect(grey(renderFirstPerson(low), 80)).toBe(true);
+  });
   test("a wall right in front fills the view", () => {
     const w = quietWorld();
     w.advance(200, 200, 25);
