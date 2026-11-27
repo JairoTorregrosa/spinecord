@@ -1534,22 +1534,27 @@ export class World {
   coneDistance(p: Pose = this.pose): number {
     const minCos = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
     let best = Infinity;
-    for (const off of this.echoBearings(p)) {
+    const cast = (off: number): void => {
       const h = this.rayHit(p, off);
       if (h.cos >= minCos - 1e-12 && h.d < best) best = h.d;
-    }
+    };
+    const half = (CONE_HALF_DEG * Math.PI) / 180;
+    for (let i = 0; i < ULTRASONIC_RAYS; i++) cast(((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * half);
+    // then between them: only a box nearer than the echo found so far can send a nearer one (a face it hides is
+    // farther still), so the rest need no rays
+    for (const off of this.echoBearings(p, best)) cast(off);
     return Math.min(best, this.cornerEcho(p));
   }
   /**
-   * The bearings (rad, from the heading) the cone is searched along: ULTRASONIC_RAYS evenly across it, and where its
+   * The bearings (rad, from the heading) the cone is searched along besides its ULTRASONIC_RAYS even rays: where its
    * nearest echo can lie between them, so that nothing inside the cone hides between two rays (a thin post far
-   * away): toward the nearest point of each face of each box and wall (where a flat face sends its echo back), and
-   * just to either side of each box corner (where a nearer box stops hiding a face behind it). Those inside the cone.
+   * away): toward the nearest point of each wall and of each face of each box nearer than `within` cm (where a flat
+   * face sends its echo back), and just to either side of each such box's corners (where a nearer box stops hiding
+   * a face behind it). Those inside the cone.
    */
-  private echoBearings(p: Pose): number[] {
+  private echoBearings(p: Pose, within: number): number[] {
     const half = (CONE_HALF_DEG * Math.PI) / 180;
     const out: number[] = [];
-    for (let i = 0; i < ULTRASONIC_RAYS; i++) out.push(((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * half);
     const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
     const toward = (x: number, y: number): void => {
       let off = (Math.atan2(y - oy, x - ox) - p.th) % (2 * Math.PI);
@@ -1575,7 +1580,7 @@ export class World {
       // a box beyond the sensor's range, or wholly to one side of the cone, adds nothing
       const nx = clamp(ox, b.x, b.x + b.w) - ox,
         ny = clamp(oy, b.y, b.y + b.h) - oy;
-      if (Math.hypot(nx, ny) > ULTRASONIC_NO_ECHO_CM) continue;
+      if (Math.hypot(nx, ny) >= Math.min(within, ULTRASONIC_NO_ECHO_CM)) continue;
       if (nx !== 0 || ny !== 0) {
         const bs = [bearing(b.x, b.y), bearing(b.x + b.w, b.y), bearing(b.x, b.y + b.h), bearing(b.x + b.w, b.y + b.h)];
         // a box subtends less than pi from outside it: unwrap its bearings around the first one
