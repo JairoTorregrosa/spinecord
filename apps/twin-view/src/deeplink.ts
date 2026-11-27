@@ -70,7 +70,8 @@ export function applyLink(): void {
 }
 
 let statsEl: HTMLElement | null = null;
-let last = 0;
+let last = 0,
+  frames = 0;
 const deltas: number[] = [];
 /** Once per frame, after every render of it: shows what the frame cost when the link asks for it. */
 export function frameStats(renderer: THREE.WebGLRenderer, now: number): void {
@@ -82,7 +83,8 @@ export function frameStats(renderer: THREE.WebGLRenderer, now: number): void {
       "position:fixed;right:8px;bottom:8px;z-index:99;font:12px monospace;color:#fff;background:#000a;padding:4px 6px";
     document.body.append(statsEl);
   }
-  if (last) deltas.push(now - last);
+  // the first frames compile shaders and upload textures: they say nothing of the steady cost
+  if (last && ++frames > 5) deltas.push(now - last);
   if (deltas.length > 120) deltas.shift();
   last = now;
   const ms = deltas.reduce((a, b) => a + b, 0) / Math.max(1, deltas.length);

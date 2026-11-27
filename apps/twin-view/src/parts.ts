@@ -184,7 +184,7 @@ export function makeKit(group: THREE.Group): Kit {
       return m;
     },
     studs(nx, ny, x, y, z, mat, parent = group) {
-      const geo = cached("stud", () => new THREE.CylinderGeometry(0.24, 0.24, 0.17, 14).translate(0, 0.085, 0));
+      const geo = cached("stud", () => new THREE.CylinderGeometry(0.24, 0.24, 0.17, 12).translate(0, 0.085, 0));
       for (let i = 0; i < nx; i++)
         for (let j = 0; j < ny; j++)
           add(geo, mat, P(x + (i - (nx - 1) / 2) * STUD, y + (j - (ny - 1) / 2) * STUD, z), parent);

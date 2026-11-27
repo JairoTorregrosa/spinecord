@@ -4,10 +4,11 @@
 //
 // Inside the brick's group: x toward the screen end, y to the left, z up, the bottom at z = 0.
 import * as THREE from "three";
+import { DIMS } from "./dims";
 import { COL, P, type Kit } from "./parts";
 import type { RobotState } from "./messages";
 
-export const BRICK = { L: 11.9, W: 7.6, H: 4.8 };
+export const BRICK = { L: DIMS.brick.l, W: DIMS.brick.w, H: DIMS.brick.h };
 const LCD_W = 178,
   LCD_H = 128;
 const LED_RGB = [0x000000, 0x1fe05a, 0xff2a1f, 0xff9a1a];
@@ -179,5 +180,8 @@ function brickTopTexture(): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
+  // drawn with the screen end on the right; the plane lies the other way round, so the print reads as the LCD does
+  t.center.set(0.5, 0.5);
+  t.rotation = Math.PI;
   return t;
 }

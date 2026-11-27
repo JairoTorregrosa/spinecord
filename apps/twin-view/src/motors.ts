@@ -4,6 +4,7 @@
 // the motor's tacho.
 import * as THREE from "three";
 import { attach, type Fit } from "./attachments";
+import { DIMS } from "./dims";
 import { boxOf, orient, P, pointOf, upFor, type Kit } from "./parts";
 
 export interface MotorPart {
@@ -97,13 +98,15 @@ export function mediumMotor(
   g.quaternion.copy(q);
   kit.group.add(g);
   // centred on its box: the body behind, the collar and hub at the front (+x)
-  kit.box(3.9, 2.4, 1.7, -0.75, 0, -0.75, mats.light, 0.4, g);
-  kit.box(3.9, 2.4, 1.5, -0.75, 0, 0.85, mats.white, 0.5, g);
-  kit.box(0.7, 1.3, 1.0, -2.75, 0, 0.2, mats.anthracite, 0.12, g);
-  const collar = kit.axleCyl(1.25, 0.8, 1.6, 0, 0, mats.light, g, 24);
+  const { l, w, h } = DIMS.mediumMotor;
+  const hx = l / 2;
+  kit.box(l - 1.3, w, h * 0.53, -0.65, 0, -h * 0.235, mats.light, 0.4, g);
+  kit.box(l - 1.3, w, h * 0.47, -0.65, 0, h * 0.265, mats.white, 0.5, g);
+  kit.box(0.4, 1.3, 1.0, -hx + 0.1, 0, 0.2, mats.anthracite, 0.12, g);
+  const collar = kit.axleCyl(1.2, 0.8, hx - 0.9, 0, 0, mats.light, g, 24);
   collar.rotation.y = Math.PI / 2; // its axis along the output
   const hubBase = new THREE.Group();
-  hubBase.position.copy(P(2.15, 0, 0));
+  hubBase.position.copy(P(hx - 0.35, 0, 0));
   hubBase.rotation.y = Math.PI / 2;
   g.add(hubBase);
   const spin = hubOn(kit, hubBase, new THREE.Vector3());
@@ -117,8 +120,8 @@ export function mediumMotor(
   }
   return {
     port,
-    box: boxOf(new THREE.Vector3(-2.9, -1.25, -1.65), new THREE.Vector3(2.4, 1.25, 1.65), q, at),
-    socket: { at: pointOf(new THREE.Vector3(-3.1, 0, 0.2), q, at), dir: dir.clone().normalize().negate() },
+    box: boxOf(new THREE.Vector3(-hx, -w / 2, -h / 2), new THREE.Vector3(hx, w / 2, h / 2), q, at),
+    socket: { at: pointOf(new THREE.Vector3(-hx - 0.1, 0, 0.2), q, at), dir: dir.clone().normalize().negate() },
     turn(deg) {
       spin.rotation.z = (-deg * Math.PI) / 180;
       grip?.(deg);

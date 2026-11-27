@@ -77,6 +77,8 @@ export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
   for (const x of [box.min.x + 0.6, box.max.x - 0.6])
     kit.beam(across, x, 0, frameZ - 1.14, mats.dark).rotation.y = Math.PI / 2;
   occ.add(box.clone().expandByPoint(v3(box.min.x, box.min.y, frameZ - 1.5)));
+  // nothing is mounted over the screen and the buttons (in front of them when the brick stands): a person needs them
+  occ.add(boxOf(v3(-3.2, -BRICK.W / 2, BRICK.H), v3(BRICK.L / 2, BRICK.W / 2, BRICK.H + 3), q, origin));
 
   const mount: BrickMount = {
     port(p) {
@@ -88,6 +90,8 @@ export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
     },
     box,
     driveTop: drive.top,
+    // the top of the end away from the screen, where the print is: free to mount on
+    printTop: pointOf(v3(-BRICK.L / 2 + 2.2, 0, BRICK.H), q, origin),
   };
   for (const mo of drive.motors) cableTo(kit, mount, mo.socket.at, mo.socket.dir, mo.port);
 

@@ -8,6 +8,7 @@ import type { Fit } from "./attachments";
 import { placePart, type Mount, type Occupancy } from "./layout";
 import type { Look, MotorPlace, SensorPlace } from "./look";
 import type { RobotMeta, RobotState } from "./messages";
+import { DIMS, type Dim } from "./dims";
 import { largeMotor, largeMotorBox, mediumMotor, type MotorPart } from "./motors";
 import { facingDir, P, pointOf, type Kit } from "./parts";
 
@@ -17,6 +18,8 @@ export interface BrickMount {
   box: THREE.Box3;
   /** Top of the drive (0 without one): where low mounts start. */
   driveTop: number;
+  /** The brick's face at the end away from its screen, robot frame: where parts can sit on the brick. */
+  printTop: THREE.Vector3;
 }
 
 /** A flat cable from `from` (leaving it along `dir`) to port `p`: a short hop when the port is near, else beside
@@ -57,12 +60,16 @@ export interface Devices {
 
 const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 /** Each sensor kind's box around its centre, facing +x. */
+const around = (d: Dim): [THREE.Vector3, THREE.Vector3] => [
+  v3(-d.l / 2, -d.w / 2, -d.h / 2),
+  v3(d.l / 2, d.w / 2, d.h / 2),
+];
 const SIZE: Record<SensorPlace["kind"], [THREE.Vector3, THREE.Vector3]> = {
-  ultrasonic: [v3(-1.3, -2.4, -1.4), v3(1.4, 2.4, 1.4)],
-  ir: [v3(-1.3, -2.4, -1.4), v3(1.4, 2.4, 1.4)],
-  color: [v3(-1.6, -0.95, -1.15), v3(1.65, 0.95, 1.15)],
-  touch: [v3(-1.9, -0.95, -1.2), v3(2.0, 0.95, 1.2)],
-  gyro: [v3(-0.9, -1.2, -1.2), v3(0.95, 1.2, 1.2)],
+  ultrasonic: around(DIMS.ultrasonicSensor),
+  ir: around(DIMS.infraredSensor),
+  color: around(DIMS.colorSensor),
+  touch: around(DIMS.touchSensor),
+  gyro: around(DIMS.gyroSensor),
 };
 
 export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMount, occ: Occupancy): Devices {
@@ -96,7 +103,13 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
   for (const s of [...look.sensors].sort(byGiven)) {
     const dx = body.distance_sensor_x_cm - 1.4;
     const mounts: Record<SensorPlace["kind"], Mount[]> = {
-      color: [0, 2.6, -2.6].map((y) => ({ x: body.color_sensor_x_cm, y, z: 2.25, facing: "down" as const })),
+      // its lens about 6 mm over the floor; side by side they sit a module apart
+      color: [0, 2.8, -2.8].map((y) => ({
+        x: body.color_sensor_x_cm,
+        y,
+        z: 0.6 + DIMS.colorSensor.l / 2,
+        facing: "down" as const,
+      })),
       touch: [
         { x: F - 2, y: 0, z: 3.2, facing: "forward" },
         { x: F - 2, y: 2.8, z: 3.2, facing: "forward" },
@@ -110,7 +123,7 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
       gyro: [
         { x: -Bk + 2, y: HW - 2, z: dt + 1.3, facing: "up" },
         { x: -Bk + 2, y: -(HW - 2), z: dt + 1.3, facing: "up" },
-        { x: bb.min.x + 1.4, y: 0, z: bb.max.z + 1.0, facing: "up" },
+        { x: m.printTop.x, y: m.printTop.y, z: m.printTop.z + 1.0, facing: "up" },
       ],
     };
     mounts.ir = mounts.ultrasonic;
@@ -156,10 +169,10 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
       }
       rayOrigin ??= at(1.4, 0, 0);
     } else if (s.kind === "color") {
-      kit.box(2.6, 1.9, 1.15, -0.25, 0, -0.55, mats.light, 0.35, g);
-      kit.box(2.6, 1.9, 1.15, -0.25, 0, 0.55, mats.white, 0.4, g);
+      kit.box(3.3, 2.3, 1.5, -0.25, 0, -0.75, mats.light, 0.35, g);
+      kit.box(3.3, 2.3, 1.5, -0.25, 0, 0.75, mats.white, 0.4, g);
       const face = new THREE.Group();
-      face.position.copy(P(1.3, 0, 0));
+      face.position.copy(P(1.6, 0, 0));
       face.rotation.y = Math.PI / 2;
       g.add(face);
       kit.axleCyl(0.92, 0.6, 0, 0, 0, mats.black, face, 24);
@@ -195,7 +208,7 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
           kit.cached("spot", () => new THREE.CircleGeometry(Math.max(0.6, body.color_spot_radius_cm * 1.2), 28)),
           spotMat,
         );
-        const lensAt = at(1.65, 0, 0);
+        const lensAt = at(1.9, 0, 0);
         spot.rotation.x = -Math.PI / 2;
         spot.position.copy(P(lensAt.x, lensAt.y, 0.05));
         spot.raycast = () => {};
@@ -260,7 +273,7 @@ function placeMotor(
   if (mp.size === "medium") {
     const mounts: Mount[] = [
       { x: Math.min(F - 2.4, bb.max.x + 2.9), y: 0, z: Math.max(bb.max.z - 1.65, m.driveTop + 1.8), facing: "forward" },
-      { x: cx, y: 0, z: bb.max.z + 1.7, facing: "forward" },
+      { x: m.printTop.x, y: m.printTop.y, z: m.printTop.z + 1.7, facing: "forward" },
       { x: cx, y: bb.max.y + 1.3, z: cz, facing: "forward" },
       { x: cx, y: bb.min.y - 1.3, z: cz, facing: "forward" },
     ];
@@ -269,8 +282,7 @@ function placeMotor(
       mp.attachment === "arm" || mp.attachment === "lift" ? "left" : mp.attachment === "turntable" ? "up" : "forward";
     const pl = placePart(
       mp,
-      v3(-2.9, -1.25, -1.65),
-      v3(2.4, 1.25, 1.65),
+      ...around(DIMS.mediumMotor),
       mounts.map((mo) => ({ ...mo, facing })),
       occ,
     );

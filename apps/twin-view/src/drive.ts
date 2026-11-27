@@ -9,6 +9,7 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { Look } from "./look";
 import type { RobotMeta } from "./messages";
+import { DIMS, wheelFor } from "./dims";
 import { largeMotor, type MotorPart } from "./motors";
 import { P, type Kit } from "./parts";
 
@@ -22,7 +23,7 @@ export interface Drive {
   update(tachos: Record<string, number>): void;
 }
 
-const TRACK_W = 3.84;
+const TRACK_W = DIMS.treadLink.w;
 const LINK_T = 0.32; // the link's plate
 const GROUSER = 0.28; // the bar across its outer face
 
@@ -42,6 +43,8 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
   const treads: { port: string; place: (travel: number) => void }[] = [];
   const boxes: THREE.Box3[] = [];
   const cmPerDeg = (sign * Math.PI * D) / 360;
+  // the radius at which the drive meets the floor: the tracks' pitch line, or the drawn tyre
+  let wheelR = Rp;
   const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
   let hubX: number, hubZ: number, bodyDir: number, motorY: number;
@@ -113,17 +116,21 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
     bodyDir = 1;
     motorY = d.axle_track_cm / 2 - TRACK_W / 2 - 0.9 - 1.2;
   } else {
-    const tyreW = 2.6;
-    const tyre = kit.cached(`tyre ${Rp} ${tyreW}`, () => tyreGeometry(Rp, tyreW));
-    const rim = kit.cached(`rim ${Rp} ${tyreW}`, () => rimGeometry(Rp * 0.62, tyreW - 0.2));
+    // the real wheel nearest the profile's diameter; it turns so its tread keeps pace with the floor
+    const real = wheelFor(D);
+    const tyreR = real.l / 2,
+      tyreW = real.w;
+    wheelR = tyreR;
+    const tyre = kit.cached(`tyre ${real.part}`, () => tyreGeometry(tyreR, tyreW, real.rim / 2));
+    const rim = kit.cached(`rim ${real.part}`, () => rimGeometry(real.rim / 2, tyreW - 0.2));
     for (const dr of sides) {
       const wheel = kit.live(new THREE.Group());
-      wheel.position.copy(P(0, dr.y, Rp));
+      wheel.position.copy(P(0, dr.y, tyreR));
       group.add(wheel);
       kit.add(tyre, mats.rubber, v3(0, 0, 0), wheel);
       kit.add(rim, mats.light, v3(0, 0, 0), wheel);
       spinners.push({ port: dr.port, obj: wheel });
-      boxes.push(new THREE.Box3(v3(-Rp, dr.y - tyreW / 2 - 0.3, 0), v3(Rp, dr.y + tyreW / 2 + 0.3, D)));
+      boxes.push(new THREE.Box3(v3(-tyreR, dr.y - tyreW / 2 - 0.3, 0), v3(tyreR, dr.y + tyreW / 2 + 0.3, 2 * tyreR)));
     }
     if (look.caster) {
       // the ball caster at the back: a steel ball in a dark grey cage, on a beam up to the frame
@@ -139,7 +146,7 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
       boxes.push(new THREE.Box3(v3(bx - 1.5, -1.5, 0), v3(bx + 5, 1.5, 4.4)));
     }
     hubX = 0;
-    hubZ = Rp;
+    hubZ = tyreR;
     bodyDir = -1;
     motorY = d.axle_track_cm / 2 - tyreW / 2 - 0.5 - 1.2;
   }
@@ -157,7 +164,7 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
     ),
   );
   for (const m of motors) boxes.push(m.box);
-  const top = Math.max(look.drive === "tracks" ? hubZ + Rp + 0.5 : D + 0.2, ...motors.map((m) => m.box.max.z));
+  const top = Math.max(look.drive === "tracks" ? hubZ + Rp + 0.5 : 2 * hubZ + 0.2, ...motors.map((m) => m.box.max.z));
 
   return {
     top,
@@ -165,7 +172,7 @@ export function buildDrive(kit: Kit, meta: RobotMeta, look: Look): Drive {
     boxes,
     update(tachos) {
       for (const t of treads) t.place((tachos[t.port] ?? 0) * cmPerDeg);
-      for (const sp of spinners) sp.obj.rotation.z = -((tachos[sp.port] ?? 0) * cmPerDeg) / Rp;
+      for (const sp of spinners) sp.obj.rotation.z = -((tachos[sp.port] ?? 0) * cmPerDeg) / wheelR;
       for (const m of motors) m.turn((tachos[m.port] ?? 0) * sign);
     },
   };
@@ -240,11 +247,10 @@ function sprocketGeometry(Rp: number): THREE.BufferGeometry {
   return g;
 }
 
-/** A 56 mm tyre: a lathe of its section, with grooves round it. Axis across the robot (three Z). */
-function tyreGeometry(R: number, w: number): THREE.BufferGeometry {
+/** A tyre: a lathe of its section, with grooves round it, on a rim of radius `ri`. Axis across the robot. */
+function tyreGeometry(R: number, w: number, ri: number): THREE.BufferGeometry {
   const pts: THREE.Vector2[] = [];
-  const ri = R * 0.62,
-    hw = w / 2;
+  const hw = w / 2;
   pts.push(new THREE.Vector2(ri, -hw));
   pts.push(new THREE.Vector2(R - 0.35, -hw));
   for (let i = 0; i <= 6; i++) {

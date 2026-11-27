@@ -27,6 +27,8 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+// the sun's shadow does not depend on the camera: drawn once a frame and shared by the robot's camera
+renderer.shadowMap.autoUpdate = false;
 // Neutral keeps LEGO's saturated colours and white plastic white, where ACES turns them grey and yellow
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.0;
@@ -721,6 +723,7 @@ function frame(now: number): void {
     h = canvas.clientHeight;
   renderer.setScissorTest(false);
   renderer.setViewport(0, 0, w, h);
+  renderer.shadowMap.needsUpdate = true;
   renderer.render(scene, camera);
   const pip = $("pip");
   if (!pip.hidden && model && s) {
@@ -733,7 +736,11 @@ function frame(now: number): void {
     renderer.setScissorTest(true);
     renderer.setScissor(x, y, r.width, r.height);
     renderer.setViewport(x, y, r.width, r.height);
+    // the phone's camera does not see the robot it stands on, and skipping the body halves this pass's cost
+    const shown = model.group.visible;
+    model.group.visible = false;
     renderer.render(scene, eyeCam);
+    model.group.visible = shown;
     renderer.setScissorTest(false);
   }
   frameStats(renderer, now);
