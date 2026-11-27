@@ -136,6 +136,8 @@ export const ULTRASONIC_MAX_CM = 250;
 export const CONE_HALF_DEG = 12;
 /** Infrared proximity is a percentage, not cm: here 100 % is about 70 cm, linear. */
 export const IR_FULL_SCALE_CM = 70;
+/** Halvings of a blocked step: the body comes to rest within 2^-12 of a step's travel from the obstacle. */
+const CONTACT_BISECTIONS = 12;
 /** The trip meter follows a line only while the axle centre is within this distance of it. */
 export const LINE_TRACK_CM = 12;
 
@@ -349,6 +351,8 @@ export class World {
   t_ms = 0;
   /** True if the last physics step was blocked by a wall or obstacle. */
   last_stalled = false;
+  /** Fraction (0..1) of its wheel travel the last physics step did: below 1 when the body came to rest against something. */
+  last_step_fraction = 1;
   /** Real turning rate during the last physics step (deg/s, counter-clockwise-positive). */
   rate_deg_s = 0;
   /** Trip meter since the last teleport: path length of the axle centre (turning on the spot adds nothing). */
@@ -576,6 +580,8 @@ export class World {
     for (let i = 0; i < n; i++) {
       res.ms += dt;
       if (this.stepWheels(dl, dr, dt)) {
+        res.left_cm += dl * this.last_step_fraction;
+        res.right_cm += dr * this.last_step_fraction;
         res.stalled = true;
         break;
       }
@@ -587,10 +593,12 @@ export class World {
 
   /**
    * One physics step: the wheels want to roll `dl_cm` / `dr_cm` during `dt_ms`.
-   * Returns true if the footprint would hit something: then the wheels are blocked and the robot does not move.
+   * Returns true if the footprint would hit something: then the body rolls only up to contact (the fraction of the
+   * travel it did is `last_step_fraction`) and the wheels are blocked there.
    */
   stepWheels(dl_cm: number, dr_cm: number, dt_ms: number): boolean {
     this.t_ms += dt_ms;
+    this.last_step_fraction = 1;
     if (dl_cm === 0 && dr_cm === 0) {
       this.rate_deg_s = 0;
       this.last_stalled = false;
@@ -603,22 +611,39 @@ export class World {
     const nz = this.cfg.noise;
     const tl = dl_cm * this.gainL * (1 + nz.motor * this.motionRng.gauss()) * (1 - nz.slip * 2 * this.motionRng.next());
     const tr = dr_cm * this.gainR * (1 + nz.motor * this.motionRng.gauss()) * (1 - nz.slip * 2 * this.motionRng.next());
-    const d = (tl + tr) / 2,
-      dth = (tr - tl) / this.drive.axle_track_cm;
-    const mid = this.pose.th + dth / 2;
-    const np: Pose = { x: this.pose.x + d * Math.cos(mid), y: this.pose.y + d * Math.sin(mid), th: this.pose.th + dth };
-    if (this.collides(np)) {
-      this.rate_deg_s = 0;
-      this.last_stalled = true;
-      return true;
+    const full = (tl + tr) / 2,
+      fullTh = (tr - tl) / this.drive.axle_track_cm;
+    const at = (f: number): Pose => {
+      const d = full * f,
+        dth = fullTh * f,
+        mid = this.pose.th + dth / 2;
+      return { x: this.pose.x + d * Math.cos(mid), y: this.pose.y + d * Math.sin(mid), th: this.pose.th + dth };
+    };
+    let f = 1,
+      np = at(1);
+    const blocked = this.collides(np);
+    if (blocked) {
+      // Bisect to the last free fraction: the body stops against the obstacle, not up to a step short of it.
+      let lo = 0,
+        hi = 1;
+      for (let i = 0; i < CONTACT_BISECTIONS; i++) {
+        const m = (lo + hi) / 2;
+        if (this.collides(at(m))) hi = m;
+        else lo = m;
+      }
+      f = lo;
+      np = at(lo);
     }
+    const d = full * f,
+      dth = fullTh * f;
+    this.last_step_fraction = f;
     this.pose = np;
-    this.last_stalled = false;
+    this.last_stalled = blocked;
     this.rate_deg_s = dt_ms > 0 ? ((dth * 180) / Math.PI / dt_ms) * 1000 : 0;
     // A spin in place only wobbles the axle centre (wheel noise): that is not travel.
-    if (Math.abs(d) > (0.1 * (Math.abs(tl) + Math.abs(tr))) / 2) this.odometer_cm += Math.abs(d);
+    if (Math.abs(d) > (0.1 * f * (Math.abs(tl) + Math.abs(tr))) / 2) this.odometer_cm += Math.abs(d);
     if (this.segs.length > 0) this.followLine();
-    return false;
+    return blocked;
   }
 
   private followLine(): void {

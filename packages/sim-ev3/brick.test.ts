@@ -209,9 +209,10 @@ describe("motors drive the world", () => {
     const { call, run, brick, world } = rig();
     await call(E.outputStepSync(BC, 50, 0, Math.round(150 * DEG_PER_CM), true));
     run(6000);
-    expect(world.pose.x).toBeGreaterThan(110);
+    expect(world.pose.x).toBeGreaterThan(111.99); // the front at the wall (x 120)
     expect(world.pose.x).toBeLessThanOrEqual(112);
     const tacho = brick.tacho("B");
+    expect(Math.abs(tacho / DEG_PER_CM - (world.pose.x - 43))).toBeLessThan(0.05); // up to the wall, not short of it
     run(2000);
     expect(brick.tacho("B")).toBe(tacho);
     expect(tacho).toBeLessThan(150 * DEG_PER_CM - 100);

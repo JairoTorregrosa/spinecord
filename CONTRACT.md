@@ -181,6 +181,8 @@ A device that a loop drives is claimed for the life of the loop: `command` on it
 
 Twin: `<profile.id>-sim` is a runtime whose EV3 provider talks to a **simulated brick** (byte-level EV3 direct-command emulator backed by 2D physics), so the twin runs exactly the real EV3 code path. Its motors and sensors are the ones its world file declares. It adds three devices that no hardware robot has: `sim.world`, `sim.camera` and `sim.speaker` (the only speaker of a twin with `speak`).
 
+The twin's physics keep the surprises of the real robot, so that what works on the twin works on the floor. A body that drives into a wall or an obstacle stops in contact with it, and its drive wheels stop there: their encoders count up to that point and no further, and the move ends `stalled`.
+
 ## 5. Programs
 
 JSON tree (`ProgramNode` in types.ts), no code. Caps: 500 nodes, `repeat.times ≤ 50`, `while.max_iterations ≤ 200`, `wait_ms ≤ 10000`, total ≤ `limits.max_program_ms`. `run_program` takes the program inline (`body`, optional `success` condition checked at the end). The runtime validates it (`validate.ts`), executes it node by node and returns per-step results: `steps: [{path, tool, ok, reason | error, measured?, clamped?, note?, ms}]`, one per call the program made (and per `wait_ms`). A step carries the `reason` and the `measured` of the same call made outside a program, and `clamped: true` when that call cut an argument, so the result says what each step did without a read after it. A step that failed has `error: {code, message}` and, when the error ended a move, the `measured` of that move.

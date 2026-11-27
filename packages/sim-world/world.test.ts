@@ -97,6 +97,17 @@ describe("physics", () => {
     expect(r.left_cm).toBeLessThan(70);
     expect(w.senseTouch()).toBe(1);
   });
+  test("a drive into a wall ends in contact with it, and the wheel travel reported is the travel done", () => {
+    const w = quietWorld(); // front of the body at x 51, the wall at 120
+    const r = w.advance(200, 200, 25);
+    expect(120 - (w.pose.x + w.cfg.body.front_cm)).toBeLessThan(0.01);
+    expect(r.left_cm).toBeCloseTo(w.pose.x - 43, 2);
+    // at a slant the corner comes to rest on the wall
+    const v = quietWorld();
+    v.setPose({ x: 90, y: 40, th: Math.PI / 6 });
+    expect(v.advance(50, 50, 25).stalled).toBe(true);
+    expect(Math.max(...v.corners().map(([x]) => x))).toBeGreaterThan(119.99);
+  });
   test("an obstacle blocks too", () => {
     const w = quietWorld();
     w.setPose({ x: 30, y: 45, th: 0 });

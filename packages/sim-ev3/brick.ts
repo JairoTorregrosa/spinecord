@@ -433,13 +433,15 @@ export class SimBrick implements Transport, WorldHost {
       : (this.world.wait(h), false);
     this.motors.forEach((m, i) => {
       const wheel = i === li || i === ri;
+      // A drive wheel held by a wall counts up to where the body came to rest, then stays.
+      const reach = wheel && blocked ? this.world.last_step_fraction : 1;
       if (m.speedPct === 0) {
+        m.pos += want[i]! * reach;
         if (wheel && blocked) m.coastLeft = 0;
-        else m.pos += want[i]!;
         return;
       }
       m.blocked = wheel && blocked;
-      if (!m.blocked) m.pos += want[i]!;
+      m.pos += want[i]! * reach;
       // A step ends when the tacho gets there (never, if blocked); a time bound ends on time even against a wall.
       if ((m.target !== null && Math.abs(m.pos - m.target) < 1e-9) || (m.until !== null && at + h >= m.until - 1e-9))
         this.halt(m, m.holdBrake);
