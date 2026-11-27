@@ -29,7 +29,8 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-// the sun's shadow does not depend on the camera: drawn once a frame and shared by the robot's camera
+// the sun's shadow does not depend on the camera: drawn when something casting it moved (shadowFrame) and shared
+// by the robot's camera
 renderer.shadowMap.autoUpdate = false;
 // Neutral keeps LEGO's saturated colours and white plastic white, where ACES turns them grey and yellow
 renderer.toneMapping = THREE.NeutralToneMapping;
@@ -53,6 +54,27 @@ sun.shadow.blurSamples = 12;
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
+// The world matrices are brought up to date once a frame, before the shadow's check and the renders.
+scene.matrixWorldAutoUpdate = false;
+let shadowSig = NaN,
+  shadowAt = -Infinity;
+/** Draws the sun's shadow again when something casting it, or the sun, moved since it was last drawn: never while
+ *  all stands still, and at most every 30 ms while things move (the shadow pass costs as much as the scene's). */
+function shadowFrame(now: number): void {
+  let sig = sun.position.x + 3 * sun.position.y + 7 * sun.position.z + 11 * sun.shadow.camera.right,
+    n = 0;
+  scene.traverseVisible((o) => {
+    if (!o.castShadow) return;
+    n++;
+    const e = o.matrixWorld.elements;
+    for (let i = 0; i < 16; i++) sig += e[i]! * (i + 1 + (n % 13));
+  });
+  sig += n * 1e6;
+  if (sig === shadowSig || now - shadowAt < 30) return;
+  renderer.shadowMap.needsUpdate = true;
+  shadowSig = sig;
+  shadowAt = now;
+}
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.5, 8000);
 camera.layers.enable(HELPERS);
@@ -666,7 +688,8 @@ function frame(now: number): void {
     h = canvas.clientHeight;
   renderer.setScissorTest(false);
   renderer.setViewport(0, 0, w, h);
-  renderer.shadowMap.needsUpdate = true;
+  scene.updateMatrixWorld();
+  shadowFrame(now);
   renderer.render(scene, camera);
   const pip = $("pip");
   if (!pip.hidden && model && s) {

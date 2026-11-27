@@ -1,7 +1,8 @@
 // The real meshes of the EV3's parts, converted from the LDraw parts library by scripts/ldraw-meshes.ts and served
-// next to the page (meshes/<part>.bin.gz). A robot is drawn at once from its procedural parts; after its first
-// frame each registered part (parts.ts `real`) fetches its mesh, and when it arrives the mesh takes the place of
-// the part's procedural shapes. The parts that move or change stay alive on it: a motor's hub turns, the touch
+// next to the page (meshes/<part>.bin.gz). A robot is drawn at once from its procedural parts; meanwhile each
+// registered part (parts.ts `real`) fetches its mesh, and when it arrives the mesh takes the place of the part's
+// procedural shapes. When every mesh of a robot is in place the page sets the performance mark "twin:meshes", so
+// a test or a person in the console can time the first complete frame. The parts that move or change stay alive on it: a motor's hub turns, the touch
 // sensor's button travels, the brick's buttons and its LED light up, its screen is drawn from the state.
 //
 // A mesh that cannot load leaves the part as it was drawn and says why in the console: the page goes on.
@@ -95,7 +96,9 @@ export function loadReal(kit: Kit, alive: () => boolean): Promise<void> {
         at.add(mesh);
       }
     });
-  return Promise.all(jobs).then(() => undefined);
+  return Promise.all(jobs).then(() => {
+    if (alive()) performance.mark("twin:meshes");
+  });
 }
 
 /** Takes away a holder's procedural shapes: every child that is not live (live ones move or change, and stay). */
