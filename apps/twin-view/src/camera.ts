@@ -80,6 +80,8 @@ export class Cameras {
   /** Called after a framing snaps, with the target and the robot's heading (a deep link's angle). */
   onSnap: ((target: THREE.Vector3, heading: number) => void) | null = null;
   private offsetKey = "";
+  /** The robot's centre when the camera last followed it: following moves the view by the robot's movement only. */
+  private lastCentre: THREE.Vector3 | null = null;
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -189,6 +191,7 @@ export class Cameras {
         this.tween = null;
         c.target.copy(centre);
         this.camera.position.copy(centre).add(off);
+        this.lastCentre = centre.clone();
         if (this.pending === "snap") this.onSnap?.(c.target, robot!.th);
       }
       this.pending = null;
@@ -198,12 +201,18 @@ export class Cameras {
         e = k * k * (3 - 2 * k); // smoothstep
       c.target.lerpVectors(this.tween.target0, centre, e);
       this.camera.position.copy(c.target).add(this.tween.off0.clone().lerp(this.tween.off1, e));
-      if (k >= 1) this.tween = null;
+      if (k >= 1) {
+        this.tween = null;
+        this.lastCentre = centre.clone();
+      }
     } else if (this.mode === "follow" && centre && !this.busy) {
-      // anchored to the robot: the person's orbit and zoom are kept, the robot carries them
-      const delta = centre.clone().sub(c.target);
-      c.target.add(delta);
-      this.camera.position.add(delta);
+      // carried by the robot: its movement moves the view, so the person's orbit, zoom and pan are kept
+      if (this.lastCentre) {
+        const delta = centre.clone().sub(this.lastCentre);
+        c.target.add(delta);
+        this.camera.position.add(delta);
+      }
+      this.lastCentre = centre.clone();
     }
     c.update();
   }

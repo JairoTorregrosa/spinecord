@@ -465,8 +465,8 @@ cams.onSnap = (target, heading) => placeCamera(camera, target, heading);
 function freeArea(): { left: number; top: number; right: number; bottom: number } {
   const r = (id: string) => $(id).getBoundingClientRect();
   const c = canvas.getBoundingClientRect();
-  const hint = $("hint");
-  const top = Math.max(r("bar").bottom, hint.hidden ? 0 : hint.getBoundingClientRect().bottom) + 8;
+  // the hint floats over the scene and fades: it is not a panel, or the scene would jump when it goes
+  const top = r("bar").bottom + 8;
   const left = $("tools").classList.contains("folded") ? 12 : r("tools").right + 8;
   const right = $("brick").classList.contains("folded") ? c.width - 12 : r("brick").left - 8;
   const below = document.getElementById("chat") ?? $("callpanel"); // --chat: the chat takes the calls' place

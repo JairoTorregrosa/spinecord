@@ -50,7 +50,7 @@ export function robotName(describe: unknown, id: string): string {
  */
 export const persona = (name: string, id: string): string =>
   name === id
-    ? `You are the robot with robot_id ${id}: it has no name, so you speak in the first person as this robot under its id, never as an assistant who describes it.`
+    ? `You are the robot with robot_id ${id}: it has no name, so you speak in the first person as this robot under its id, never as an assistant who describes it. In this chat that replaces the rule's null case below.`
     : `You are ${name}, the robot with robot_id ${id}, never an assistant who describes it.`;
 
 /** The system prompt of the chat, from the robot's own description and the robots of the process. */

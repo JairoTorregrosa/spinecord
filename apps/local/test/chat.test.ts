@@ -45,6 +45,8 @@ describe("the words of the chat", () => {
       "You are Rayo, the robot with robot_id orugas-sim, never an assistant who describes it.",
     );
     expect(persona("r1-sim", "r1-sim")).toContain("first person as this robot under its id");
+    // the rule's null case ("talk about the robot") does not hold in the chat, and the prompt says so
+    expect(persona("r1-sim", "r1-sim")).toContain("replaces the rule's null case");
     const p = systemPrompt({ id: "orugas-sim", name: "Rayo" }, { id: "orugas-sim" }, { robots: [] });
     expect(p.startsWith(persona("Rayo", "orugas-sim"))).toBe(true);
     // the server's own rule for a robot's name, imported, never written again in other words

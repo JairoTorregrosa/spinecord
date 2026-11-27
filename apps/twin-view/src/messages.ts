@@ -12,7 +12,7 @@ export interface Box {
 /** A box on the floor as the world holds it (sim-world's Obstacle): a page names it by `id`, never by its place. */
 export interface Obstacle extends Box {
   id: string;
-  /** How tall it stands (cm); absent: taller than any sensor looks over. */
+  /** Its height (cm); absent: higher than any sensor looks over. */
   height_cm?: number;
   /** Its mass (g): the robot can push it. Absent: fixed in place. */
   mass_g?: number;

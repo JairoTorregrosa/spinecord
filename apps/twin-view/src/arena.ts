@@ -304,7 +304,7 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
     for (const t of temp.splice(0)) t.dispose();
     meshes.length = 0;
     for (const b of boxes) {
-      // a box with a height stands as tall as it is; one without is taller than any sensor looks over
+      // a box with a height is drawn at that height; one without rises above what any sensor looks over
       const bh = b.height_cm ?? boxH;
       const geo = new THREE.BoxGeometry(b.w, bh, b.h);
       // faces in order +x, -x, +y, -y, +z, -z, four vertices each: the top (+y) takes the atlas's right half
