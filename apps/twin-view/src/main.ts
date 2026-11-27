@@ -10,6 +10,7 @@ import { Cameras, CAMS, type Cam } from "./camera";
 import { ChatPanel } from "./chat";
 import { Hand, MODES, heading, type Mode } from "./hand";
 import * as hud from "./hud";
+import { draftLines } from "./draft";
 import { SensorRayView } from "./rays";
 import { Link, type LinkState } from "./link";
 import { lookOf } from "./look";
@@ -240,7 +241,21 @@ function receive(m: ServerMessage): void {
 
 // ---------------------------------------------------------------- focus: build the world and the robot
 /** The robot's name is the page's title, its id beside it; without a name, the page's own title. */
+/** The "borrador" chip, only for a twin whose build someone has yet to confirm. */
+function showDraft(r: RobotMeta | null): void {
+  const lines = r ? draftLines(r) : [];
+  $("chip-draft").hidden = lines.length === 0;
+  $("draft-items").replaceChildren(
+    ...lines.map((l) => {
+      const li = document.createElement("li");
+      li.textContent = l;
+      return li;
+    }),
+  );
+}
+
 function showTitle(r: RobotMeta | null): void {
+  showDraft(r);
   const title = $("title");
   if (!r?.name) {
     title.innerHTML = "EV3 <b>gemelo 3D</b>";

@@ -22,6 +22,19 @@
           >Atascado</span
         >
         <span id="chip-call" class="chip busy mono" title="Llamada MCP en curso" hidden></span>
+        <button
+          id="chip-draft"
+          class="chip warn"
+          popovertarget="draft-list"
+          title="Partes de este robot que nadie confirmó"
+          hidden
+        >
+          borrador
+        </button>
+      </div>
+      <div id="draft-list" class="panel draft" popover>
+        <b>Sin confirmar</b>
+        <ul id="draft-items"></ul>
       </div>
       <div class="readout mono">
         <span
