@@ -32,6 +32,10 @@ const FORBIDDEN: Record<string, string[]> = {
   "packages/runtime": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "page-hub"].map((p) => `packages/${p}`),
   // the page hub talks to pages and to the runtime only through protocol's types and the Provider interface
   "packages/page-hub": ["driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
+  // the LEGO parts map is data and a loader: it stands on nothing else
+  "packages/lego-parts": ["protocol", "driver-ev3", "driver-ev3dev", "sim-world", "sim-ev3", "runtime", "page-hub"].map(
+    (p) => `packages/${p}`,
+  ),
   // the bridge page speaks EV3 bytes and nothing else; apps/local builds and serves it, not the other way round
   "apps/robot-page": [
     ...["protocol", "driver-ev3dev", "sim-world", "sim-ev3", "runtime"].map((p) => `packages/${p}`),
