@@ -1,6 +1,6 @@
 ---
 name: setup-spinecord
-description: Set up spinecord from zero on macOS, Windows or Linux for a person who is not a developer and who received Claude API credits in a Console organization. Installs git, bun, the ant CLI and Claude Code, logs in with `ant auth login` so that the credits pay (no API key), clones spinecord, registers it in the folder mi-robot, and ends with Claude driving the robot - the simulated twin in a 3D view in the browser, or a LEGO EV3 over USB. Resumes from any state. Also does the later asks - a new name for the robot, adding an EV3, repairing spinecord when it stops working. Use it when a person asks to set up spinecord, to install the robot tools, to prepare a computer for a robot workshop or an EV3, or says "call the robot Rayo", "ponle Rayo a mi robot", "cámbiale el nombre al robot", "I have an EV3 now", "ya tengo el EV3", "conecté el EV3", "spinecord does not work", "spinecord no funciona", "arregla spinecord".
+description: Set up spinecord from zero on macOS, Windows or Linux for a person who is not a developer and who received Claude API credits in a Console organization. Installs git, bun, the ant CLI and Claude Code, logs in with `ant auth login` so that the credits pay (no API key), clones spinecord, registers it in the folder mi-robot, and ends with Claude driving the robot - the simulated twin in a 3D view in the browser, or a LEGO EV3 over USB. Resumes from any state. Also does the later asks - a new name for the robot, adding an EV3, repairing spinecord when it stops working. Use it when a person asks to set up spinecord, to install the robot tools, to prepare a computer for a robot workshop or an EV3, or says "call the robot Rayo", "llama al robot Rayo", "ponle Rayo a mi robot", "cámbiale el nombre al robot", "I have an EV3 now", "ya tengo un EV3", "ya tengo el EV3", "conecté el EV3", "spinecord does not work", "spinecord no funciona", "arregla spinecord".
 ---
 
 # Set up spinecord
@@ -125,12 +125,12 @@ Skip this state if the person has no EV3. The person keeps the Claude Code of st
 
 1. Say:
    - "Turn on the EV3. Connect it to this computer with the USB cable."
-   - "In Chrome or Edge, open http://127.0.0.1:8767/. Click Connect EV3. In the window, click the EV3, then Connect. Keep that tab open."
+   - "In Chrome or Edge, open http://127.0.0.1:8767/. Click Connect EV3 (the page is in English). In the window, click the EV3, then Connect. Keep that tab open."
    - "Put the robot on the floor with free space in front of it. In Claude Code, type: list the robots, then drive the EV3 forward 5 cm."
 2. Ask: "Does the answer say the EV3 is online? Did the robot move forward or backward?"
 3. Not online: use the row "EV3 not `online`" of fixes.md.
 4. Forward: run `setup confirm forward`.
-5. Backward: say "Type /exit in Claude Code." Then run `setup flip`. Then ask for the launch line again, and do steps 1 and 2 again.
+5. Backward: say "Type /exit in Claude Code." Then run `setup flip`. Then say: "Paste the launch line again and press Enter." Do steps 1 and 2 again.
 
 ### 9 REPORT
 
@@ -143,6 +143,6 @@ The person asks for one of these after the setup, often in the robot's Claude Co
 
 | The person says | Do | Done when | Restart |
 |---|---|---|---|
-| A new name: "Call the robot Rayo", "ponle Rayo a mi robot" | `setup name "<name>"`, or `setup name none` for no name. A `fail` line: do the action after `->` | `setup name` ends `ok` | Yes. The next start shows the name |
-| "I have an EV3 now", "ya tengo el EV3" | `setup workshop --ev3 yes`. After the restart, run `setup status` and do state 8 EV3 | `setup status` shows `EV3` `ok` | Yes, before state 8 |
+| A new name: "Call the robot Rayo", "llama al robot Rayo", "ponle Rayo a mi robot" | `setup name "<name>"`, or `setup name none` for no name. A `fail` line: do the action after `->` | `setup name` ends `ok` | Yes. The next start shows the name |
+| "I have an EV3 now", "ya tengo un EV3" | `setup workshop --ev3 yes`. After the restart, run `setup status` and do state 8 EV3 | `setup status` shows `EV3` `ok` | Yes, before state 8 |
 | "spinecord does not work. Run its doctor and fix it", "spinecord no funciona" | `setup workshop` runs the doctor. Fix each `fail` line with fixes.md, except the expected `port` lines. Then do the state that `setup status` names after `next` | After the restart: `setup workshop: ok`, and `setup status` ends `next REPORT` | Yes, after the fixes |

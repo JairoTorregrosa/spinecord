@@ -68,7 +68,7 @@ Every length is in cm from the centre of the drive axle, on the floor: `x` ahead
 | Field | Allowed values | Default | What it is |
 |---|---|---|---|
 | `description` | text | none | for people only |
-| `name` | 1-22 letters (accents too), digits, spaces, `'`, `.`, `-` | none: no name | what the person calls the robot: Claude speaks as it, the 3D page shows it as its title, the brick shows it on its screen. Only the person chooses it. To change it later, edit it here and restart Claude Code |
+| `name` | 1-22 letters (accents too), digits, spaces, `'`, `.`, `-` | none: no name | what the person calls the robot: Claude speaks as it, the 3D page shows it as its title, the brick shows it on its screen. Only the person chooses it. The registration's `--name` wins over it: to change it later, `bun <clone>/scripts/setup.ts name "<name>"` (skill `setup-spinecord`), then restart Claude Code |
 | `pair.left`, `pair.right` | two different ports of `A`-`D` | no `pair`: no drive | the drive motors, left and right seen from behind |
 | `hardware.low_battery_v`, `max_tone_ms`, `tone_volume_pct` | number > 0 | required | 6.5, 5000, 50 fit the EV3 |
 | `hardware.speech_volume_pct` | 1 to 100 | required on ev3dev | |
@@ -100,10 +100,10 @@ For each row the robot hits: write the note, tell the person the line in their l
 | A bumper bar | `twin.view.bumper` | none |
 | A shell, decoration or a tall body (a humanoid, an animal) | `twin.view.shell` `"panels"` or `"beams"`; a note | "The 3D twin draws <side panels / a frame of beams>, not the <shell>'s shape." |
 | A brick leaning, neither flat nor upright | the closer `view.brick.pose`; a note | "The 3D twin shows the brick <flat / upright>." |
-| No drive | as "A robot with no drive" | "The 3D twin stands on a frame of beams; it does not drive." |
+| No drive | as "A robot with no drive" | The stop: "This looks like the <model>: <what you see>, no wheels. The twin shows it standing on a frame of beams and turning its motors; it cannot drive. Is it the <model>?" (es: "Parece el <modelo>: <lo que ves>, sin ruedas. El gemelo lo muestra de pie sobre un marco de vigas, girando sus motores; no puede andar. ¿Es el <modelo>?") |
 | Four or six wheels, two sides driven (or chained) | `differential`; `view.wheels_per_side` 2 or 3; the footprint covers every wheel; a note | "The twin drives as two sides; it draws <n> wheels a side turning together, without the gears or chain." |
 | Front and rear axles driven by separate motors (the Stair Climber) | no `pair`, no drivetrain, `view.drive` `"none"`; each motor a role (`front_wheels`, `rear_wheels`, `lift`); a note | "The twin cannot drive or climb: it stands on a frame of beams and turns each motor on its own." |
-| A caster, ball or skid | `back_cm` (or `front_cm`) reaches it | none |
+| A caster, ball or skid; a frame or beam whose end rests on the floor | `back_cm` (or `front_cm`) reaches it; the resting frame is `view.caster` `"skid"`. The support at the end the brick rule calls the front: the front is the other end, `front` token kept | none |
 | Steering (one motor steers, one drives), legs, a walker | no `pair` and no drivetrain; the motors as roles; a note | "The twin cannot steer or walk: its motors turn, the body stays put." |
 | Two wheels and no caster: it balances | `differential`; `view.caster` `"none"`; a note "balances on two wheels; do not drive it without its balance program" | "The twin does not fall over; the real robot does without its balance program." |
 | A motor turned by hand as a dial | role `dial`; a note | "In the twin nobody turns the dial; it reads what the program turns." |

@@ -54,7 +54,7 @@ Claude asks only what the photo does not show: which port, which side, which whe
 |---|---|
 | Say "stop" | Every motor brakes. This is the way to stop |
 | Close Claude Code | The motors stop |
-| Pull the USB cable | The EV3 stops by itself in a quarter of a second |
+| Pull the USB cable | The EV3 stops by itself |
 
 Keep a hand near a real robot the first time.
 

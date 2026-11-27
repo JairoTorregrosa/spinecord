@@ -1,6 +1,6 @@
 # Contract v3 (2026-11-22): spinecord MCP
 
-Audience: the model (Claude Fable 5.2) and the people who extend the robot. English only on the MCP surface.
+Audience: the model (Claude) and the people who extend the robot. English only on the MCP surface.
 
 Sources of truth, in this order: this file → `packages/protocol/types.ts` (types, FSM transition tables) → `packages/protocol/tools.ts` (tool names, descriptions, input and output schemas, server instructions, served verbatim).
 
@@ -386,7 +386,7 @@ With pages enabled, every other robot gets a page hub as its last provider too.
 | what | field | tools |
 |---|---|---|
 | channel values | `readings: [{device, channel, value, unit?, ts, error?, absent?}]`, one per channel; an image channel's reading is `{device, channel, value: null, image: true, mime, age_ms, ts}` | `read_device` `read_all` `wait_until` |
-| the robots | `robots: [{id, backend, link, activity, fault_reason, connect, join}]` | `list_robots` |
+| the robots | `robots: [{id, name, backend, link, activity, fault_reason, connect, join}]` | `list_robots` |
 | a command's result | `{requested, applied, measured, clamped, clamps?, reason, note?, ms}`; `clamps: [{arg, requested, applied, target}]` when the runtime cut an argument (§0.2); `note` when a drivetrain target is under the smallest move and nothing was sent (§4) | `drive` `turn` `arc` `command_device` |
 | the readings that met `until` | `readings`, the shape above, present when `reason` is `condition_met`: a read made after the stop differs from them by the sensor's noise | `drive` `turn` `arc` `command_device` |
 | what a drivetrain move measured | `measured: {distance_cm, heading_change_deg, source, left_deg, right_deg, heading_error?}`; `source` is `gyro` (the drivetrain's `heading` channel, §3) or `encoders`; `heading_error` says why a declared heading did not measure the move (§3) | `drive` `turn` `arc` |
