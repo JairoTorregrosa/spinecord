@@ -119,6 +119,7 @@ describe("what the model is told", () => {
     expect(ROBOT_NAME_RULE).toMatch(/robot_id/);
     expect(ROBOT_NAME_RULE).toMatch(/say so plainly/);
     expect(SERVER_INSTRUCTIONS).toContain(ROBOT_NAME_RULE);
+    expect(SERVER_INSTRUCTIONS).toMatch(/one or two short sentences of plain words/);
     for (const name of ["list_robots", "describe_robot"]) {
       const t = TOOLS.find((x) => x.name === name)!;
       expect(t.description).toContain(ROBOT_NAME_RULE);
