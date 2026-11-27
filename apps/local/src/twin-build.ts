@@ -9,12 +9,32 @@ import { parseWorld, type BodyShape } from "../../../packages/sim-world/world";
 
 /** The top-level keys of a robot file; anything else is a typo that would otherwise go unnoticed. */
 const FILE_KEYS = ["description", "hardware", "profile", "pair", "twin"];
-const TWIN_KEYS = ["body", "ev3", "view"];
+const TWIN_KEYS = ["body", "ev3", "view", "unconfirmed"];
+
+/** What of a build nobody confirmed (CONTRACT §3, `twin.unconfirmed`). The ones that change how the robot moves first. */
+export const MOVES = [
+  "A",
+  "B",
+  "C",
+  "D",
+  "S1",
+  "S2",
+  "S3",
+  "S4",
+  "left_right",
+  "front",
+  "drive",
+  "wheel_diameter",
+  "axle_track",
+] as const;
+export const UNCONFIRMED = [...MOVES, "footprint", "places"] as const;
+export type Unconfirmed = (typeof UNCONFIRMED)[number];
 
 export interface TwinBuild {
   body?: unknown;
   ev3?: unknown;
   view?: unknown;
+  unconfirmed?: Unconfirmed[];
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -40,7 +60,53 @@ export function readBuild(raw: unknown, where: string): TwinBuild | null {
     );
   // the fields, without a world: a twin's file and a robot on hardware fail on the same bad field
   ownSections(t, where);
-  return { ...t };
+  if (isObj(t.view) && "unconfirmed" in t.view)
+    throw new Error(
+      `${where}: twin.view.unconfirmed is not a field of the look: list what is unconfirmed in twin.unconfirmed, the page receives it from there`,
+    );
+  const profile = isObj(raw.profile) ? raw.profile : {};
+  const unconfirmed = readUnconfirmed(t.unconfirmed, where, {
+    pair: raw.pair !== undefined,
+    drivetrain: profile.drivetrain !== undefined,
+  });
+  return { ...t, ...(unconfirmed === undefined ? {} : { unconfirmed }) };
+}
+
+function readUnconfirmed(
+  v: unknown,
+  where: string,
+  has: { pair: boolean; drivetrain: boolean },
+): Unconfirmed[] | undefined {
+  if (v === undefined) return undefined;
+  const at = `${where}: twin.unconfirmed`;
+  if (!Array.isArray(v))
+    throw new Error(
+      `${at} must be a list of what nobody confirmed, from ${UNCONFIRMED.join(", ")}; got ${JSON.stringify(v)}`,
+    );
+  const seen = new Set<string>();
+  for (const x of v) {
+    if (typeof x !== "string" || !(UNCONFIRMED as readonly string[]).includes(x))
+      throw new Error(`${at}: ${JSON.stringify(x)} is not one of ${UNCONFIRMED.join(", ")}`);
+    if (seen.has(x)) throw new Error(`${at}: ${x} is listed twice`);
+    seen.add(x);
+    if (x === "left_right" && !has.pair)
+      throw new Error(
+        `${at}: left_right needs a pair (which of its two ports drives the left side); this file has no pair: remove left_right`,
+      );
+    if ((x === "wheel_diameter" || x === "axle_track") && !has.drivetrain)
+      throw new Error(`${at}: ${x} needs profile.drivetrain, and this file has none: remove ${x}`);
+  }
+  return v as Unconfirmed[];
+}
+
+/** The draft line of `--doctor`: `ports B, C, S4; front; wheel diameter`, in the order of UNCONFIRMED. */
+export function describeUnconfirmed(list: readonly Unconfirmed[]): string {
+  const ports = UNCONFIRMED.filter((u) => /^S?[A-D1-4]$/.test(u) && list.includes(u));
+  const rest = UNCONFIRMED.filter((u) => !/^S?[A-D1-4]$/.test(u) && list.includes(u)).map((u) =>
+    u === "left_right" ? "left/right" : u.replace("_", " "),
+  );
+  const moves = list.filter((u) => (MOVES as readonly string[]).includes(u)).length;
+  return `${list.length} unconfirmed (${moves} change how it moves): ${[...(ports.length ? [`port${ports.length > 1 ? "s" : ""} ${ports.join(", ")}`] : []), ...rest].join("; ")}`;
 }
 
 /** `body` and `ev3` of a build, each through the packages' own validator, its errors named `twin.<field>`. */
@@ -92,6 +158,9 @@ export function withBuild(
     delete ext.view;
     if (build.ev3 !== undefined) ext.ev3 = build.ev3;
     if (build.view !== undefined) ext.view = build.view;
+    // the page reads only extensions.view, so the draft list rides there
+    if (build.unconfirmed?.length)
+      ext.view = { ...(isObj(build.view) ? build.view : {}), unconfirmed: build.unconfirmed };
     out = { ...w, extensions: ext };
     delete out.body;
     if (build.body !== undefined) out.body = build.body;
@@ -188,7 +257,13 @@ export function describeTwin(robot: RobotFile, world: unknown, ownBuild: boolean
         ? [`distance sensor ${b.distance_sensor_x_cm} cm ahead`]
         : []),
     ].join(", "),
-    `look ${isObj(look) ? Object.keys(look).join(", ") || "default" : "default"}`,
+    `look ${
+      (isObj(look)
+        ? Object.keys(look)
+            .filter((k) => k !== "unconfirmed")
+            .join(", ")
+        : "") || "default"
+    }`,
     ownBuild ? "build from the robot file's twin" : "build from the world (the robot file has no twin)",
   ].join("; ");
 }

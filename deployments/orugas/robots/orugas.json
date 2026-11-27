@@ -40,6 +40,7 @@
     ]
   },
   "twin": {
+    "unconfirmed": ["wheel_diameter", "axle_track"],
     "body": {
       "front_cm": 8.5,
       "back_cm": 13.5,

@@ -15,4 +15,5 @@ Read each device's `kind` and `description`:
 | `ev3.S<n>` | `light`, `sound`, `temperature`, `sensor` | anything else | nothing: the twin has no such sensor. Give the port no role |
 
 `ev3.pair` is the pair the robot file used to connect, not what the robot has. Ignore it, and ignore the `roles` of the devices: they come from that file too.
+The brick confirms all eight ports, the empty ones too: take `A`-`D` and `S1`-`S4` out of `twin.unconfirmed` (keep a port whose motor's job you do not know yet).
 The brick does not say which motor drives which side, what an actuator does, or where anything sits: ask the person (state 1).

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { DEFAULT_BODY } from "../../../packages/sim-world/world";
 import { EXAMPLE, loadConfig, type RobotSource } from "../src/config";
 import { buildFleet } from "../src/sources";
+import { describeTwin, describeUnconfirmed, MOVES } from "../src/twin-build";
 import { toolsOf } from "./arm";
 
 const tmp = mkdtempSync(join(tmpdir(), "spinecord-build-"));
@@ -177,7 +178,9 @@ describe("refused at start, naming the field", () => {
 
   test("twin itself: not an object, a key it does not have, a view that is not an object", () => {
     expect(fails({ ...r1Bare, twin: [] })).toThrow("twin must be an object");
-    expect(fails({ ...r1Bare, twin: { look: {} } })).toThrow("twin.look is not a part of twin (body, ev3, view)");
+    expect(fails({ ...r1Bare, twin: { look: {} } })).toThrow(
+      "twin.look is not a part of twin (body, ev3, view, unconfirmed)",
+    );
     expect(fails({ ...r1Bare, twin: { ...r1.twin, view: "tracks" } })).toThrow("twin.view must be an object");
   });
 
@@ -251,6 +254,52 @@ describe("refused at start, naming the field", () => {
   });
 });
 
+describe("twin.unconfirmed: a draft twin says what nobody confirmed", () => {
+  const draft = (unconfirmed: unknown, base: Record<string, unknown> = TRACKED) => ({
+    ...base,
+    twin: { ...TRACKED.twin, unconfirmed },
+  });
+  test("runs as any twin; the list reaches the page in extensions.view.unconfirmed, beside the look", () => {
+    const t = twinOf(draft(["B", "C", "S4", "front", "wheel_diameter", "axle_track"]));
+    expect(t.unconfirmed).toEqual(["B", "C", "S4", "front", "wheel_diameter", "axle_track"]);
+    const view = (t.world as { extensions: { view: Record<string, unknown> } }).extensions.view;
+    expect(view).toEqual({ ...TRACKED.twin.view, unconfirmed: t.unconfirmed });
+    expect(describeTwin(t.robot, t.world, true)).toContain("look drive, phone;");
+    expect(describeUnconfirmed(t.unconfirmed!)).toBe(
+      "6 unconfirmed (6 change how it moves): ports B, C, S4; front; wheel diameter; axle track",
+    );
+    expect(describeUnconfirmed(["places", "S2", "left_right"])).toBe(
+      "3 unconfirmed (2 change how it moves): port S2; left/right; places",
+    );
+  });
+  test("absent or empty: not a draft, and the page gets no list; a port that the build leaves empty may be listed", () => {
+    for (const u of [undefined, []]) {
+      const t = twinOf(draft(u));
+      expect(t.unconfirmed).toEqual([]);
+      expect((t.world as { extensions: { view: Record<string, unknown> } }).extensions.view).toEqual(TRACKED.twin.view);
+    }
+    const noView = twinOf({ ...TRACKED, twin: { ev3: TRACKED.twin.ev3, unconfirmed: ["A"] } });
+    expect((noView.world as { extensions: { view: unknown } }).extensions.view).toEqual({ unconfirmed: ["A"] });
+    expect(describeTwin(noView.robot, noView.world, true)).toContain("look default;");
+  });
+  test("refused when read, from any source, naming twin.unconfirmed", () => {
+    expect(fails(draft("front"))).toThrow("twin.unconfirmed must be a list");
+    expect(fails(draft(["ports"]))).toThrow('twin.unconfirmed: "ports" is not one of A, B, C, D, S1');
+    expect(fails(draft([3]))).toThrow("twin.unconfirmed: 3 is not one of");
+    expect(fails(draft(["front", "front"]))).toThrow("twin.unconfirmed: front is listed twice");
+    const { pair: _p, ...noPair } = TRACKED;
+    const noDrive = { ...noPair, profile: { ...TRACKED.profile, drivetrain: undefined } };
+    expect(fails(draft(["left_right"], noDrive))).toThrow("left_right needs a pair");
+    expect(fails(draft(["wheel_diameter"], noDrive))).toThrow("wheel_diameter needs profile.drivetrain");
+    expect(fails(draft(["axle_track"], noDrive))).toThrow("axle_track needs profile.drivetrain");
+    expect(twinOf(draft(["drive", "front", "A"], noDrive)).unconfirmed).toEqual(["drive", "front", "A"]);
+    expect(fails({ ...TRACKED, twin: { ...TRACKED.twin, view: { unconfirmed: ["B"] } } })).toThrow(
+      "twin.view.unconfirmed is not a field of the look",
+    );
+    expect(() => loadConfig(["--ev3", file("hw.json", draft(["B", "B"]))])).toThrow("B is listed twice");
+  });
+});
+
 describe("the robot-twin skill", () => {
   const skill = join(import.meta.dir, "..", "..", "..", ".claude", "skills", "robot-twin");
   test("its template is a robot file the server takes, and its links point at files that are there", () => {
@@ -259,6 +308,8 @@ describe("the robot-twin skill", () => {
     const t = twinOf(template);
     expect(t.ownBuild).toBe(true);
     expect(t.id).toBe("my-robot-sim");
+    // the template is a draft: every value that changes how a drive base moves starts unconfirmed
+    expect([...t.unconfirmed!].sort()).toEqual([...MOVES].sort());
     for (const md of ["SKILL.md", join("reference", "robot-file.md")]) {
       const text = readFileSync(join(skill, md), "utf8");
       for (const [, link] of text.matchAll(/\]\(((?:reference\/)?[a-z-]+\.md)\)/g))

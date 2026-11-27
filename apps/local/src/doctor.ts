@@ -10,7 +10,7 @@ import { join, posix, win32 } from "node:path";
 import { paysBeforeProfile, type Env } from "../../../examples/assistant/setup";
 import { loadConfig, REPO, type LocalConfig } from "./config";
 import { chooseInterface, defaultRouteAddress } from "./lan";
-import { describeTwin } from "./twin-build";
+import { describeTwin, describeUnconfirmed } from "./twin-build";
 
 export type Status = "ok" | "warn" | "fail";
 export interface Line {
@@ -354,6 +354,8 @@ export interface DoctorOptions {
   /** The robot flags, as they would follow --print-add. */
   robotArgs: string[];
   assistant: boolean;
+  /** Only the robot files: no line about this computer, so the exit code is the files' own. */
+  filesOnly?: boolean;
   /** Per check, CHECK_MS; tests pass less. */
   checkMs?: number;
 }
@@ -364,7 +366,7 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
   const add = (l: Line | Line[] | null) => {
     if (l) lines.push(...(Array.isArray(l) ? l : [l]));
   };
-  add(checkBun(p));
+  if (!o.filesOnly) add(checkBun(p));
   let config: LocalConfig | null = null;
   try {
     config = loadConfig(o.robotArgs);
@@ -375,8 +377,16 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
     });
     // what each twin will have, so that a person can compare it with the robot on the table
     for (const r of config.robots)
-      if (r.source === "twin")
+      if (r.source === "twin") {
         add({ status: "ok", check: `twin ${r.id}`, reason: describeTwin(r.robot, r.world, r.ownBuild === true) });
+        if (r.unconfirmed?.length)
+          add({
+            status: "warn",
+            check: `draft ${r.id}`,
+            reason: describeUnconfirmed(r.unconfirmed),
+            next: "confirm each with the person, the brick or a calibration on the real robot, then take it out of twin.unconfirmed",
+          });
+      }
   } catch (e) {
     add({
       status: "fail",
@@ -385,6 +395,7 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
       next: "fix the flag or the file it names; bun apps/local/main.ts --help lists every flag",
     });
   }
+  if (o.filesOnly) return { lines, code: lines.some((l) => l.status === "fail") ? 1 : 0 };
   const needs = config
     ? { ev3: config.robots.some((r) => r.source === "ev3"), pages: !!config.pages }
     : { ev3: o.robotArgs.some((a) => a.startsWith("--ev3")), pages: o.robotArgs.some((a) => a.startsWith("--pages")) };
@@ -525,8 +536,9 @@ export const realProbes = (): Probes => ({
 /** main.ts `--doctor`: `argv` without --doctor. Writes the report on stdout and returns the exit code. */
 export async function doctorMain(argv: string[], p: Probes = realProbes()): Promise<0 | 1> {
   const assistant = argv.includes("--assistant");
-  const robotArgs = argv.filter((a) => a !== "--assistant");
-  const { lines, code } = await doctor({ robotArgs, assistant }, p);
+  const filesOnly = argv.includes("--files-only");
+  const robotArgs = argv.filter((a) => a !== "--assistant" && a !== "--files-only");
+  const { lines, code } = await doctor({ robotArgs, assistant, filesOnly }, p);
   await new Promise<void>((resolve) => process.stdout.write(report(lines), () => resolve()));
   return code;
 }

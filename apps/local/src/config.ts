@@ -13,7 +13,7 @@ import type { RobotProfile } from "../../../packages/protocol/types";
 import { parseWorld } from "../../../packages/sim-world/world";
 import type { LanConfig } from "./lan";
 import { DEFAULT_PAGE_PORT } from "./pages";
-import { readBuild, withBuild, type TwinBuild } from "./twin-build";
+import { readBuild, withBuild, type TwinBuild, type Unconfirmed } from "./twin-build";
 
 /** Port of the 3D view of the twins (`--view`), on 127.0.0.1. */
 export const DEFAULT_VIEW_PORT = 8769;
@@ -53,6 +53,8 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
                                  firewall; one line per check with the next command, last line "doctor: ok"
                                  or "doctor: <n> to fix" (exit 1); starts nothing
     --assistant                  also check who pays for examples/assistant (names of variables, never values)
+    --files-only                 check only the robot files those flags name, nothing of this computer: the
+                                 robots, twin and draft lines; exit 1 only when a file is refused
 
   (no arguments)                 the example robot's twin (deployments/example/robots/r1.json) in
                                  apps/local/examples/room.json
@@ -126,6 +128,8 @@ export type RobotSource =
       seed: number;
       /** true when the build came from the robot file's `twin`, false when from the world. */
       ownBuild?: boolean;
+      /** What of the build nobody confirmed (its file's `twin.unconfirmed`); empty for a twin that is not a draft. */
+      unconfirmed?: Unconfirmed[];
     }
   | { source: "ev3"; id: string; robot: RobotFile }
   | {
@@ -267,10 +271,15 @@ function robotFile(where: string, path: string): ReadRobot {
   return { file, raw, build: readBuild(raw, `${where} ${path}`), path };
 }
 /** The world a twin of `r` runs in: the room read from `path`, with the robot's build in place. */
-function twinWorld(r: ReadRobot, where: string, path: string): Pick<Source<"twin">, "world" | "ownBuild"> {
+function twinWorld(
+  r: ReadRobot,
+  where: string,
+  path: string,
+): Pick<Source<"twin">, "world" | "ownBuild" | "unconfirmed"> {
   return {
     world: withBuild(world(where, path), r.build, r.file, { robot: r.path, world: `${where} ${path}` }),
     ownBuild: r.build !== null,
+    unconfirmed: r.build?.unconfirmed ?? [],
   };
 }
 type Source<K extends RobotSource["source"]> = Extract<RobotSource, { source: K }>;

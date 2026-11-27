@@ -1,7 +1,8 @@
 // --doctor: every check against injected probes (no subprocess, no port, no file written), then one run of the
 // real entry point, which only reads this computer.
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REPO, USAGE } from "../src/config";
 import { doctor, FIREWALL, MIN_BUN, report, runBounded, type Line, type Probes, type RunResult } from "../src/doctor";
@@ -277,6 +278,50 @@ describe("--doctor", () => {
     expect(code).toBe(1);
     expect(Date.now() - t).toBeLessThan(3000);
   });
+
+  test("a draft twin: a warn line with what nobody confirmed; --files-only checks the files alone", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spinecord-doctor-"));
+    try {
+      const r1 = JSON.parse(readFileSync(join(REPO, "deployments", "example", "robots", "r1.json"), "utf8"));
+      const draft = join(dir, "draft.json");
+      writeFileSync(draft, JSON.stringify({ ...r1, twin: { ...r1.twin, unconfirmed: ["B", "C", "front"] } }));
+      const nobody = probes({ which: () => null, portFree: async () => false });
+      const full = await run(["--twin", draft], nobody);
+      expect(line(full.lines, "draft r1-sim")).toMatchObject({
+        status: "warn",
+        reason: "3 unconfirmed (3 change how it moves): ports B, C; front",
+      });
+      expect(full.code).toBe(1); // the computer's fails still count without --files-only
+      const quiet = probes({ which: () => null, portFree: async () => false });
+      const only = await doctor({ robotArgs: ["--twin", draft], assistant: false, filesOnly: true }, quiet);
+      expect(only.lines.map((l) => [l.check, l.status])).toEqual([
+        ["robots", "ok"],
+        ["twin r1-sim", "ok"],
+        ["draft r1-sim", "warn"],
+      ]);
+      expect(only.code).toBe(0);
+      expect(quiet.calls).toEqual([]); // nothing of this computer is probed
+      const bad = join(dir, "bad.json");
+      writeFileSync(bad, JSON.stringify({ ...r1, twin: { ...r1.twin, unconfirmed: ["wheels"] } }));
+      const refused = await doctor({ robotArgs: ["--twin", bad], assistant: false, filesOnly: true }, nobody);
+      expect(refused.lines.map((l) => [l.check, l.status])).toEqual([["robots", "fail"]]);
+      expect(refused.lines[0]!.reason).toContain('twin.unconfirmed: "wheels" is not one of');
+      expect(refused.code).toBe(1);
+      // the entry point: a fine file exits 0 with no claude registration to be seen
+      const cli = Bun.spawnSync(["bun", MAIN, "--doctor", "--files-only", "--twin", draft], {
+        cwd: REPO,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = cli.stdout.toString();
+      expect(out).toMatch(/^warn {2}draft r1-sim {2}3 unconfirmed/m);
+      expect(out).not.toContain("claude code");
+      expect(out.trimEnd().split("\n").at(-1)).toBe("doctor: ok");
+      expect(cli.exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   test("--help lists --doctor", () => {
     expect(USAGE).toContain("--doctor [robots...]");

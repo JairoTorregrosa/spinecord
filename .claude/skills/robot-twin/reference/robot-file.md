@@ -1,11 +1,10 @@
-# The robot file: template and every field
+# The robot file: template, parts and every field
 
-One JSON file holds the robot: the model reads `profile`, the real brick uses `hardware` and `pair`, and the twin uses everything plus `twin`.
-The contract is `<clone>/CONTRACT.md` §3. A top-level key that is not listed here stops the start.
+One JSON file holds the robot: the model reads `profile`, the real brick uses `hardware` and `pair`, the twin uses everything plus `twin`. The contract is `<clone>/CONTRACT.md` §3. A top-level key not listed here stops the start.
 
-## Template: two drive motors and sensors
+## Template: a two-motor drive base, nothing confirmed
 
-Copy it, then change it to match the robot. Delete each role, port and section that the robot does not have.
+Copy it. Every value in it is a placeholder, and `twin.unconfirmed` says so: fill each value from state 1, and take a token out only when its value has a source (SKILL.md "Confirm"). Add parts from "Parts" below.
 
 ```json
 {
@@ -14,15 +13,7 @@ Copy it, then change it to match the robot. Delete each role, port and section t
   "hardware": { "low_battery_v": 6.5, "max_tone_ms": 5000, "tone_volume_pct": 50, "speech_volume_pct": 100 },
   "profile": {
     "id": "my-robot",
-    "roles": {
-      "left_wheel": "ev3.B",
-      "right_wheel": "ev3.C",
-      "arm": "ev3.A",
-      "touch": "ev3.S1",
-      "gyro": "ev3.S2",
-      "color": "ev3.S3",
-      "distance": "ev3.S4"
-    },
+    "roles": { "left_wheel": "ev3.B", "right_wheel": "ev3.C" },
     "drivetrain": {
       "type": "differential",
       "pair_device": "ev3.pair",
@@ -30,94 +21,84 @@ Copy it, then change it to match the robot. Delete each role, port and section t
       "axle_track_cm": 12,
       "forward_sign": 1,
       "max_drive_cm": 100,
-      "max_turn_deg": 360,
-      "heading": { "device": "gyro", "channel": "angle_deg" }
+      "max_turn_deg": 360
     },
     "limits": { "max_speed_pct": 60, "max_command_ms": 15000, "max_program_ms": 120000, "max_loop_ms": 60000 },
-    "notes": [
-      "The arm motor on A lifts the arm with positive degrees, about 90 degrees from down to up.",
-      "The colour sensor points down, 7 cm ahead of the axle."
-    ]
+    "notes": []
   },
   "twin": {
-    "body": { "front_cm": 10, "back_cm": 8, "half_width_cm": 7, "color_sensor_x_cm": 7, "color_spot_radius_cm": 1, "distance_sensor_x_cm": 9 },
-    "ev3": {
-      "motors": { "A": "medium", "B": "large", "C": "large" },
-      "sensors": { "1": "touch", "2": "gyro", "3": "color", "4": "ultrasonic" }
-    },
+    "unconfirmed": ["A", "B", "C", "D", "S1", "S2", "S3", "S4", "left_right", "front", "drive", "wheel_diameter", "axle_track"],
+    "ev3": { "motors": { "B": "large", "C": "large" } },
     "view": { "drive": "wheels" }
   }
 }
 ```
 
-## A robot with no drive (an arm, a crane, a sensor station)
+A port token stays listed until you know what is on that port, **also when you believe it is empty**: a port you could not see may hold a part.
+`footprint` and `places` are not in the template because it has no `twin.body` and no places yet: add the token with the first length you assume.
 
-Delete `pair` and `profile.drivetrain`. Every motor is then a device of its own, and `drive`, `turn` and `arc` answer `unsupported`.
-A robot with four actuators and no sensor, or four sensors and no motor, is a valid file.
+## Parts
+
+Add each one the robot has. An unknown port: take the lowest free port of its row (motors: B and C for the drive, then A, D; sensors: 1, 2, 3, 4) and keep its token.
+
+| Part | `twin.ev3` | `profile.roles` | Also |
+|---|---|---|---|
+| Large or medium motor that does not drive | `"motors": {"A": "medium"}` | a free name for what it does: `"arm": "ev3.A"` (`lift`, `gripper`, `head`, `wings`, `dial`) | a note: what it does, which way positive degrees move it, its range |
+| Touch | `"sensors": {"1": "touch"}` | `"touch": "ev3.S1"` | none: the twin's touch is pressed when the whole front of the body is within 0.7 cm of a wall or a box |
+| Colour | `"sensors": {"3": "color"}` | `"color": "ev3.S3"` | `twin.body.color_sensor_x_cm`, `color_spot_radius_cm` |
+| Ultrasonic or infrared | `"sensors": {"4": "ultrasonic"}` or `"ir"` | `"distance": "ev3.S4"` | `twin.body.distance_sensor_x_cm` |
+| Gyro | `"sensors": {"2": "gyro"}` | `"gyro": "ev3.S2"` | `"heading": {"device": "gyro", "channel": "angle_deg"}` in the drivetrain, only when the port is confirmed. Its place changes nothing in the physics |
+| Phone | none | none | `twin.view.phone`; a note "A phone stands at the front with its screen facing forward; it joins as a page and lends its camera, screen and speaker." (README "Peripheral pages on a phone") |
+
+`twin.view.sensors.<port>` (`x_cm`, `y_cm`, `z_cm`) places a sensor in the 3D look only. Leave out the body fields of a sensor the robot does not have.
+
+## A robot with no drive (an arm, a crane, a station, a controller)
+
+Delete `pair`, `profile.drivetrain`, the wheel roles, `left_right`, `wheel_diameter` and `axle_track`. Every motor is a device; `drive`, `turn` and `arc` answer `unsupported`. Keep `drive` in `twin.unconfirmed` until you know it does not drive. The origin is the middle of the base on the floor; pick one end as the front and say which in `notes`.
 
 ## Coordinates
 
-Every length is in centimetres from the centre of the drive axle, on the floor: `x` ahead, `y` to the left, `z` up.
-"Ahead" is the direction the robot drives with a positive `drive`.
-For a robot with no drive, pick one end as the front and say which in `notes`.
+Every length is in cm from the centre of the drive axle, on the floor: `x` ahead, `y` to the left, `z` up. "Ahead" is where a positive `drive` goes. With several axles, the driven one; with tracks, the middle of the tracks.
 
-## Every selectable option
+## Every field
 
-| Field | Allowed values | Default when left out | What it is |
+| Field | Allowed values | Default | What it is |
 |---|---|---|---|
 | `description` | text | none | for people only |
-| `pair.left`, `pair.right` | two different ports of `A`, `B`, `C`, `D` | no `pair`: no drive | the two drive motors, left and right as seen from behind the robot looking ahead |
-| `hardware.low_battery_v` | number > 0 | required | battery warning, volts. 6.5 fits the EV3 |
-| `hardware.max_tone_ms` | number > 0 | required | longest tone |
-| `hardware.tone_volume_pct` | number > 0 | required | volume of tones |
-| `hardware.speech_volume_pct` | 1 to 100 | required only for an EV3 on ev3dev | volume of speech |
-| `hardware.ir_channel` | 1, 2, 3, 4 | 1 | the channel switch of the infrared remote |
-| `profile.id` | starts with a lowercase letter or digit, then lowercase letters, digits, `_`, `-`; at most 44 characters (its twin adds `-sim`) | required | the robot's id; its twin is `<id>-sim` |
-| `profile.roles.<name>` | a device id: `ev3.A` to `ev3.D`, `ev3.S1` to `ev3.S4`, `ev3.pair`, `sim.camera`, or a page's device | `{}` | a free name for what a device does: `left_wheel`, `arm`, `gripper`, `lift`, `head`, `eyes`. On a twin, a role on a port with nothing plugged in stops the start |
-| `profile.drivetrain` | the object below | none: no drive tools | needs `pair` |
-| `drivetrain.type` | `"differential"` | required | two driven sides, wheels or tracks |
-| `drivetrain.pair_device` | `"ev3.pair"` | required | the synced pair of `pair` |
-| `drivetrain.wheel_diameter_cm` | number > 0 | required | [parts.md](parts.md); state 6 calibrates it |
-| `drivetrain.axle_track_cm` | number > 0 | required | distance between the middles of the two wheels or tracks; state 6 calibrates it |
-| `drivetrain.forward_sign` | 1 or -1 | required | -1 when a positive `drive` moves the real robot backward |
-| `drivetrain.max_drive_cm`, `max_turn_deg` | number > 0 | required | the longest single move |
-| `drivetrain.heading` | `{"device": <role or id>, "channel": "angle_deg"}` | none: the heading comes from the wheel encoders | only with a gyro |
-| `profile.limits.*` | numbers > 0 | required | `max_speed_pct` (100 is full speed), `max_command_ms`, `max_program_ms`, `max_loop_ms` |
-| `profile.notes` | array of text | required (may be `[]`) | facts for the model: which way an actuator moves with positive degrees and its range, where a sensor looks, what the phone is for |
-| `twin` | `{body?, ev3?, view?}` | none: the twin takes these three from its world | the build. With `twin`, a part left out takes the default below, never the world's |
-| `twin.ev3.motors.<A-D>` | `"large"`, `"medium"` | nothing plugged | what is plugged into each motor port |
-| `twin.ev3.sensors.<1-4>` | `"touch"`, `"color"`, `"ultrasonic"`, `"gyro"`, `"ir"` | nothing plugged | what is plugged into each sensor port |
-| `twin.body.front_cm` | number >= 0 | 8 | how far the robot reaches ahead of the axle |
-| `twin.body.back_cm` | number >= 0 | 10 | how far it reaches behind the axle (a caster, a bumper) |
-| `twin.body.half_width_cm` | number >= 0 | 6 | half of the full width, across the wheels or tracks |
-| `twin.body.color_sensor_x_cm` | number >= 0 | 7 | where the colour sensor reads the floor, ahead of the axle |
-| `twin.body.color_spot_radius_cm` | number >= 0 | 1 | the size of the spot it reads |
-| `twin.body.distance_sensor_x_cm` | number >= 0 | 8 | where the ultrasonic or infrared sensor looks out, ahead of the axle |
-| `twin.view` | object | the default look | how the twin looks in 3D: see below |
-
-`twin.body` is a rectangle. The physics uses it for collisions and for what the colour and distance sensors see.
-The colour sensor always reads the floor on the centre line, and the distance sensor always looks straight ahead on the centre line.
-A sensor that sits elsewhere or faces elsewhere: write where in `notes`, and use the closest `x` for the body.
-
-## `twin.view`: the look
-
-The fields are listed in the header comment of `<clone>/apps/twin-view/src/look.ts`. Read that header now; it is the only list, and it changes.
-Use only the fields that header lists, with the units it gives.
-The page never fails on a bad look field: it draws the default instead. Check the look by eye in state 5 SHOW.
-
-## A phone as the robot's eyes
-
-When a phone stands on the robot:
-
-1. Put it in `twin.view.phone`: `x_cm` where it stands, `bottom_cm` how high its bottom edge is, `screen` `"front"` or `"back"`.
-2. Add a note: "A phone stands at the front with its screen facing forward; it joins as a page and lends its camera, screen and speaker."
-3. On the real robot, the phone opens the page of `--pages` and lends its camera, screen and speaker to the robot (README "Peripheral pages on a phone"). The twin's own camera is `sim.camera`.
+| `pair.left`, `pair.right` | two different ports of `A`-`D` | no `pair`: no drive | the drive motors, left and right seen from behind |
+| `hardware.low_battery_v`, `max_tone_ms`, `tone_volume_pct` | number > 0 | required | 6.5, 5000, 50 fit the EV3 |
+| `hardware.speech_volume_pct` | 1 to 100 | required on ev3dev | |
+| `hardware.ir_channel` | 1-4 | 1 | the infrared remote's channel switch |
+| `profile.id` | lowercase letter or digit first, then lowercase letters, digits, `_`, `-`; at most 44 characters | required | the twin is `<id>-sim` |
+| `profile.roles.<name>` | `ev3.A`-`ev3.D`, `ev3.S1`-`ev3.S4`, `ev3.pair`, `sim.camera`, a page's device | `{}` | on a twin, a role on an empty port stops the start |
+| `profile.drivetrain` | `type` `"differential"`, `pair_device` `"ev3.pair"`, `wheel_diameter_cm` > 0, `axle_track_cm` > 0, `forward_sign` 1 or -1, `max_drive_cm` > 0, `max_turn_deg` > 0, `heading?` | none: no drive tools | needs `pair` |
+| `profile.limits.*` | numbers > 0 | required | `max_speed_pct`, `max_command_ms`, `max_program_ms`, `max_loop_ms` |
+| `profile.notes` | array of text | required, may be `[]` | facts for the model the file has no field for |
+| `twin.unconfirmed` | a list of tokens, each once: `A`-`D`, `S1`-`S4`, `left_right` (needs `pair`), `front`, `drive`, `wheel_diameter` and `axle_track` (need `drivetrain`), `footprint`, `places` | none: nothing unconfirmed | what nobody confirmed; the check prints it as the `draft` line |
+| `twin.ev3.motors.<A-D>` | `"large"`, `"medium"` | nothing plugged | |
+| `twin.ev3.sensors.<1-4>` | `"touch"`, `"color"`, `"ultrasonic"`, `"gyro"`, `"ir"` | nothing plugged | |
+| `twin.body.front_cm`, `back_cm`, `half_width_cm` | number >= 0 | 8, 10, 6 | the footprint: a rectangle around the axle, used for collisions and the touch sensor |
+| `twin.body.color_sensor_x_cm`, `color_spot_radius_cm` | number >= 0 | 7, 1 | where the colour sensor reads the floor, on the centre line |
+| `twin.body.distance_sensor_x_cm` | number >= 0 | 8 | where the ultrasonic or infrared looks out, straight ahead on the centre line |
+| `twin.view` | the fields in the header of `<clone>/apps/twin-view/src/look.ts`, nothing else | the default look | the 3D look only; a bad field draws its default, so check by eye in state 4. `twin.view.unconfirmed` is refused: the page gets the list from `twin.unconfirmed` |
 
 ## What a twin cannot have
 
-| On the real robot | In the twin |
-|---|---|
-| An NXT light, sound or temperature sensor, or a sensor of another maker | Nothing on that port. Give it no role, or the twin stops at start; the model can still use it on the real robot by its id, `ev3.S<n>` |
-| An NXT touch or ultrasonic sensor | `"touch"` or `"ultrasonic"` |
-| Three or more driven wheels, legs, steering | Not simulated: the drive is two sides. Leave out `pair` and `drivetrain`, and describe the build in `notes` |
-| A sensor that faces sideways, up, or behind | It faces as in the table above; say where it really faces in `notes` |
+For each row the robot hits: write the note, tell the person the line in their language, keep the rest of the file as the row says. Never leave it out in silence.
+
+| On the real robot | In the file | Tell the person |
+|---|---|---|
+| An NXT light, sound or colour sensor, or another maker's sensor | nothing on that port, no role; a note with its port | "The twin has no <sensor>; on the real robot the model can still read it as `ev3.S<n>`." |
+| An NXT touch or ultrasonic sensor | `"touch"` or `"ultrasonic"` | none |
+| An NXT motor | `"large"`; a note | "The twin uses an EV3 large motor for the NXT motor." |
+| An attachment: an arm, claw, lifter, scoop, frame, bumper bar, wings | the motor's role and a note on what it does and its range | "The 3D twin does not draw the <attachment>; its motor turns." |
+| A shell, decoration or a tall body (a humanoid, an animal) | a note | "The 3D twin shows the bare base, not the <shell>." |
+| A brick standing upright | `view.brick.x_cm` only; a note | "The 3D twin shows the brick lying flat." |
+| No drive | as "A robot with no drive" | "The 3D twin still draws wheels; it does not drive." |
+| Four or six wheels, two sides driven (or chained) | `differential`; the footprint covers every wheel; a note | "The twin drives as two sides; it draws two wheels." |
+| A caster, ball or skid | `back_cm` (or `front_cm`) reaches it | none |
+| Steering (one motor steers, one drives), legs, a walker | no `pair` and no drivetrain; the motors as roles; a note | "The twin cannot steer or walk: its motors turn, the body stays put." |
+| Two wheels and no caster: it balances | `differential`; a note "balances on two wheels; do not drive it without its balance program" | "The twin does not fall over; the real robot does without its balance program." |
+| A motor turned by hand as a dial | role `dial`; a note | "In the twin nobody turns the dial; it reads what the program turns." |
+| A sensor that faces sideways, up, behind, or sits off the centre line | the closest `x` in `twin.body`; its real place in `twin.view.sensors`; a note | "In the twin the <sensor> looks straight ahead (reads the floor) on the centre line." |
+| Terrain (stairs, ramps, rough ground) | a note | "The twin's floor is flat." |
