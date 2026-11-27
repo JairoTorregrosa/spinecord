@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { CONFIRM, launchLine, parseAuth, parseMcpGet, robotArgs, STEPS } from "../../../scripts/setup";
 
 const DIR = join(import.meta.dir, "..", "..", "..", ".claude", "skills", "setup-spinecord");
@@ -131,18 +131,21 @@ test("setup.ts registers absolute paths, the EV3 first, and prints a launch line
 test("setup.ts keeps the robot's name across runs, and a new name changes only the name", () => {
   const home = mkdtempSync(join(tmpdir(), "spinecord-setup-home-"));
   try {
-    // no claude on PATH: nothing is registered, only the state is written
+    // nothing on PATH (bun is started by its path): no claude, so nothing is registered, only the state is written
     const setup = (...args: string[]) =>
       Bun.spawnSync([process.execPath, join(DIR, "..", "..", "..", "scripts", "setup.ts"), ...args], {
-        env: { HOME: home, USERPROFILE: home, PATH: dirname(process.execPath) },
+        env: { HOME: home, USERPROFILE: home, PATH: join(home, "no-tools") },
         stdout: "pipe",
         stderr: "pipe",
       });
     const state = () => JSON.parse(readFileSync(join(home, "mi-robot", ".spinecord-setup.json"), "utf8"));
     expect(setup("name", "Doña", "Tuerca").stdout.toString()).toContain('ok    name  "Doña Tuerca"');
+    expect(state().name).toBe("Doña Tuerca");
+    // another step that writes the state keeps the name; the same name again changes nothing
+    setup("confirm", "moved");
     const before = state();
-    expect(before.name).toBe("Doña Tuerca");
-    setup("workshop");
+    expect(before).toEqual({ profile: "credits", name: "Doña Tuerca", moved: true });
+    setup("name", "Doña Tuerca");
     expect(state()).toEqual(before);
     setup("name", "Rayo");
     expect(state()).toEqual({ ...before, name: "Rayo" });
