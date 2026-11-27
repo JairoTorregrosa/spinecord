@@ -25,6 +25,12 @@ const MIN_BUN = (
   JSON.parse(readFileSync(join(REPO, "package.json"), "utf8")) as { packageManager: string }
 ).packageManager.replace(/^bun@/, "");
 
+export interface Line {
+  status: Status;
+  what: string;
+  why: string;
+  next?: string;
+}
 export interface Robots {
   /** The robot flags of a person without an EV3, paths from the repository root. */
   twin: string[];
@@ -44,13 +50,7 @@ export interface State {
   /** The EV3 drove forward when asked to. */
   forward?: boolean;
 }
-type Status = "ok" | "todo" | "fail";
-interface Line {
-  status: Status;
-  what: string;
-  why: string;
-  next?: string;
-}
+export type Status = "ok" | "todo" | "fail";
 
 // ---- pure parts (setup-skill.test.ts) ----
 
@@ -435,7 +435,8 @@ async function login(s: State): Promise<Line[]> {
     : [{ ...after, status: "fail", next: `fixes.md, row "The login did not finish"` }];
 }
 
-async function workshop(s: State): Promise<Line[]> {
+/** The workshop folder's settings, skills and registration, written when they differ, then checked again. */
+async function register(s: State): Promise<Line[]> {
   mkdirSync(join(WORKSHOP, ".claude"), { recursive: true });
   const settings = existsSync(SETTINGS) ? readJson<{ permissions?: { allow?: string[] } }>(SETTINGS) : {};
   const allow = settings.permissions?.allow ?? [];
@@ -458,7 +459,12 @@ async function workshop(s: State): Promise<Line[]> {
       return [{ status: "fail", what: "registration", why: `claude mcp add: ${(r.out + r.err).trim()}` }];
   }
   const lines = await checkWorkshop(s);
-  if (lines.some((l) => l.status !== "ok")) return lines.map((l) => (l.status === "ok" ? l : { ...l, status: "fail" }));
+  return lines.map((l) => (l.status === "ok" ? l : { ...l, status: "fail" }));
+}
+
+async function workshop(s: State): Promise<Line[]> {
+  const lines = await register(s);
+  if (lines.some((l) => l.status !== "ok")) return lines;
   // the doctor reads the registration of the folder it runs in
   const d = await run([process.execPath, MAIN, "--doctor", ...wanted(s)]);
   process.stdout.write(d.out);
@@ -564,10 +570,21 @@ async function flip(s: State): Promise<Line[]> {
   return [{ status: "ok", what: "flip", why: `${copy}: forward_sign ${d.forward_sign}` }, ...(await workshop(s))];
 }
 
+/** What the person does after a registration change: Claude Code reads its servers only when it starts. */
+export function restartLine(platform: string, profile: string): Line {
+  return {
+    status: "ok",
+    what: "restart",
+    why: "Claude Code reads the new registration when it starts again",
+    next: `the person types /exit in Claude Code, then starts it again with: ${launchLine(platform, profile)}`,
+  };
+}
+
 /**
  * The person named the robot, renamed it, or took its name away (`none`): the name of setup's own registration
  * changes, and nothing else. A registration this setup did not write (the robot-twin skill's) is left alone: its
- * robot file holds the name.
+ * robot file holds the name. No doctor runs: the person often asks in the robot's own Claude Code, whose spinecord
+ * holds the ports the doctor checks, so its `port` lines fail until the restart.
  */
 async function name(s: State, raw: string): Promise<Line[]> {
   let next: string | undefined;
@@ -576,12 +593,15 @@ async function name(s: State, raw: string): Promise<Line[]> {
   } catch (e) {
     return [{ status: "fail", what: "name", why: (e as Error).message, next: "ask the person for another name" }];
   }
-  // the workshop step below registers again with the new name, whatever was registered before
+  // register() below writes the registration again with the new name, whatever was registered before
   s.name = next;
   saveState(s);
   const said: Line = { status: "ok", what: "name", why: next === undefined ? "no name" : `"${next}"` };
   if (s.ev3 === undefined) return [said, ...(await checkWorkshop(s))];
-  return [said, ...(await workshop(s))];
+  const lines = await register(s);
+  return lines.every((l) => l.status === "ok")
+    ? [said, ...lines, restartLine(process.platform, s.profile)]
+    : [said, ...lines];
 }
 
 async function report(s: State): Promise<string> {
@@ -622,7 +642,7 @@ const USAGE = `usage: bun scripts/setup.ts <step>
   confirm org            the person said the organization that pays holds the credits
   workshop --ev3 yes|no [--name <name>]
                          ${WORKSHOP}: settings, local registration, doctor; --name: the robot's name
-  name <name>|none       give the robot a name, or take it away; registers again (restart Claude Code)
+  name <name>|none       give the robot a name, or take it away; registers again, no doctor (restart Claude Code)
   smoke                  one claude -p request drives the twin (at most USD 0.50)
   view                   wait for the 3D view of the person's Claude Code (under ${STEP_MS / 1000} s), open it
   confirm moved          the person saw the robot move

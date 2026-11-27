@@ -13,6 +13,7 @@ import {
   parseAntOrg,
   parseAuth,
   parseMcpGet,
+  restartLine,
   robotArgs,
   STEPS,
 } from "../../../scripts/setup";
@@ -193,6 +194,25 @@ test("setup.ts registers absolute paths, the EV3 first, and prints a launch line
   const json = JSON.parse(readFileSync(join(DIR, "robots.json"), "utf8")) as typeof robots;
   for (const p of [json.ev3, ...json.twin.filter((a) => a.endsWith(".json"))])
     expect(existsSync(join(DIR, "..", "..", "..", p))).toBe(true);
+});
+
+test("setup.ts name ends with the restart the person must do, and runs no doctor", () => {
+  // the robot's own Claude Code holds the ports a doctor checks, so a doctor in `name` could never end ok there
+  expect(restartLine("linux", "credits")).toEqual({
+    status: "ok",
+    what: "restart",
+    why: "Claude Code reads the new registration when it starts again",
+    next: "the person types /exit in Claude Code, then starts it again with: cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude --model sonnet",
+  });
+  expect(restartLine("win32", "p").next).toEndWith(launchLine("win32", "p"));
+  const src = readFileSync(join(DIR, "..", "..", "..", "scripts", "setup.ts"), "utf8");
+  const nameStep = src.slice(src.indexOf("async function name("), src.indexOf("async function report("));
+  expect(nameStep).toContain("register(s)");
+  // the step function that runs the doctor, by what it runs
+  const fns = [...src.matchAll(/^async function (\w+)\(/gm)].map((m) => ({ name: m[1]!, at: m.index }));
+  const doctorAt = src.indexOf('"--doctor"');
+  const runsDoctor = fns.filter((f) => f.at < doctorAt).at(-1)!.name;
+  expect(nameStep).not.toContain(`${runsDoctor}(`);
 });
 
 test("setup.ts keeps the robot's name across runs, and a new name changes only the name", () => {
