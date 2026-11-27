@@ -49,11 +49,11 @@ Add each one the robot has, on its confirmed port. A port nobody confirmed: the 
 | Ultrasonic or infrared | `"sensors": {"<n>": "ultrasonic"}` or `"ir"` | `"distance": "ev3.S<n>"` | `twin.body.distance_sensor_x_cm` |
 | Gyro | `"sensors": {"<n>": "gyro"}` | `"gyro": "ev3.S<n>"` | `"heading": {"device": "gyro", "channel": "angle_deg"}` in the drivetrain, only when the port is confirmed. Its place changes nothing in the physics |
 | The brick (always) | none | none | `twin.view.brick`: `"pose"` `"flat"` or `"standing"`, `"screen"` `"front"` or `"back"` (flat: where ports A-D point; standing: where the screen faces), as the photo shows. A leaning brick: the closer pose and a note "the brick leans <n>° toward <the front / the back>" |
-| Phone | none | none | `twin.view.phone`; a note "A phone stands at the front with its screen facing forward; it joins as a page and lends its camera, screen and speaker." (README "Peripheral pages on a phone") |
+| Phone | none | none | `twin.view.phone`; a note "A phone stands at the front with its screen facing forward; it joins as a page and lends its camera, screen and speaker." (`<clone>/docs/manual.md` "Peripheral pages on a phone") |
 
 `twin.view.sensors.<n>` (`x_cm`, `y_cm`, `z_cm`) places a sensor in the 3D look only. Leave out the body fields of a sensor the robot does not have.
 
-A part whose kind is a guess: write the likeliest kind on its port, keep the port's token, and add a note "<port>: <kind a> or <kind b>, not confirmed". Something plugged into a port whose kind you cannot even guess: a motor is `"large"` if it drives, else `"medium"`; a sensor gets no entry in `twin.ev3.sensors` and no role (the file has no "sensor of unknown kind"), the port's token, and a note "S<n>: a sensor is plugged in here, kind unknown". A part of an official model that the photo does not show is written like a seen one, with its token and a note "<part> on <port>: from the <model>'s build, not seen in the photo".
+A part whose kind is a guess: write the likelier kind on its port, keep the port's token, add a note "<port>: <kind a> or <kind b>, not confirmed", and ask the question naming both (SKILL.md state 1). Something plugged into a port whose kind you cannot even guess: a motor is `"large"` if it drives, else `"medium"`; a sensor gets no entry in `twin.ev3.sensors` and no role (the file has no "sensor of unknown kind"), the port's token, and a note "S<n>: a sensor is plugged in here, kind unknown". A part of an official model that the photo does not show is written like a seen one, with its token and a note "<part> on <port>: from the <model>'s build, not seen in the photo".
 
 ## A robot with no drive (an arm, a crane, a station, a controller)
 
@@ -95,14 +95,17 @@ For each row the robot hits: write the note, tell the person the line in their l
 | An NXT light, sound or colour sensor, or another maker's sensor | nothing on that port, no role; a note with its port | "The twin has no <sensor>; on the real robot the model can still read it as `ev3.S<n>`." |
 | An NXT touch or ultrasonic sensor | `"touch"` or `"ultrasonic"` | none |
 | An NXT motor | `"large"`; a note | "The twin uses an EV3 large motor for the NXT motor." |
-| An attachment: an arm, claw, lifter, scoop, frame, bumper bar, wings | the motor's role and a note on what it does and its range | "The 3D twin does not draw the <attachment>; its motor turns." |
-| A shell, decoration or a tall body (a humanoid, an animal) | a note | "The 3D twin shows the bare base, not the <shell>." |
+| An attachment: an arm, claw, lifter, turntable | the motor's role, `twin.view.motors.<X>.attachment` `"arm"`, `"gripper"`, `"lift"` or `"turntable"`, and a note on what it does and its range | "The 3D twin draws the <attachment> as a LEGO <arm / gripper / lift / turntable> of beams that moves with its motor." |
+| Another attachment: a scoop, hammer, wings, a frame | the closest of those, else `"axle"`; a note | "The 3D twin draws the <attachment> as a <closest>, moving with its motor." |
+| A bumper bar | `twin.view.bumper` | none |
+| A shell, decoration or a tall body (a humanoid, an animal) | `twin.view.shell` `"panels"` or `"beams"`; a note | "The 3D twin draws <side panels / a frame of beams>, not the <shell>'s shape." |
 | A brick leaning, neither flat nor upright | the closer `view.brick.pose`; a note | "The 3D twin shows the brick <flat / upright>." |
-| No drive | as "A robot with no drive" | "The 3D twin still draws wheels; it does not drive." |
-| Four or six wheels, two sides driven (or chained) | `differential`; the footprint covers every wheel; a note | "The twin drives as two sides; it draws two wheels." |
+| No drive | as "A robot with no drive" | "The 3D twin stands on a frame of beams; it does not drive." |
+| Four or six wheels, two sides driven (or chained) | `differential`; `view.wheels_per_side` 2 or 3; the footprint covers every wheel; a note | "The twin drives as two sides; it draws <n> wheels a side turning together, without the gears or chain." |
+| Front and rear axles driven by separate motors (the Stair Climber) | no `pair`, no drivetrain, `view.drive` `"none"`; each motor a role (`front_wheels`, `rear_wheels`, `lift`); a note | "The twin cannot drive or climb: it stands on a frame of beams and turns each motor on its own." |
 | A caster, ball or skid | `back_cm` (or `front_cm`) reaches it | none |
 | Steering (one motor steers, one drives), legs, a walker | no `pair` and no drivetrain; the motors as roles; a note | "The twin cannot steer or walk: its motors turn, the body stays put." |
 | Two wheels and no caster: it balances | `differential`; `view.caster` `"none"`; a note "balances on two wheels; do not drive it without its balance program" | "The twin does not fall over; the real robot does without its balance program." |
 | A motor turned by hand as a dial | role `dial`; a note | "In the twin nobody turns the dial; it reads what the program turns." |
-| A sensor that faces sideways, up, behind, or sits off the centre line | the closest `x` in `twin.body`; its real place in `twin.view.sensors`; a note | "In the twin the <sensor> looks straight ahead (reads the floor) on the centre line." |
+| A sensor that faces sideways, up, behind, or sits off the centre line | the closest `x` in `twin.body`; its real place in `twin.view.sensors`; a note | "The 3D twin draws the <sensor> where it is, but it reads straight ahead (the floor) on the centre line." |
 | Terrain (stairs, ramps, rough ground) | a note | "The twin's floor is flat." |

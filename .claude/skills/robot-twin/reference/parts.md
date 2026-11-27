@@ -1,6 +1,6 @@
 # LEGO wheels and sprockets: diameters for `wheel_diameter_cm`
 
-Offer the rows as a pick list. The diameters are the map's (`<clone>/packages/lego-parts/data/rolling.json`), which wins when they differ. `wheel_diameter` is confirmed when the person picks a row, reads the size printed on the tire wall (`56 x 28`: diameter 56 mm), or measures; a row you pick from the photo stays assumed. State 6 CALIBRATE replaces it with a measured value.
+Offer the rows as a pick list. The map wins over this table: an official model's `wheel_diameter_mm` in `builds.json` (it is what the model rolls, a little under the tyre's outer size), else the part's `outer_diameter_mm` in `rolling.json`; the numbers here are rolling.json's and serve only parts the map does not have. `wheel_diameter` is confirmed when the person picks a row, reads the size printed on the tire wall (`56 x 28`: diameter 56 mm), or measures; a row you pick from the photo stays assumed. State 6 CALIBRATE replaces it with a measured value.
 
 | What you see | Part | Outer diameter | `wheel_diameter_cm` | Source |
 |---|---|---|---|---|
@@ -30,4 +30,4 @@ From the middle of the left tire's tread to the middle of the right tire's tread
 
 ## A caster, a skid, or passive wheels
 
-Whatever touches the floor with no motor turning it is a support: a steel ball in a socket (the Education caster), a swivel wheel, a skid, or small wheels on a free axle. All are written the same way: `view.caster` `"ball"`, and `back_cm` (or `front_cm`) reaching it. Small passive wheels get a note "rests on two small free wheels at the back, drawn as a ball caster". Wheels that a chain, gears or a second motor turn are driven, not passive: robot-file.md "What a twin cannot have", four or six wheels.
+Whatever touches the floor with no motor turning it is a support: a steel ball in a socket (the Education caster), a swivel wheel, a skid, or small wheels on a free axle. Write `view.caster` as the closest: `"ball"` (a steel ball or a swivel wheel), `"wheel"` (small passive wheels), `"skid"`, with `back_cm` (or `front_cm`) reaching it, and a note when it is not that part ("a swivel caster, drawn as a ball"). Wheels that a chain, gears or a second motor turn are driven, not passive: robot-file.md "What a twin cannot have", four or six wheels.

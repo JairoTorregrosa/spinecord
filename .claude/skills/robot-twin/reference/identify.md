@@ -4,25 +4,28 @@ Sizes are the parts' bounding boxes from BrickLink's catalogue (marked verified 
 
 ## What the photo shows
 
-| It is | Tells |
-|---|---|
-| A photo of a built robot | Real light and shadow, a floor or table, cables that sag, parts slightly out of line, often a hand, a mat or a room |
-| An instruction drawing | Flat shading, no shadow on a floor, a step number, a parts call-out box (`1x`, `2x`), an arrow showing where a part goes, white background |
-| A render, box art or product photo | Perfect parts, glossy, no cables or cables drawn ideal, logo or set number; or a studio shot: a seamless backdrop curving up behind the robot, soft even light, a flawless build, no table edge, room, hand, mat or other object. Treat it like box art |
-| A slide, poster or screen | A frame, text blocks, a projector's keystone, a monitor bezel, moiré, other images beside it |
-| Several robots | More than one drive base or more than one brick. A robot in the background, out of focus or cut off, while one robot is the sharp subject in the middle, does not make it several: go on with the subject and say in the report which robot you used |
+Read the tells in this order; the first group seen decides.
+
+| # | Tells | It is |
+|---|---|---|
+| 1 | Print on the image: a step number, a parts call-out box (`1x`, `2x`), an arrow showing where a part goes, a logo or set number, text blocks, a frame, a projector's keystone, a monitor bezel, moiré, other images beside it | not a photo: a drawing, render, box art, slide or screen |
+| 2 | Signs of a real object: cables that sag or bend unevenly, parts slightly out of line, dust or wear, a hard shadow on a floor or table, a hand, a table edge, a mat, a room | a photo, unless group 3 is also seen on an official model you recognise: then it is the "photo and picture at once" row of state 0 |
+| 3 | Studio look only: a seamless backdrop curving up behind the robot, soft even light, glossy flawless parts, cables drawn ideal | an official model you recognise: a picture, not a photo. Any other robot: the person's photo, go on |
+| | Several robots: more than one drive base or more than one brick | the "several" rows. A robot in the background, out of focus or cut off, while one robot is the sharp subject in the middle, does not make it several: go on with the subject and say in the report which robot you used |
 
 ## Readable
 
 The gate of state 0 counts the brick and the drive as readable only when the photo shows:
 - **the brick**: its body, not only an edge or a cable, and at least one of the signs of an EV3: the screen, the dark grey button cross, a port end with its row of four sockets, or the `EV3` print. A brick covered by parts, seen only from below or from a side with none of these, or too blurred to tell any of them, is not readable. Tilted or standing upright is fine: say so in the file;
 - **the drive**: what touches the floor on at least one side (wheels, tracks, legs, a fixed base), and that side's motor or the axle it drives.
-A robot that hides one of the two is the "not readable" row of state 0, also when everything else is sharp.
+A robot that hides one of the two is a "not readable" row of state 0, also when everything else is sharp.
+
+**Not an EV3** needs one of: the other brick seen with a tell of its row below (NXT: the orange button or three output ports `A B C`; SPIKE, Robot Inventor: the 5 × 5 light grid or six ports; RCX: the yellow brick), or motors and sensors with flat white cables fixed to them. NXT motors and sensors alone do not decide: they plug into an EV3 too. Anything less is "not readable".
 
 | Brick | Tells | spinecord |
 |---|---|---|
 | **EV3** | Dark grey and light grey, 11.1 × 7.2 × 5.1 cm ([BrickLink 95646c01](https://www.bricklink.com/v2/catalog/catalogitem.page?P=95646c01)). A grey monochrome screen at one end of the top face; below it six buttons: a centre button inside a ring of four arrow buttons that light green, orange or red, and a back button at the screen's corner. `EV3` printed on it. **Four** output ports `A B C D` on the end beside the screen, **four** input ports `1 2 3 4` on the other end; the USB plug between them on the A-D end | yes |
-| NXT | Light grey and white, an **orange** square button with two grey arrow buttons, `NXT` printed, a smaller screen. **Three** output ports `A B C` on one end, four inputs `1 2 3 4` on the other. With the brick hidden, its parts tell it: an ultrasonic with **orange rings** round its eyes, an **orange** touch plunger, motors with an **orange** hub | no: stop |
+| NXT | Light grey and white, an **orange** square button with two grey arrow buttons, `NXT` printed, a smaller screen. **Three** output ports `A B C` on one end, four inputs `1 2 3 4` on the other. Its parts (an ultrasonic with **orange rings**, an **orange** touch plunger, motors with an **orange** hub) also plug into an EV3 | no: stop |
 | SPIKE Prime, Robot Inventor | A square hub, no screen: a **5 × 5 grid of white lights** and one round button; **six** ports `A`-`F` along two sides. SPIKE Prime is yellow and white, Robot Inventor teal, white and black | no: stop |
 | SPIKE Essential, WeDo 2.0, Powered Up | A small hub with two ports and a light, often on a yellow or light-blue base | no: stop |
 | Any of the four above | **Flat white cables fixed to each motor and sensor**, round light-blue or teal motor faces, bright azure, magenta and yellow parts. EV3 cables are black and unplug at both ends | no: stop |
@@ -58,11 +61,11 @@ Look-alikes, and the one tell that separates them:
 - ultrasonic or infrared: eyes that stand out are ultrasonic, a flat dark face is infrared;
 - large or medium motor: length against the brick (11 cm, about the brick's length, or 7 cm).
 
-When the tell is not in the photo (the part seen from behind or from the side, too small, in shadow), the kind is assumed: keep its port's token and ask "Is the part at <place> a <kind a> or a <kind b>?". Never pick one. An IR remote or beacon is not on a port.
+When the tell is not in the photo (the part seen from behind or from the side, too small, in shadow), write the likelier kind, keep its port's token, and ask "Is the part at <place> a <kind a> or a <kind b>?". An IR remote or beacon is not on a port.
 
 ## Official models
 
-When the robot looks like one of these, name it (state 0). The tells are what a photo shows; the ports and numbers are in the map's `builds.json` under the key, never here.
+A robot **is the model** when the photo shows its drive (what touches the floor, the drive motors), the brick's pose and place, and one more tell of its row, and every part seen is a part of the build (an `attachment:` part counts). Parts hidden or out of frame may be missing (the caster, a sensor behind the brick, the attachment). Name it in state 0. The tells are what a photo shows; the ports and numbers are in the map's `builds.json` under the key, never here.
 
 | Model (set) | `builds.json` key | Tells |
 |---|---|---|
@@ -83,7 +86,7 @@ When the robot looks like one of these, name it (state 0). The tells are what a 
 
 A model not in this table (the 31313 bonus models, a community build) is a custom robot: no build data.
 
-**On a model's base.** A robot that has a model's drive (the Driving Base's two motors and wheels, Tank Bot's tracks) but other parts or another layout on it is built *on* that model, not the model. Take from the build only the drive: its drive ports, wheel diameter and axle track, assumed. Read every other part from the photo as for a custom robot. The build's other ports are not added; ask about them in question 14 ("Is there a gyro on port 2, as on the Driving Base?").
+**On a model's base.** A robot with a model's drive and at least one part seen that the build does not have, or a part of the build seen in another place, is built *on* that model. Take from the build only the drive: its drive ports, wheel diameter and axle track, assumed. Every other part is read from the photo and an unread port takes the custom rule of questions.md row 4. The build's other ports are not added; ask about them in question 14 ("Is there a gyro on port 2, as on the Driving Base?").
 
 ## Reading a build
 
@@ -98,9 +101,16 @@ Open `<clone>/packages/lego-parts/data/builds.json` and take the entry whose `ke
 
 ## Where a port is
 
-On an EV3 lying flat, screen up, with the screen end away from you, the output ports from left to right are `A B C D` (with the USB plug between B and C), and on the near end the inputs from left to right are `1 2 3 4`. A plug is confirmed only when you can read the letter beside it or count its place in the row and follow its cable to a part.
+The letters printed beside the sockets decide when legible. Else count the place in the row (the map's `electronics.json`, part 95646):
 
-A port is **visibly empty** only when you see the socket's open dark slot, with nothing in it and no cable in front of it, and can place it in its row. A row seen at a slant where cables cover the sockets, or a port end out of the frame, is not read: its ports keep their tokens.
+| You look at | Output row (screen end) | Input row (other end) |
+|---|---|---|
+| The top: flat seen from above with the screen end away from you, or standing seen from the screen side with ports A-D up | `A B C D` left to right, the mini-USB PC socket after D, on the right | `1 2 3 4` left to right |
+| The screen end's face, straight on | `D C B A` left to right, the PC socket on the left | |
+| The other end's face, straight on | | `1 2 3 4` left to right |
+| The back of a standing brick (ports A-D down: turn the photo upside down first) | mirrored: `D C B A`, the PC socket on the left | `4 3 2 1` |
+
+A plug you can place in its row and follow to a part is read. A plug read with doubt (a slanted row, a cable hiding a socket) is still written as read, and its port keeps its token; the official model never replaces it. A port is **visibly empty** only when you see the socket's open dark slot, with nothing in it and no cable in front of it, and can place it in its row. A port end out of the frame is not read: its ports keep their tokens.
 
 ## Scale
 
