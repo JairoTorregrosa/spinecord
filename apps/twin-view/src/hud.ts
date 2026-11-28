@@ -3,6 +3,7 @@
 import { CallsScroller, isClaudeCall, type ListPort } from "./activity";
 import type { Chip } from "./status";
 import type { CallEnd, CallStart, MotorState, RefusalCode, RobotState, ServerMessage } from "./messages";
+import { terrainWords } from "./terrain";
 import { glance } from "./toolwords";
 import { bar, gauge, sensorWidget } from "./widgets";
 
@@ -13,6 +14,17 @@ const $ = <T extends HTMLElement>(id: string): T => {
 };
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
+/**
+ * The terrain chip: the robot fell (it waits for "Restaurar mundo" or a hand), a step too high or a slope too steep
+ * stopped it; hidden otherwise and on a flat world.
+ */
+export function terrainChip(st: RobotState): void {
+  const el = document.getElementById("chip-terrain");
+  if (!el) return;
+  const text = terrainWords(st);
+  el.hidden = text === null;
+  if (text !== null) el.textContent = text;
+}
 /** Why the process refused an action of the hand, in the person's words. */
 export const REFUSAL: Record<RefusalCode | "offline", string> = {
   does_not_fit: "No cabe ahí: chocaría con una pared o una caja",
@@ -23,7 +35,8 @@ export const REFUSAL: Record<RefusalCode | "offline", string> = {
   invalid: "La página envió una acción no válida (recárgala)",
   internal: "Error del visor (queda en el registro de spinecord)",
   on_terrain: "Las cajas van en el suelo plano, no sobre una rampa ni una plataforma",
-  unstable: "Ahí no se sostiene: quedaría inclinado sobre un borde o dentro de una rampa y se caería",
+  unstable:
+    "Ahí no se sostiene: quedaría inclinado sobre un borde, dentro de una rampa o sobre una pendiente muy empinada, y se caería",
   offline: "Sin conexión con spinecord: no se hizo nada",
 };
 /** The distance sensors, by kind: what the cone of the 3D view is called. */

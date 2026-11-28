@@ -3,12 +3,14 @@
 // must reach what the robot reads through the tools, and what the tools do (a tone, a phrase, a call) must reach
 // the page.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IR_RAYS, NO_NOISE, ULTRASONIC_RAYS, World, parseWorld } from "../../../packages/sim-world/world";
 import { loadWorldFile } from "../../../packages/sim-world/world-file";
+import { Terrain, slopeDeg } from "../../../packages/sim-world/terrain";
 import { fit } from "../../twin-view/src/fit";
+import { heightAt as viewHeightAt, slopeDeg as viewSlopeDeg } from "../../twin-view/src/terrain";
 import type { ServerMessage } from "../../twin-view/src/messages";
 import { buildViewPage } from "../../twin-view/view-build";
 import { DEFAULT_VIEW_PORT, loadConfig } from "../src/config";
@@ -106,10 +108,10 @@ function page(url: string, origin = new URL(url).origin) {
 }
 
 /** `rateHz`: the state frames; a slow rate keeps the tick away from what a test does between two frames. */
-async function rig(rateHz = 50) {
+async function rig(rateHz = 50, args = ["--twin"]) {
   const events: Record<string, unknown>[] = [];
   const log = (ev: string, fields?: Record<string, unknown>) => void events.push({ ev, ...fields });
-  const fleet = await buildFleet(loadConfig(["--twin"]), { log });
+  const fleet = await buildFleet(loadConfig(args), { log });
   const twins = fleet.robots.map((r) => ({
     id: r.id,
     brick: fleet.bricks.get(r.id)!,
@@ -133,6 +135,41 @@ async function rig(rateHz = 50) {
 }
 
 describe("the view listener", () => {
+  test("on terrain: the state carries the tilt; the hand sets the robot on a platform, never across an edge", async () => {
+    const deployment = join(import.meta.dir, "..", "..", "..", "deployments", "orugas");
+    const r = await rig(50, [
+      "--twin",
+      join(deployment, "robots", "orugas.json"),
+      "--world",
+      join(deployment, "worlds", "rampa.json"),
+    ]);
+    const p = await r.connect();
+    const first = await p.state("orugas-sim");
+    expect(first).toMatchObject({ tilt: { z_cm: 0, pitch_deg: 0, roll_deg: 0 }, block: null, fallen: null });
+    const hello = p.got.find((m) => m.t === "hello") as Extract<ServerMessage, { t: "hello" }>;
+    expect(hello.robots[0]!.world.terrain!.map((t) => t.id)).toEqual(["subida", "plataforma", "bajada"]);
+    expect(await p.act({ t: "carry", id: "orugas-sim", x: 120, y: 60, heading_deg: 0 })).toMatchObject({ ok: true });
+    await until("on top", async () => (await p.state("orugas-sim")).tilt?.z_cm === 12);
+    // the axle past the platform's south edge, facing off it: it would tip over
+    const tipped = await p.act({ t: "carry", id: "orugas-sim", x: 120, y: 34, heading_deg: -90 });
+    expect(tipped).toMatchObject({ ok: false, code: "unstable" });
+    expect((tipped as { error: string }).error).toMatch(/would rest tilted \d+ deg .* across the edge of "plataforma"/);
+  });
+
+  test("the page draws the terrain at the heights and slopes the world rolls the robot on", () => {
+    // the page cannot import sim-world, so it has its own heightAt and slopeDeg: both must agree with the world's
+    const worlds = join(import.meta.dir, "..", "..", "..", "deployments", "orugas", "worlds");
+    for (const name of ["rampa", "puente", "escalones", "colina", "circuito"]) {
+      const cfg = parseWorld(JSON.parse(readFileSync(join(worlds, `${name}.json`), "utf8")));
+      const pieces = cfg.terrain!;
+      const world = new Terrain(pieces);
+      for (const p of pieces) expect(viewSlopeDeg(p)).toBeCloseTo(slopeDeg(p), 9);
+      for (let x = 0.5; x < cfg.width; x += 3)
+        for (let y = 0.5; y < cfg.height; y += 3)
+          expect(viewHeightAt(pieces, x, y)).toBeCloseTo(world.heightAt(x, y), 9);
+    }
+  });
+
   test("serves the page on 127.0.0.1; only the page served here takes the socket", async () => {
     const { view } = await rig();
     expect(view.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);

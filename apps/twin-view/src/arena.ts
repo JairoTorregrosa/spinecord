@@ -8,6 +8,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { Obstacle, WorldShape } from "./messages";
+import { buildTerrain } from "./terrain";
 
 /** Floor colours of the colour ids of contract §2.2, as sim-world draws them. */
 export const COLOR_RGB = ["#282828", "#141414", "#3478dc", "#3caa5a", "#f5cd3c", "#dc463c", "#f5f3ec", "#8c5f3c"];
@@ -336,6 +337,11 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
     }
   };
   setBoxes(w.boxes);
+  if (w.terrain && w.terrain.length > 0) {
+    const terrain = buildTerrain(w.terrain);
+    group.add(terrain.group);
+    owned.push(terrain);
+  }
 
   return {
     group,

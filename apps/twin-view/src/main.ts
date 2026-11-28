@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { buildArena, toScene, type Arena } from "./arena";
+import { heightAt } from "./terrain";
 import { applyLink, frameStats, placeCamera } from "./deeplink";
 import { Sound } from "./audio";
 import { Cameras, CAMS, type Cam } from "./camera";
@@ -132,7 +133,16 @@ scene.add(robotRoot);
 let cur: RobotState | null = null;
 let curAt = 0;
 let interval = 33;
-type Shown = { x: number; y: number; th: number; tachos: Record<string, number> };
+/** Where the robot is drawn; on terrain also its height on the surface and its tilt (rad: pitch nose up, roll left up). */
+type Shown = {
+  x: number;
+  y: number;
+  th: number;
+  tachos: Record<string, number>;
+  z?: number;
+  pitch?: number;
+  roll?: number;
+};
 let from: Shown | null = null;
 let shown: Shown | null = null;
 let roles: Record<string, string> = {};
@@ -309,6 +319,8 @@ function setFocus(id: string | null): void {
   cur = null;
   from = shown = null;
   trail.feed.reset(driveLimits(focus?.drivetrain ?? null));
+  const pieces = focus?.world.terrain;
+  trail.path.ground = pieces && pieces.length > 0 ? (x, y) => heightAt(pieces, x, y) : null;
   trailReset();
   hand.reset(focus);
   showConeOption();
@@ -388,7 +400,13 @@ function onState(st: RobotState): void {
   const now = performance.now();
   const tachos: Record<string, number> = {};
   for (const mo of st.motors) tachos[mo.port] = mo.tacho_deg;
-  const next: Shown = { x: st.pose.x, y: st.pose.y, th: st.pose.heading_deg * DEG, tachos };
+  const next: Shown = {
+    x: st.pose.x,
+    y: st.pose.y,
+    th: st.pose.heading_deg * DEG,
+    tachos,
+    ...(st.tilt && { z: st.tilt.z_cm, pitch: st.tilt.pitch_deg * DEG, roll: st.tilt.roll_deg * DEG }),
+  };
   // the trail takes every state, drawn or not (a hidden tab still records the path); a move no drive could make
   // (picked up, restored) breaks it, and is shown at once, not glided over
   const carried = trail.feed.state(next.x, next.y, next.th, st.t_ms) === "carried";
@@ -412,11 +430,18 @@ function glide(now: number): Shown | null {
     const f = from.tachos[mo.port] ?? mo.tacho_deg;
     tachos[mo.port] = f + (mo.tacho_deg - f) * a;
   }
+  const mix = (f: number | undefined, t: number | undefined) =>
+    t === undefined ? undefined : (f ?? t) + (t - (f ?? t)) * a;
   shown = {
     x: from.x + (to.pose.x - from.x) * a,
     y: from.y + (to.pose.y - from.y) * a,
     th: from.th + dth * a,
     tachos,
+    ...(to.tilt && {
+      z: mix(from.z, to.tilt.z_cm),
+      pitch: mix(from.pitch, to.tilt.pitch_deg * DEG),
+      roll: mix(from.roll, to.tilt.roll_deg * DEG),
+    }),
   };
   return shown;
 }
@@ -438,7 +463,8 @@ setInterval(() => {
   stateForHud = null;
   showStatus(link.state === "open", st);
   if (st.motors.some((m) => m.blocked) || (st.stalled && st.activity !== "idle")) pushedAt = performance.now();
-  $("chip-stall").hidden = performance.now() - pushedAt > 3000;
+  $("chip-stall").hidden = performance.now() - pushedAt > 3000 || !!st.fallen;
+  hud.terrainChip(st);
   $("pose").textContent =
     `x ${st.pose.x.toFixed(1)} · y ${st.pose.y.toFixed(1)} cm · θ ${heading(st.pose.heading_deg).toFixed(0)}°`;
   $("clock").textContent = `t ${(st.t_ms / 1000).toFixed(1)} s`;
@@ -705,8 +731,10 @@ function frame(now: number): void {
   const t = now / 1000;
   const s = glide(now);
   if (s && model && cur) {
-    robotRoot.position.copy(toScene(s.x, s.y));
-    robotRoot.rotation.y = s.th;
+    robotRoot.position.copy(toScene(s.x, s.y, s.z ?? 0));
+    // heading about the vertical, then the pitch about the robot's right (+z: nose up), then the roll about its
+    // heading (+x: left side up)
+    robotRoot.rotation.set(s.roll ?? 0, s.th, s.pitch ?? 0, "YZX");
     robotRoot.visible = true;
     model.update(cur, s.tachos, t);
     updateCone(cur);

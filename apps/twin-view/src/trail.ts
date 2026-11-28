@@ -165,6 +165,8 @@ export class TrailPath {
   private lth = 0;
   private dist = 0;
   private prog = 0;
+  /** The surface height (cm) under (x, y) on terrain, so the band lies on a ramp or a platform; null: a flat floor. */
+  ground: ((x: number, y: number) => number) | null = null;
   /** Points changed since `takeDirty`, [lo, hi); the whole buffer after a compaction. */
   private dlo = Infinity;
   private dhi = -Infinity;
@@ -270,7 +272,7 @@ export class TrailPath {
     for (let e = 0; e < 2; e++) {
       const v = 2 * k + e;
       this.pos[3 * v] = x;
-      this.pos[3 * v + 1] = this.height;
+      this.pos[3 * v + 1] = this.height + (this.ground?.(x, y) ?? 0);
       this.pos[3 * v + 2] = -y;
       this.nrm[2 * v] = nx;
       this.nrm[2 * v + 1] = nz;
