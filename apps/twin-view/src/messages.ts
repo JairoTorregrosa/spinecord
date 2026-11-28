@@ -49,6 +49,17 @@ export interface WorldShape {
   };
   start: { x: number; y: number; heading_deg: number };
   look: LookSection;
+  /** Platforms and ramps (sim-world terrain.ts); absent: a flat floor. */
+  terrain?: TerrainPiece[];
+}
+
+/** A piece of terrain: a platform (`low_cm` = `high_cm`) or a ramp rising toward `rises`. */
+export interface TerrainPiece extends Box {
+  id: string;
+  kind: "platform" | "ramp";
+  low_cm: number;
+  high_cm: number;
+  rises?: "east" | "west" | "north" | "south";
 }
 
 export interface RobotMeta {
@@ -92,6 +103,13 @@ export interface RobotState {
   pose: { x: number; y: number; heading_deg: number };
   /** The last physics step was blocked by a wall or obstacle. */
   stalled: boolean;
+  /**
+   * On terrain only: how the body lies (height of the axle on the surface in cm, nose-up pitch and left-up roll in
+   * degrees), what stopped it (`block`: a step too high, a slope too steep), and how it fell (null: upright).
+   */
+  tilt?: { z_cm: number; pitch_deg: number; roll_deg: number };
+  block?: { by: "step"; with: string; rise_cm: number } | { by: "steep"; slope_deg: number } | null;
+  fallen?: { from: string; drop_cm: number; tilt_deg: number } | null;
   link: string;
   activity: string;
   motors: MotorState[];
@@ -140,6 +158,11 @@ export interface WorldEventMsg {
   how?: "reset" | "carried";
   why?: string;
   cm?: number;
+  rise_cm?: number;
+  slope_deg?: number;
+  from?: string;
+  drop_cm?: number;
+  tilt_deg?: number;
 }
 
 export interface CallStart {
@@ -197,6 +220,8 @@ export type ServerMessage =
  * Why an action of the page was refused. does_not_fit: the robot would overlap a wall or a box there;
  * box_on_robot: the box would sit on the robot; outside: a box not inside the arena; no_such_box: that box is
  * gone (another page took it); too_fast: more actions than a hand makes; invalid: a malformed action;
+ * on_terrain: a box would stand on a ramp or a platform (boxes stand on the flat floor); unstable: the robot would
+ * rest tilted across an edge there and fall;
  * internal: a fault of the view itself (the process logs it as view_error).
  */
 export type RefusalCode =
@@ -206,7 +231,9 @@ export type RefusalCode =
   | "no_such_box"
   | "too_fast"
   | "invalid"
-  | "internal";
+  | "internal"
+  | "on_terrain"
+  | "unstable";
 
 export type PageMessage =
   /** A person picks the robot up and sets it down (the gyro feels the turn). */

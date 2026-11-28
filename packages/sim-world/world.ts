@@ -6,6 +6,11 @@
 // The world file describes the environment and where the sensors sit on the body. It does NOT describe the
 // drivetrain: wheel size, axle track, how much a turn scrubs and which motors drive belong to the robot, handed in
 // by whoever puts a robot body in this world (see `World.drive`).
+//
+// A world may have terrain (terrain.ts): platforms and ramps the body climbs, rests on, is stopped by and falls
+// from. A world without terrain is flat and none of that code runs: its physics are those of a flat floor.
+import { RISES, Terrain, checkTerrain, type Rest, type Rise, type TerrainPiece } from "./terrain";
+export type { Rest, Rise, TerrainPiece } from "./terrain";
 
 export type Vec = [number, number];
 export interface Pose {
@@ -76,7 +81,7 @@ function obstacleOf(b: ObstacleInput, id: string): Obstacle {
   };
 }
 /** Why the world refused to change its obstacles (it then changed nothing). */
-export type ObstacleErrorCode = "invalid" | "outside" | "on_robot" | "no_such_box" | "id_taken";
+export type ObstacleErrorCode = "invalid" | "outside" | "on_robot" | "no_such_box" | "id_taken" | "on_terrain";
 export class ObstacleError extends Error {
   constructor(
     readonly code: ObstacleErrorCode,
@@ -151,6 +156,15 @@ export interface DriveGeometry {
    * heavier one as against a wall. Default DEFAULT_PUSH_N.
    */
   push_n?: number;
+  /**
+   * On terrain only. What the body weighs (g) and how its tread grips (friction coefficient): gravity pulls it back
+   * by mass x g x sin(pitch) on a slope, and its tread holds it up to a slope of atan(grip). Defaults
+   * TERRAIN_DEFAULT_MASS_G and TERRAIN_DEFAULT_GRIP.
+   */
+  mass_g?: number;
+  grip?: number;
+  /** On terrain only. The highest edge (cm) the tread rides up onto; a higher one stops it. Default DEFAULT_CLIMB_CM. */
+  climb_cm?: number;
 }
 
 export interface NoiseConfig {
@@ -193,6 +207,8 @@ export interface WorldConfig {
   body: BodyShape;
   noise: NoiseConfig;
   start: Pose;
+  /** Platforms and ramps (terrain.ts); absent or empty: a flat floor. */
+  terrain?: readonly TerrainPiece[];
 }
 
 /** Body used when the world file has no `body` section: a compact 18 x 12 cm base with front sensors. */
@@ -236,6 +252,10 @@ export const NO_NOISE: NoiseConfig = {
 
 /** Physics step (ms of simulated time). */
 export const DT_MS = 20;
+/** The slice of DT_MS of world time `t_ms` lies in (a hair before a boundary counts as past it: float sums of steps). */
+export function slopeSlice(t_ms: number): number {
+  return Math.floor(t_ms / DT_MS + 1e-9);
+}
 /**
  * Motion noise is one draw per wheel for each slice this long of world time, made from the seed and the slice's
  * index: a step that spans slices takes from each its share. How time is cut into steps (a viewer that ticks the
@@ -310,6 +330,10 @@ export type WorldEvent = { n: number; t_ms: number } & (
   | { kind: "echo_back"; cm: number }
   | { kind: "placed"; how: "reset" | "carried" }
   | { kind: "obstacle_changed"; box: string; change: "added" | "moved" | "removed" }
+  // terrain only
+  | { kind: "step_blocked"; with: string; rise_cm: number }
+  | { kind: "too_steep"; slope_deg: number }
+  | { kind: "fell"; from: string; drop_cm: number; tilt_deg: number }
 );
 type EventBody = WorldEvent extends infer E ? (E extends unknown ? Omit<E, "n" | "t_ms"> : never) : never;
 /** Events the world keeps; older ones are dropped (a reader learns how many it missed). */
@@ -472,6 +496,7 @@ export function parseWorld(json: unknown): WorldConfig {
     "body",
     "noise",
     "extensions",
+    "terrain",
   ];
   const noise = root.noise as Record<string, unknown> | undefined;
   if (noise && typeof noise === "object" && "turn_scrub" in noise)
@@ -492,6 +517,33 @@ export function parseWorld(json: unknown): WorldConfig {
   const arena = obj(root.arena, "arena");
   const start = obj(root.start, "start");
   const labels = new Set<string>();
+  const terrain = arr(root.terrain, "terrain").map((t, i) => {
+    const o = obj(t, `terrain[${i}]`),
+      at = `terrain[${i}]`;
+    const kind = o.kind;
+    const keys = kind === "ramp" ? TERRAIN_RAMP_KEYS : TERRAIN_PLATFORM_KEYS;
+    if (kind !== "ramp" && kind !== "platform")
+      fail(`${at}.kind`, `must be "platform" or "ramp", got ${JSON.stringify(kind)}`);
+    for (const k of Object.keys(o))
+      if (!(keys as readonly string[]).includes(k))
+        fail(`${at}.${k}`, `is not a known field of a ${kind} (${keys.join(", ")})`);
+    if (typeof o.id !== "string" || !OBSTACLE_ID.test(o.id))
+      fail(`${at}.id`, `must be 1 to 32 letters, digits, _ or -, got ${JSON.stringify(o.id)}`);
+    const r = rect(t, at);
+    if (!(r.w > 0 && r.h > 0)) fail(at, "needs w and h > 0");
+    if (kind === "platform") {
+      const z = num(o.height_cm, `${at}.height_cm`, Number.MIN_VALUE);
+      return { id: o.id as string, kind, ...r, low_cm: z, high_cm: z } as TerrainPiece;
+    }
+    const rises = o.rises as Rise;
+    if (!RISES.includes(rises))
+      fail(`${at}.rises`, `must be one of ${RISES.join(", ")}, got ${JSON.stringify(o.rises)}`);
+    const low = num(o.low_cm, `${at}.low_cm`, 0),
+      high = num(o.high_cm, `${at}.high_cm`, 0);
+    if (!(high > low)) fail(`${at}.high_cm`, `must be above low_cm (${low}), got ${high}`);
+    return { id: o.id as string, kind, ...r, low_cm: low, high_cm: high, rises } as TerrainPiece;
+  });
+  checkTerrain(terrain, (i, why) => fail(`terrain[${i}]`, why));
   return {
     name: str(root.name, "name"),
     ...(root.description === undefined ? {} : { description: str(root.description, "description") }),
@@ -568,7 +620,51 @@ export function parseWorld(json: unknown): WorldConfig {
       y: num(start.y, "start.y"),
       th: (num(start.heading_deg, "start.heading_deg") * Math.PI) / 180,
     },
+    ...(terrain.length > 0 ? { terrain } : {}),
   };
+}
+
+const TERRAIN_PLATFORM_KEYS = ["id", "kind", "x", "y", "w", "h", "height_cm"] as const;
+const TERRAIN_RAMP_KEYS = ["id", "kind", "x", "y", "w", "h", "rises", "low_cm", "high_cm"] as const;
+/** Names a body's wall contacts take in events: no terrain piece or box may be called that. */
+const WALL_NAMES = ["wall_west", "wall_east", "wall_south", "wall_north"];
+/**
+ * A body tilted further than this (pitch or roll, degrees) has fallen: it tipped over an edge, or a slope tips it
+ * over. An estimate, not a measurement: a body that an edge tilts this far lands on its nose, its tail or its side.
+ * With the centre of mass at the axle, a body tips at the edge of a drop once its axle passes the edge, by
+ * atan(drop / overhang): a drop of more than tan(30 deg) = 0.58 x the overhang (its front or back beyond the edge)
+ * tips it over; across a side edge, one track down a drop of more than 0.58 x the width between the tracks. A lower
+ * drop lets it drive down the step.
+ */
+export const FALL_TILT_DEG = 30;
+/**
+ * What a body on terrain weighs when its build does not say (g): the 1 kg DEFAULT_PUSH_N assumes. On terrain the
+ * mass sets how hard gravity pulls along a slope against the motors (mass x g x sin(pitch)).
+ */
+export const TERRAIN_DEFAULT_MASS_G = 1000;
+/**
+ * How a tread grips when its build does not say: the 0.5 DEFAULT_PUSH_N assumes, between plastic EV3 track links
+ * (0.25) and LEGO rubber tyres (1.0-1.2). A tread holds a body on a slope up to atan(grip) (26.6 deg at 0.5); on a
+ * steeper one it spins and the body climbs no further.
+ */
+export const TERRAIN_DEFAULT_GRIP = 0.5;
+/**
+ * The highest edge (cm) a tread rides up onto when the robot does not say: the radius of a 5.6 cm wheel. A wheel or a
+ * track's leading sprocket meets a step at about its axle's height and no higher (an estimate, not a measurement;
+ * a SimBrick hands the world its own wheel's radius).
+ */
+export const DEFAULT_CLIMB_CM = 2.8;
+/** Why the body did not roll as far as its wheels asked in the last physics step, on terrain or against a box. */
+export type Block =
+  | { by: "contact" }
+  | { by: "step"; with: string; rise_cm: number }
+  | { by: "steep"; slope_deg: number }
+  | { by: "fallen" };
+/** How a body fell: from what (a terrain piece's id, or "floor"), the height it dropped, how far it tipped. */
+export interface Fall {
+  from: string;
+  drop_cm: number;
+  tilt_deg: number;
 }
 
 /** Standard gravity, m/s2. */
@@ -761,6 +857,14 @@ export class World {
   private lastBoxN = 0;
   /** Length of each line (cm), in file order. */
   readonly line_lengths_cm: number[] = [];
+  /** The platforms and ramps; null for a flat world (then nothing below about terrain runs). */
+  readonly terrain: Terrain | null;
+  /** How the body lies on the terrain now; null in a flat world. */
+  rest: Rest | null = null;
+  /** The body fell (tipped over an edge or a slope): it drives no more until it is set down again. Null: upright. */
+  fallen: Fall | null = null;
+  /** Why the last physics step did not roll as far as the wheels asked; null when it rolled freely. */
+  last_block: Block | null = null;
 
   constructor(cfg: WorldConfig, seed = 1, drive: DriveGeometry | null = null) {
     if (!(cfg.width > 0 && cfg.height > 0)) throw new Error("world: the arena needs width and height > 0");
@@ -793,14 +897,140 @@ export class World {
       const m = /^box(\d+)$/.exec(b.id);
       if (m) this.lastBoxN = Math.max(this.lastBoxN, Number(m[1]));
     }
+    this.terrain = cfg.terrain && cfg.terrain.length > 0 ? new Terrain(cfg.terrain) : null;
+    if (this.terrain) {
+      const ids = new Set<string>();
+      for (const t of this.terrain.pieces) {
+        if (ids.has(t.id) || t.id === "floor" || WALL_NAMES.includes(t.id) || cfg.boxes.some((b) => b.id === t.id))
+          throw new Error(`world "${cfg.name}": terrain id "${t.id}" is repeated, or names the floor, a box or a wall`);
+        ids.add(t.id);
+        if (t.x < 0 || t.y < 0 || t.x + t.w > cfg.width || t.y + t.h > cfg.height)
+          throw new Error(`world "${cfg.name}": terrain "${t.id}" does not lie wholly inside the arena`);
+        // the body rests on its two tracks: a piece narrower than the body could pass between them unfelt
+        const across = 2 * cfg.body.half_width_cm;
+        if (Math.min(t.w, t.h) < across)
+          throw new Error(
+            `world "${cfg.name}": terrain "${t.id}" is ${Math.min(t.w, t.h)} cm across; a piece is at least as wide as the body (${across} cm), which rests on its tracks only`,
+          );
+      }
+      for (const b of cfg.boxes)
+        if (this.onTerrain(b))
+          throw new Error(
+            `world "${cfg.name}": box "${b.id}" stands on terrain; boxes stand on the flat floor only (a box on a ramp or a platform is not modelled)`,
+          );
+    }
     this.pose = { ...cfg.start };
     this.gyroZeroTh = this.pose.th;
     if (this.collides(this.pose))
       throw new Error(
         `world "${cfg.name}": the robot does not fit at the start pose (${cfg.start.x}, ${cfg.start.y}): it overlaps a wall or obstacle`,
       );
+    if (this.terrain) {
+      const why = this.placeProblem(this.pose);
+      if (why) throw new Error(`world "${cfg.name}": at the start pose ${why}`);
+      this.rest = this.restAt(this.pose);
+    }
     this.resetTrip();
     this.touching = this.touchedAt(this.pose, cfg.boxes);
+  }
+
+  // ----- terrain -----
+  /** How the body would lie at pose `p` (terrain worlds only). */
+  restAt(p: Pose): Rest {
+    if (!this.terrain) throw new Error("restAt: this world is flat");
+    return this.terrain.rest(p.x, p.y, p.th, this.cfg.body);
+  }
+  /**
+   * Why the body cannot be set down at `p` on this terrain (it would rest tilted past FALL_TILT_DEG across an edge
+   * or on a slope, and fall), or null when it can. A flat world: always null.
+   */
+  placeProblem(p: Pose): string | null {
+    if (!this.terrain) return null;
+    const r = this.restAt(p),
+      tilt = (Math.max(Math.abs(r.pitch), Math.abs(r.roll)) * 180) / Math.PI;
+    if (tilt <= FALL_TILT_DEG) return null;
+    return `the robot would rest tilted ${tilt.toFixed(0)} deg (more than ${FALL_TILT_DEG}) across the edge of "${r.top_piece ?? "floor"}" at (${p.x.toFixed(1)}, ${p.y.toFixed(1)}) and fall`;
+  }
+  /** The mass, grip and climb the terrain's physics use: the drive's, else the defaults. */
+  terrainDrive(): { mass_g: number; grip: number; climb_cm: number } {
+    return {
+      mass_g: this.drive?.mass_g ?? TERRAIN_DEFAULT_MASS_G,
+      grip: this.drive?.grip ?? TERRAIN_DEFAULT_GRIP,
+      climb_cm: this.drive?.climb_cm ?? DEFAULT_CLIMB_CM,
+    };
+  }
+  /**
+   * Gravity along the body's heading now (N; positive pulls it backward: nose up on a slope). 0 in a flat world and
+   * for a body that fell.
+   */
+  slopeForceN(): number {
+    if (!this.rest || this.fallen) return 0;
+    return (this.terrainDrive().mass_g / 1000) * G * Math.sin(this.slopeCell().pitch);
+  }
+  /**
+   * The pitch the drive feels during the slice of DT_MS of world time it is in: how the body lay when that slice
+   * began. A host that cuts its steps on that grid (SimBrick does on terrain) then rolls the same path whatever its
+   * ticks, as the motor law is exact for a constant input.
+   */
+  slopeCell(at = this.t_ms): { pitch: number } {
+    const k = slopeSlice(at);
+    if (this.cell.k !== k) this.cell = { k, pitch: this.rest?.pitch ?? 0 };
+    return this.cell;
+  }
+  private cell = { k: -1, pitch: 0 };
+  /** What the tread grips with on the slope it is on (N): grip x weight x cos(pitch). */
+  tractionN(): number {
+    const d = this.terrainDrive();
+    return d.grip * (d.mass_g / 1000) * G * Math.cos(this.rest?.pitch ?? 0);
+  }
+  /** Whether box `b` overlaps a piece of terrain (edges touching do not count). */
+  private onTerrain(b: Rect): boolean {
+    return (
+      this.terrain?.pieces.some(
+        (t) => b.x < t.x + t.w - 1e-9 && t.x < b.x + b.w - 1e-9 && b.y < t.y + t.h - 1e-9 && t.y < b.y + b.h - 1e-9,
+      ) ?? false
+    );
+  }
+  /** Why the terrain stops a body resting as `this.rest` at `from` from reaching `p`, or null when it does not. */
+  private terrainBlock(from: Pose, p: Pose): Block | null {
+    const t = this.terrain!,
+      g = this.cfg.body,
+      d = this.terrainDrive();
+    const cl = t.climb(from, this.rest!, p, g);
+    if (cl.rise_cm > d.climb_cm + 1e-9)
+      return { by: "step", with: cl.piece ?? "floor", rise_cm: Math.round(cl.rise_cm * 10) / 10 };
+    const r = t.rest(p.x, p.y, p.th, g);
+    // a tread holds a body up a slope to atan(grip): steeper, it spins and the body climbs no higher
+    if (r.z_cm > this.rest!.z_cm + 1e-9 && Math.abs(Math.tan(r.pitch)) > d.grip)
+      return { by: "steep", slope_deg: Math.round((Math.abs(r.pitch) * 1800) / Math.PI) / 10 };
+    return null;
+  }
+  /** After a step on terrain: where the body lies, whether it fell, and the events of a block that began. */
+  private settleTerrain(block: Block | null): boolean {
+    const was = this.last_block;
+    if (block?.by === "step" && !(was?.by === "step" && was.with === block.with))
+      this.note({ kind: "step_blocked", with: block.with, rise_cm: block.rise_cm });
+    if (block?.by === "steep" && was?.by !== "steep") this.note({ kind: "too_steep", slope_deg: block.slope_deg });
+    const r = (this.rest = this.restAt(this.pose));
+    const tilt = (Math.max(Math.abs(r.pitch), Math.abs(r.roll)) * 180) / Math.PI;
+    if (tilt > FALL_TILT_DEG) {
+      this.fallen = {
+        from: r.top_piece ?? "floor",
+        drop_cm: Math.round((r.top_cm - r.bottom_cm) * 10) / 10,
+        tilt_deg: Math.round(tilt),
+      };
+      this.note({ kind: "fell", ...this.fallen });
+      return true;
+    }
+    return false;
+  }
+  /** The body is set down somewhere (a reset, a hand): upright again, resting on what is there. */
+  private placedOnTerrain(): void {
+    if (!this.terrain) return;
+    this.fallen = null;
+    this.last_block = null;
+    this.rest = this.restAt(this.pose);
+    this.cell = { k: slopeSlice(this.t_ms), pitch: this.rest.pitch };
   }
 
   /** Independent copy (same configuration, pose and drivetrain) with another seed. */
@@ -815,7 +1045,10 @@ export class World {
       throw new Error(
         `setPose: the robot does not fit at (${p.x.toFixed(1)}, ${p.y.toFixed(1)}): it overlaps a wall or obstacle`,
       );
+    const unstable = this.placeProblem(p);
+    if (unstable) throw new Error(`setPose: ${unstable}`);
     this.pose = { ...p };
+    this.placedOnTerrain();
     this.last_stalled = false;
     this.rate_deg_s = 0;
     this.resetGyro();
@@ -838,7 +1071,10 @@ export class World {
       throw new Error(
         `carry: the robot does not fit at (${p.x.toFixed(1)}, ${p.y.toFixed(1)}): it overlaps a wall or obstacle`,
       );
+    const unstable = this.placeProblem(next);
+    if (unstable) throw new Error(`carry: ${unstable}`);
     this.pose = next;
+    this.placedOnTerrain();
     this.last_stalled = false;
     this.rate_deg_s = 0;
     this.trackLine = -1;
@@ -862,8 +1098,8 @@ export class World {
    */
   addObstacle(r: ObstacleInput): string {
     const id = r.id ?? this.freeId();
-    if (r.id !== undefined && this.obstacle(r.id))
-      throw new ObstacleError("id_taken", `addObstacle: there is a box "${r.id}" already`);
+    if (r.id !== undefined && (this.obstacle(r.id) || this.terrain?.pieces.some((t) => t.id === r.id)))
+      throw new ObstacleError("id_taken", `addObstacle: there is a box or a piece of terrain "${r.id}" already`);
     this.place([...this.cfg.boxes, this.checked("addObstacle", { ...r, id })]);
     this.noteByHand(id, "added");
     return id;
@@ -940,6 +1176,11 @@ export class World {
     if (r !== undefined && !(Number.isFinite(r) && r > 0 && r <= 1))
       throw new ObstacleError("invalid", `${op}: ir_reflectivity must be > 0 and at most 1, got ${JSON.stringify(r)}`);
     const out = obstacleOf(b, b.id);
+    if (this.onTerrain(out))
+      throw new ObstacleError(
+        "on_terrain",
+        `${op}: a box stands on the flat floor; this one would stand on a ramp or a platform`,
+      );
     if (robot && this.boxCollides(out, this.pose))
       throw new ObstacleError("on_robot", `${op}: the box would overlap the robot; set it down somewhere free`);
     return out;
@@ -1235,13 +1476,26 @@ export class World {
       throw new Error(
         "world: this body has no drivetrain geometry (set World.drive from the robot profile before rolling the wheels)",
       );
+    if (this.fallen) {
+      // a body that fell lies on its side or its nose: its tracks are held there until it is set down again
+      this.last_step_fraction = 0;
+      this.last_stalled = true;
+      this.last_block = { by: "fallen" };
+      this.rate_deg_s = 0;
+      this.last_push_n = 0;
+      this.notePushes(this.cfg.boxes);
+      return true;
+    }
     const axle = this.drive.axle_track_cm,
       scrub = this.drive.turn_scrub ?? 0;
+    // On a slope the tread rolls along the surface: the map sees cos(pitch) of it (the encoders count all of it).
+    const along = this.rest ? Math.cos(this.slopeCell(this.t_ms - dt_ms).pitch) : 1;
     // Each slice of motion noise is its own arc, so the path does not depend on where steps begin and end.
     const arcs = this.wheelNoise(this.t_ms - dt_ms, dt_ms).map(({ w, l, r }) => {
       const tl = dl_cm * w * this.gainL * l,
         tr = dr_cm * w * this.gainR * r;
-      return { w, tl, tr, d: (tl + tr) / 2, th: ((tr - tl) / axle) * (1 - scrub) };
+      const d = this.rest ? ((tl + tr) / 2) * along : (tl + tr) / 2;
+      return { w, tl, tr, d, th: ((tr - tl) / axle) * (1 - scrub) };
     });
     const from = { ...this.pose };
     /** The pose after fraction `f` of this step's time, and the turn and travel done until then. */
@@ -1271,7 +1525,31 @@ export class World {
     let f = 1,
       end = at(1),
       push = this.pushTo(end.pose);
-    const blocked = push === null;
+    // terrain: an edge too high to ride up, or a slope too steep to hold, stops the body as a wall does
+    const terrainBlock = this.terrain && push !== null ? this.terrainBlock(from, end.pose) : null;
+    const blocked = push === null || terrainBlock !== null;
+    const stops = this.terrain
+      ? (q: Pose) => this.pushTo(q) === null || this.terrainBlock(from, q) !== null
+      : (q: Pose) => this.pushTo(q) === null;
+    // terrain: a body that would tip past the fall's tilt falls where it first does, not at the end of the step
+    const tipped = (q: Pose) => {
+      const r = this.restAt(q);
+      return (Math.max(Math.abs(r.pitch), Math.abs(r.roll)) * 180) / Math.PI > FALL_TILT_DEG;
+    };
+    let falls = false;
+    if (this.terrain && !blocked && tipped(end.pose)) {
+      falls = true;
+      let lo = 0,
+        hi = 1;
+      for (let i = 0; i < CONTACT_BISECTIONS; i++) {
+        const m = (lo + hi) / 2;
+        if (tipped(at(m).pose)) hi = m;
+        else lo = m;
+      }
+      f = hi;
+      end = at(hi);
+      push = this.pushTo(end.pose) ?? { boxes: null, force_n: 0 };
+    }
     if (blocked) {
       // Bisect to the last free fraction: the body stops against the obstacle (or a box it pushes stops against
       // one), not up to a step short of it. Fraction 0 is where the body already is: free by construction.
@@ -1279,7 +1557,7 @@ export class World {
         hi = 1;
       for (let i = 0; i < CONTACT_BISECTIONS; i++) {
         const m = (lo + hi) / 2;
-        if (this.pushTo(at(m).pose) === null) hi = m;
+        if (stops(at(m).pose)) hi = m;
         else lo = m;
       }
       f = lo;
@@ -1288,7 +1566,11 @@ export class World {
     }
     this.last_step_fraction = f;
     this.pose = end.pose;
-    this.last_stalled = blocked;
+    let block: Block | null = !blocked ? null : (terrainBlock ?? { by: "contact" });
+    // the step it falls in ends there: its tracks are held from that moment
+    if (this.terrain && this.settleTerrain(block)) block = { by: "fallen" };
+    this.last_stalled = blocked || falls || block?.by === "fallen";
+    this.last_block = block;
     this.last_push_n = push?.force_n ?? 0;
     const before = this.cfg.boxes;
     if (push?.boxes) this.place(push.boxes);
@@ -1299,7 +1581,7 @@ export class World {
     // A spin in place only wobbles the axle centre (wheel noise): that is not travel.
     if (Math.abs(end.d) > 0.1 * end.wheels) this.odometer_cm += Math.abs(end.d);
     if (this.segs.length > 0) this.followLine();
-    return blocked;
+    return this.last_stalled;
   }
 
   /**
@@ -1325,6 +1607,7 @@ export class World {
       const [dx, dy] = clearOf(b, p, cs, this.cfg.body);
       const moved = { ...b, x: b.x + dx, y: b.y + dy };
       if (moved.x < 0 || moved.y < 0 || moved.x + moved.w > width || moved.y + moved.h > height) return null;
+      if (this.terrain && this.onTerrain(moved)) return null; // a pushed box stops against terrain as against a wall
       (next ??= [...boxes])[i] = moved;
       force += resist;
     }
@@ -1521,14 +1804,15 @@ export class World {
     offset_rad = 0,
     vHalfRad = (CONE_HALF_DEG * Math.PI) / 180,
   ): { d: number; cos: number; top_cm: number; ir: number } {
-    const {
-      o: [ox, oy],
-      th,
-    } = this.distanceSensorAxis(p);
-    const z = this.cfg.body.distance_sensor_z_cm,
-      spread = vHalfRad >= Math.PI / 2 ? Infinity : Math.tan(vHalfRad);
-    const dx = Math.cos(th + offset_rad),
-      dy = Math.sin(th + offset_rad);
+    const o = this.sensorAt(p);
+    const { x: ox, y: oy, z } = o;
+    // tan of the ray's elevation: the pitch along its bearing, the roll (left up) across it; 0 on a flat floor
+    const k = o.tan_pitch * Math.cos(o.yaw + offset_rad) + o.tan_roll * Math.sin(o.yaw + offset_rad);
+    const camera = vHalfRad >= Math.PI / 2;
+    // how many cm the beam's lower edge comes down per cm ahead (0 or less: it never comes down)
+    const drop = camera ? Infinity : k === 0 ? Math.tan(vHalfRad) : Math.max(0, -Math.tan(Math.atan(k) - vHalfRad));
+    const dx = Math.cos(o.th + offset_rad),
+      dy = Math.sin(o.th + offset_rad);
     const { width, height, boxes } = this.cfg;
     if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return { d: 0, cos: 1, top_cm: Infinity, ir: 1 };
     let best = Infinity,
@@ -1581,14 +1865,63 @@ export class World {
         }
       }
       if (!hit) continue;
-      const below = b.height_cm === undefined ? 0 : z - b.height_cm;
       const r = b.ir_reflectivity ?? 1;
-      if (below <= 0 || spread === Infinity) take(t0, c0, b.height_cm, r);
-      // a box lower than the sensor: seen only once the beam's lower edge comes down to its top, and then where the
-      // beam meets its top edge, slanted down (the slant counts against the echo as a sideways one does)
-      else if (below <= t0 * spread) take(Math.hypot(t0, below), c0 * Math.cos(Math.atan2(below, t0)), b.height_cm, r);
+      // the central ray reaches the box below its top (a box without a height: always)
+      if (b.height_cm === undefined || camera || z + k * t0 <= b.height_cm) take(t0, c0, b.height_cm, r);
+      else {
+        // a box lower than the beam: seen only once the beam's lower edge comes down to its top, and then where the
+        // beam meets its top edge, slanted down (the slant counts against the echo as a sideways one does)
+        const below = z - b.height_cm;
+        if (below <= t0 * drop) take(Math.hypot(t0, below), c0 * Math.cos(Math.atan2(below, t0)), b.height_cm, r);
+      }
     }
+    // the terrain: a piece's side, its top, the floor once the beam points down
+    const t = this.terrain?.ray(ox, oy, z, dx, dy, k, drop, best);
+    if (t) take(t.d, t.cos, t.top_cm, 1);
     return { d: best, cos, top_cm: top, ir };
+  }
+  /**
+   * Where the distance sensor is and how it looks at pose `p`: its place on the map (x, y) and its height above the
+   * floor (z), the heading of its axis (th: distanceSensorAxis) and how far that is turned from the body's (yaw), and
+   * the tilt of the body it rides on (tan of pitch and roll; 0 on a flat floor). Every ray of the distance sensors
+   * starts here. On terrain the tilted body carries it: nose up moves it back and up.
+   */
+  sensorAt(p: Pose = this.pose): {
+    x: number;
+    y: number;
+    z: number;
+    th: number;
+    yaw: number;
+    tan_pitch: number;
+    tan_roll: number;
+  } {
+    const g = this.cfg.body;
+    const axis = this.distanceSensorAxis(p),
+      yaw = axis.th - p.th;
+    if (!this.terrain)
+      return { x: axis.o[0], y: axis.o[1], z: g.distance_sensor_z_cm, th: axis.th, yaw, tan_pitch: 0, tan_roll: 0 };
+    const r =
+      p === this.pose || (p.x === this.pose.x && p.y === this.pose.y && p.th === this.pose.th)
+        ? this.rest!
+        : this.restAt(p);
+    // the eye on the body (x ahead, y left, z up) tilted with it: pitch about the axle, roll about the centre line
+    const ahead = g.distance_sensor_x_cm * Math.cos(r.pitch) - g.distance_sensor_z_cm * Math.sin(r.pitch),
+      left = g.distance_sensor_y_cm * Math.cos(r.roll),
+      c = Math.cos(p.th),
+      s = Math.sin(p.th);
+    return {
+      x: p.x + ahead * c - left * s,
+      y: p.y + ahead * s + left * c,
+      z:
+        r.z_cm +
+        g.distance_sensor_x_cm * Math.sin(r.pitch) +
+        g.distance_sensor_y_cm * Math.sin(r.roll) +
+        g.distance_sensor_z_cm * Math.cos(r.pitch) * Math.cos(r.roll),
+      th: axis.th,
+      yaw,
+      tan_pitch: Math.tan(r.pitch),
+      tan_roll: Math.tan(r.roll),
+    };
   }
 
   /**
@@ -1633,10 +1966,7 @@ export class World {
   private echoBearings(p: Pose, within: number): number[] {
     const half = (CONE_HALF_DEG * Math.PI) / 180;
     const out: number[] = [];
-    const {
-      o: [ox, oy],
-      th,
-    } = this.distanceSensorAxis(p);
+    const { x: ox, y: oy, th } = this.sensorAt(p);
     const toward = (x: number, y: number): void => {
       let off = (Math.atan2(y - oy, x - ox) - th) % (2 * Math.PI);
       if (off > Math.PI) off -= 2 * Math.PI;
@@ -1694,10 +2024,7 @@ export class World {
   /** The nearest box corner that echoes whatever the angle (ULTRASONIC_EDGE_MAX_CM): inside the cone and in plain view. */
   private cornerEcho(p: Pose): { d: number; off: number } {
     const { width, height, boxes } = this.cfg;
-    const {
-      o: [ox, oy],
-      th,
-    } = this.distanceSensorAxis(p);
+    const { x: ox, y: oy, z, th } = this.sensorAt(p);
     const half = (CONE_HALF_DEG * Math.PI) / 180;
     let best = Infinity,
       bestOff = NaN;
@@ -1720,8 +2047,7 @@ export class World {
       y <= 0 ||
       y >= height ||
       boxes.some((b) => b !== skip && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
-    const z = this.cfg.body.distance_sensor_z_cm,
-      spread = Math.tan(half);
+    const spread = Math.tan(half);
     for (const b of boxes)
       for (const [x, y] of [
         [b.x, b.y],

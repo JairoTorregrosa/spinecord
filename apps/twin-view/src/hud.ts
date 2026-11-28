@@ -22,6 +22,8 @@ export const REFUSAL: Record<RefusalCode | "offline", string> = {
   too_fast: "Demasiadas acciones seguidas: espera un segundo",
   invalid: "La página envió una acción no válida (recárgala)",
   internal: "Error del visor (queda en el registro de spinecord)",
+  on_terrain: "Las cajas van en el suelo plano, no sobre una rampa ni una plataforma",
+  unstable: "Ahí no se sostiene: quedaría inclinado sobre un borde o dentro de una rampa y se caería",
   offline: "Sin conexión con spinecord: no se hizo nada",
 };
 /** The distance sensors, by kind: what the cone of the 3D view is called. */

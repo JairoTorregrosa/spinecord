@@ -14,7 +14,8 @@ import {
   type BackendKind,
   type ImagePayload,
 } from "../protocol/types";
-import { EVENT_LOG_MAX, World, parseWorld, type WorldConfig } from "./world";
+import { EVENT_LOG_MAX, FALL_TILT_DEG, World, parseWorld, type WorldConfig } from "./world";
+import { slopeDeg } from "./terrain";
 import { readWorldChannel, worldChannelSpecs } from "./channels";
 import { renderWorld, renderFirstPerson, encodePNG, toBase64 } from "./render";
 
@@ -46,7 +47,18 @@ export interface SimWorldProviderOptions {
 
 const DEVICE_IDS = "sim.world, sim.camera, sim.speaker";
 const WORLD_COMMANDS = ["load_world", "use_map", "reset", "restore", "events"];
-const EVENTS_DESCRIPTION = `What happened in the world after event number "since" (default 0: every event still kept, at most ${EVENT_LOG_MAX}), oldest first. Changes nothing and spends no sensor noise. measured.events holds one JSON object per event, as a string: {n, t_ms (simulated time), kind, ...}. kind is contact_began or contact_ended {with: a box id, or the wall it touches: wall_west (x 0), wall_east, wall_south (y 0), wall_north}; push_began {box} and push_ended {box, moved_cm}: the robot slid a box; stall_began and stall_ended: a drive wheel held by what the body is against, its encoder stopped; slip_began and slip_ended: the drive wheels turn while the body is held; echo_lost {why: slant (a surface in range met too far off square to echo) or range (nothing within 250 cm)} and echo_back {cm}, only with an ultrasonic sensor plugged in; placed {how: reset or carried (a person moved the robot)}; obstacle_changed {box, change: added, moved or removed} (by a person). measured.next is the number to pass as since next time, measured.dropped how many events after since are no longer kept, measured.t_ms the world's time now. Contacts are timed to a fraction of a ms; the other events to the end of the physics step (at most 20 ms) they happen in.`;
+const EVENTS_DESCRIPTION = `What happened in the world after event number "since" (default 0: every event still kept, at most ${EVENT_LOG_MAX}), oldest first. Changes nothing and spends no sensor noise. measured.events holds one JSON object per event, as a string: {n, t_ms (simulated time), kind, ...}. kind is contact_began or contact_ended {with: a box id, or the wall it touches: wall_west (x 0), wall_east, wall_south (y 0), wall_north}; push_began {box} and push_ended {box, moved_cm}: the robot slid a box; stall_began and stall_ended: a drive wheel held by what the body is against, its encoder stopped; slip_began and slip_ended: the drive wheels turn while the body is held; echo_lost {why: slant (a surface in range met too far off square to echo) or range (nothing within 250 cm)} and echo_back {cm}, only with an ultrasonic sensor plugged in; placed {how: reset or carried (a person moved the robot)}; obstacle_changed {box, change: added, moved or removed} (by a person); on terrain only: step_blocked {with: the piece (or floor), rise_cm}: an edge higher than the tracks climb stopped the drive, too_steep {slope_deg}: a slope steeper than the tread holds (the tracks spin), fell {from: the piece or floor, drop_cm, tilt_deg}: the robot tipped over an edge or a slope and lies there until reset, restore, use_map, load_world or a person puts it back. measured.next is the number to pass as since next time, measured.dropped how many events after since are no longer kept, measured.t_ms the world's time now. Contacts are timed to a fraction of a ms; the other events to the end of the physics step (at most 20 ms) they happen in.`;
+/** The terrain of a world in words for the model ("" for a flat world): every piece, its place, heights and slope. */
+function terrainWords(w: World): string {
+  if (!w.terrain) return "";
+  const d = w.terrainDrive();
+  const pieces = w.terrain.pieces.map((t) =>
+    t.kind === "platform"
+      ? `${t.id}: platform x ${t.x}..${t.x + t.w}, y ${t.y}..${t.y + t.h}, ${t.high_cm} cm high`
+      : `${t.id}: ramp x ${t.x}..${t.x + t.w}, y ${t.y}..${t.y + t.h}, rising toward ${t.rises} from ${t.low_cm} to ${t.high_cm} cm (${slopeDeg(t).toFixed(1)} deg)`,
+  );
+  return ` Terrain (heights above the floor; the floor is 0 elsewhere; an edge is where heights jump): ${pieces.join("; ")}. This robot climbs an edge up to ${d.climb_cm} cm and a slope up to ${((Math.atan(d.grip) * 180) / Math.PI).toFixed(1)} deg along its heading; it falls when an edge or a slope tilts it past ${FALL_TILT_DEG} deg. Channels tilt, blocked_by and fallen say how it lies; boxes stand on the flat floor only.`;
+}
 /** speak limits of the simulated speaker: the same shape a real text-to-speech speaker declares (CONTRACT §2.3). */
 export const SIM_SPEAK = { max_chars: 200, max_ms: 15000, rate_wpm: { min: 80, max: 300, default: 140 } } as const;
 const SPEAKER_CHANNELS = ["last_spoken", "spoken_count"];
@@ -127,7 +139,7 @@ export class SimWorldProvider implements Provider {
         provider: this.id,
         kind: "sim_world",
         roles: [],
-        description: `Simulation only: the 2D world the twin lives in (now "${c.name}", ${c.width} x ${c.height} cm, origin bottom-left, x right, y up). Named points: ${c.points.map((p) => `${p.label} (${p.x}, ${p.y})`).join(", ") || "none"}.${c.description ? ` What the person does here: ${c.description}` : ""}`,
+        description: `Simulation only: the 2D world the twin lives in (now "${c.name}", ${c.width} x ${c.height} cm, origin bottom-left, x right, y up). Named points: ${c.points.map((p) => `${p.label} (${p.x}, ${p.y})`).join(", ") || "none"}.${c.description ? ` What the person does here: ${c.description}` : ""}${terrainWords(this.world)}`,
         channels: [
           ...worldChannelSpecs(this.world),
           {
@@ -446,6 +458,12 @@ export class SimWorldProvider implements Provider {
         `the robot does not fit at x_cm ${pose.x}, y_cm ${pose.y}: it would overlap a wall or obstacle (world is ${this.world.cfg.width} x ${this.world.cfg.height} cm; keep about 12 cm clear)`,
       );
     }
+    const unstable = this.world.placeProblem(pose);
+    if (unstable)
+      throw new RuntimeError(
+        "invalid_argument",
+        `${unstable}; set it down where it rests within ${FALL_TILT_DEG} deg (on a platform with its axle on top, on the floor, or on a ramp gentler than that)`,
+      );
     this.world.setPose(pose);
     this.forgetSpeech();
     return result("completed");

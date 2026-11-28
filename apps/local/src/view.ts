@@ -121,6 +121,7 @@ function shape(w: World): WorldShape {
     },
     start: { x: c.start.x, y: c.start.y, heading_deg: c.start.th * DEG },
     look: look !== null && typeof look === "object" && !Array.isArray(look) ? (look as Record<string, unknown>) : null,
+    ...(c.terrain && c.terrain.length > 0 ? { terrain: c.terrain.map((t) => ({ ...t })) } : {}),
   };
 }
 
@@ -190,6 +191,13 @@ function state(t: ViewTwin): RobotState {
     buttons: p.buttons,
     rays: sensorRays(w, Object.values(t.brick.ports.sensors) as string[]),
     t_ms: Math.round(w.t_ms),
+    ...(w.rest
+      ? {
+          tilt: { z_cm: r2(w.rest.z_cm), pitch_deg: r1(w.rest.pitch * DEG), roll_deg: r1(w.rest.roll * DEG) },
+          block: w.last_block?.by === "step" || w.last_block?.by === "steep" ? { ...w.last_block } : null,
+          fallen: w.fallen ? { ...w.fallen } : null,
+        }
+      : {}),
   };
 }
 
@@ -368,6 +376,8 @@ export function serveView(
             "does_not_fit",
             `the robot does not fit at (${p.x.toFixed(1)}, ${p.y.toFixed(1)}): it would overlap a wall or a box`,
           );
+        const unstable = w.placeProblem(p);
+        if (unstable) throw new Refused("unstable", unstable);
         w.carry(p);
         break;
       }
