@@ -15,6 +15,8 @@ import { LOST_GRACE_MS, hideNo3d, showNo3d } from "./no3d";
 import { SensorRayView } from "./rays";
 import { Stillness } from "./still";
 import { Link, type LinkState } from "./link";
+import { driveLimits } from "./trail";
+import { TrailView } from "./trail-view";
 import { lookOf } from "./look";
 import { restoredText } from "./restore";
 import type { RobotMeta, RobotState, ServerMessage } from "./messages";
@@ -36,7 +38,8 @@ const canvas = $<HTMLCanvasElement>("scene");
  */
 let renderer: THREE.WebGLRenderer | null = null;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+  // a stencil buffer lets the trail draw each pixel once (src/trail-view.ts)
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, stencil: true, powerPreference: "high-performance" });
 } catch (e) {
   showNo3d("no_context", (e as Error).message);
 }
@@ -143,38 +146,11 @@ const coneGroup = sensorRays.group;
 robotRoot.add(coneGroup);
 
 // ---------------------------------------------------------------- trail
-const TRAIL_MAX = 6000;
-const trailPos = new Float32Array(TRAIL_MAX * 3);
-const trailGeo = new THREE.BufferGeometry();
-trailGeo.setAttribute("position", new THREE.BufferAttribute(trailPos, 3));
-trailGeo.setDrawRange(0, 0);
-const trail = new THREE.Line(
-  trailGeo,
-  new THREE.LineBasicMaterial({ color: 0xe3000b, transparent: true, opacity: 0.8 }),
-);
-trail.frustumCulled = false;
-scene.add(trail);
-let trailN = 0;
-const trailReset = () => {
-  trailN = 0;
-  trailGeo.setDrawRange(0, 0);
-};
-const trailAdd = (x: number, y: number) => {
-  if (trailN > 0) {
-    const i = (trailN - 1) * 3;
-    if (Math.hypot(trailPos[i]! - x, -trailPos[i + 2]! - y) < 0.4) return;
-  }
-  if (trailN >= TRAIL_MAX) {
-    trailPos.copyWithin(0, 3 * (TRAIL_MAX / 2));
-    trailN = TRAIL_MAX / 2;
-  }
-  trailPos.set([x, 0.12, -y], trailN * 3);
-  trailN++;
-  trailGeo.setDrawRange(0, trailN);
-  trailGeo.attributes.position!.needsUpdate = true;
-};
+const trail = new TrailView(HELPERS);
+scene.add(trail.mesh);
+const trailReset = () => trail.clear();
 
-for (const o of [coneGroup, trail]) o.traverse((c) => c.layers.set(HELPERS));
+coneGroup.traverse((c) => c.layers.set(HELPERS));
 
 // ---------------------------------------------------------------- the socket
 const link = new Link(`ws://${location.host}/ws`, (m) => receive(m), linkChanged);
@@ -334,6 +310,7 @@ function setFocus(id: string | null): void {
   }
   cur = null;
   from = shown = null;
+  trail.feed.reset(driveLimits(focus?.drivetrain ?? null));
   trailReset();
   hand.reset(focus);
   showConeOption();
@@ -405,13 +382,13 @@ function onState(st: RobotState): void {
   const tachos: Record<string, number> = {};
   for (const mo of st.motors) tachos[mo.port] = mo.tacho_deg;
   const next: Shown = { x: st.pose.x, y: st.pose.y, th: st.pose.heading_deg * DEG, tachos };
-  // a jump (picked up, reset, a new world) is shown at once, not glided over
-  const jump = !shown || Math.hypot(shown.x - next.x, shown.y - next.y) > 15 || Math.abs(shown.th - next.th) > 0.8;
+  // the trail takes every state, drawn or not (a hidden tab still records the path); a move no drive could make
+  // (picked up, restored) breaks it, and is shown at once, not glided over
+  const carried = trail.feed.state(next.x, next.y, next.th, st.t_ms) === "carried";
+  const jump =
+    carried || !shown || Math.hypot(shown.x - next.x, shown.y - next.y) > 15 || Math.abs(shown.th - next.th) > 0.8;
   from = jump ? next : { ...shown!, tachos: { ...shown!.tachos } };
-  if (jump) {
-    shown = next;
-    if (cur && trailN > 0) trailReset();
-  }
+  if (jump) shown = next;
   cur = st;
   curAt = now;
   stateForHud = st;
@@ -555,7 +532,7 @@ $<HTMLInputElement>("opt-cone").addEventListener("change", (e) => {
 });
 $<HTMLInputElement>("opt-trail").addEventListener(
   "change",
-  (e) => (trail.visible = (e.target as HTMLInputElement).checked),
+  (e) => (trail.mesh.visible = (e.target as HTMLInputElement).checked),
 );
 $<HTMLInputElement>("opt-pip").addEventListener("change", (e) => {
   $("pip").hidden = !(e.target as HTMLInputElement).checked || cams.mode === "eye";
@@ -721,7 +698,6 @@ function frame(now: number): void {
     robotRoot.visible = true;
     model.update(cur, s.tachos, t);
     updateCone(cur);
-    if (trail.visible) trailAdd(s.x, s.y);
     hud.led(cur.led, t);
   } else robotRoot.visible = false;
 
@@ -762,6 +738,10 @@ function frame(now: number): void {
   if (!renderer) return; // no 3D: the panels go on, the scene is a message
   const w = canvas.clientWidth,
     h = canvas.clientHeight;
+  if (trail.mesh.visible) {
+    trail.viewHeight = canvas.height;
+    trail.flush();
+  }
   scene.updateMatrixWorld();
   shadowFrame(now);
   const pip = $("pip");
@@ -776,7 +756,12 @@ function frame(now: number): void {
   camera.updateMatrixWorld();
   if (pipOn) eyeCam.updateMatrixWorld();
   // nothing to draw that the canvas does not show already: the frame costs a look at the scene, not a render
-  const extra = [canvas.width, canvas.height, renderer.shadowMap.needsUpdate ? 1 : 0];
+  const extra = [
+    canvas.width,
+    canvas.height,
+    renderer.shadowMap.needsUpdate ? 1 : 0,
+    trail.mesh.visible ? trail.head : -1,
+  ];
   if (pr && cr) extra.push(pr.left - cr.left, cr.bottom - pr.bottom, pr.width, pr.height);
   if (!still.changed(scene, pipOn ? [camera, eyeCam] : [camera], extra)) return frameStats(renderer, now);
   renderer.setScissorTest(false);
