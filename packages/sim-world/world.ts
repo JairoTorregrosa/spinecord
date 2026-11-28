@@ -114,8 +114,17 @@ export interface BodyShape {
   /** Colour sensor: cm ahead of the axle, looking down; radius of the spot it averages. */
   color_sensor_x_cm: number;
   color_spot_radius_cm: number;
-  /** Distance sensor (ultrasonic or infrared): cm ahead of the axle, looking forward. */
+  /**
+   * Distance sensor (ultrasonic or infrared): where its eye is and where it looks. Every ray of its beam starts at
+   * that point and is aimed from that heading; the 3D view draws the sensor there (apps/twin-view/src/sensor-pose.ts).
+   * `x` cm ahead of the axle (negative: behind it; within -back_cm..front_cm), `y` cm to the left of the centre line
+   * (negative: to the right). The rays see walls and boxes only, never the robot's own body: a sensor at the front
+   * looking back reads through the robot to what is behind it.
+   */
   distance_sensor_x_cm: number;
+  distance_sensor_y_cm: number;
+  /** Where the distance sensor looks: degrees counter-clockwise from straight ahead, seen from above (-180..180). */
+  distance_sensor_yaw_deg: number;
   /**
    * How high the distance sensor is mounted (cm above the floor, the centre of its beam). It sees a box only where its
    * beam, spreading up and down as it does sideways, comes down to the box's height: mounted at 20 cm it looks over a
@@ -194,6 +203,8 @@ export const DEFAULT_BODY: BodyShape = {
   color_sensor_x_cm: 7,
   color_spot_radius_cm: 1,
   distance_sensor_x_cm: 8,
+  distance_sensor_y_cm: 0,
+  distance_sensor_yaw_deg: 0,
   // a sensor nobody measured: about where the EV3 educator base carries it; walls and boxes without a height are
   // higher than any mount, so in a world of those it changes nothing
   distance_sensor_z_cm: 6,
@@ -408,17 +419,46 @@ export function parseWorld(json: unknown): WorldConfig {
       h: num(o.h, `${path}.h`, 0),
     };
   };
+  // the fields that may be negative: a side of the centre line, a direction
+  const SIGNED: Record<string, [number, number]> = {
+    distance_sensor_x_cm: [-Infinity, Infinity], // behind the axle: checked against back_cm below
+    distance_sensor_y_cm: [-Infinity, Infinity],
+    distance_sensor_yaw_deg: [-180, 180],
+  };
   const partial = <T extends object>(v: unknown, path: string, base: T): T => {
     if (v === undefined) return { ...base };
     const o = obj(v, path),
       out = { ...base } as Record<string, number>;
     for (const [k, val] of Object.entries(o)) {
       if (!(k in base)) fail(`${path}.${k}`, `is not a known field (${Object.keys(base).join(", ")})`);
-      out[k] = num(val, `${path}.${k}`, 0);
+      const [lo, hi] = SIGNED[k] ?? [0, Infinity];
+      out[k] = num(val, `${path}.${k}`, lo);
+      if (out[k]! > hi) fail(`${path}.${k}`, `must be a finite number from ${lo} to ${hi}, got ${JSON.stringify(val)}`);
     }
     return out as T;
   };
   const root = obj(json, "root");
+  const body = partial(root.body, "body", DEFAULT_BODY);
+  // the sensor's place against the footprint, only where the file states it (a body without a distance sensor
+  // leaves it out, and its default must not refuse a short body)
+  const stated = (k: string) => typeof root.body === "object" && root.body !== null && k in root.body;
+  const x = body.distance_sensor_x_cm;
+  if (stated("distance_sensor_x_cm") && x < -body.back_cm)
+    fail(
+      "body.distance_sensor_x_cm",
+      `is ${x}: the distance sensor's eye would be ${-x} cm behind the axle, past the back of the body (back_cm ${body.back_cm}); a sensor at the back is at most back_cm behind the axle`,
+    );
+  if (stated("distance_sensor_x_cm") && x > body.front_cm)
+    fail(
+      "body.distance_sensor_x_cm",
+      `is ${x}: the distance sensor's eye would be ${x} cm ahead of the axle, past the front of the body (front_cm ${body.front_cm}); the body reaches at least as far as the sensor on it`,
+    );
+  const y = body.distance_sensor_y_cm;
+  if (stated("distance_sensor_y_cm") && Math.abs(y) > body.half_width_cm)
+    fail(
+      "body.distance_sensor_y_cm",
+      `is ${y}: the distance sensor's eye would be ${Math.abs(y)} cm to the ${y < 0 ? "right" : "left"} of the centre line, past the side of the body (half_width_cm ${body.half_width_cm}); the body is at least as wide as the sensor on it`,
+    );
   const KNOWN = [
     "schema",
     "name",
@@ -521,7 +561,7 @@ export function parseWorld(json: unknown): WorldConfig {
         radius: num(o.radius_cm, `points[${i}].radius_cm`, 0.1),
       };
     }),
-    body: partial(root.body, "body", DEFAULT_BODY),
+    body,
     noise: partial(root.noise, "noise", DEFAULT_NOISE),
     start: {
       x: num(start.x, "start.x"),
@@ -1418,6 +1458,23 @@ export class World {
     return [p.x + ahead * Math.cos(p.th), p.y + ahead * Math.sin(p.th)];
   }
 
+  /**
+   * The distance sensor's eye in the world and the heading it looks along (rad): body.distance_sensor_x_cm ahead,
+   * _y_cm to the left, turned by _yaw_deg. Every ray of the ultrasonic and the infrared starts here.
+   */
+  distanceSensorAxis(p: Pose = this.pose): { o: Vec; th: number } {
+    const g = this.cfg.body,
+      c = Math.cos(p.th),
+      s = Math.sin(p.th);
+    return {
+      o: [
+        p.x + g.distance_sensor_x_cm * c - g.distance_sensor_y_cm * s,
+        p.y + g.distance_sensor_x_cm * s + g.distance_sensor_y_cm * c,
+      ],
+      th: p.th + (g.distance_sensor_yaw_deg * Math.PI) / 180,
+    };
+  }
+
   // ----- sensors (every read spends noise from the sensor generator, never from the motion one) -----
   /** Reflected light 0..100 %: the average of the spot under the sensor, so the edge of a line reads in between. */
   senseReflect(): number {
@@ -1464,11 +1521,14 @@ export class World {
     offset_rad = 0,
     vHalfRad = (CONE_HALF_DEG * Math.PI) / 180,
   ): { d: number; cos: number; top_cm: number; ir: number } {
-    const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
+    const {
+      o: [ox, oy],
+      th,
+    } = this.distanceSensorAxis(p);
     const z = this.cfg.body.distance_sensor_z_cm,
       spread = vHalfRad >= Math.PI / 2 ? Infinity : Math.tan(vHalfRad);
-    const dx = Math.cos(p.th + offset_rad),
-      dy = Math.sin(p.th + offset_rad);
+    const dx = Math.cos(th + offset_rad),
+      dy = Math.sin(th + offset_rad);
     const { width, height, boxes } = this.cfg;
     if (ox <= 0 || ox >= width || oy <= 0 || oy >= height) return { d: 0, cos: 1, top_cm: Infinity, ir: 1 };
     let best = Infinity,
@@ -1573,9 +1633,12 @@ export class World {
   private echoBearings(p: Pose, within: number): number[] {
     const half = (CONE_HALF_DEG * Math.PI) / 180;
     const out: number[] = [];
-    const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
+    const {
+      o: [ox, oy],
+      th,
+    } = this.distanceSensorAxis(p);
     const toward = (x: number, y: number): void => {
-      let off = (Math.atan2(y - oy, x - ox) - p.th) % (2 * Math.PI);
+      let off = (Math.atan2(y - oy, x - ox) - th) % (2 * Math.PI);
       if (off > Math.PI) off -= 2 * Math.PI;
       else if (off < -Math.PI) off += 2 * Math.PI;
       if (Math.abs(off) <= half) out.push(off);
@@ -1589,7 +1652,7 @@ export class World {
     toward(width, oy);
     const NUDGE = 1e-4; // rad: just past a corner, onto the face it hid
     const bearing = (x: number, y: number): number => {
-      let off = (Math.atan2(y - oy, x - ox) - p.th) % (2 * Math.PI);
+      let off = (Math.atan2(y - oy, x - ox) - th) % (2 * Math.PI);
       if (off > Math.PI) off -= 2 * Math.PI;
       else if (off < -Math.PI) off += 2 * Math.PI;
       return off;
@@ -1631,14 +1694,17 @@ export class World {
   /** The nearest box corner that echoes whatever the angle (ULTRASONIC_EDGE_MAX_CM): inside the cone and in plain view. */
   private cornerEcho(p: Pose): { d: number; off: number } {
     const { width, height, boxes } = this.cfg;
-    const [ox, oy] = this.pointAhead(this.cfg.body.distance_sensor_x_cm, p);
+    const {
+      o: [ox, oy],
+      th,
+    } = this.distanceSensorAxis(p);
     const half = (CONE_HALF_DEG * Math.PI) / 180;
     let best = Infinity,
       bestOff = NaN;
     const look = (x: number, y: number, max: number): void => {
       const d = Math.hypot(x - ox, y - oy);
       if (!(d > 1e-9) || d > max || d >= best) return;
-      let off = (Math.atan2(y - oy, x - ox) - p.th) % (2 * Math.PI);
+      let off = (Math.atan2(y - oy, x - ox) - th) % (2 * Math.PI);
       if (off > Math.PI) off -= 2 * Math.PI;
       else if (off < -Math.PI) off += 2 * Math.PI;
       if (Math.abs(off) > half) return;

@@ -30,6 +30,7 @@ import type {
   WorldShape,
 } from "../../twin-view/src/messages";
 import { RAY_MAX_CM } from "../../twin-view/src/messages";
+import { poseOfBody } from "../../twin-view/src/sensor-pose";
 import type { ViewPageFiles } from "../../twin-view/view-build";
 import type { ViewChat } from "./chat";
 import { cacheFile, respond, type CachedFile } from "./http-cache";
@@ -114,7 +115,9 @@ function shape(w: World): WorldShape {
       color_sensor_x_cm: c.body.color_sensor_x_cm,
       color_spot_radius_cm: c.body.color_spot_radius_cm,
       distance_sensor_x_cm: c.body.distance_sensor_x_cm,
+      distance_sensor_y_cm: c.body.distance_sensor_y_cm,
       distance_sensor_z_cm: c.body.distance_sensor_z_cm,
+      distance_sensor_yaw_deg: c.body.distance_sensor_yaw_deg,
     },
     start: { x: c.start.x, y: c.start.y, heading_deg: c.start.th * DEG },
     look: look !== null && typeof look === "object" && !Array.isArray(look) ? (look as Record<string, unknown>) : null,
@@ -159,7 +162,7 @@ export function sensorRays(w: World, kinds: readonly string[]): SensorRays {
       }
     : null;
   const color = kinds.includes("color") ? { ahead_cm: b.color_sensor_x_cm, r_cm: b.color_spot_radius_cm } : null;
-  return { from: { ahead_cm: b.distance_sensor_x_cm, z_cm: b.distance_sensor_z_cm }, ultrasonic, ir, color };
+  return { from: poseOfBody(b), ultrasonic, ir, color };
 }
 
 function state(t: ViewTwin): RobotState {

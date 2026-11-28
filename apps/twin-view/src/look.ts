@@ -58,7 +58,10 @@
 //         face points (a gyro: its top, the face with the arrows, whose axis it measures), or a motor's output
 //         axle; yaw_deg turns that about the vertical, counter-clockwise from above. A place given in part fills
 //         the rest from the default. Default mounts: colour down under the front; touch forward at the front;
-//         ultrasonic and infrared forward where the world's body says the distance sensor reads; gyro top up on
+//         the distance sensor (the lowest port with an ultrasonic or infrared) always with its eye at the body's
+//         distance-sensor pose, looking along its heading (sensor-pose.ts: apps/local fills that pose from this
+//         place where `body` leaves it out, and refuses a side or a heading the two state differently); another
+//         ultrasonic or infrared above it; gyro top up on
 //         the brick or the frame; medium motor forward on the front of the brick; large motor on top of the
 //         brick, its axle to the left; each moved along a short list of mounts, then upward, until it touches
 //         nothing placed.
@@ -78,10 +81,10 @@
 //   }
 //
 // What the look cannot show:
-//   - The physics reads none of this. The distance sensor's rays start at the world's `body.distance_sensor_x_cm`
-//     and always look ahead, and the colour sensor reads the floor at `body.color_sensor_x_cm`, wherever the look
-//     puts them; so the distance cone is drawn where the twin measures, ahead, even for a sensor drawn facing
-//     sideways or back (the page shows what the twin reads, never a direction it does not read).
+//   - The physics reads none of this but the distance sensor's pose (above). The colour sensor reads the floor at
+//     `body.color_sensor_x_cm` on the centre line, wherever the look puts it. A distance sensor placed facing up or
+//     down is refused when the file is read: the twin reads only level (the page shows what the twin reads,
+//     never a direction it does not read).
 //   - Only parts of the EV3 sets' electronics, beams, axles, wheels, tracks and casters are drawn; any other
 //     LEGO part (gears, panels' shapes, plates with studs, bespoke chassis) is drawn as beams of the same extent.
 //   - Gears or a chain between wheels of one side are not drawn: the wheels just turn together.
@@ -90,6 +93,7 @@
 //   - Free-form shapes: a sensor tilted at an angle other than a right angle (yaw_deg turns it about the
 //     vertical only).
 import { MODULE, TRACKS } from "./dims";
+import { lenIn, placeIn } from "./place";
 import type { LookSection, RobotMeta } from "./messages";
 
 export type SensorKind = "touch" | "color" | "ultrasonic" | "gyro" | "ir";
@@ -151,7 +155,6 @@ export interface Look {
   label: string | null;
 }
 
-const FACINGS: readonly Facing[] = ["forward", "back", "left", "right", "up", "down"];
 const obj = (v: unknown): Record<string, unknown> | null =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -159,23 +162,10 @@ const n = (v: unknown, fallback: number): number => num(v) ?? fallback;
 const oneOf = <T extends string>(v: unknown, of: readonly T[], fallback: T): T =>
   of.includes(v as T) ? (v as T) : fallback;
 /** A length given in modules (rounded to a half module) or in cm, in cm; null when neither is given. */
-const len = (at: Record<string, unknown>, k: string): number | null => {
-  const cm = num(at[`${k}_cm`]);
-  if (cm !== null) return cm;
-  const m = num(at[k]);
-  return m === null ? null : (Math.round(m * 2) / 2) * MODULE;
-};
+const len = (at: Record<string, unknown>, k: string): number | null => lenIn(at, k, MODULE);
 
-function place(v: unknown): Place {
-  const at = obj(v) ?? {};
-  return {
-    x: len(at, "x"),
-    y: len(at, "y"),
-    z: len(at, "z"),
-    facing: FACINGS.includes(at.facing as Facing) ? (at.facing as Facing) : null,
-    yaw: n(at.yaw_deg, 0),
-  };
-}
+/** A look's place: x, y, z in modules or cm (null where not given), its facing and yaw_deg (place.ts). */
+export const place = (v: unknown): Place => placeIn(v, MODULE);
 
 /** The look of a robot over defaults. Never throws: a bad field keeps its default. */
 export function lookOf(robot: RobotMeta): Look {

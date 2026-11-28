@@ -348,8 +348,10 @@ describe("the view listener", () => {
       expect(st.rays.ir).toBeNull(); // no infrared on this robot: no rays invented for it
       expect(st.rays.color).toEqual({ ahead_cm: w.cfg.body.color_sensor_x_cm, r_cm: w.cfg.body.color_spot_radius_cm });
       expect(st.rays.from).toEqual({
-        ahead_cm: w.cfg.body.distance_sensor_x_cm,
+        x_cm: w.cfg.body.distance_sensor_x_cm,
+        y_cm: w.cfg.body.distance_sensor_y_cm,
         z_cm: w.cfg.body.distance_sensor_z_cm,
+        yaw_deg: w.cfg.body.distance_sensor_yaw_deg,
       });
     }
   });

@@ -2,6 +2,7 @@
 // text frame. Units as in sim-world: cm and ms, degrees at the edges; x to the right, y up, headings
 // counter-clockwise from +x seen from above.
 import type { ChatServerMessage, ChatStatus } from "./chat-messages";
+import type { SensorPose } from "./sensor-pose";
 
 export interface Box {
   x: number;
@@ -39,9 +40,12 @@ export interface WorldShape {
     half_width_cm: number;
     color_sensor_x_cm: number;
     color_spot_radius_cm: number;
+    /** The distance sensor's eye: ahead, to the left, up (cm), and its heading (degrees counter-clockwise from
+     *  ahead): the one pose it reads from and is drawn at (src/sensor-pose.ts). */
     distance_sensor_x_cm: number;
-    /** How high the distance sensor's beam is (cm above the floor). */
+    distance_sensor_y_cm: number;
     distance_sensor_z_cm: number;
+    distance_sensor_yaw_deg: number;
   };
   start: { x: number; y: number; heading_deg: number };
   look: LookSection;
@@ -104,12 +108,12 @@ export interface RobotState {
 }
 
 /**
- * The rays of the simulated sensors, in the robot's frame: bearings in degrees from its heading (counter-clockwise,
- * left positive), lengths in cm from the distance sensor (capped at RAY_MAX_CM).
+ * The rays of the simulated sensors, in the robot's frame: bearings in degrees from the distance sensor's heading
+ * (counter-clockwise, left positive), lengths in cm from its eye (capped at RAY_MAX_CM).
  */
 export interface SensorRays {
-  /** Where the distance sensor sits: cm ahead of the axle centre, cm above the floor (the physics' place). */
-  from: { ahead_cm: number; z_cm: number };
+  /** The distance sensor's eye and heading, the physics' pose (src/sensor-pose.ts): every ray starts there. */
+  from: SensorPose;
   /**
    * The ultrasonic's cone: its even rays (`echo`: that ray meets a surface square enough to send sound back), and
    * the echo the reading comes from, null when none comes back (the sensor reads 255).

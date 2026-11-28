@@ -147,3 +147,38 @@ describe("first-person render", () => {
     expect(g).toBeGreaterThan(100);
   });
 });
+
+describe("renderFirstPerson: the camera is the distance sensor's eye", () => {
+  test("off the centre line and turned, its floor and its walls come from the same point and heading", async () => {
+    const { World, parseWorld, NO_NOISE, WORLD_SCHEMA } = await import("./world");
+    const room = (body: object) =>
+      new World(
+        parseWorld({
+          schema: WORLD_SCHEMA,
+          name: "eye",
+          arena: { width_cm: 200, height_cm: 200 },
+          start: { x: 100, y: 100, heading_deg: 0 },
+          // a red strip along the eye's line of sight: 10 cm left of the robot, running away to its left
+          zones: [{ x: 96, y: 112, w: 8, h: 88, color: "red" }],
+          noise: { ...NO_NOISE },
+          body: { front_cm: 8, back_cm: 10, half_width_cm: 12, distance_sensor_x_cm: 0, ...body },
+        }),
+        1,
+      );
+    const W = 160,
+      H = 120;
+    const centreFloor = (img: ReturnType<typeof renderFirstPerson>) =>
+      [H - 1, H - 20, H / 2 + 14].map((y) => {
+        const i = (y * W + W / 2) * 4;
+        return [img.data[i], img.data[i + 1], img.data[i + 2]];
+      });
+    const red = [...COLOR_RGB[COLOR.red]!];
+    // eye 10 cm left, looking left: straight down the strip, near and far
+    const eye = room({ distance_sensor_y_cm: 10, distance_sensor_yaw_deg: 90 });
+    for (const px of centreFloor(renderFirstPerson(eye, { width: W, height: H }))) expect(px).toEqual(red);
+    // the wall it faces is the one at y 200, 90 cm away: the same distance the sensor's ray reads
+    expect(eye.rayDistance()).toBeCloseTo(90, 6);
+    // on the centre line looking ahead, the strip is out of view
+    for (const px of centreFloor(renderFirstPerson(room({}), { width: W, height: H }))) expect(px).not.toEqual(red);
+  });
+});

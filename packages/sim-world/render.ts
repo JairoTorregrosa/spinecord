@@ -126,7 +126,10 @@ export function renderWorld(world: World, opts: RenderOptions = {}): Image {
         put(px, py, u > g.front_cm - 2.5 ? NOSE : BODY);
     }
   if (opts.rays ?? true) {
-    const [ox, oy] = world.pointAhead(g.distance_sensor_x_cm);
+    const {
+      o: [ox, oy],
+      th,
+    } = world.distanceSensorAxis(p);
     // Every ray of the ultrasonic cone, each up to what it hits: dark where that surface echoes, pale where it is
     // met too far off square to send the sound back (world.ts, ULTRASONIC_ECHO_DEG).
     const echo = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
@@ -134,13 +137,7 @@ export function renderWorld(world: World, opts: RenderOptions = {}): Image {
       const off = (((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * CONE_HALF_DEG * Math.PI) / 180,
         h = world.rayHit(p, off),
         d = Math.min(h.d, ULTRASONIC_MAX_CM);
-      line(
-        ox,
-        oy,
-        ox + d * Math.cos(p.th + off),
-        oy + d * Math.sin(p.th + off),
-        h.cos >= echo - 1e-12 ? RAY : SILENT_RAY,
-      );
+      line(ox, oy, ox + d * Math.cos(th + off), oy + d * Math.sin(th + off), h.cos >= echo - 1e-12 ? RAY : SILENT_RAY);
     }
     const [sx, sy] = world.pointAhead(g.color_sensor_x_cm);
     disc(sx, sy, g.color_spot_radius_cm, SPOT);
@@ -157,7 +154,7 @@ export interface CameraOptions {
 }
 
 /**
- * First-person view from the robot's pose (camera at the front, looking forward).
+ * First-person view from the distance sensor's eye (World.distanceSensorAxis), looking where it looks.
  * Floor: every pixel under the horizon is projected onto the floor and takes its colour. Walls and obstacles: one ray per column.
  */
 export function renderFirstPerson(world: World, opts: CameraOptions = {}): Image {
@@ -169,14 +166,18 @@ export function renderFirstPerson(world: World, opts: CameraOptions = {}): Image
   if (!(W > 0 && H > 0 && W <= 640 && H <= 480))
     throw new Error(`renderFirstPerson: size ${W}x${H} is outside 1..640 x 1..480`);
   const data = new Uint8ClampedArray(W * H * 4);
+  // the camera is the distance sensor's eye: walls (rayHit) and floor from the same point, along the same heading
   const p = world.pose,
-    [ox, oy] = world.pointAhead(world.cfg.body.distance_sensor_x_cm);
+    {
+      o: [ox, oy],
+      th,
+    } = world.distanceSensorAxis();
   const focal = W / 2 / Math.tan(fov / 2),
     horizon = H / 2;
   for (let px = 0; px < W; px++) {
     const off = Math.atan((W / 2 - px - 0.5) / focal); // + = left
-    const dx = Math.cos(p.th + off),
-      dy = Math.sin(p.th + off),
+    const dx = Math.cos(th + off),
+      dy = Math.sin(th + off),
       cosOff = Math.cos(off);
     const hit = world.rayHit(p, off, Math.PI / 2),
       wall = hit.d * cosOff; // distance perpendicular to the image plane
