@@ -18,6 +18,11 @@
       "type": "string",
       "minLength": 1
     },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What a person does in this world (the challenge), in one or two sentences of their language. The model reads it with the world."
+    },
     "arena": {
       "type": "object",
       "required": [

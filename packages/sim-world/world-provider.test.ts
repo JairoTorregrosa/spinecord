@@ -71,6 +71,7 @@ describe("SimWorldProvider", () => {
     expect(p.stop_worst_ms).toBeGreaterThan(0);
     expect(world.commands.map((c) => [c.name, c.bound.kind])).toEqual([
       ["load_world", "instant"],
+      ["use_map", "instant"],
       ["reset", "instant"],
       ["restore", "instant"],
       ["events", "instant"],
@@ -172,6 +173,23 @@ describe("SimWorldProvider", () => {
     });
     expect((await p.devices())[0]!.description).toContain('"mine"');
   });
+  test("use_map takes a registered map by name only, and refuses anything else with the names", async () => {
+    const p = make(new StillHost(quietWorld()));
+    const r = await p.command("sim.world", "use_map", { map: "walls-maze" }, idle);
+    expect(r.measured.world).toBe("walls-maze");
+    await expect(p.command("sim.world", "use_map", { map: "nowhere" }, idle)).rejects.toThrow(
+      'unknown world "nowhere"; worlds: line-oval, walls-maze',
+    );
+    expect(await code(p.command("sim.world", "use_map", { map: JSON.stringify(EXAMPLES.lineOval) }, idle))).toBe(
+      "invalid_argument",
+    );
+    expect(await code(p.command("sim.world", "use_map", {}, idle))).toBe("invalid_argument");
+    expect(await code(p.command("sim.world", "use_map", { map: "line-oval", world: "x" }, idle))).toBe(
+      "invalid_argument",
+    );
+    expect((await p.devices())[0]!.description).toContain('"walls-maze"');
+  });
+
   test("load_world failures are invalid_argument with the reason, and keep the current world", async () => {
     const host = new StillHost(quietWorld(), (w) => {
       if (w.cfg.name === "walls-maze") throw new Error("this body cannot live there");

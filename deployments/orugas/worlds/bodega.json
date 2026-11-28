@@ -1,0 +1,145 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "bodega",
+  "description": "Una bodega grande con estanterías, un sofá y cajas: explórala desde la zona azul base y encuentra las tres marcas de color en el piso, roja, amarilla y verde; di dónde está cada una.",
+  "arena": {
+    "width_cm": 400,
+    "height_cm": 300
+  },
+  "obstacles": [
+    {
+      "id": "estante1",
+      "x": 90,
+      "y": 40,
+      "w": 24,
+      "h": 110
+    },
+    {
+      "id": "estante2",
+      "x": 90,
+      "y": 190,
+      "w": 24,
+      "h": 110
+    },
+    {
+      "id": "estante3",
+      "x": 230,
+      "y": 110,
+      "w": 120,
+      "h": 24
+    },
+    {
+      "id": "sofa",
+      "x": 300,
+      "y": 230,
+      "w": 70,
+      "h": 34,
+      "height_cm": 40
+    },
+    {
+      "id": "columna",
+      "x": 200,
+      "y": 200,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "id": "caja_baja",
+      "x": 170,
+      "y": 50,
+      "w": 30,
+      "h": 20,
+      "height_cm": 10
+    },
+    {
+      "id": "caja_vacia",
+      "x": 290,
+      "y": 50,
+      "w": 20,
+      "h": 20,
+      "height_cm": 20,
+      "mass_g": 250
+    },
+    {
+      "id": "archivador",
+      "x": 360,
+      "y": 20,
+      "w": 34,
+      "h": 26,
+      "height_cm": 70
+    }
+  ],
+  "zones": [
+    {
+      "x": 10,
+      "y": 120,
+      "w": 55,
+      "h": 60,
+      "color": "blue",
+      "label": "base"
+    },
+    {
+      "x": 280,
+      "y": 196,
+      "w": 112,
+      "h": 96,
+      "color": "brown",
+      "label": "alfombra"
+    },
+    {
+      "x": 130,
+      "y": 248,
+      "w": 36,
+      "h": 36,
+      "color": "red",
+      "label": "roja"
+    },
+    {
+      "x": 350,
+      "y": 140,
+      "w": 36,
+      "h": 36,
+      "color": "yellow",
+      "label": "amarilla"
+    },
+    {
+      "x": 130,
+      "y": 10,
+      "w": 36,
+      "h": 36,
+      "color": "green",
+      "label": "verde"
+    }
+  ],
+  "points": [
+    {
+      "label": "roja",
+      "x": 148,
+      "y": 266,
+      "radius_cm": 8
+    },
+    {
+      "label": "amarilla",
+      "x": 368,
+      "y": 158,
+      "radius_cm": 8
+    },
+    {
+      "label": "verde",
+      "x": 148,
+      "y": 28,
+      "radius_cm": 8
+    }
+  ],
+  "start": {
+    "x": 38,
+    "y": 150,
+    "heading_deg": 0
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.05,
+    "wheel_bias": 0.006,
+    "ultrasonic_cm": 0.5
+  }
+}

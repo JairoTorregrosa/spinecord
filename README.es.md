@@ -45,6 +45,7 @@ En la página 3D puedes levantar el robot, ponerle cajas en el camino, pulsar lo
 | Que el gemelo sea el robot que armaste | "Este es mi robot, haz que el gemelo sea igual", con una foto |
 | Otro nombre | "Llama al robot Rayo" |
 | El EV3 de verdad | Conéctalo con el cable USB y di "ya tengo un EV3" |
+| Otro mapa | "Usa el mapa laberinto" (o pista, slalom, reparto, bodega, sala) |
 
 Claude pregunta solo lo que la foto no muestra: qué puerto, qué lado, qué ruedas.
 

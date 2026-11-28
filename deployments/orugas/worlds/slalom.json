@@ -1,0 +1,98 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "slalom",
+  "description": "Cinco conos en fila por el centro del pasillo: pasa en zigzag entre ellos, uno por cada lado, sin tocarlos, y cruza la línea negra hasta la zona verde meta.",
+  "arena": {
+    "width_cm": 330,
+    "height_cm": 120
+  },
+  "obstacles": [
+    {
+      "id": "cono1",
+      "x": 76,
+      "y": 56,
+      "w": 8,
+      "h": 8,
+      "height_cm": 25
+    },
+    {
+      "id": "cono2",
+      "x": 121,
+      "y": 56,
+      "w": 8,
+      "h": 8,
+      "height_cm": 25
+    },
+    {
+      "id": "cono3",
+      "x": 166,
+      "y": 56,
+      "w": 8,
+      "h": 8,
+      "height_cm": 25
+    },
+    {
+      "id": "cono4",
+      "x": 211,
+      "y": 56,
+      "w": 8,
+      "h": 8,
+      "height_cm": 25
+    },
+    {
+      "id": "cono5",
+      "x": 256,
+      "y": 56,
+      "w": 8,
+      "h": 8,
+      "height_cm": 25
+    }
+  ],
+  "zones": [
+    {
+      "x": 6,
+      "y": 30,
+      "w": 46,
+      "h": 60,
+      "color": "blue",
+      "label": "salida"
+    },
+    {
+      "x": 290,
+      "y": 10,
+      "w": 34,
+      "h": 100,
+      "color": "green",
+      "label": "meta"
+    }
+  ],
+  "lines": [
+    {
+      "points": [
+        [286, 4],
+        [286, 116]
+      ],
+      "width_cm": 3,
+      "closed": false
+    }
+  ],
+  "points": [
+    {
+      "label": "meta",
+      "x": 307,
+      "y": 60,
+      "radius_cm": 10
+    }
+  ],
+  "start": {
+    "x": 30,
+    "y": 60,
+    "heading_deg": 0
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.04,
+    "wheel_bias": 0.006,
+    "ultrasonic_cm": 0.5
+  }
+}

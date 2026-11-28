@@ -98,7 +98,8 @@ export function twinRuntime(
   });
   const sim = new SimWorldProvider({
     host: brick,
-    worlds: { [config.name]: s.world },
+    // the rooms of its world's folder by name, its own as it started (with the build already in place)
+    worlds: { ...s.worlds, [config.name]: s.world },
     // a room loaded later, by name or as JSON, gets this robot's build as the one it started in did
     prepare: (w) => withBuild(w, s.build ?? null, s.robot, { robot: s.id, world: "load_world" }),
     seed: s.seed,

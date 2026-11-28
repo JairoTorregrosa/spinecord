@@ -2,7 +2,7 @@
 // built, and every failure names the flag or the field. A relative path on the command line is taken from the
 // repository root, one in a config file from that file's folder: the working directory of the process (the folder
 // an MCP client was started in) decides nothing.
-import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import nodePath, { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
@@ -10,7 +10,7 @@ import { parseRobotFile, type RobotFile } from "../../../packages/driver-ev3/rob
 import type { Ev3devHardware } from "../../../packages/driver-ev3dev/src/provider";
 import type { SshOptions } from "../../../packages/driver-ev3dev/src/ssh";
 import type { RobotProfile } from "../../../packages/protocol/types";
-import { parseWorld } from "../../../packages/sim-world/world";
+import { parseWorld, WORLD_SCHEMA } from "../../../packages/sim-world/world";
 import type { LanConfig } from "./lan";
 import { DEFAULT_PAGE_PORT } from "./pages";
 import { readBuild, withBuild, type TwinBuild, type Unconfirmed } from "./twin-build";
@@ -85,7 +85,9 @@ export const USAGE = `usage: bun apps/local/main.ts [robots...]        MCP serve
   (no arguments)                 the example robot's twin (deployments/example/robots/r1.json) in
                                  apps/local/examples/room.json
   --twin [robot.json]            a simulated twin of that robot, id "<profile.id>-sim"
-    --world <world.json>         its world, schema spinecord/world@1 (default apps/local/examples/room.json)
+    --world <world.json>         its world, schema spinecord/world@1 (default apps/local/examples/room.json);
+                                 every world of that file's folder is a map sim.world use_map (and load_world)
+                                 takes by its file name
     --seed <n>                   seed of the world's noise (default 1)
   --ev3 [robot.json]             a stock-firmware EV3 on USB, lent by a page in Chrome or Edge (WebHID)
     --port <n>                   port of that page on 127.0.0.1 (default ${DEFAULT_PORT})
@@ -169,6 +171,11 @@ export type RobotSource = (
        * every world `load_world` takes gets its build, like the one the twin started in.
        */
       build?: TwinBuild | null;
+      /**
+       * Every world of the folder its world file is in, its own included, by file name without `.json` (their
+       * JSON as read, checked against the schema, not yet against this robot): the rooms `load_world` takes by name.
+       */
+      worlds?: Record<string, unknown>;
     }
   | { source: "ev3"; id: string; robot: RobotFile }
   | {
@@ -342,9 +349,10 @@ function twinWorld(
   r: ReadRobot,
   where: string,
   path: string,
-): Pick<Source<"twin">, "world" | "ownBuild" | "unconfirmed" | "build"> {
+): Pick<Source<"twin">, "world" | "ownBuild" | "unconfirmed" | "build" | "worlds"> {
   return {
     world: withBuild(world(where, path), r.build, r.file, { robot: r.path, world: `${where} ${path}` }),
+    worlds: siblingWorlds(where, path),
     build: r.build,
     ownBuild: r.build !== null,
     unconfirmed: r.build?.unconfirmed ?? [],
@@ -380,6 +388,60 @@ function world(where: string, path: string): unknown {
     throw new Error(`${where} ${path}: ${(e as Error).message}`, { cause: e });
   }
   return json;
+}
+/** Largest file read as a possible world next to `--world` (a world file is a few kB). */
+export const MAX_SIBLING_WORLD_BYTES = 1_000_000;
+const DECLARES_WORLD = /"schema"\s*:\s*"spinecord\/world@1"/;
+/**
+ * The worlds of `path`'s folder by file name without its extension, in Unicode NFC (a name typed matches a file a
+ * zip wrote decomposed); a folder cannot hold two files of one name. The key is the file name, which may differ from
+ * the `name` inside the file that `measured.world` reports: `mapNameMismatches` lists those, for a warning at start.
+ * Each `.json` file there (the extension in any case) that is a regular file, or a link to one (links are followed,
+ * a dangling link is skipped), up to MAX_SIBLING_WORLD_BYTES, and declares `"schema": "spinecord/world@1"`, is a
+ * map. Anything else there is not a world and is left alone: a folder, a dangling link, a bigger file, JSON of
+ * another kind, a file that is not JSON and does not declare the schema. One that declares the schema and does not
+ * parse ends the start. Whether this robot fits in each is checked when it is loaded, so a room another robot
+ * cannot use never stops this one from starting.
+ */
+function siblingWorlds(where: string, path: string): Record<string, unknown> {
+  const dir = dirname(path);
+  const out: Record<string, unknown> = {};
+  for (const f of readdirSync(dir)
+    .filter((n) => n.toLowerCase().endsWith(".json"))
+    .sort()) {
+    const file = join(dir, f);
+    let text: string;
+    try {
+      const st = statSync(file);
+      if (!st.isFile() || st.size > MAX_SIBLING_WORLD_BYTES) continue;
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue; // gone, unreadable or a dangling link: not a world of this folder
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      if (!DECLARES_WORLD.test(text)) continue;
+      throw new Error(`${where}: the world next to it ${file} is not valid JSON: ${(e as Error).message}`, {
+        cause: e,
+      });
+    }
+    if (!isObj(json) || json.schema !== WORLD_SCHEMA) continue;
+    try {
+      parseWorld(json);
+    } catch (e) {
+      throw new Error(`${where}: the world next to it ${file}: ${(e as Error).message}`, { cause: e });
+    }
+    out[f.slice(0, -".json".length).normalize("NFC")] = json;
+  }
+  return out;
+}
+/** The maps whose file name is not the `name` inside the file: `use_map` takes the first, `measured.world` says the second. */
+export function mapNameMismatches(worlds: Record<string, unknown>): { map: string; name: string }[] {
+  return Object.entries(worlds)
+    .map(([map, w]) => ({ map, name: String((w as { name?: unknown }).name) }))
+    .filter((m) => m.map !== m.name);
 }
 function ev3devHardware(where: string, file: RobotFile, raw: unknown): Ev3devHardware {
   const speech = isObj(raw) && isObj(raw.hardware) ? raw.hardware.speech_volume_pct : undefined;
