@@ -51,7 +51,7 @@ const HINTS: Record<Mode, string> = {
   carry: "Pulsa donde va el robot y arrastra hacia donde mira · arrastra una caja: moverla",
   box: "Arrastra en el suelo: caja nueva (Mayús: otra más) · arrastra una caja: moverla",
   remove: "Clic en una caja: quitarla",
-  measure: "Arrastra, o clic y clic, para medir (las cajas no se mueven)",
+  measure: "Arrastra, o clic y clic, para medir",
 };
 const FIT_WORDS: Record<Exclude<Fit, "free">, string> = {
   wall: "No cabe: se saldría de la pista",
@@ -103,6 +103,8 @@ export class Hand {
    * robot; a box (its sides stay along x and y) turns a quarter turn once the twist passes 45°.
    */
   private twist: { id: number; angle: number; acc: number } | null = null;
+  /** The pointers pressed on the canvas now, whoever (the hand or the camera) has them. */
+  private readonly downs = new Set<number>();
   /** A measure by two clicks: where the first click was, until the second (the tape follows the pointer). */
   private anchor: { x: number; y: number } | null = null;
   private readonly tag = document.getElementById("tag")!;
@@ -125,14 +127,25 @@ export class Hand {
     c.scene.add(this.ghostRobot, this.ghostBox, this.tape);
     for (const o of [this.ghostRobot, this.ghostBox, this.tape]) o.traverse((x) => x.layers.set(c.helpers));
     const cv = c.canvas;
-    // capture phase: the hand sees a press before OrbitControls and keeps it when it takes it
-    cv.addEventListener("pointerdown", (e) => (this.twistDown(e) ? undefined : this.down(e)), { capture: true });
+    // capture phase: the hand sees a press before OrbitControls and keeps it when it takes it; a press that
+    // joins a finger already down (the camera's pinch or orbit) is the camera's
+    cv.addEventListener(
+      "pointerdown",
+      (e) => {
+        const alone = this.downs.size === 0;
+        this.downs.add(e.pointerId);
+        if (!this.twistDown(e) && alone) this.down(e);
+      },
+      { capture: true },
+    );
     cv.addEventListener("pointermove", (e) => (this.twistMove(e) ? undefined : this.move(e)));
     cv.addEventListener("pointerup", (e) => {
+      this.downs.delete(e.pointerId);
       if (this.twist?.id === e.pointerId) this.twist = null;
       else if (!this.holder || this.holder.id === e.pointerId) this.up(e);
     });
     cv.addEventListener("pointercancel", (e) => {
+      this.downs.delete(e.pointerId);
       if (this.twist?.id === e.pointerId) this.twist = null;
       else this.cancel();
     });
@@ -251,18 +264,22 @@ export class Hand {
     if (!clamp) return x < 0 || y < 0 || x > width || y > height ? null : { x, y };
     return { x: Math.min(width, Math.max(0, x)), y: Math.min(height, Math.max(0, y)) };
   }
-  private onRobot(e: PointerEvent): boolean {
-    const g = this.c.robot();
-    if (!g) return false;
+  /** What the pointer is on: the robot or a box, whichever is nearer the camera, or null (the floor). */
+  private under(e: { clientX: number; clientY: number }): { what: "robot" } | { what: "box"; id: string } | null {
     this.aim(e);
-    return this.ray.intersectObject(g, true).length > 0;
+    const g = this.c.robot(),
+      a = this.c.arena();
+    const robot = g ? this.ray.intersectObject(g, true)[0] : undefined;
+    const box = a ? this.ray.intersectObjects(a.boxes, false)[0] : undefined;
+    if (robot && (!box || robot.distance <= box.distance)) return { what: "robot" };
+    return box ? { what: "box", id: box.object.userData.id as string } : null;
   }
-  private boxUnder(e: PointerEvent): string | null {
-    const a = this.c.arena();
-    if (!a) return null;
-    this.aim(e);
-    const hit = this.ray.intersectObjects(a.boxes, false)[0];
-    return hit ? (hit.object.userData.id as string) : null;
+  /** What a press there takes in this mode: the robot, a box by its id, or null (the floor's or the camera's). */
+  private grip(e: { clientX: number; clientY: number }): "robot" | { box: string } | null {
+    const u = this.under(e);
+    if (!u || this.mode === "measure") return null;
+    if (u.what === "robot") return this.mode === "look" ? "robot" : null;
+    return { box: u.id };
   }
 
   private down(e: PointerEvent): void {
@@ -271,44 +288,35 @@ export class Hand {
       pose = this.c.pose();
     if (!f || !pose || this.c.cams.mode === "eye") return;
     const m = this.mode;
-    // in look and carry a press on a box (and not on the robot in front of it) takes the box
-    const held = (m === "look" || m === "carry") && !this.onRobot(e) ? this.boxUnder(e) : null;
-    if (held !== null) {
-      const b = f.world.boxes.find((o) => o.id === held);
-      const p = this.floorAt(e);
-      if (!b || !p) return;
-      this.drag = { kind: "move", id: b.id, dx: b.x - p.x, dy: b.y - p.y, box: { x: b.x, y: b.y, w: b.w, h: b.h } };
-      this.take(e);
-      this.show();
-      return;
-    }
+    const grip = this.grip(e);
     if (m === "remove") {
-      const box = this.boxUnder(e);
-      if (box === null) return;
+      if (grip === null || grip === "robot") return;
       this.take(e);
       this.c.cams.handBusy(false);
-      void this.c.link.request({ t: "box_remove", id: f.id, box }).then((r) => this.answer(r, e));
+      void this.c.link.request({ t: "box_remove", id: f.id, box: grip.box }).then((r) => this.answer(r, e));
       return;
     }
-    if (m === "look") {
-      if (!this.onRobot(e)) return;
+    const b = grip !== null && grip !== "robot" ? f.world.boxes.find((o) => o.id === grip.box) : undefined;
+    if (b) {
+      // look, carry and box: a press on a box (nearer than the robot) moves that box
+      const p = this.floorAt(e);
+      if (!p) return;
+      this.drag = { kind: "move", id: b.id, dx: b.x - p.x, dy: b.y - p.y, box: { x: b.x, y: b.y, w: b.w, h: b.h } };
+    } else if (m === "look") {
+      if (grip !== "robot") return;
       const p = this.floorAt(e)!;
       this.drag = { kind: "robot", dx: pose.x - p.x, dy: pose.y - p.y, x: pose.x, y: pose.y, th: pose.th, from: pose };
     } else if (m === "box") {
-      const id = this.boxUnder(e);
       const p = this.floorAt(e);
       if (!p) return;
-      const b = id === null ? undefined : f.world.boxes.find((o) => o.id === id);
-      if (b) {
-        this.drag = { kind: "move", id: b.id, dx: b.x - p.x, dy: b.y - p.y, box: { x: b.x, y: b.y, w: b.w, h: b.h } };
-      } else this.drag = { kind: "box", x0: p.x, y0: p.y, x: p.x, y: p.y };
+      this.drag = { kind: "box", x0: p.x, y0: p.y, x: p.x, y: p.y };
     } else {
       const p = this.floorAt(e, m !== "carry");
       if (!p) return;
       if (m === "carry") this.drag = { kind: "place", x: p.x, y: p.y, th: pose.th, from: pose };
       else {
         // a measure that starts on the robot starts at its axle centre: where the tools count from
-        const o = this.onRobot(e) ? pose : p;
+        const o = this.under(e)?.what === "robot" ? pose : p;
         this.drag = { kind: "measure", x0: o.x, y0: o.y, x: p.x, y: p.y };
       }
     }
@@ -371,16 +379,10 @@ export class Hand {
       this.show();
     }
     if (!d || !f) {
-      const hover =
-        this.c.cams.mode === "eye"
-          ? ""
-          : this.mode === "look" && this.onRobot(e)
-            ? "robot"
-            : this.mode !== "measure" && this.boxUnder(e) !== null
-              ? "box"
-              : "";
-      this.c.arena()?.highlight(this.mode === "remove" && hover === "box" ? this.boxUnder(e) : null);
-      this.c.canvas.dataset.hover = hover;
+      // the same rule as a press: what the hover shows is what a press there takes
+      const grip = this.c.cams.mode === "eye" ? null : this.grip(e);
+      this.c.arena()?.highlight(this.mode === "remove" && grip !== null && grip !== "robot" ? grip.box : null);
+      this.c.canvas.dataset.hover = grip === null ? "" : grip === "robot" ? "robot" : "box";
       return;
     }
     const p = this.floorAt(e);

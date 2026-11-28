@@ -13,7 +13,7 @@ test("pushes, collisions and box changes become one icon and a few words; ending
   expect(eventRow({ n: 3, t_ms: 0, kind: "contact_began", with: "box2" })!.text).toBe("toca caja box2");
   expect(eventRow({ n: 4, t_ms: 0, kind: "obstacle_changed", box: "box2", change: "removed" })).toEqual({
     icon: "➖",
-    text: "box2 quitada",
+    text: "se quitó box2",
   });
   expect(eventRow({ n: 5, t_ms: 0, kind: "contact_ended", with: "box2" })).toBeNull();
   expect(eventRow({ n: 6, t_ms: 0, kind: "echo_lost", why: "slant" })).toBeNull();
