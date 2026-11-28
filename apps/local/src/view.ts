@@ -20,7 +20,6 @@ import type { SimWorldProvider } from "../../../packages/sim-world/world-provide
 import type {
   Box,
   CallEnd,
-  Obstacle,
   CallStart,
   RefusalCode,
   RobotMeta,
@@ -36,8 +35,11 @@ import type { ViewChat } from "./chat";
 import { cacheFile, respond, type CachedFile } from "./http-cache";
 import type { CallWatcher } from "./mcp";
 import type { LocalRobot } from "./robot";
+import type { RobotActivity } from "../../../packages/protocol/types";
 
 export const VIEW_RATE_HZ = 30;
+/** What a robot may be doing that a restore of its room waits out with a stop (one already stopping is joined). */
+const MOVING = new Set<RobotActivity>(["acting", "running_program", "looping", "stopping"]);
 /** Calls a page that opens late still sees. */
 const CALL_HISTORY = 40;
 /** World events of each twin a page that opens late still sees. */
@@ -243,8 +245,6 @@ export function serveView(
   const seen = new Map<string, { world: World; rev: number; tones: number; events: number }>();
   /** The last world events of each twin, for a page that opens late. */
   const happened = new Map<string, WorldEventMsg[]>(twins.map((t) => [t.id, []]));
-  /** The obstacles each world came with, for `restore`. */
-  const original = new WeakMap<World, Obstacle[]>();
   const calls: (CallStart | CallEnd)[] = [];
 
   let stopped = false;
@@ -268,15 +268,7 @@ export function serveView(
       }
     }
   };
-  const remember = (w: World) => {
-    if (!original.has(w))
-      original.set(
-        w,
-        w.cfg.boxes.map((b) => ({ ...b })),
-      );
-  };
   for (const t of twins) {
-    remember(t.brick.world);
     seen.set(t.id, {
       world: t.brick.world,
       rev: t.brick.world.obstacles_rev,
@@ -284,11 +276,7 @@ export function serveView(
       events: t.brick.world.eventsSince(0).next,
     });
   }
-  const unsubscribe = [
-    ...twins.map((t) => t.sim.onSpoken((text) => broadcast({ t: "speak", id: t.id, text }))),
-    // the obstacles a world came with are taken when it arrives, before any page can act on it
-    ...twins.map((t) => t.sim.onDevicesChanged(() => remember(t.brick.world))),
-  ];
+  const unsubscribe = [...twins.map((t) => t.sim.onSpoken((text) => broadcast({ t: "speak", id: t.id, text })))];
 
   const tick = () => {
     if (sockets.size === 0) return;
@@ -304,7 +292,6 @@ export function serveView(
       }
       const w = t.brick.world;
       if (w !== last.world) {
-        remember(w);
         last.world = w;
         last.rev = w.obstacles_rev;
         last.events = 0; // a new world keeps its own log
@@ -336,8 +323,24 @@ export function serveView(
   const timer = setInterval(tick, Math.max(10, Math.round(1000 / hz)));
   timer.unref?.();
 
-  /** One action of the person at the page. Throws Refused, changing nothing, when it cannot be done. */
-  const act = (s: Socket, msg: Record<string, unknown>): void => {
+  /**
+   * The room the twin started in, whole (sim.world restore). A robot still moving is stopped first, as by the tools'
+   * stop (a stop already running, Claude's or an earlier restore's, is joined), and the restore waits for that stop: the preempted call ends, and measures, in the room it ran in. A
+   * robot in fault stays in fault (a hand does not clear it, reset_fault does): the answer carries the activity the
+   * robot is left in, so the page can say so.
+   */
+  const restore = async (t: ViewTwin): Promise<{ activity: RobotActivity }> => {
+    if (MOVING.has(t.robot.view().activity)) await t.robot.stop().catch(() => {}); // a failed stop leaves it in fault
+    t.sim.restore();
+    o.log("view_action", { robot_id: t.id, action: "restore" });
+    return { activity: t.robot.view().activity };
+  };
+
+  /**
+   * One action of the person at the page. Throws Refused, changing nothing, when it cannot be done. A restore
+   * answers later, with what it leaves.
+   */
+  const act = (s: Socket, msg: Record<string, unknown>): void | Promise<{ activity: RobotActivity }> => {
     const t = typeof msg.id === "string" ? byId.get(msg.id) : undefined;
     if (!t) throw new Refused("invalid", `no twin ${JSON.stringify(msg.id)} here: ${[...byId.keys()].join(", ")}`);
     const { brick } = t;
@@ -381,13 +384,8 @@ export function serveView(
         boxChange(() => w.moveObstacle(id, r)); // refused, the box stays where it was
         break;
       }
-      case "restore": {
-        const own = original.get(w);
-        if (!own) throw new Error(`the view never saw world "${w.cfg.name}" arrive: it cannot know its own boxes`);
-        // free: the World checked its own boxes against its start when it was made
-        w.setObstacles(own, { ...w.cfg.start });
-        break;
-      }
+      case "restore":
+        return restore(t);
       case "button": {
         const b = num(msg, "button");
         if (!Number.isInteger(b) || b < 1 || b > 6) throw new Refused("invalid", "button must be 1..6");
@@ -482,15 +480,19 @@ export function serveView(
           // --chat: the chat's own messages (src/chat.ts); without it they are unknown actions, as before
           if (o.chat && typeof m.t === "string" && m.t.startsWith("chat_"))
             return o.chat.message(m, (r) => send(ws, r));
-          try {
-            act(ws, m);
-            send(ws, { t: "reply", req, ok: true });
-          } catch (e) {
+          const fail = (e: unknown) => {
             if (e instanceof Refused) return send(ws, { t: "reply", req, ok: false, code: e.code, error: e.message });
             // a fault of the view, not of the person: logged loud, shown as one on the page, the listener goes on
             const error = (e as Error).message;
             o.log("view_error", { robot_id: m.id, action: m.t, error });
             send(ws, { t: "reply", req, ok: false, code: "internal", error });
+          };
+          try {
+            const later = act(ws, m);
+            if (later) later.then((r) => send(ws, { t: "reply", req, ok: true, ...r }), fail);
+            else send(ws, { t: "reply", req, ok: true });
+          } catch (e) {
+            fail(e);
           }
         },
         close(ws) {

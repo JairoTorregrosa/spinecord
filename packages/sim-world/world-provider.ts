@@ -1,6 +1,6 @@
 // SimWorldProvider: the twin-only devices next to the simulated brick.
 //   sim.world  (kind sim_world): ground truth (pose, collision, named points, line and trip meters), overhead
-//                                picture, load a world, put the robot somewhere.
+//                                picture, load a world, put the robot somewhere, restore the room it started in.
 //   sim.camera (kind camera):    first-person picture from the robot's pose.
 //   sim.speaker (kind speaker):  speak{text}: makes no sound, records the text in the channel last_spoken.
 // Image channels answer Reading.image = {mime: "image/png", b64, age_ms: 0} with value null. The robot body itself (motors, sensors) is some other provider's business.
@@ -14,7 +14,7 @@ import {
   type BackendKind,
   type ImagePayload,
 } from "../protocol/types";
-import { EVENT_LOG_MAX, World, parseWorld } from "./world";
+import { EVENT_LOG_MAX, World, parseWorld, type WorldConfig } from "./world";
 import { readWorldChannel, worldChannelSpecs } from "./channels";
 import { renderWorld, renderFirstPerson, encodePNG, toBase64 } from "./render";
 
@@ -45,6 +45,7 @@ export interface SimWorldProviderOptions {
 }
 
 const DEVICE_IDS = "sim.world, sim.camera, sim.speaker";
+const WORLD_COMMANDS = ["load_world", "reset", "restore", "events"];
 const EVENTS_DESCRIPTION = `What happened in the world after event number "since" (default 0: every event still kept, at most ${EVENT_LOG_MAX}), oldest first. Changes nothing and spends no sensor noise. measured.events holds one JSON object per event, as a string: {n, t_ms (simulated time), kind, ...}. kind is contact_began or contact_ended {with: a box id, or the wall it touches: wall_west (x 0), wall_east, wall_south (y 0), wall_north}; push_began {box} and push_ended {box, moved_cm}: the robot slid a box; stall_began and stall_ended: a drive wheel held by what the body is against, its encoder stopped; slip_began and slip_ended: the drive wheels turn while the body is held; echo_lost {why: slant (a surface in range met too far off square to echo) or range (nothing within 250 cm)} and echo_back {cm}, only with an ultrasonic sensor plugged in; placed {how: reset or carried (a person moved the robot)}; obstacle_changed {box, change: added, moved or removed} (by a person). measured.next is the number to pass as since next time, measured.dropped how many events after since are no longer kept, measured.t_ms the world's time now. Contacts are timed to a fraction of a ms; the other events to the end of the physics step (at most 20 ms) they happen in.`;
 /** speak limits of the simulated speaker: the same shape a real text-to-speech speaker declares (CONTRACT §2.3). */
 export const SIM_SPEAK = { max_chars: 200, max_ms: 15000, rate_wpm: { min: 80, max: 300, default: 140 } } as const;
@@ -61,6 +62,11 @@ export class SimWorldProvider implements Provider {
   private readonly seed: number;
   private readonly scale: number;
   private readonly now: () => number;
+  /**
+   * The room this twin started in, as the host held it when this provider was made: what `restore` goes back to.
+   * Only `startRoom` (a person picking the room) changes it; a world `load_world` takes is an edit of the room.
+   */
+  private origin: { cfg: WorldConfig; seed: number };
 
   constructor(opts: SimWorldProviderOptions) {
     if (!opts?.host)
@@ -74,6 +80,7 @@ export class SimWorldProvider implements Provider {
     this.seed = opts.seed ?? opts.host.world.seed;
     this.scale = opts.scale ?? 4;
     this.now = opts.now ?? (() => Date.now());
+    this.origin = { cfg: structuredClone(opts.host.world.cfg), seed: opts.host.world.seed };
   }
 
   private readonly changed = new Set<() => void>();
@@ -86,7 +93,7 @@ export class SimWorldProvider implements Provider {
   }
 
   /**
-   * Fires after `load_world` replaced the world. A world file can plug other devices into the robot body
+   * Fires after `load_world` or `restore` replaced the world. A world file can plug other devices into the robot body
    * (another port map), and this provider's own device description names the world, so every provider that
    * shares the host must be re-read: whoever assembles the twin calls `devices()` again on all of them
    * (a hardware-driver provider re-detects its ports there). Returns the unsubscribe function.
@@ -153,6 +160,13 @@ export class SimWorldProvider implements Provider {
               properties: { x_cm: { type: "number" }, y_cm: { type: "number" }, heading_deg: { type: "number" } },
               additionalProperties: false,
             },
+          },
+          {
+            name: "restore",
+            moves: true,
+            bound: { kind: "instant", max: 0 },
+            description: `Puts the whole room back as this twin started in it (world "${this.origin.cfg.name}"): its boxes, zones, floor lines and named points exactly as its file has them, and the robot at that world's start pose; motors stop, tachos and sensors reset, and sim.speaker forgets what it said. A world taken with load_world is dropped. The same as the 3D view's restore button. Takes no arguments.`,
+            params: { type: "object", properties: {}, additionalProperties: false },
           },
           {
             name: "events",
@@ -328,10 +342,10 @@ export class SimWorldProvider implements Provider {
     if (device !== "sim.world")
       throw new RuntimeError("unknown_device", `the simulation has no device "${device}"; its devices: ${DEVICE_IDS}`);
     if (command === "events") return this.events(args);
-    if (command !== "load_world" && command !== "reset")
+    if (!WORLD_COMMANDS.includes(command))
       throw new RuntimeError(
         "unknown_command",
-        `sim.world has no command "${command}"; commands: load_world, reset, events`,
+        `sim.world has no command "${command}"; commands: ${WORLD_COMMANDS.join(", ")}`,
       );
     const result = (reason: CommandResult["reason"]): CommandResult => ({
       requested: { ...args },
@@ -341,6 +355,13 @@ export class SimWorldProvider implements Provider {
       ms: 0,
     });
     if (signal.aborted) return result("preempted");
+    if (command === "restore") {
+      const extra = Object.keys(args);
+      if (extra.length)
+        throw new RuntimeError("invalid_argument", `restore takes no arguments; unknown: ${extra.join(", ")}`);
+      this.restore();
+      return result("completed");
+    }
     if (command === "load_world") {
       const extra = Object.keys(args).filter((k) => k !== "world");
       if (extra.length)
@@ -371,12 +392,10 @@ export class SimWorldProvider implements Provider {
         throw new RuntimeError("invalid_argument", (e as Error).message);
       }
       try {
-        this.host.setWorld(next);
+        this.enter(next);
       } catch (e) {
         throw new RuntimeError("invalid_argument", (e as Error).message);
       }
-      this.forgetSpeech();
-      for (const cb of [...this.changed]) cb();
       return result("completed");
     }
     const start = this.world.cfg.start;
@@ -407,6 +426,45 @@ export class SimWorldProvider implements Provider {
     return result("completed");
   }
 
+  /**
+   * The room this twin started in, whole and fresh: a new World from the origin's configuration and seed, so every
+   * box, zone, line and named point is the file's and every edit since (a page's boxes, a pose, a world load_world
+   * took) is gone; the host re-plugs its ports (motors stop, tachos, sensors and stalls reset). Used by sim.world
+   * `restore` and by a viewer's restore button: one operation for both.
+   */
+  restore(): void {
+    this.enter(new World(structuredClone(this.origin.cfg), this.origin.seed));
+  }
+
+  /**
+   * A person picks the room the twin is in from now on (a map switch): `world` (a world file, parsed JSON) goes
+   * through `prepare` like a world `load_world` takes, the twin enters it fresh, and it becomes the origin `restore`
+   * goes back to. Throws RuntimeError invalid_argument, changing nothing (neither the room nor the origin), for a
+   * world that is not valid or that this robot cannot live in. Like load_world it re-plugs the brick (motors stop,
+   * tachos reset): the caller stops the robot first, as the runtime does for load_world (a moving command).
+   */
+  startRoom(world: unknown): void {
+    let next: World;
+    let origin: { cfg: WorldConfig; seed: number };
+    try {
+      const cfg = parseWorld(this.prepare(world));
+      origin = { cfg: structuredClone(cfg), seed: this.seed };
+      next = new World(cfg, this.seed);
+      this.enter(next);
+    } catch (e) {
+      if (e instanceof RuntimeError) throw e;
+      throw new RuntimeError("invalid_argument", (e as Error).message);
+    }
+    this.origin = origin;
+  }
+
+  /** Hands `next` to the host (which throws, changing nothing, when it cannot live there), then starts the scene over. */
+  private enter(next: World): void {
+    this.host.setWorld(next);
+    this.forgetSpeech();
+    for (const cb of [...this.changed]) cb();
+  }
+
   /** sim.world events: the world's log after `since`, with the physics run up to now first. Changes nothing. */
   private events(args: Record<string, Value>): CommandResult {
     const extra = Object.keys(args).filter((k) => k !== "since");
@@ -431,7 +489,7 @@ export class SimWorldProvider implements Provider {
     };
   }
 
-  /** load_world and reset start a scene over, so what the speaker said before does not leak into the next trial. */
+  /** load_world, reset and restore start a scene over, so what the speaker said before does not leak into the next trial. */
   private forgetSpeech(): void {
     this.lastSpoken = "";
     this.spokenCount = 0;

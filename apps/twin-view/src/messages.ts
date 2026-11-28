@@ -184,7 +184,8 @@ export type ServerMessage =
   | CallStart
   | CallEnd
   | ChatServerMessage
-  | { t: "reply"; req: number; ok: true }
+  /** An action done; a restore adds the activity the robot is left in (a fault stays). */
+  | { t: "reply"; req: number; ok: true; activity?: string }
   /** An action refused, changing nothing: `code` says why for the page's own words, `error` in English. */
   | { t: "reply"; req: number; ok: false; code: RefusalCode; error: string };
 
@@ -211,7 +212,10 @@ export type PageMessage =
   | { t: "box_remove"; req: number; id: string; box: string }
   /** Box `box` (its id) lifted and set down as `x, y, w, h`, keeping its id, height and mass. */
   | { t: "box_move"; req: number; id: string; box: string; x: number; y: number; w: number; h: number }
-  /** The world's own obstacles back, and the robot at its start pose. */
+  /**
+   * The whole room as the twin started in it (sim.world restore): every box, zone, floor line and named point of its
+   * world file, the robot at that file's start pose. Answered with the activity the robot is left in.
+   */
   | { t: "restore"; req: number; id: string }
   /** A brick button (1 up, 2 enter, 3 down, 4 right, 5 left, 6 back) goes down or up. */
   | { t: "button"; req: number; id: string; button: number; down: boolean };

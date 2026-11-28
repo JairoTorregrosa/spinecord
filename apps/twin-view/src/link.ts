@@ -5,7 +5,7 @@
 import type { PageMessage, RefusalCode, ServerMessage } from "./messages";
 
 export type LinkState = "connecting" | "open" | "closed";
-export type Reply = { ok: true } | { ok: false; code: RefusalCode | "offline"; error: string };
+export type Reply = { ok: true; activity?: string } | { ok: false; code: RefusalCode | "offline"; error: string };
 /** Distributes PageMessage over its union, so a literal of one action type-checks without `req`. */
 type Action<M = PageMessage> = M extends PageMessage ? Omit<M, "req"> : never;
 
@@ -78,7 +78,11 @@ export class Link {
       if (m.t === "reply") {
         const done = this.pending.get(m.req);
         this.pending.delete(m.req);
-        done?.(m.ok ? { ok: true } : { ok: false, code: m.code, error: m.error });
+        done?.(
+          m.ok
+            ? { ok: true, ...(m.activity !== undefined && { activity: m.activity }) }
+            : { ok: false, code: m.code, error: m.error },
+        );
         return;
       }
       this.onMessage(m);

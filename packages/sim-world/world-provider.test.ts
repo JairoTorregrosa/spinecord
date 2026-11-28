@@ -72,6 +72,7 @@ describe("SimWorldProvider", () => {
     expect(world.commands.map((c) => [c.name, c.bound.kind])).toEqual([
       ["load_world", "instant"],
       ["reset", "instant"],
+      ["restore", "instant"],
       ["events", "instant"],
     ]);
     expect(world.commands[0]!.description).toContain("line-oval, walls-maze");
