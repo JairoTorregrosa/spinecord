@@ -9,6 +9,7 @@ import {
   ULTRASONIC_ECHO_DEG,
   type Vec,
 } from "./world";
+import type { Terrain } from "./terrain";
 
 export interface Image {
   width: number;
@@ -35,6 +36,25 @@ const RAY: RGB = [230, 40, 60],
   POINT: RGB = [40, 40, 40],
   TRAIL: RGB = [150, 90, 200];
 
+/** Terrain: the higher, the warmer and darker; a thin contour every CONTOUR_CM; an edge (a jump in height) black. */
+const TERRAIN: RGB = [176, 120, 64],
+  EDGE: RGB = [25, 20, 15];
+const CONTOUR_CM = 5;
+function shade(rgb: RGB, x: number, y: number, px: number, t: Terrain): RGB {
+  const z = t.heightAt(x, y);
+  const zl = t.heightAt(x - px, y),
+    zu = t.heightAt(x, y + px);
+  if (Math.abs(z - zl) > 0.3 || Math.abs(z - zu) > 0.3) return EDGE;
+  if (z <= 0) return rgb;
+  if (
+    Math.floor(z / CONTOUR_CM) !== Math.floor(zl / CONTOUR_CM) ||
+    Math.floor(z / CONTOUR_CM) !== Math.floor(zu / CONTOUR_CM)
+  )
+    return [90, 60, 30];
+  const a = Math.min(0.75, 0.3 + z / 60);
+  return [0, 1, 2].map((k) => rgb[k]! * (1 - a) + TERRAIN[k]! * a * (1 - z / 120)) as unknown as RGB;
+}
+
 /** Floor and boxes per world and scale, kept while the obstacles stay the same list (a moved box is a new list). */
 const floorCache = new WeakMap<object, Map<number, { boxes: object; buf: Uint8ClampedArray }>>();
 
@@ -44,7 +64,8 @@ function floorLayer(world: World, scale: number, W: number, H: number): Uint8Cla
   const kept = per.get(scale);
   if (kept && kept.boxes === world.cfg.boxes) return kept.buf;
   const buf = new Uint8ClampedArray(W * H * 4);
-  const c = world.cfg;
+  const c = world.cfg,
+    t = world.terrain;
   for (let py = 0; py < H; py++) {
     const y = c.height - (py + 0.5) / scale;
     for (let px = 0; px < W; px++) {
@@ -55,6 +76,7 @@ function floorLayer(world: World, scale: number, W: number, H: number): Uint8Cla
           rgb = BOX;
           break;
         }
+      if (t) rgb = shade(rgb, x, y, 1 / scale, t);
       if (px < 2 || py < 2 || px >= W - 2 || py >= H - 2) rgb = WALL;
       const i = (py * W + px) * 4;
       buf[i] = rgb[0];
@@ -126,10 +148,7 @@ export function renderWorld(world: World, opts: RenderOptions = {}): Image {
         put(px, py, u > g.front_cm - 2.5 ? NOSE : BODY);
     }
   if (opts.rays ?? true) {
-    const {
-      o: [ox, oy],
-      th,
-    } = world.distanceSensorAxis(p);
+    const { x: ox, y: oy, th } = world.sensorAt(p);
     // Every ray of the ultrasonic cone, each up to what it hits: dark where that surface echoes, pale where it is
     // met too far off square to send the sound back (world.ts, ULTRASONIC_ECHO_DEG).
     const echo = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
@@ -154,7 +173,8 @@ export interface CameraOptions {
 }
 
 /**
- * First-person view from the distance sensor's eye (World.distanceSensorAxis), looking where it looks.
+ * First-person view from the distance sensor's eye (World.sensorAt: on terrain, carried by the tilted body), looking
+ * where it looks.
  * Floor: every pixel under the horizon is projected onto the floor and takes its colour. Walls and obstacles: one ray per column.
  */
 export function renderFirstPerson(world: World, opts: CameraOptions = {}): Image {
@@ -168,10 +188,7 @@ export function renderFirstPerson(world: World, opts: CameraOptions = {}): Image
   const data = new Uint8ClampedArray(W * H * 4);
   // the camera is the distance sensor's eye: walls (rayHit) and floor from the same point, along the same heading
   const p = world.pose,
-    {
-      o: [ox, oy],
-      th,
-    } = world.distanceSensorAxis();
+    { x: ox, y: oy, th } = world.sensorAt(p);
   const focal = W / 2 / Math.tan(fov / 2),
     horizon = H / 2;
   for (let px = 0; px < W; px++) {

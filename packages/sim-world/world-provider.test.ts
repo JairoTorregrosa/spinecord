@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { inflateSync } from "node:zlib";
 import { RuntimeError } from "../protocol/types";
 import { SimWorldProvider, type WorldHost } from "./world-provider";
-import { World } from "./world";
+import { NO_NOISE, World, parseWorld } from "./world";
 import { quietWorld, EXAMPLES } from "./testkit";
 
 /** The smallest host: a world that nothing drives. */
@@ -159,6 +159,22 @@ describe("SimWorldProvider", () => {
     expect(await code(p.command("sim.world", "reset", { x_cm: "left" }, idle))).toBe("invalid_argument");
     expect(await code(p.command("sim.world", "reset", { x: 10 }, idle))).toBe("invalid_argument");
     expect(host.world.pose).toEqual({ x: 43, y: 25, th: 0 });
+  });
+  test("reset where the body would rest tipped over an edge is invalid_argument in words and moves nothing", async () => {
+    const cfg = parseWorld({
+      schema: "spinecord/world@1",
+      name: "t",
+      arena: { width_cm: 200, height_cm: 100 },
+      start: { x: 20, y: 50, heading_deg: 0 },
+      terrain: [{ id: "arriba", kind: "platform", x: 90, y: 0, w: 40, h: 100, height_cm: 10 }],
+    });
+    const host = new StillHost(new World({ ...cfg, noise: { ...NO_NOISE } }, 1));
+    const p = make(host);
+    const err = await p.command("sim.world", "reset", { x_cm: 88, y_cm: 50, heading_deg: 0 }, idle).catch((e) => e);
+    expect(err).toBeInstanceOf(RuntimeError);
+    expect((err as RuntimeError).code).toBe("invalid_argument");
+    expect((err as RuntimeError).message).toMatch(/would rest tilted.*set it down where it rests within 30 deg/);
+    expect(host.world.pose).toEqual({ x: 20, y: 50, th: 0 });
   });
   test("load_world by name, or from a whole world file given as JSON text", async () => {
     const host = new StillHost(quietWorld());

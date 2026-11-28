@@ -60,7 +60,9 @@ export function worldChannelSpecs(world: World): ChannelSpec[] {
     {
       name: "collided",
       type: "boolean",
-      description: "true if the robot's last movement was blocked by a wall or obstacle.",
+      description: world.terrain
+        ? "true if the robot's last movement was blocked by a wall or obstacle, or by the terrain (see blocked_by)."
+        : "true if the robot's last movement was blocked by a wall or obstacle.",
     },
     {
       name: "at_point",
@@ -90,6 +92,30 @@ export function worldChannelSpecs(world: World): ChannelSpec[] {
         range: [0, 100000],
         description:
           "Net distance covered along the floor line since the last reset or load_world, in either direction (going back subtracts). Counts only while the axle centre is within 12 cm of the line.",
+      },
+    );
+  }
+  if (world.terrain) {
+    specs.push(
+      {
+        name: "tilt",
+        type: "vector",
+        unit: "cm, deg, deg",
+        length: 3,
+        description:
+          "How the body lies on the terrain: [z_cm, pitch_deg, roll_deg]. z_cm: height of the surface under the axle centre (0 = the floor). pitch_deg: nose up positive. roll_deg: left side up positive. On a slope the encoders count the distance along the surface; pose moves by cos(pitch) of it.",
+      },
+      {
+        name: "blocked_by",
+        type: "string",
+        description:
+          'Why the last movement stopped short on the terrain: "step <id> <rise_cm>" (an edge higher than the tracks climb: the drive stalls as at a wall), "steep <slope_deg>" (a slope steeper than the tread holds: the tracks spin, the body climbs no higher), "fallen", or "" (it was not stopped by the terrain).',
+      },
+      {
+        name: "fallen",
+        type: "string",
+        description:
+          'Why the robot fell, or "" while it is upright: "fell from <id or floor>: dropped <cm> cm, tipped <deg> deg". A fallen robot does not drive (every move ends stalled) until reset, restore, use_map, load_world or a person puts it back.',
       },
     );
   }
@@ -125,6 +151,21 @@ export function readWorldChannel(world: World, channel: string): Value {
       return world.cfg.points.find((q) => Math.hypot(q.x - p.x, q.y - p.y) <= q.radius)?.label ?? "";
     case "odometer_cm":
       return r2(world.odometer_cm);
+  }
+  if (world.rest) {
+    const b = world.last_block,
+      f = world.fallen;
+    if (channel === "tilt")
+      return [r2(world.rest.z_cm), r2((world.rest.pitch * 180) / Math.PI), r2((world.rest.roll * 180) / Math.PI)];
+    if (channel === "blocked_by")
+      return b?.by === "step"
+        ? `step ${b.with} ${b.rise_cm}`
+        : b?.by === "steep"
+          ? `steep ${b.slope_deg}`
+          : b?.by === "fallen"
+            ? "fallen"
+            : "";
+    if (channel === "fallen") return f ? `fell from ${f.from}: dropped ${f.drop_cm} cm, tipped ${f.tilt_deg} deg` : "";
   }
   if (world.cfg.lines.length > 0) {
     if (channel === "line_distance_cm") return r2(world.nearestOnLine(p.x, p.y)!.dist);

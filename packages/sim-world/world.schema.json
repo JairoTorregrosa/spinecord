@@ -45,7 +45,7 @@
       "items": {
         "$ref": "#/$defs/obstacle"
       },
-      "description": "Solid boxes: the robot stalls against them and the distance sensor sees them. Each has an id (given here, or box1, box2, ... in order) that names it while it exists."
+      "description": "Solid boxes: the robot stalls against them and the distance sensor sees them. Each has an id (given here, or box1, box2, ... in order) that names it while it exists. A box stands on the flat floor, never on terrain."
     },
     "zones": {
       "type": "array",
@@ -198,6 +198,20 @@
           "description": "Where the distance sensor looks: degrees counter-clockwise from straight ahead, seen from above. Default 0."
         }
       }
+    },
+    "terrain": {
+      "type": "array",
+      "description": "Platforms and ramps on the floor (absent: a flat floor). Axis-aligned rectangles that may touch along an edge but never overlap, wholly inside the arena; where none is, the floor is at 0. The body rests on them, climbs an edge up to its tread's climb (its wheel's radius) and a slope up to atan(grip) along its heading, is stopped by a higher edge as by a wall, and falls when an edge or a slope tilts it more than 30 deg. Boxes stand on the flat floor only.",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/platform"
+          },
+          {
+            "$ref": "#/$defs/ramp"
+          }
+        ]
+      }
     }
   },
   "$defs": {
@@ -270,6 +284,106 @@
           "exclusiveMinimum": 0,
           "maximum": 1,
           "description": "How much of the infrared sensor's light it sends back, relative to a white wall (absent: 1). Black is about 0.21: the stock firmware reads 88-90 % from black at 38 cm, 40-41 % from white. Only the infrared sensor sees it."
+        }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "x",
+        "y",
+        "w",
+        "h",
+        "height_cm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,32}$",
+          "description": "Names the piece in events (step_blocked.with, fell.from) and in sim.world blocked_by; unique, and no box or wall_* has it."
+        },
+        "kind": {
+          "const": "platform"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "w": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "h": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height_cm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Its flat top, above the floor (cm)."
+        }
+      }
+    },
+    "ramp": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "x",
+        "y",
+        "w",
+        "h",
+        "rises",
+        "low_cm",
+        "high_cm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,32}$",
+          "description": "Names the piece in events (step_blocked.with, fell.from) and in sim.world blocked_by; unique, and no box or wall_* has it."
+        },
+        "kind": {
+          "const": "ramp"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "w": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "h": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rises": {
+          "enum": [
+            "east",
+            "west",
+            "north",
+            "south"
+          ],
+          "description": "The side it goes up toward (east = +x, north = +y)."
+        },
+        "low_cm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Its surface on the low side (cm)."
+        },
+        "high_cm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Its surface on the high side (cm), above low_cm. The slope is atan((high_cm - low_cm) / run), run = w for east or west, h for north or south."
         }
       }
     }

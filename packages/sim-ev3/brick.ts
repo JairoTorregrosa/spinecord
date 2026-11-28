@@ -15,7 +15,7 @@ import {
   readParam,
 } from "../driver-ev3/encode";
 import type { Transport } from "../driver-ev3/transport";
-import { World, DT_MS, COLOR_RGB, DEFAULT_PUSH_N, checkDrive } from "../sim-world/world";
+import { World, DT_MS, COLOR_RGB, DEFAULT_PUSH_N, checkDrive, slopeSlice } from "../sim-world/world";
 import type { WorldHost } from "../sim-world/world-provider";
 import type { RobotProfile } from "../protocol/types";
 import {
@@ -427,6 +427,13 @@ export class SimBrick implements Transport, WorldHost {
         axle_track_cm: d.axle_track_cm,
         turn_scrub: d.turn_scrub ?? 0,
         push_n: Math.min(this.tractionN ?? DEFAULT_PUSH_N, motorN),
+        // terrain only: what the body weighs, how its tread grips and the edge it climbs (its wheel's radius)
+        ...(this.world.terrain
+          ? {
+              climb_cm: d.wheel_diameter_cm / 2,
+              ...(d.mass_g !== undefined && d.grip !== undefined ? { mass_g: d.mass_g, grip: d.grip } : {}),
+            }
+          : {}),
       };
     } else this.world.drive = null;
     this.loadNcm = 0;
@@ -567,7 +574,11 @@ export class SimBrick implements Transport, WorldHost {
       return;
     }
     while (dt > 1e-9) {
-      const h = Math.min(DT_MS, dt);
+      // on terrain, steps never cross a slice of the world's time grid: the slope the drive feels is the slice's,
+      // so the path does not depend on how the ticks cut time (World.slopeCell)
+      const h = this.world.terrain
+        ? Math.min(DT_MS * (slopeSlice(this.world.t_ms) + 1) - this.world.t_ms, dt)
+        : Math.min(DT_MS, dt);
       this.substep(at, h);
       at += h;
       dt -= h;
@@ -585,6 +596,10 @@ export class SimBrick implements Transport, WorldHost {
     const dt = this.drivetrain;
     const li = dt ? "ABCD".indexOf(dt.left) : -1,
       ri = dt ? "ABCD".indexOf(dt.right) : -1;
+    // On a slope gravity turns each drive motor (N·cm, positive helps it turn its positive way): half the pull along
+    // the heading on each, at the wheel's radius. 0 on a flat world.
+    const assistNcm =
+      dt && this.world.terrain ? ((-this.world.slopeForceN() * dt.forward_sign) / 2) * (dt.wheel_diameter_cm / 2) : 0;
     this.motors.forEach((m, i) => {
       if (m.speedPct === 0) {
         const r = motorStep(m.vel, m.braking ? "brake" : "coast", h, m.rate, m.tau);
@@ -600,6 +615,21 @@ export class SimBrick implements Transport, WorldHost {
       if ((i === li || i === ri) && this.loadNcm > 0) {
         cap = m.rate * Math.max(0, 1 - this.loadNcm / this.stallNcm(m.plugged ?? "large"));
         vt = Math.sign(vt) * Math.min(Math.abs(vt), cap);
+      }
+      if ((i === li || i === ri) && assistNcm !== 0) {
+        // gravity moves the torque-speed line: a power command runs faster downhill and slower uphill; a speed
+        // command holds its setpoint as long as full power reaches it (the regulator brakes downhill)
+        const stall = this.stallNcm(m.plugged ?? "large"),
+          dir = Math.sign(vt) || 1;
+        const reach = m.rate * Math.max(0, 1 + (dir * assistNcm) / stall - this.loadNcm / stall);
+        if (m.regulated) {
+          cap = reach;
+          vt = dir * Math.min(Math.abs(vt), cap);
+        } else {
+          vt += (m.rate * assistNcm) / stall;
+          if (Math.sign(vt) === dir) vt = dir * Math.min(Math.abs(vt), reach);
+          cap = Math.max(cap, reach);
+        }
       }
       const run = motorStep(m.vel, m.regulated ? { run: vt, full: cap } : { run: vt }, active, m.rate, m.tau);
       let d = run.d,
@@ -624,10 +654,13 @@ export class SimBrick implements Transport, WorldHost {
     const blocked = dt
       ? this.world.stepWheels(want[li]! * cmPerDeg, want[ri]! * cmPerDeg, h)
       : (this.world.wait(h), false);
-    // A tread that grips less than its motors push slips at a wall: the wheels keep turning, the body stays.
-    const slipping = blocked && this.slips;
+    // A tread that grips less than its motors push slips at a wall: the wheels keep turning, the body stays. On a
+    // slope steeper than its grip holds, a tread spins whatever it grips with.
+    const steep = blocked && this.world.last_block?.by === "steep";
+    const slipping = blocked && (this.slips || steep);
     const r = dt ? dt.wheel_diameter_cm / 2 : 0;
-    this.loadNcm = ((slipping ? this.tractionN! : blocked ? 0 : this.world.last_push_n) / 2) * r;
+    this.loadNcm =
+      ((steep ? this.world.tractionN() : slipping ? this.tractionN! : blocked ? 0 : this.world.last_push_n) / 2) * r;
     this.motors.forEach((m, i) => {
       const held = (i === li || i === ri) && blocked && !slipping;
       // A drive wheel held by a wall stops: its tacho counts up to where the body came to rest, then stays.
