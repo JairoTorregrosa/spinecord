@@ -539,7 +539,7 @@ export class SimWorldProvider implements Provider {
     };
   }
 
-  /** load_world, reset and restore start a scene over, so what the speaker said before does not leak into the next trial. */
+  /** load_world, use_map, reset and restore start a scene over, so what the speaker said before does not leak into the next trial. */
   private forgetSpeech(): void {
     this.lastSpoken = "";
     this.spokenCount = 0;

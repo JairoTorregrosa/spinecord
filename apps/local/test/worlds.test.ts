@@ -21,7 +21,9 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { World, parseWorld, type Rect, type WorldConfig } from "../../../packages/sim-world/world";
 import { MAX_SIBLING_WORLD_BYTES, REPO, loadConfig } from "../src/config";
+import { LocalRobot } from "../src/robot";
 import { twinRuntime } from "../src/sources";
+import { callTool } from "../src/tools";
 
 const DEPLOYMENTS = join(REPO, "deployments");
 const jsonIn = (dir: string): string[] =>
@@ -241,6 +243,80 @@ describe("the maps of a folder: the world files next to --world", () => {
       expect(use).toContain(`${name} (${desc})`);
       const r = await sim.command("sim.world", "use_map", { map: name }, idle);
       expect(r.measured.description).toBe(desc);
+    }
+  });
+});
+
+describe("a map a person picks is the room restore goes back to", () => {
+  const ORUGAS = join(REPO, "deployments", "orugas", "robots", "orugas.json");
+  const SALA = join(REPO, "deployments", "orugas", "worlds", "sala.json");
+  const LABERINTO = parseWorld(
+    JSON.parse(readFileSync(join(REPO, "deployments", "orugas", "worlds", "laberinto.json"), "utf8")),
+  );
+  const idle = new AbortController().signal;
+  const twinIn = (world: string) => {
+    const twin = loadConfig(["--twin", ORUGAS, "--world", world]).robots[0]!;
+    if (twin.source !== "twin") throw new Error("not a twin");
+    return { twin, ...twinRuntime(twin) };
+  };
+  const boxes = (w: World) => w.cfg.boxes.map((b) => [b.id, b.x, b.y, b.w, b.h]);
+
+  test("use_map laberinto, a box moved, restore: laberinto as its file has it, not sala", async () => {
+    const { brick, sim } = twinIn(SALA);
+    await sim.command("sim.world", "use_map", { map: "laberinto" }, idle);
+    const own = boxes(brick.world);
+    brick.world.moveObstacle("muro_h1", { x: 120, y: 160, w: 30, h: 4 });
+    expect(boxes(brick.world)).not.toEqual(own);
+    const r = await sim.command("sim.world", "restore", {}, idle);
+    expect(r.measured.world).toBe("laberinto");
+    expect(brick.world.cfg.name).toBe("laberinto");
+    expect(boxes(brick.world)).toEqual(own);
+    expect(brick.world.cfg.boxes.length).toBe(LABERINTO.boxes.length);
+    expect(brick.world.pose).toEqual(LABERINTO.start);
+  });
+
+  test("load_world after use_map is an edit: restore still returns to the map the person picked", async () => {
+    const { brick, sim } = twinIn(SALA);
+    await sim.command("sim.world", "use_map", { map: "laberinto" }, idle);
+    await sim.command("sim.world", "load_world", { world: "slalom" }, idle);
+    expect(brick.world.cfg.name).toBe("slalom");
+    await sim.command("sim.world", "restore", {}, idle);
+    expect(brick.world.cfg.name).toBe("laberinto");
+    // and load_world by name alone never makes a map the origin
+    const fresh = twinIn(SALA);
+    await fresh.sim.command("sim.world", "load_world", { world: "laberinto" }, idle);
+    await fresh.sim.command("sim.world", "restore", {}, idle);
+    expect(fresh.brick.world.cfg.name).toBe("sala");
+  });
+
+  test("a failed use_map changes neither the room nor the one restore goes back to", async () => {
+    const { brick, sim } = twinIn(SALA);
+    await sim.command("sim.world", "use_map", { map: "laberinto" }, idle);
+    await expect(sim.command("sim.world", "use_map", { map: "nope" }, idle)).rejects.toThrow("unknown world");
+    expect(brick.world.cfg.name).toBe("laberinto");
+    await sim.command("sim.world", "restore", {}, idle);
+    expect(brick.world.cfg.name).toBe("laberinto");
+  });
+
+  test("use_map is refused with busy while the robot moves, and the room stays", async () => {
+    const { twin, runtime, brick } = twinIn(SALA);
+    const robot = new LocalRobot({ id: twin.id });
+    await robot.attach(runtime);
+    try {
+      const drive = callTool([robot], "drive", { robot_id: twin.id, distance_cm: 30, speed_pct: 20 });
+      const sw = await callTool([robot], "command_device", {
+        robot_id: twin.id,
+        device: "sim.world",
+        command: "use_map",
+        args: { map: "laberinto" },
+      });
+      expect(sw.envelope.ok).toBe(false);
+      expect((sw.envelope as { error: { code: string } }).error.code).toBe("busy");
+      expect(brick.world.cfg.name).toBe("sala");
+      await callTool([robot], "stop", { robot_id: twin.id });
+      await drive;
+    } finally {
+      await robot.shutdown();
     }
   });
 });
