@@ -393,18 +393,21 @@ function world(where: string, path: string): unknown {
 export const MAX_SIBLING_WORLD_BYTES = 1_000_000;
 const DECLARES_WORLD = /"schema"\s*:\s*"spinecord\/world@1"/;
 /**
- * The worlds of `path`'s folder by file name without `.json` (a folder cannot hold two of one name): each regular
- * `.json` file there, up to MAX_SIBLING_WORLD_BYTES, that declares `"schema": "spinecord/world@1"`. Anything else
- * there is not a world and is left alone: a folder, a dangling link, a bigger file, JSON of another kind, a file
- * that is not JSON and does not declare the schema. One that declares the schema and does not parse ends the start.
- * Whether this robot fits in each is checked when it is loaded, so a room another robot cannot use never stops this
- * one from starting.
+ * The worlds of `path`'s folder by file name without its extension, in Unicode NFC (a name typed matches a file a
+ * zip wrote decomposed); a folder cannot hold two files of one name. The key is the file name, which may differ from
+ * the `name` inside the file that `measured.world` reports: `mapNameMismatches` lists those, for a warning at start.
+ * Each `.json` file there (the extension in any case) that is a regular file, or a link to one (links are followed,
+ * a dangling link is skipped), up to MAX_SIBLING_WORLD_BYTES, and declares `"schema": "spinecord/world@1"`, is a
+ * map. Anything else there is not a world and is left alone: a folder, a dangling link, a bigger file, JSON of
+ * another kind, a file that is not JSON and does not declare the schema. One that declares the schema and does not
+ * parse ends the start. Whether this robot fits in each is checked when it is loaded, so a room another robot
+ * cannot use never stops this one from starting.
  */
 function siblingWorlds(where: string, path: string): Record<string, unknown> {
   const dir = dirname(path);
   const out: Record<string, unknown> = {};
   for (const f of readdirSync(dir)
-    .filter((n) => n.endsWith(".json"))
+    .filter((n) => n.toLowerCase().endsWith(".json"))
     .sort()) {
     const file = join(dir, f);
     let text: string;
@@ -430,9 +433,15 @@ function siblingWorlds(where: string, path: string): Record<string, unknown> {
     } catch (e) {
       throw new Error(`${where}: the world next to it ${file}: ${(e as Error).message}`, { cause: e });
     }
-    out[f.slice(0, -".json".length)] = json;
+    out[f.slice(0, -".json".length).normalize("NFC")] = json;
   }
   return out;
+}
+/** The maps whose file name is not the `name` inside the file: `use_map` takes the first, `measured.world` says the second. */
+export function mapNameMismatches(worlds: Record<string, unknown>): { map: string; name: string }[] {
+  return Object.entries(worlds)
+    .map(([map, w]) => ({ map, name: String((w as { name?: unknown }).name) }))
+    .filter((m) => m.map !== m.name);
 }
 function ev3devHardware(where: string, file: RobotFile, raw: unknown): Ev3devHardware {
   const speech = isObj(raw) && isObj(raw.hardware) ? raw.hardware.speech_volume_pct : undefined;

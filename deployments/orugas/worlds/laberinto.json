@@ -1,7 +1,7 @@
 {
   "schema": "spinecord/world@1",
   "name": "laberinto",
-  "description": "Un laberinto de muros altos con un solo camino y dos callejones sin salida: sal de la zona azul BASE y llega a la zona verde META, arriba a la derecha, sin chocar.",
+  "description": "Un laberinto de muros altos con un solo camino y dos callejones sin salida: sal de la zona azul base y llega a la zona verde meta, arriba a la derecha, sin chocar.",
   "arena": {
     "width_cm": 275,
     "height_cm": 220

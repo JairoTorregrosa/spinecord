@@ -75,7 +75,8 @@ export class SimWorldProvider implements Provider {
         "SimWorldProvider needs the host (e.g. the simulated brick) whose world it exposes",
       );
     this.host = opts.host;
-    this.worlds = opts.worlds ?? {};
+    // names in Unicode NFC, as `named` compares them: a name typed matches a file a zip wrote decomposed
+    this.worlds = Object.fromEntries(Object.entries(opts.worlds ?? {}).map(([k, w]) => [k.normalize("NFC"), w]));
     this.prepare = opts.prepare ?? ((w) => w);
     this.seed = opts.seed ?? opts.host.world.seed;
     this.scale = opts.scale ?? 4;
@@ -364,7 +365,10 @@ export class SimWorldProvider implements Provider {
       measured: {
         world: this.world.cfg.name,
         pose: this.pose(),
-        ...(this.world.cfg.description ? { description: this.world.cfg.description } : {}),
+        // a new room says what the person does there; a reset or a restore leaves the model where it was
+        ...((command === "use_map" || command === "load_world") && this.world.cfg.description
+          ? { description: this.world.cfg.description }
+          : {}),
       },
       clamped: false,
       reason,
@@ -481,8 +485,9 @@ export class SimWorldProvider implements Provider {
 
   /**
    * A person's choice of map, by name (sim.world use_map, or a viewer's map control): `startRoom` with the world
-   * registered as `name`, so it becomes the room and the origin restore goes back to. Throws invalid_argument,
-   * changing nothing, for an unknown name (listing the names) or a map this robot does not fit in.
+   * registered as `name` (compared in Unicode NFC), so it becomes the room and the origin restore goes back to;
+   * load_world, even by name, never changes the origin. Throws invalid_argument, changing nothing (neither the room
+   * nor the origin), for an unknown name (listing the names) or a map this robot does not fit in.
    */
   useMap(name: string): void {
     this.startRoom(this.named(name));
@@ -503,9 +508,10 @@ export class SimWorldProvider implements Provider {
 
   /** The world file registered as `name`; invalid_argument listing the names when there is none. */
   private named(name: string): unknown {
-    if (!Object.hasOwn(this.worlds, name))
+    const key = name.normalize("NFC");
+    if (!Object.hasOwn(this.worlds, key))
       throw new RuntimeError("invalid_argument", `unknown world "${name}"; worlds: ${this.mapNames()}`);
-    return this.worlds[name];
+    return this.worlds[key];
   }
 
   /** Hands `next` to the host (which throws, changing nothing, when it cannot live there), then starts the scene over. */

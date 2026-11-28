@@ -1,7 +1,7 @@
 {
   "schema": "spinecord/world@1",
   "name": "slalom",
-  "description": "Cinco conos en fila por el centro del pasillo: pasa en zigzag entre ellos, uno por cada lado, sin tocarlos, y cruza la l\u00ednea negra hasta la zona verde META.",
+  "description": "Cinco conos en fila por el centro del pasillo: pasa en zigzag entre ellos, uno por cada lado, sin tocarlos, y cruza la línea negra hasta la zona verde meta.",
   "arena": {
     "width_cm": 330,
     "height_cm": 120

@@ -20,7 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { World, parseWorld, type Rect, type WorldConfig } from "../../../packages/sim-world/world";
-import { MAX_SIBLING_WORLD_BYTES, REPO, loadConfig } from "../src/config";
+import { MAX_SIBLING_WORLD_BYTES, REPO, loadConfig, mapNameMismatches } from "../src/config";
 import { LocalRobot } from "../src/robot";
 import { twinRuntime } from "../src/sources";
 import { callTool } from "../src/tools";
@@ -212,6 +212,26 @@ describe("the maps of a folder: the world files next to --world", () => {
     }
   });
 
+  test("names are file names in Unicode NFC, .json in any case; a name unlike the one inside is listed", async () => {
+    const world = (name: string) => JSON.stringify({ ...JSON.parse(room), name });
+    const decomposed = "cancio\u0301n"; // "canción" as a zip may write it
+    const dir = folder({ [`${decomposed}.json`]: world("canción"), "OTRO.JSON": world("otro") });
+    try {
+      const twin = loadConfig(["--twin", robot, "--world", join(dir, "room.json")]).robots[0]!;
+      if (twin.source !== "twin") throw new Error("not a twin");
+      const names = Object.keys(twin.worlds ?? {});
+      // a file system that keeps names as written (APFS, NTFS) lists it decomposed; the key is composed either way
+      expect(names).toEqual(expect.arrayContaining(["canción", "OTRO", "room"]));
+      expect(mapNameMismatches(twin.worlds ?? {})).toEqual([{ map: "OTRO", name: "otro" }]);
+      const { sim } = twinRuntime(twin);
+      const idle = new AbortController().signal;
+      for (const typed of ["canción", decomposed])
+        expect((await sim.command("sim.world", "use_map", { map: typed }, idle)).measured.world).toBe("canción");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a file that declares the world schema and is not a valid world ends the start, naming it", () => {
     for (const [text, why] of [
       ['{"schema": "spinecord/world@1", "name": "x",', "is not valid JSON"],
@@ -243,6 +263,10 @@ describe("the maps of a folder: the world files next to --world", () => {
       expect(use).toContain(`${name} (${desc})`);
       const r = await sim.command("sim.world", "use_map", { map: name }, idle);
       expect(r.measured.description).toBe(desc);
+      expect((await sim.command("sim.world", "load_world", { world: name }, idle)).measured.description).toBe(desc);
+      // a reset or a restore keeps the room: nothing new to tell
+      expect((await sim.command("sim.world", "reset", {}, idle)).measured.description).toBeUndefined();
+      expect((await sim.command("sim.world", "restore", {}, idle)).measured.description).toBeUndefined();
     }
   });
 });

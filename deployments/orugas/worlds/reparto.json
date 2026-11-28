@@ -1,7 +1,7 @@
 {
   "schema": "spinecord/world@1",
   "name": "reparto",
-  "description": "Tres paquetes livianos en el centro: empuja los tres hasta la zona verde ENTREGA y termina estacionado en el PARQUEO amarillo, entre los dos postes.",
+  "description": "Tres paquetes livianos en el centro: empuja los tres hasta la zona verde entrega y termina estacionado en la zona amarilla parqueo, entre los dos postes.",
   "arena": {
     "width_cm": 220,
     "height_cm": 220

@@ -3,7 +3,7 @@
 // through `end`.
 import { log, logTo } from "./stderr"; // first: it moves console output off stdout
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import type { LocalConfig } from "./config";
+import { mapNameMismatches, type LocalConfig } from "./config";
 import { LISTED_TOOLS, buildServer } from "./mcp";
 import { linksText } from "./pages";
 import { buildFleet, type Fleet, type FleetOptions } from "./sources";
@@ -46,6 +46,14 @@ export async function serve(config: LocalConfig, fleetOptions: Omit<FleetOptions
     }
   }
   for (const r of fleet.robots) log("robot", r.listing());
+  for (const s of config.robots)
+    if (s.source === "twin")
+      for (const m of mapNameMismatches(s.worlds ?? {}))
+        log("map_name_differs", {
+          robot_id: s.id,
+          ...m,
+          why: `use_map takes "${m.map}" (the file name); the world inside says "${m.name}", which measured.world reports`,
+        });
   if (view) {
     process.stderr.write(`spinecord: the 3D view of the twins is on ${view.url}: open it in a browser\n`);
     log("view", { url: view.url });

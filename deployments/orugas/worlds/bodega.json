@@ -1,7 +1,7 @@
 {
   "schema": "spinecord/world@1",
   "name": "bodega",
-  "description": "Una bodega grande con estanter\u00edas, un sof\u00e1 y cajas: expl\u00f3rala desde BASE y encuentra las tres marcas de color en el piso, ROJA, AMARILLA y VERDE; di d\u00f3nde est\u00e1 cada una.",
+  "description": "Una bodega grande con estanterías, un sofá y cajas: explórala desde la zona azul base y encuentra las tres marcas de color en el piso, roja, amarilla y verde; di dónde está cada una.",
   "arena": {
     "width_cm": 400,
     "height_cm": 300

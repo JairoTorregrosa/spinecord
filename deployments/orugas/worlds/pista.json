@@ -1,7 +1,7 @@
 {
   "schema": "spinecord/world@1",
   "name": "pista",
-  "description": "Una cinta negra en forma de ocho que se cruza en el centro: sal de SALIDA sobre la cinta, rec\u00f3rrela entera pasando por los puntos cruce y vuelta, y regresa a SALIDA.",
+  "description": "Una cinta negra en forma de ocho que se cruza en el centro: sal de la zona salida sobre la cinta, recórrela entera pasando por los puntos cruce y vuelta, y regresa a salida.",
   "arena": {
     "width_cm": 260,
     "height_cm": 180
