@@ -365,8 +365,8 @@ export function launchEnv(terminalEnv: Env, inherited: Env, profile: string, pla
 /**
  * One environment.d file (systemd 262, environment.d(5)): KEY=VALUE lines; `#` and `;` lines and empty lines are
  * ignored; a backslash at the end of a line continues it; surrounding quotes are stripped; `$X`, `${X}`,
- * `${X:-default}` and `${X:+alternate}` expand from what came before; `$$` is a dollar sign. Only whether a name is
- * set matters here, so escapes inside quotes are kept as they are.
+ * `${X:-default}` and `${X:+alternate}` expand from what came before, inside single quotes too; `$$` is a dollar
+ * sign. Only whether a name is set matters here, so backslash escapes are kept as they are.
  */
 export function parseEnvironmentD(text: string, before: Env = {}): Env {
   const env: Env = { ...before };
@@ -378,26 +378,48 @@ export function parseEnvironmentD(text: string, before: Env = {}): Env {
     let v = m[2]!;
     const quoted = v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.at(-1) === v[0];
     if (quoted) v = v.slice(1, -1);
-    if (!(quoted && m[2]![0] === "'"))
-      v = v.replaceAll(
-        /\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([-+])([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
-        (all, n, op, alt, bare) => {
-          if (all === "$$") return "$";
-          const cur = env[(n ?? bare) as string] ?? "";
-          return op === "-" ? cur || alt : op === "+" ? (cur ? alt : "") : cur;
-        },
-      );
+    v = v.replaceAll(
+      /\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([-+])([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+      (all, n, op, alt, bare) => {
+        if (all === "$$") return "$";
+        const cur = env[(n ?? bare) as string] ?? "";
+        return op === "-" ? cur || alt : op === "+" ? (cur ? alt : "") : cur;
+      },
+    );
     env[m[1]!] = v;
   }
   return env;
 }
 
 /**
- * The files that give a Linux login session its environment, in the order they apply: /etc/environment (pam_env),
- * then the *.conf files of the system's environment.d folders by file name (/etc wins over /run, /usr/local/lib,
- * /usr/lib), then the user's. `unreadable`: files or folders that exist and could not be read.
+ * /etc/environment as pam_env reads it: leading whitespace and `#` lines skipped, an `export ` prefix dropped, the
+ * value cut at its first `#`, surrounding quotes stripped, no expansion.
  */
-export function readLoginSession(home: string, system = "/"): { env: Env; unreadable: string[] } {
+export function parsePamEnvironment(text: string, before: Env = {}): Env {
+  const env: Env = { ...before };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimStart().replace(/^export\s+/, "");
+    if (line === "" || line.startsWith("#")) continue;
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!m) continue;
+    let v = m[2]!.split("#")[0]!.trim();
+    if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.at(-1) === v[0]) v = v.slice(1, -1);
+    env[m[1]!] = v;
+  }
+  return env;
+}
+
+/**
+ * The files that give a Linux login session its environment, in the order they apply: the *.conf files of the
+ * environment.d folders, sorted together by file name, where a file of the user's folder ($XDG_CONFIG_HOME, else
+ * ~/.config) masks one of the system's of the same name, and /etc wins over /run, /usr/local/lib and /usr/lib;
+ * then /etc/environment, with pam_env's rules. `unreadable`: files or folders that exist and could not be read.
+ */
+export function readLoginSession(
+  home: string,
+  system = "/",
+  configHome: string = join(home, ".config"),
+): { env: Env; unreadable: string[] } {
   const unreadable: string[] = [];
   const read = (path: string): string | null => {
     try {
@@ -416,22 +438,16 @@ export function readLoginSession(home: string, system = "/"): { env: Env; unread
     }
   };
   let env: Env = {};
-  const etc = read(join(system, "etc", "environment"));
-  if (etc !== null) env = parseEnvironmentD(etc, env);
   const byName = new Map<string, string>();
-  for (const dir of ["usr/lib", "usr/local/lib", "run", "etc"].map((d) => join(system, d, "environment.d")))
+  const dirs = ["usr/lib", "usr/local/lib", "run", "etc"].map((d) => join(system, d, "environment.d"));
+  for (const dir of [...dirs, join(configHome, "environment.d")])
     for (const f of confs(dir)) byName.set(f, join(dir, f));
-  const user = join(home, ".config", "environment.d");
-  const files = [
-    ...[...byName.keys()].sort().map((f) => byName.get(f)!),
-    ...confs(user)
-      .sort()
-      .map((f) => join(user, f)),
-  ];
-  for (const f of files) {
-    const text = read(f);
+  for (const f of [...byName.keys()].sort()) {
+    const text = read(byName.get(f)!);
     if (text !== null) env = parseEnvironmentD(text, env);
   }
+  const etc = read(join(system, "etc", "environment"));
+  if (etc !== null) env = parsePamEnvironment(etc, env);
   return { env, unreadable };
 }
 
@@ -603,7 +619,8 @@ const loginSession: Session = async (names) => {
       if (r.code === 0 && r.out.trim()) out[n] = r.out.trim();
     }
   else if (process.platform === "linux") {
-    const r = readLoginSession(homedir());
+    const home = homedir();
+    const r = readLoginSession(home, "/", process.env.XDG_CONFIG_HOME || join(home, ".config"));
     for (const n of names) if (r.env[n]) out[n] = r.env[n];
     if (r.unreadable.length)
       return {
@@ -689,8 +706,8 @@ async function checkLogin(s: State): Promise<Line> {
  * - UNCONFIRMED: an organization, and the person has not confirmed it (State.org) -> `todo pays`; `confirm org`
  *   records it and goes to CONFIRMED. A new profile (`login --profile`) clears it and goes back here.
  * - CONFIRMED: State.org is the organization that pays -> `ok pays`.
- * The notes `ok host` and `warn session` come with every state after TERMINAL UNREADABLE. They ask nothing, and
- * they never open or close a state.
+ * The notes `ok host` and `warn session` come with every state after PAID AHEAD. They ask nothing, and they never
+ * open or close a state.
  */
 async function checkPays(s: State): Promise<Line[]> {
   const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);

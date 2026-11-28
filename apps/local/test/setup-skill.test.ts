@@ -13,6 +13,7 @@ import {
   launchEnv,
   nextState,
   parseEnvironmentD,
+  parsePamEnvironment,
   readLoginSession,
   summarize,
   type Line,
@@ -476,6 +477,17 @@ test("a key that only the login session gives (launchctl setenv, environment.d) 
   expect("env" in shell && shell.env.X).toBe("1");
 });
 
+test("/etc/environment as pam_env reads it: export, a value cut at #, quotes, no expansion", () => {
+  expect(
+    parsePamEnvironment(
+      ["# c", "  export ANTHROPIC_API_KEY=sk-x", "EMPTY=#x", 'Q="a b" # note', "R=$Q", "  ; not a name"].join("\n"),
+    ),
+  ).toEqual({ ANTHROPIC_API_KEY: "sk-x", EMPTY: "", Q: "a b", R: "$Q" });
+  // an exported key in /etc/environment is the named fail
+  const plan = paysPlan({ env: parsePamEnvironment("export ANTHROPIC_API_KEY=sk-x\n") }, {}, "credits", "linux");
+  expect(plan).toMatchObject({ lines: [{ status: "fail", what: "pays" }] });
+});
+
 test("environment.d files: comments, quotes, continuations and expansions, as systemd reads them", () => {
   const env = parseEnvironmentD(
     [
@@ -499,7 +511,7 @@ test("environment.d files: comments, quotes, continuations and expansions, as sy
   expect(env).toEqual({
     A: "1",
     B: "two words",
-    C: "$A",
+    C: "1",
     D: "1-1",
     E: "fallback",
     F: "alt",
@@ -517,15 +529,19 @@ posixOnly("the login session: /etc/environment, the system's environment.d by na
       mkdirSync(join(root, path, ".."), { recursive: true });
       writeFileSync(join(root, path), text);
     };
-    put("etc/environment", "ANTHROPIC_AUTH_TOKEN=from-pam\n");
+    put("etc/environment", "  export ANTHROPIC_AUTH_TOKEN=from-pam\nX=pam\n");
     put("usr/lib/environment.d/10-a.conf", "X=lib\n");
     put("etc/environment.d/10-a.conf", "X=etc\n");
     put("usr/lib/environment.d/20-b.conf", "Y=$X\n");
     put("home/.config/environment.d/50-key.conf", "ANTHROPIC_API_KEY=sk-user\nnot-a-conf=1\n");
+    // a user file masks the system's file of the same name
+    put("usr/lib/environment.d/30-c.conf", "Z=system\n");
+    put("home/.config/environment.d/30-c.conf", "Z=user\n");
     put("home/.config/environment.d/notes.txt", "CLAUDE_CODE_OAUTH_TOKEN=ignored\n");
     const r = readLoginSession(join(root, "home"), root);
     expect(r).toEqual({
-      env: { ANTHROPIC_AUTH_TOKEN: "from-pam", X: "etc", Y: "etc", ANTHROPIC_API_KEY: "sk-user" },
+      // /etc/environment last: its X wins
+      env: { ANTHROPIC_AUTH_TOKEN: "from-pam", X: "pam", Y: "etc", Z: "user", ANTHROPIC_API_KEY: "sk-user" },
       unreadable: [],
     });
     // a key there is a new terminal's: the named fail, never the value
