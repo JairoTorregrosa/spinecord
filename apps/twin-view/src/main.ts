@@ -318,7 +318,10 @@ function setFocus(id: string | null): void {
   try {
     model = buildRobot(focus, look);
   } catch (e) {
-    // a robot the page cannot draw as the twin reads it: said in place of the scene, never a silent empty arena
+    // a robot the page cannot draw as the twin reads it: said in place of the scene, never a silent empty arena;
+    // nothing of it stays (the rays, the ports' roles)
+    roles = {};
+    coneGroup.visible = false;
     return no3d({ t: "build_failed", detail: (e as Error).message });
   }
   no3d({ t: "built" });

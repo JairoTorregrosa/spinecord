@@ -592,6 +592,31 @@ describe("the distance sensor's pose: the reading, the rays and the drawn sensor
     );
   });
 
+  test("a body without a distance sensor is not held to the sensor's default place", () => {
+    const { distance: _d, ...roles } = orugas.profile.roles;
+    const { sensors: _v, ...view } = orugas.twin.view;
+    const robot = {
+      ...orugas,
+      profile: { ...orugas.profile, roles },
+      twin: {
+        ...orugas.twin,
+        body: { front_cm: 6, back_cm: 13.5, half_width_cm: 9 },
+        ev3: { ...orugas.twin.ev3, sensors: {} },
+        view,
+      },
+    };
+    expect((twinOf(robot).world as { body: Record<string, number> }).body.front_cm).toBe(6);
+  });
+
+  test("a distance sensor placed facing up, or past the side of the body, is refused naming the place", () => {
+    expect(fails(offCentre({ x_cm: 5, z_cm: 10, facing: "up" }))).toThrow(
+      'twin.view.sensors.4 faces up: a distance sensor reads level, along a heading; give it "facing" forward, back, left or right',
+    );
+    expect(fails(offCentre({ y_cm: -12, z_cm: 10 }))).toThrow(
+      "twin.view.sensors.4 puts the distance sensor's eye 12 cm to the right of the centre line, past the side of the body (twin.body.half_width_cm 9)",
+    );
+  });
+
   test("doctor: a place near the body's numbers, or copying them, says nothing; one grossly elsewhere is named", () => {
     const clash = (place: object, body: object = {}) =>
       sensorPoseClash(twinOf(offCentre(place, { distance_sensor_z_cm: 20, ...body })).world, true);

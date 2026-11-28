@@ -439,15 +439,25 @@ export function parseWorld(json: unknown): WorldConfig {
   };
   const root = obj(json, "root");
   const body = partial(root.body, "body", DEFAULT_BODY);
-  if (body.distance_sensor_x_cm < -body.back_cm)
+  // the sensor's place against the footprint, only where the file states it (a body without a distance sensor
+  // leaves it out, and its default must not refuse a short body)
+  const stated = (k: string) => typeof root.body === "object" && root.body !== null && k in root.body;
+  const x = body.distance_sensor_x_cm;
+  if (stated("distance_sensor_x_cm") && x < -body.back_cm)
     fail(
       "body.distance_sensor_x_cm",
-      `is ${body.distance_sensor_x_cm}: the distance sensor's eye would be ${-body.distance_sensor_x_cm} cm behind the axle, past the back of the body (back_cm ${body.back_cm}); a sensor at the back is at most back_cm behind the axle`,
+      `is ${x}: the distance sensor's eye would be ${-x} cm behind the axle, past the back of the body (back_cm ${body.back_cm}); a sensor at the back is at most back_cm behind the axle`,
     );
-  if (body.distance_sensor_x_cm > body.front_cm)
+  if (stated("distance_sensor_x_cm") && x > body.front_cm)
     fail(
       "body.distance_sensor_x_cm",
-      `is ${body.distance_sensor_x_cm}: the distance sensor's eye would be ${body.distance_sensor_x_cm} cm ahead of the axle, past the front of the body (front_cm ${body.front_cm}); the body reaches at least as far as the sensor on it`,
+      `is ${x}: the distance sensor's eye would be ${x} cm ahead of the axle, past the front of the body (front_cm ${body.front_cm}); the body reaches at least as far as the sensor on it`,
+    );
+  const y = body.distance_sensor_y_cm;
+  if (stated("distance_sensor_y_cm") && Math.abs(y) > body.half_width_cm)
+    fail(
+      "body.distance_sensor_y_cm",
+      `is ${y}: the distance sensor's eye would be ${Math.abs(y)} cm to the ${y < 0 ? "right" : "left"} of the centre line, past the side of the body (half_width_cm ${body.half_width_cm}); the body is at least as wide as the sensor on it`,
     );
   const KNOWN = [
     "schema",

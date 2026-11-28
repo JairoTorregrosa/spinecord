@@ -55,7 +55,6 @@ export function cableTo(kit: Kit, m: BrickMount, from: THREE.Vector3, dir: THREE
 export interface Devices {
   height: number;
   /** Origin of the distance sensor's rays (its face), robot frame, or null. */
-  rayOrigin: THREE.Vector3 | null;
   update(s: RobotState, timeS: number, tachos: Record<string, number>): void;
 }
 
@@ -96,15 +95,13 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
   const cx = (bb.min.x + bb.max.x) / 2,
     cz = (bb.min.z + bb.max.z) / 2;
   let height = 0;
-  let rayOrigin: THREE.Vector3 | null = null;
   /** The drawn eye, checked against the pose the physics reads from: a layout that moved it fails loud. */
-  const eyeAt = (e: THREE.Vector3): THREE.Vector3 => {
+  const eyeAt = (e: THREE.Vector3): void => {
     const p = poseOfBody(body);
     if (Math.hypot(e.x - p.x_cm, e.y - p.y_cm, e.z - p.z_cm) > 0.01)
       throw new Error(
         `the distance sensor is drawn with its eye at (${e.x.toFixed(2)}, ${e.y.toFixed(2)}, ${e.z.toFixed(2)}) cm, and the twin reads from (${p.x_cm}, ${p.y_cm}, ${p.z_cm})`,
       );
-    return e;
   };
 
   // ---------------------------------------------------------------- motors that drive something else
@@ -273,12 +270,12 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
           kit.axleCyl(r * 0.78, 0.34, 0, 0, 0, mats.black, eye, 24);
           kit.axleCyl(r * 0.5, 0.36, 0, 0, 0, i === 0 ? glow : mats.anthracite, eye, 20);
         }
-        if (s.port === pinned?.port) rayOrigin = eyeAt(at(...f("beam_centre")));
+        if (s.port === pinned?.port) eyeAt(at(...f("beam_centre")));
       } else {
         // the infrared's two dark red windows, glossy
         const win = keep(new THREE.MeshStandardMaterial({ color: 0x3c0508, roughness: 0.06, metalness: 0.1 }));
         for (const y of [W / 4, -W / 4]) kit.box(0.2, W / 2 - 0.5, H - 0.8, x1 - 0.05, y, zc, win, 0.4, o);
-        if (s.port === pinned?.port) rayOrigin = eyeAt(at(...f("front_face")));
+        if (s.port === pinned?.port) eyeAt(at(...f("front_face")));
       }
     } else if (s.kind === "color") {
       shell(x1 - 0.3, W);
@@ -360,7 +357,6 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
 
   return {
     height,
-    rayOrigin,
     update(s, timeS, tachos) {
       for (const mo of motors) mo.turn(tachos[mo.port] ?? 0);
       for (const sensor of s.sensors) {

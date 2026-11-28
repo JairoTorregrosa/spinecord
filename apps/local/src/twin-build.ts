@@ -253,10 +253,10 @@ export function withSensorPose(
   ports: BrickPorts,
   where: { file: string; at: "twin" | "" },
 ): Record<string, unknown> {
-  const look = lookEye(world, ports);
+  const pre = where.at ? "twin." : "";
+  const look = lookEye(world, ports, `${where.file}: ${pre}${where.at ? "view" : "extensions.view"}`);
   if (!look) return world;
   const { eye, body } = look;
-  const pre = where.at ? "twin." : "";
   const placeAt = `${where.file}: ${pre}${where.at ? "view" : "extensions.view"}.sensors.${look.port}`;
   const pose = resolveDistancePose(body, eye, poseOfBody(DEFAULT_BODY), {
     body: `${where.file}: ${pre}body`,
@@ -277,6 +277,12 @@ export function withSensorPose(
     throw new Error(
       `${placeAt} puts the distance sensor's eye ${added.distance_sensor_x_cm} cm ahead of the axle, past the front of the body (${pre}body.front_cm ${front}${body.front_cm === undefined ? ", the default" : ""}): move the sensor back in the look, or write how far the body reaches ahead of the axle in ${pre}body.front_cm`,
     );
+  const half = body.half_width_cm ?? DEFAULT_BODY.half_width_cm;
+  const y = added.distance_sensor_y_cm;
+  if (y !== undefined && Math.abs(y) > half)
+    throw new Error(
+      `${placeAt} puts the distance sensor's eye ${Math.abs(y)} cm to the ${y < 0 ? "right" : "left"} of the centre line, past the side of the body (${pre}body.half_width_cm ${half}${body.half_width_cm === undefined ? ", the default" : ""}): move the sensor in in the look, or write how wide the body is in ${pre}body.half_width_cm`,
+    );
   return Object.keys(added).length ? { ...world, body: { ...body, ...added } } : world;
 }
 
@@ -284,6 +290,7 @@ export function withSensorPose(
 function lookEye(
   world: Record<string, unknown>,
   ports: BrickPorts,
+  viewAt = "the look",
 ): {
   port: string;
   eye: ReturnType<typeof eyeOfPlace> | null;
@@ -298,9 +305,18 @@ function lookEye(
   const body = (isObj(world.body) ? world.body : {}) as Record<string, number>;
   if (!isObj(raw)) return { port: d.port, eye: null, centre: null, body };
   const p = placeIn(raw, moduleCm());
+  const eyeOrRefuse = <T>(f: () => T): T => {
+    try {
+      return f();
+    } catch (e) {
+      throw new Error(`${viewAt}.sensors.${d.port} ${(e as Error).message}`, { cause: e });
+    }
+  };
   return {
     port: d.port,
-    eye: eyeOfPlace(sensorEye(d.kind), p, { facing: p.facing !== null, yaw: typeof raw.yaw_deg === "number" }),
+    eye: eyeOrRefuse(() =>
+      eyeOfPlace(sensorEye(d.kind), p, { facing: p.facing !== null, yaw: typeof raw.yaw_deg === "number" }),
+    ),
     centre: { x: p.x, z: p.z },
     body,
   };

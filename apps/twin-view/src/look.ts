@@ -83,8 +83,8 @@
 // What the look cannot show:
 //   - The physics reads none of this but the distance sensor's pose (above). The colour sensor reads the floor at
 //     `body.color_sensor_x_cm` on the centre line, wherever the look puts it. A distance sensor placed facing up or
-//     down is drawn looking along the body's heading: the twin reads only level (the page shows what the twin
-//     reads, never a direction it does not read).
+//     down is refused when the file is read: the twin reads only level (the page shows what the twin reads,
+//     never a direction it does not read).
 //   - Only parts of the EV3 sets' electronics, beams, axles, wheels, tracks and casters are drawn; any other
 //     LEGO part (gears, panels' shapes, plates with studs, bespoke chassis) is drawn as beams of the same extent.
 //   - Gears or a chain between wheels of one side are not drawn: the wheels just turn together.

@@ -415,7 +415,7 @@ describe("the distance sensor's pose: its eye off the centre line and its headin
   });
   test("a box beside the centre line is seen by an eye on that side, looking ahead, and missed from the centre", () => {
     const box = [{ x: 140, y: 108, w: 10, h: 6 }];
-    const side = room({ distance_sensor_y_cm: 11 }, box);
+    const side = room({ half_width_cm: 12, distance_sensor_y_cm: 11 }, box);
     expect(side.rayDistance()).toBeCloseTo(140 - 106, 6);
     expect(room({}, box).rayDistance()).toBeCloseTo(200 - 106, 6);
     // the infrared's light comes back mostly along the ray that meets it
@@ -431,6 +431,21 @@ describe("the distance sensor's pose: its eye off the centre line and its headin
     // past the front of the body neither
     expect(() => room({ front_cm: 8, distance_sensor_x_cm: 9 })).toThrow(
       "body.distance_sensor_x_cm is 9: the distance sensor's eye would be 9 cm ahead of the axle, past the front of the body (front_cm 8)",
+    );
+    // a body that never states the sensor (no distance sensor) is not held to the default's place
+    expect(room({ front_cm: 6 }).cfg.body.front_cm).toBe(6);
+    expect(() =>
+      parseWorld({
+        schema: WORLD_SCHEMA,
+        name: "short",
+        arena: { width_cm: 100, height_cm: 100 },
+        start: { x: 50, y: 50, heading_deg: 0 },
+        body: { front_cm: 6, back_cm: 13.5, half_width_cm: 9 },
+      }),
+    ).not.toThrow();
+    // nor past either side
+    expect(() => room({ half_width_cm: 6, distance_sensor_y_cm: -7 })).toThrow(
+      "body.distance_sensor_y_cm is -7: the distance sensor's eye would be 7 cm to the right of the centre line, past the side of the body (half_width_cm 6)",
     );
     // past the back of the body is no place for it: refused in plain words
     expect(() => room({ back_cm: 12, distance_sensor_x_cm: -13 })).toThrow(

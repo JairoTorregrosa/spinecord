@@ -55,9 +55,12 @@ describe("the distance sensor's pose: one point and heading for the reading, the
     expect(eye.y).toBeCloseTo(4.6, 9);
     expect(eye.z!).toBeCloseTo(19.6 + EYE("ir")[2], 9);
     expect(eye.yaw).toBeNull();
-    // up or down has no heading the physics can read along: the place settles only the height
-    const up = eyeOfPlace(EYE("ir"), place({ x_cm: 1, y_cm: 1, z_cm: 9, facing: "up" }), { facing: true, yaw: false });
-    expect([up.x, up.y, up.yaw]).toEqual([null, null, null]);
+    // up or down has no heading the physics can read along: refused in plain words
+    expect(() =>
+      eyeOfPlace(EYE("ir"), place({ x_cm: 1, y_cm: 1, z_cm: 9, facing: "up" }), { facing: true, yaw: false }),
+    ).toThrow(
+      'faces up: a distance sensor reads level, along a heading; give it "facing" forward, back, left or right',
+    );
     expect(facingYaw("back", 10)).toBe(-170);
     expect(wrapDeg(540)).toBe(180);
     expect(wrapDeg(-190)).toBe(170);

@@ -25,8 +25,6 @@ export interface RobotModel {
   group: THREE.Group;
   /** The robot's own camera (the phone when there is one, else the front), robot frame: where, and a point it looks at. */
   eye: { pos: THREE.Vector3; look: THREE.Vector3 };
-  /** Origin of the distance sensor's rays in the group frame, or null without a distance sensor. */
-  rayOrigin: THREE.Vector3 | null;
   /** Height of the tallest part, cm. */
   height: number;
   update(s: RobotState, tachos: Record<string, number>, timeS: number): void;
@@ -155,11 +153,9 @@ export function buildRobot(meta: RobotMeta, look: Look): RobotModel {
   let alive = true;
   void loadReal(kit, () => alive);
 
-  const ray = devices.rayOrigin;
   return {
     group,
     eye: acc.eye,
-    rayOrigin: ray ? P(ray.x, ray.y, ray.z) : null,
     height: Math.max(acc.height, devices.height, box.max.z + 1),
     update(s, tachos, timeS) {
       drive.update(tachos);

@@ -154,7 +154,7 @@ export interface CameraOptions {
 }
 
 /**
- * First-person view from the robot's pose (camera at the front, looking forward).
+ * First-person view from the distance sensor's eye (World.distanceSensorAxis), looking where it looks.
  * Floor: every pixel under the horizon is projected onto the floor and takes its colour. Walls and obstacles: one ray per column.
  */
 export function renderFirstPerson(world: World, opts: CameraOptions = {}): Image {
@@ -166,14 +166,18 @@ export function renderFirstPerson(world: World, opts: CameraOptions = {}): Image
   if (!(W > 0 && H > 0 && W <= 640 && H <= 480))
     throw new Error(`renderFirstPerson: size ${W}x${H} is outside 1..640 x 1..480`);
   const data = new Uint8ClampedArray(W * H * 4);
+  // the camera is the distance sensor's eye: walls (rayHit) and floor from the same point, along the same heading
   const p = world.pose,
-    [ox, oy] = world.pointAhead(world.cfg.body.distance_sensor_x_cm);
+    {
+      o: [ox, oy],
+      th,
+    } = world.distanceSensorAxis();
   const focal = W / 2 / Math.tan(fov / 2),
     horizon = H / 2;
   for (let px = 0; px < W; px++) {
     const off = Math.atan((W / 2 - px - 0.5) / focal); // + = left
-    const dx = Math.cos(p.th + off),
-      dy = Math.sin(p.th + off),
+    const dx = Math.cos(th + off),
+      dy = Math.sin(th + off),
       cosOff = Math.cos(off);
     const hit = world.rayHit(p, off, Math.PI / 2),
       wall = hit.d * cosOff; // distance perpendicular to the image plane

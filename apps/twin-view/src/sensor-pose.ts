@@ -69,13 +69,18 @@ export function eyeOfPlace(
   p: Place,
   stated: { facing: boolean; yaw: boolean },
 ): { x: number | null; y: number | null; z: number | null; yaw: number | null } {
+  // up and down have no heading the physics can read along: refused, naming the facing (the caller names the place)
   const yaw = facingYaw(p.facing, p.yaw);
+  if (yaw === null)
+    throw new Error(
+      `faces ${p.facing}: a distance sensor reads level, along a heading; give it "facing" forward, back, left or right (and "yaw_deg" to turn it between them)`,
+    );
   const [ox, oy, oz] = offset;
-  const c = Math.cos((yaw ?? 0) * DEG),
-    s = Math.sin((yaw ?? 0) * DEG);
+  const c = Math.cos(yaw * DEG),
+    s = Math.sin(yaw * DEG);
   return {
-    x: p.x === null || yaw === null ? null : p.x + ox * c - oy * s,
-    y: p.y === null || yaw === null ? null : p.y + ox * s + oy * c,
+    x: p.x === null ? null : p.x + ox * c - oy * s,
+    y: p.y === null ? null : p.y + ox * s + oy * c,
     z: p.z === null ? null : p.z + oz,
     yaw: stated.facing || stated.yaw ? yaw : null,
   };
