@@ -3,7 +3,7 @@
 // code blocks are not prose and are skipped. Inline code and a link's text count as one word each. Its SKILL.md
 // stays short, every file it names exists, and every `setup <step>` it names is a step of scripts/setup.ts.
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,7 +11,11 @@ import {
   ev3DraftWarn,
   hostOnly,
   launchEnv,
-  systemctlWarn,
+  nextState,
+  parseEnvironmentD,
+  readLoginSession,
+  summarize,
+  type Line,
   paysPlan,
   execDetached,
   type Exec,
@@ -472,20 +476,106 @@ test("a key that only the login session gives (launchctl setenv, environment.d) 
   expect("env" in shell && shell.env.X).toBe("1");
 });
 
-test("a login session that exists but cannot be read is a warn line that names it, and PAYS goes on", async () => {
+test("environment.d files: comments, quotes, continuations and expansions, as systemd reads them", () => {
+  const env = parseEnvironmentD(
+    [
+      "# a comment",
+      "; another",
+      "",
+      "A = 1",
+      'B="two words"',
+      "C='$A'",
+      "D=${A}-$A",
+      "E=${NOPE:-fallback}",
+      "F=${A:+alt}",
+      "G=${NOPE:+alt}",
+      "H=$$A",
+      "I=x # not a comment",
+      "J=one\\",
+      "two",
+      "not a line",
+    ].join("\n"),
+  );
+  expect(env).toEqual({
+    A: "1",
+    B: "two words",
+    C: "$A",
+    D: "1-1",
+    E: "fallback",
+    F: "alt",
+    G: "",
+    H: "$A",
+    I: "x # not a comment",
+    J: "onetwo",
+  });
+});
+
+posixOnly("the login session: /etc/environment, the system's environment.d by name, then the user's", () => {
+  const root = mkdtempSync(join(tmpdir(), "spinecord-session-"));
+  try {
+    const put = (path: string, text: string) => {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), text);
+    };
+    put("etc/environment", "ANTHROPIC_AUTH_TOKEN=from-pam\n");
+    put("usr/lib/environment.d/10-a.conf", "X=lib\n");
+    put("etc/environment.d/10-a.conf", "X=etc\n");
+    put("usr/lib/environment.d/20-b.conf", "Y=$X\n");
+    put("home/.config/environment.d/50-key.conf", "ANTHROPIC_API_KEY=sk-user\nnot-a-conf=1\n");
+    put("home/.config/environment.d/notes.txt", "CLAUDE_CODE_OAUTH_TOKEN=ignored\n");
+    const r = readLoginSession(join(root, "home"), root);
+    expect(r).toEqual({
+      env: { ANTHROPIC_AUTH_TOKEN: "from-pam", X: "etc", Y: "etc", ANTHROPIC_API_KEY: "sk-user" },
+      unreadable: [],
+    });
+    // a key there is a new terminal's: the named fail, never the value
+    const plan = paysPlan({ env: { ...NEW_TERMINAL, ...r.env } }, HOST, "credits", "linux");
+    expect(plan).toMatchObject({
+      lines: [{ status: "fail", what: "pays", next: expect.stringContaining("Another credential pays") }],
+    });
+    expect(JSON.stringify(plan)).not.toContain("sk-user");
+    // a folder that exists and cannot be read is named; a missing one is not
+    expect(readLoginSession(join(root, "nobody"), root).unreadable).toEqual([]);
+    put("odd/.config/environment.d", "a file, not a folder");
+    expect(readLoginSession(join(root, "odd"), root).unreadable).toEqual([
+      join(root, "odd", ".config", "environment.d"),
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a session file that cannot be read is an informational warn: no question, PAYS goes on", async () => {
   const p = await probeTerminal("linux", HOST, writes(dump(NEW_TERMINAL)), user, {
-    session: async () => ({ env: {}, warn: systemctlWarn(1) }),
+    session: async () => ({ env: {}, warn: "/etc/environment could not be read: ..." }),
   });
   const plan = paysPlan(p, NEW_TERMINAL, "credits", "linux");
   if (!("env" in plan)) throw new Error(`no env: ${JSON.stringify(plan)}`);
-  expect(plan.notes).toMatchObject([
-    {
-      status: "warn",
-      what: "session",
-      why: "systemctl --user show-environment exit 1: a key that ~/.config/environment.d gives the person's desktop terminals is not seen",
-    },
-  ]);
-  expect(plan.notes[0]!.next).toContain(`row "Another credential pays"`);
+  expect(plan.notes).toEqual([{ status: "warn", what: "session", why: "/etc/environment could not be read: ..." }]);
+});
+
+test("status combines a state's lines: fail, then todo, then warn, then ok; a warn never holds next", () => {
+  const ok: Line = { status: "ok", what: "host", why: "h" };
+  const warn: Line = { status: "warn", what: "session", why: "s" };
+  const todo: Line = { status: "todo", what: "pays", why: "p", next: "ask the person" };
+  const fail: Line = { status: "fail", what: "pays", why: "f", next: "fixes.md" };
+  expect(summarize("PAYS", [ok, warn])).toMatchObject({ status: "warn", next: undefined });
+  expect(summarize("PAYS", [warn, todo])).toMatchObject({ status: "todo", next: "ask the person" });
+  expect(summarize("PAYS", [warn, fail])).toMatchObject({ status: "fail", next: "fixes.md" });
+  expect(summarize("PAYS", [ok])).toMatchObject({ status: "ok", why: "host: h" });
+  expect(
+    nextState([
+      ["PAYS", [ok, warn]],
+      ["NEXT", [todo]],
+    ]),
+  ).toBe("NEXT");
+  expect(
+    nextState([
+      ["PAYS", [warn, todo]],
+      ["NEXT", [todo]],
+    ]),
+  ).toBe("PAYS");
+  expect(nextState([["PAYS", [warn]]])).toBe("REPORT");
 });
 
 test("a new Windows terminal: computed values, then Machine, volatile, User; Path is Machine's then User's", () => {

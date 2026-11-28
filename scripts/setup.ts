@@ -4,7 +4,17 @@
 // The robots come from the skill's robots.json; what no command can detect (the person's answers, the smoke
 // test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|warn|todo|fail  <what>  <why>  ->  <next>`, the
 // last line `setup <step>: ok` (exit 0) or `setup <step>: not done` (exit 1). Nothing here prints a secret.
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { parseRobotName } from "../apps/local/src/config";
@@ -352,9 +362,78 @@ export function launchEnv(terminalEnv: Env, inherited: Env, profile: string, pla
   return env;
 }
 
-/** `systemctl --user show-environment` failed: the agent may run with no user bus (SSH, a sandbox). */
-export const systemctlWarn = (code: number | null) =>
-  `systemctl --user show-environment ${code === null ? "gave no answer" : `exit ${code}`}: a key that ~/.config/environment.d gives the person's desktop terminals is not seen`;
+/**
+ * One environment.d file (systemd 262, environment.d(5)): KEY=VALUE lines; `#` and `;` lines and empty lines are
+ * ignored; a backslash at the end of a line continues it; surrounding quotes are stripped; `$X`, `${X}`,
+ * `${X:-default}` and `${X:+alternate}` expand from what came before; `$$` is a dollar sign. Only whether a name is
+ * set matters here, so escapes inside quotes are kept as they are.
+ */
+export function parseEnvironmentD(text: string, before: Env = {}): Env {
+  const env: Env = { ...before };
+  for (const raw of text.replaceAll(/\\\r?\n/g, "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let v = m[2]!;
+    const quoted = v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.at(-1) === v[0];
+    if (quoted) v = v.slice(1, -1);
+    if (!(quoted && m[2]![0] === "'"))
+      v = v.replaceAll(
+        /\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([-+])([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+        (all, n, op, alt, bare) => {
+          if (all === "$$") return "$";
+          const cur = env[(n ?? bare) as string] ?? "";
+          return op === "-" ? cur || alt : op === "+" ? (cur ? alt : "") : cur;
+        },
+      );
+    env[m[1]!] = v;
+  }
+  return env;
+}
+
+/**
+ * The files that give a Linux login session its environment, in the order they apply: /etc/environment (pam_env),
+ * then the *.conf files of the system's environment.d folders by file name (/etc wins over /run, /usr/local/lib,
+ * /usr/lib), then the user's. `unreadable`: files or folders that exist and could not be read.
+ */
+export function readLoginSession(home: string, system = "/"): { env: Env; unreadable: string[] } {
+  const unreadable: string[] = [];
+  const read = (path: string): string | null => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable.push(path);
+      return null;
+    }
+  };
+  const confs = (dir: string): string[] => {
+    try {
+      return readdirSync(dir).filter((f) => f.endsWith(".conf"));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable.push(dir);
+      return [];
+    }
+  };
+  let env: Env = {};
+  const etc = read(join(system, "etc", "environment"));
+  if (etc !== null) env = parseEnvironmentD(etc, env);
+  const byName = new Map<string, string>();
+  for (const dir of ["usr/lib", "usr/local/lib", "run", "etc"].map((d) => join(system, d, "environment.d")))
+    for (const f of confs(dir)) byName.set(f, join(dir, f));
+  const user = join(home, ".config", "environment.d");
+  const files = [
+    ...[...byName.keys()].sort().map((f) => byName.get(f)!),
+    ...confs(user)
+      .sort()
+      .map((f) => join(user, f)),
+  ];
+  for (const f of files) {
+    const text = read(f);
+    if (text !== null) env = parseEnvironmentD(text, env);
+  }
+  return { env, unreadable };
+}
 
 export const terminalFail = (p: { error: string; row?: string }): Line => ({
   status: "fail",
@@ -413,13 +492,7 @@ export function paysPlan(
         },
       ]
     : [];
-  if (probe.warn)
-    notes.push({
-      status: "warn",
-      what: "session",
-      why: probe.warn,
-      next: `ask the person if ~/.config/environment.d sets ANTHROPIC_API_KEY or another key; if yes: fixes.md, row "Another credential pays"`,
-    });
+  if (probe.warn) notes.push({ status: "warn", what: "session", why: probe.warn });
   return { env: launchEnv(probe.env, inherited, profile, platform), notes };
 }
 
@@ -518,13 +591,10 @@ export const execDetached: Exec = async (cmd, env, ms) => {
 
 /**
  * The values that the login session gives every terminal, for these names (no shell profile sets them). `warn`:
- * the session exists but could not be read; it names the command and its exit, never its output.
+ * a file of the session could not be read; it names the file, never a value. It asks nothing of the person.
  */
 export type Session = (names: string[]) => Promise<{ env: Env; warn?: string }>;
-/**
- * macOS: `launchctl getenv`. Linux: the environment of the systemd user manager; without `systemctl` there is no
- * such session to read.
- */
+/** macOS: `launchctl getenv`. Linux: /etc/environment and the environment.d files, read from disk. */
 const loginSession: Session = async (names) => {
   const out: Env = {};
   if (process.platform === "darwin")
@@ -532,16 +602,14 @@ const loginSession: Session = async (names) => {
       const r = await run(["launchctl", "getenv", n], { ms: 5000, cwd: homedir() });
       if (r.code === 0 && r.out.trim()) out[n] = r.out.trim();
     }
-  else if (process.platform === "linux" && Bun.which("systemctl") !== null) {
-    const r = await run(["systemctl", "--user", "show-environment"], { ms: 5000, cwd: homedir() });
-    if (r.code === 0) {
-      const all = Object.fromEntries(
-        r.out
-          .split("\n")
-          .flatMap((l) => (l.indexOf("=") > 0 ? [[l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]] : [])),
-      );
-      for (const n of names) if (all[n]) out[n] = all[n];
-    } else return { env: out, warn: systemctlWarn(r.code) };
+  else if (process.platform === "linux") {
+    const r = readLoginSession(homedir());
+    for (const n of names) if (r.env[n]) out[n] = r.env[n];
+    if (r.unreadable.length)
+      return {
+        env: out,
+        warn: `${r.unreadable.join(", ")} could not be read: a key that the login session takes from there is not seen`,
+      };
   }
   return { env: out };
 };
@@ -611,6 +679,19 @@ async function checkLogin(s: State): Promise<Line> {
       };
 }
 
+/**
+ * PAYS, its states, from `paysPlan` and then `claude auth status` with the launch line's environment:
+ * - TERMINAL UNREADABLE: the new terminal's environment could not be read -> `fail terminal`.
+ * - PAID AHEAD: a variable of the new terminal or its login session pays ahead of the profile -> `fail pays`, row
+ *   "Another credential pays".
+ * - NOT THE PROFILE: Claude Code does not name the profile -> `fail pays`, row "Login method with the profile set".
+ * - NO ORGANIZATION: the profile pays, and neither Claude Code nor ant names its organization -> `fail pays`.
+ * - UNCONFIRMED: an organization, and the person has not confirmed it (State.org) -> `todo pays`; `confirm org`
+ *   records it and goes to CONFIRMED. A new profile (`login --profile`) clears it and goes back here.
+ * - CONFIRMED: State.org is the organization that pays -> `ok pays`.
+ * The notes `ok host` and `warn session` come with every state after TERMINAL UNREADABLE. They ask nothing, and
+ * they never open or close a state.
+ */
 async function checkPays(s: State): Promise<Line[]> {
   const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
   if ("lines" in plan) return plan.lines;
@@ -759,6 +840,30 @@ const checkEv3 = (s: State): Line =>
 
 // ---- the steps ----
 
+/** A warn line is done: it says what the person must know, and asks nothing. */
+const isOpen = (l: Line) => l.status !== "ok" && l.status !== "warn";
+/** The first state with a line that is not done, else REPORT. */
+export const nextState = (per: [string, Line[]][]): string => per.find(([, ls]) => ls.some(isOpen))?.[0] ?? "REPORT";
+/**
+ * One line of `setup status` for a state: fail if a line fails, else todo if one is open, else warn if one warns,
+ * else ok. Its `next` is the first open line's, else the first warn line's.
+ */
+export function summarize(name: string, ls: Line[]): Line {
+  const open = ls.find(isOpen);
+  return {
+    status: open
+      ? ls.some((l) => l.status === "fail")
+        ? "fail"
+        : "todo"
+      : ls.some((l) => l.status === "warn")
+        ? "warn"
+        : "ok",
+    what: name,
+    why: ls.map((l) => `${l.what}: ${l.why}`).join("; "),
+    next: (open ?? ls.find((l) => l.status === "warn"))?.next,
+  };
+}
+
 async function status(s: State): Promise<Line[]> {
   const per: [string, Line[]][] = [["TOOLS", await checkTools()]];
   const login = await checkLogin(s);
@@ -771,25 +876,7 @@ async function status(s: State): Promise<Line[]> {
   per.push(["SMOKE", [checkSmoke(s)]]);
   per.push(["SEE IT", [checkMoved(s)]]);
   per.push(["EV3", [checkEv3(s)]]);
-  // a warn line is done: it names what the person must know
-  const isOpen = (l: Line) => l.status !== "ok" && l.status !== "warn";
-  const next = per.find(([, ls]) => ls.some(isOpen))?.[0] ?? "REPORT";
-  const lines = per.map(([name, ls]): Line => {
-    const open = ls.find(isOpen);
-    return {
-      status: open
-        ? ls.some((l) => l.status === "fail")
-          ? "fail"
-          : "todo"
-        : ls.some((l) => l.status === "warn")
-          ? "warn"
-          : "ok",
-      what: name,
-      why: ls.map((l) => `${l.what}: ${l.why}`).join("; "),
-      next: (open ?? ls.find((l) => l.status === "warn"))?.next,
-    };
-  });
-  return [...lines, { status: "ok", what: "next", why: next }];
+  return [...per.map(([name, ls]) => summarize(name, ls)), { status: "ok", what: "next", why: nextState(per) }];
 }
 
 async function login(s: State): Promise<Line[]> {
