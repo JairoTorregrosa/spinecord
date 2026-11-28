@@ -11,7 +11,7 @@ import type { RobotMeta, RobotState } from "./messages";
 import { MOTOR, SENSOR, type PartDims } from "./dims";
 import { largeMotor, largeMotorBox, mediumMotor, type MotorPart } from "./motors";
 import { facingDir, P, pointOf, type Kit, type RealPart } from "./parts";
-import { centreForPose, distancePort, poseOfBody } from "./sensor-pose";
+import { centreForPose, distancePort, eyeOffset, poseOfBody } from "./sensor-pose";
 
 /** The brick as the cables see it: where each port is, the way out of it, and the brick's box. */
 export interface BrickMount {
@@ -166,7 +166,7 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
   const pinned = distancePort(meta.ports.sensors);
   const sensors = look.sensors.map((s): SensorPlace => {
     if (s.port !== pinned?.port) return s;
-    const c = centreForPose(pinned.kind, pose);
+    const c = centreForPose(eyeOffset(pinned.kind, SENSOR[pinned.kind]), pose);
     return { ...s, x: c.x, y: c.y, z: c.z, facing: "forward", yaw: pose.yaw_deg };
   });
   for (const s of sensors.sort(byGiven)) {

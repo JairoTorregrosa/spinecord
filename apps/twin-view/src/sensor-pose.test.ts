@@ -14,18 +14,19 @@ import {
   type SensorPose,
 } from "./sensor-pose";
 
+const EYE = (k: "ir" | "ultrasonic") => eyeOffset(k, SENSOR[k]);
 const DEFAULTS: SensorPose = { x_cm: 8, y_cm: 0, z_cm: 6, yaw_deg: 0 };
 const WHERE = { body: "r.json: twin.body", place: "r.json: twin.view.sensors.4" };
 
 describe("the distance sensor's pose: one point and heading for the reading, the rays and the drawing", () => {
   test("the eye is the parts map's own point: the infrared's front face, the ultrasonic's beam centre", () => {
-    const [x, y, z] = eyeOffset("ir");
+    const [x, y, z] = EYE("ir");
     const ir = SENSOR.ir;
     expect(x).toBeCloseTo(ir.at.front_face![0] - (ir.min[0] + ir.max[0]) / 2, 9);
     expect(y).toBeCloseTo(0, 9);
     expect(z).toBeCloseTo(ir.at.front_face![2] - (ir.min[2] + ir.max[2]) / 2, 9);
     expect(x).toBeGreaterThan(2); // the face is well ahead of the box's centre
-    expect(eyeOffset("ultrasonic")[0]).toBeCloseTo(
+    expect(EYE("ultrasonic")[0]).toBeCloseTo(
       SENSOR.ultrasonic.at.beam_centre![0] - (SENSOR.ultrasonic.min[0] + SENSOR.ultrasonic.max[0]) / 2,
       9,
     );
@@ -34,28 +35,28 @@ describe("the distance sensor's pose: one point and heading for the reading, the
   test("a place's eye and the place drawn for a pose are the same point, off-centre and turned", () => {
     for (const kind of ["ir", "ultrasonic"] as const) {
       const pose: SensorPose = { x_cm: 6.5, y_cm: -4.2, z_cm: 12.4, yaw_deg: 20 };
-      const c = centreForPose(kind, pose);
-      const eye = eyeOfPlace(kind, { ...c, facing: "forward", yaw: 20 }, { facing: true, yaw: true });
+      const c = centreForPose(EYE(kind), pose);
+      const eye = eyeOfPlace(EYE(kind), { ...c, facing: "forward", yaw: 20 }, { facing: true, yaw: true });
       expect(eye.x!).toBeCloseTo(pose.x_cm, 9);
       expect(eye.y!).toBeCloseTo(pose.y_cm, 9);
       expect(eye.z!).toBeCloseTo(pose.z_cm, 9);
       expect(eye.yaw).toBe(20);
     }
     // facing left is 90 degrees, and the eye sits on that side of the box's centre
-    const left = eyeOfPlace("ir", { x: 0, y: 0, z: 10, facing: "left", yaw: 0 }, { facing: true, yaw: false });
+    const left = eyeOfPlace(EYE("ir"), { x: 0, y: 0, z: 10, facing: "left", yaw: 0 }, { facing: true, yaw: false });
     expect(left.x!).toBeCloseTo(0, 9);
-    expect(left.y!).toBeCloseTo(eyeOffset("ir")[0], 9);
+    expect(left.y!).toBeCloseTo(EYE("ir")[0], 9);
     expect(left.yaw).toBe(90);
   });
 
   test("the look's place says only what it gives: no facing and no yaw_deg leave the heading to the body", () => {
-    const eye = eyeOfPlace("ir", place({ y_cm: 4.6, z_cm: 19.6 }), { facing: false, yaw: false });
+    const eye = eyeOfPlace(EYE("ir"), place({ y_cm: 4.6, z_cm: 19.6 }), { facing: false, yaw: false });
     expect(eye.x).toBeNull();
     expect(eye.y).toBeCloseTo(4.6, 9);
-    expect(eye.z!).toBeCloseTo(19.6 + eyeOffset("ir")[2], 9);
+    expect(eye.z!).toBeCloseTo(19.6 + EYE("ir")[2], 9);
     expect(eye.yaw).toBeNull();
     // up or down has no heading the physics can read along: the place settles only the height
-    const up = eyeOfPlace("ir", place({ x_cm: 1, y_cm: 1, z_cm: 9, facing: "up" }), { facing: true, yaw: false });
+    const up = eyeOfPlace(EYE("ir"), place({ x_cm: 1, y_cm: 1, z_cm: 9, facing: "up" }), { facing: true, yaw: false });
     expect([up.x, up.y, up.yaw]).toEqual([null, null, null]);
     expect(facingYaw("back", 10)).toBe(-170);
     expect(wrapDeg(540)).toBe(180);

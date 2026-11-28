@@ -5,8 +5,8 @@
 // the part's own point in the LEGO parts map: the infrared's front face, the ultrasonic's beam centre.
 //
 // A look's place (`twin.view.sensors.<n>`) is the centre of the part's box (look.ts); this file turns one into the
-// other. No three.js here: apps/local reads it too.
-import { SENSOR } from "./dims";
+// other. No three.js and no parts map here: apps/local reads it too, handing in the part's box from the map it reads
+// at run time (apps/local/src/sensor-eyes.ts), the page from dims.ts.
 import type { Facing, Place } from "./look";
 
 export type DistanceKind = "ultrasonic" | "ir";
@@ -23,12 +23,21 @@ export interface SensorPose {
 const EYE: Record<DistanceKind, string> = { ultrasonic: "beam_centre", ir: "front_face" };
 const DEG = Math.PI / 180;
 
+/** A sensor's box and named points in its own frame (x where it looks, y left, z up), cm: dims.ts PartDims. */
+export interface PartBox {
+  min: readonly number[];
+  max: readonly number[];
+  at: Record<string, readonly number[]>;
+}
 /** The eye from the centre of the part's box, in the part's frame (x where it looks, y left, z up), cm. */
-export function eyeOffset(kind: DistanceKind): [number, number, number] {
-  const d = SENSOR[kind];
-  const e = d.at[EYE[kind]];
+export type EyeOffset = [number, number, number];
+
+/** Where a sensor's eye is from the centre of its box. */
+export function eyeOffset(kind: DistanceKind, part: PartBox): EyeOffset {
+  const e = part.at[EYE[kind]];
   if (!e) throw new Error(`the parts map gives the ${kind} sensor no ${EYE[kind]}`);
-  return [e[0] - (d.min[0] + d.max[0]) / 2, e[1] - (d.min[1] + d.max[1]) / 2, e[2] - (d.min[2] + d.max[2]) / 2];
+  const c = (i: number) => (part.min[i]! + part.max[i]!) / 2;
+  return [e[0]! - c(0), e[1]! - c(1), e[2]! - c(2)];
 }
 
 /** The heading of a facing turned by yaw_deg, degrees in -180..180; null for up and down (no heading). */
@@ -43,8 +52,8 @@ export const wrapDeg = (d: number): number => {
 };
 
 /** Where the centre of the part's box is when its eye is at `pose`: the place the look draws it at. */
-export function centreForPose(kind: DistanceKind, pose: SensorPose): { x: number; y: number; z: number } {
-  const [ox, oy, oz] = eyeOffset(kind);
+export function centreForPose(eye: EyeOffset, pose: SensorPose): { x: number; y: number; z: number } {
+  const [ox, oy, oz] = eye;
   const c = Math.cos(pose.yaw_deg * DEG),
     s = Math.sin(pose.yaw_deg * DEG);
   return { x: pose.x_cm - (ox * c - oy * s), y: pose.y_cm - (ox * s + oy * c), z: pose.z_cm - oz };
@@ -56,12 +65,12 @@ export function centreForPose(kind: DistanceKind, pose: SensorPose): { x: number
  * yaw_deg the part faces forward, as the look draws it.
  */
 export function eyeOfPlace(
-  kind: DistanceKind,
+  offset: EyeOffset,
   p: Place,
   stated: { facing: boolean; yaw: boolean },
 ): { x: number | null; y: number | null; z: number | null; yaw: number | null } {
   const yaw = facingYaw(p.facing, p.yaw);
-  const [ox, oy, oz] = eyeOffset(kind);
+  const [ox, oy, oz] = offset;
   const c = Math.cos((yaw ?? 0) * DEG),
     s = Math.sin((yaw ?? 0) * DEG);
   return {

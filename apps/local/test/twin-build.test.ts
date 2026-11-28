@@ -8,7 +8,9 @@ import { EXAMPLE, REPO, loadConfig, type RobotSource } from "../src/config";
 import { buildFleet } from "../src/sources";
 import { describeTwin, describeUnconfirmed, MOVES, sensorPoseClash } from "../src/twin-build";
 import { toolsOf } from "./arm";
+import { SENSOR } from "../../twin-view/src/dims";
 import { eyeOffset, poseOfBody, rayEnd } from "../../twin-view/src/sensor-pose";
+import { moduleCm, sensorEye } from "../src/sensor-eyes";
 import { sensorRays } from "../src/view";
 
 const tmp = mkdtempSync(join(tmpdir(), "spinecord-build-"));
@@ -484,7 +486,13 @@ describe("the distance sensor's pose: the reading, the rays and the drawn sensor
     },
   });
   const PLACE = { x_cm: 4, y_cm: -5, z_cm: 12, facing: "forward", yaw_deg: 20 };
-  const eye = eyeOffset("ir");
+  const eye = sensorEye("ir");
+
+  test("the server's eyes are the page's: the same parts map, read at run time without the page's macro", () => {
+    for (const k of ["ir", "ultrasonic"] as const)
+      sensorEye(k).forEach((v, i) => expect(v).toBeCloseTo(eyeOffset(k, SENSOR[k])[i]!, 9));
+    expect(moduleCm()).toBeCloseTo(0.8, 9);
+  });
   const rad = (20 * Math.PI) / 180;
 
   test("a place in the look sets the side, the height and the heading the physics reads with", () => {

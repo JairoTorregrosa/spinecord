@@ -93,6 +93,7 @@
 //   - Free-form shapes: a sensor tilted at an angle other than a right angle (yaw_deg turns it about the
 //     vertical only).
 import { MODULE, TRACKS } from "./dims";
+import { lenIn, placeIn } from "./place";
 import type { LookSection, RobotMeta } from "./messages";
 
 export type SensorKind = "touch" | "color" | "ultrasonic" | "gyro" | "ir";
@@ -154,7 +155,6 @@ export interface Look {
   label: string | null;
 }
 
-const FACINGS: readonly Facing[] = ["forward", "back", "left", "right", "up", "down"];
 const obj = (v: unknown): Record<string, unknown> | null =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -162,24 +162,10 @@ const n = (v: unknown, fallback: number): number => num(v) ?? fallback;
 const oneOf = <T extends string>(v: unknown, of: readonly T[], fallback: T): T =>
   of.includes(v as T) ? (v as T) : fallback;
 /** A length given in modules (rounded to a half module) or in cm, in cm; null when neither is given. */
-const len = (at: Record<string, unknown>, k: string): number | null => {
-  const cm = num(at[`${k}_cm`]);
-  if (cm !== null) return cm;
-  const m = num(at[k]);
-  return m === null ? null : (Math.round(m * 2) / 2) * MODULE;
-};
+const len = (at: Record<string, unknown>, k: string): number | null => lenIn(at, k, MODULE);
 
-/** A look's place: x, y, z in modules or cm (null where not given), its facing and yaw_deg. */
-export function place(v: unknown): Place {
-  const at = obj(v) ?? {};
-  return {
-    x: len(at, "x"),
-    y: len(at, "y"),
-    z: len(at, "z"),
-    facing: FACINGS.includes(at.facing as Facing) ? (at.facing as Facing) : null,
-    yaw: n(at.yaw_deg, 0),
-  };
-}
+/** A look's place: x, y, z in modules or cm (null where not given), its facing and yaw_deg (place.ts). */
+export const place = (v: unknown): Place => placeIn(v, MODULE);
 
 /** The look of a robot over defaults. Never throws: a bad field keeps its default. */
 export function lookOf(robot: RobotMeta): Look {

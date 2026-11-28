@@ -7,7 +7,7 @@ import type { RobotFile } from "../../../packages/driver-ev3/robot-file";
 import { TREAD_GRIP, type PhysicalDrive, type Tread } from "../../../packages/sim-ev3/brick";
 import { parseBrickPorts, type BrickPorts } from "../../../packages/sim-ev3/ports";
 import { DEFAULT_BODY, parseWorld, type BodyShape } from "../../../packages/sim-world/world";
-import { place } from "../../twin-view/src/look";
+import { placeIn } from "../../twin-view/src/place";
 import {
   distancePort,
   eyeOfPlace,
@@ -16,6 +16,7 @@ import {
   resolveDistancePose,
 } from "../../twin-view/src/sensor-pose";
 import rolling from "../../../packages/lego-parts/data/rolling.json";
+import { moduleCm, sensorEye } from "./sensor-eyes";
 
 /** The top-level keys of a robot file; anything else is a typo that would otherwise go unnoticed. */
 const FILE_KEYS = ["description", "name", "hardware", "profile", "pair", "twin"];
@@ -296,10 +297,10 @@ function lookEye(
   const raw = isObj(view.sensors) ? view.sensors[d.port] : undefined;
   const body = (isObj(world.body) ? world.body : {}) as Record<string, number>;
   if (!isObj(raw)) return { port: d.port, eye: null, centre: null, body };
-  const p = place(raw);
+  const p = placeIn(raw, moduleCm());
   return {
     port: d.port,
-    eye: eyeOfPlace(d.kind, p, { facing: p.facing !== null, yaw: typeof raw.yaw_deg === "number" }),
+    eye: eyeOfPlace(sensorEye(d.kind), p, { facing: p.facing !== null, yaw: typeof raw.yaw_deg === "number" }),
     centre: { x: p.x, z: p.z },
     body,
   };
