@@ -41,23 +41,25 @@ body {
   display: block;
   touch-action: none;
 }
-#scene[data-hover="robot"],
-#scene[data-mode="box"][data-hover="box"] {
-  cursor: grab;
-}
+/* !important: OrbitControls writes the canvas's cursor inline; on the floor of Mirar its cursor stays */
 #scene[data-mode="carry"],
 #scene[data-mode="box"],
 #scene[data-mode="measure"] {
-  cursor: crosshair;
+  cursor: crosshair !important;
+}
+#scene[data-hover="robot"],
+#scene[data-hover="box"] {
+  cursor: grab !important;
 }
 #scene[data-mode="remove"][data-hover="box"] {
-  cursor: pointer;
+  cursor: pointer !important;
 }
 #scene.holding {
-  cursor: grabbing;
+  cursor: grabbing !important;
 }
+/* the robot's camera: the hand does not reach, whatever the mode */
 #scene[data-cam="eye"] {
-  cursor: default;
+  cursor: default !important;
 }
 .panel {
   position: fixed;

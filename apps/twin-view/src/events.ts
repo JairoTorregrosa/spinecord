@@ -23,7 +23,7 @@ export function eventRow(e: WorldEventMsg): { icon: string; text: string } | nul
     case "obstacle_changed":
       return {
         icon: e.change === "added" ? "➕" : e.change === "removed" ? "➖" : "✋",
-        text: `${e.box} ${e.change === "added" ? "puesta" : e.change === "removed" ? "quitada" : "movida"}`,
+        text: `${e.change === "added" ? "se puso" : e.change === "removed" ? "se quitó" : "se movió"} ${e.box}`,
       };
     case "stall_began":
       return { icon: "⛔", text: "atascado" };
