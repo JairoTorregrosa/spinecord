@@ -15,9 +15,9 @@
       </div>
       <select id="robot" title="Qué robot mirar" aria-label="Robot" hidden></select>
       <div class="chips">
-        <span id="chip-ws" class="chip warn" title="Conexión de esta página con spinecord">Conectando…</span>
-        <span id="chip-link" class="chip" title="Enlace del robot">—</span>
-        <span id="chip-activity" class="chip" title="Qué está haciendo el robot">—</span>
+        <span id="chip-ws" class="chip bad" title="Conexión de esta página con spinecord" hidden></span>
+        <span id="chip-link" class="chip" title="Enlace del robot" hidden></span>
+        <span id="chip-activity" class="chip" title="Qué está haciendo el robot" hidden></span>
         <span id="chip-stall" class="chip bad" title="El robot empuja contra una pared o una caja" hidden
           >Atascado</span
         >
@@ -143,9 +143,12 @@
       </div>
     </aside>
 
-    <section class="calls panel" id="callpanel" aria-label="Actividad">
+    <section class="calls panel" id="callpanel" aria-label="Actividad de Claude">
       <div class="group-title">
-        <span>Actividad <span class="dim" id="calls-hint">— pídele a Claude que mueva el robot</span></span>
+        <span
+          >Actividad de Claude
+          <span class="dim" id="calls-hint">— pídele a Claude que mueva el robot y aquí verás cada orden</span></span
+        >
         <button id="calls-new" class="mini" hidden></button>
         <button class="fold" data-fold="callpanel" aria-label="Plegar actividad" title="Plegar">▾</button>
       </div>

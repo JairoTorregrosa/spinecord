@@ -1,7 +1,8 @@
-// The panels around the 3D scene: the robot's state chips, its ports and screen, the MCP calls, and the notes
+// The panels around the 3D scene: the robot's problem chips, its ports and screen, Claude's MCP calls, and the notes
 // the page gives the person (toasts, hints). All copy is the page's own, in Spanish.
-import { eventRow } from "./events";
-import type { CallEnd, CallStart, MotorState, RefusalCode, RobotState, WorldEventMsg } from "./messages";
+import { CallsScroller, isClaudeCall, type ListPort } from "./activity";
+import type { Chip } from "./status";
+import type { CallEnd, CallStart, MotorState, RefusalCode, RobotState, ServerMessage } from "./messages";
 import { glance } from "./toolwords";
 import { bar, gauge, sensorWidget } from "./widgets";
 
@@ -12,19 +13,6 @@ const $ = <T extends HTMLElement>(id: string): T => {
 };
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-export const ACTIVITY: Record<string, [string, string]> = {
-  idle: ["en reposo", "ok"],
-  acting: ["en movimiento", "busy"],
-  running_program: ["corriendo un programa", "busy"],
-  looping: ["en un bucle", "busy"],
-  stopping: ["frenando", "warn"],
-  fault: ["en falla", "bad"],
-};
-export const LINK: Record<string, [string, string]> = {
-  online: ["en línea", "ok"],
-  handshaking: ["conectando", "warn"],
-  offline: ["desconectado", "bad"],
-};
 /** Why the process refused an action of the hand, in the person's words. */
 export const REFUSAL: Record<RefusalCode | "offline", string> = {
   does_not_fit: "No cabe ahí: chocaría con una pared o una caja",
@@ -60,8 +48,12 @@ const MEANING: Record<string, string> = {
   gyro: "grados desde el último reinicio; positivo = a la izquierda (antihorario)",
   ir: "0 = tocando, 100 = lejos (unos 70 cm); no son centímetros",
 };
-export function chip(id: string, [text, kind]: [string, string]): void {
+/** One chip of the top bar; null hides it. */
+export function chip(id: string, c: Chip): void {
   const el = $(id);
+  el.hidden = c === null;
+  if (!c) return;
+  const [text, kind] = c;
   if (el.textContent !== text) el.textContent = text;
   el.className = `chip ${kind}`;
 }
@@ -146,18 +138,46 @@ export function led(pattern: number, timeS: number): void {
 }
 
 // ---------------------------------------------------------------- calls
-const MAX_CALLS = 80;
 const rows = new Map<number, { li: HTMLLIElement; at: number; running: boolean }>();
-let unseen = 0;
 const secs = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 
-/** One call begins or ends. The list keeps the place the person is reading: new rows above do not push it. */
-export function call(m: CallStart | CallEnd): void {
+/** The list on the page, as the scroller of src/activity.ts sees it. */
+function listPort(list: HTMLOListElement): ListPort<HTMLLIElement> {
+  return {
+    get top() {
+      return list.scrollTop;
+    },
+    set top(v: number) {
+      list.scrollTop = v;
+    },
+    rows: () => [...list.children] as HTMLLIElement[],
+    relTop: (li) => li.getBoundingClientRect().top - list.getBoundingClientRect().top,
+    height: (li) => li.getBoundingClientRect().height,
+    drop(li) {
+      for (const [k, v] of rows) if (v.li === li) rows.delete(k);
+      li.remove();
+    },
+  };
+}
+let scroller: CallsScroller<HTMLLIElement> | null = null;
+/** Whether the list follows the newest call, whose each scroll is, and the row the person reads (src/activity.ts). */
+const scroll = () => (scroller ??= new CallsScroller(listPort($<HTMLOListElement>("calls")), () => performance.now()));
+
+/**
+ * One call of Claude's begins or ends; any other message is not the panel's (src/activity.ts). The list follows the
+ * newest; while the person reads older calls it keeps their place.
+ */
+export function call(m: ServerMessage): void {
+  if (!isClaudeCall(m)) return;
   const list = $<HTMLOListElement>("calls");
   $("calls-hint").hidden = true;
-  const reading = list.scrollTop > 4;
-  const before = list.scrollHeight;
+  scroll().change(() => draw(list, m));
+  showUnseen();
+}
+/** Draws one call in the list; true when it is a new row on top. */
+function draw(list: HTMLOListElement, m: CallStart | CallEnd): boolean {
   let row = rows.get(m.n);
+  let added = false;
   if (!row) {
     const li = document.createElement("li");
     li.tabIndex = 0;
@@ -174,12 +194,7 @@ export function call(m: CallStart | CallEnd): void {
     row = { li, at: m.at, running: true };
     rows.set(m.n, row);
     list.prepend(li);
-    if (reading) unseen++;
-    while (list.children.length > MAX_CALLS) {
-      const last = list.lastElementChild as HTMLLIElement;
-      for (const [k, v] of rows) if (v.li === last) rows.delete(k);
-      last.remove();
-    }
+    added = true;
   }
   const li = row.li;
   const q = (sel: string) => li.querySelector<HTMLElement>(sel)!;
@@ -209,50 +224,7 @@ export function call(m: CallStart | CallEnd): void {
     sum.textContent = m.summary;
     li.title = `terminó a las ${time} · clic para ver todo`;
   }
-  if (reading) list.scrollTop += list.scrollHeight - before;
-  showUnseen();
-}
-/** One world event as a compact row of the activity list (src/events.ts); nothing for one it does not show. */
-export function worldEvent(e: WorldEventMsg): void {
-  const r = eventRow(e);
-  if (r) activity(r.icon, r.text, `t ${(e.t_ms / 1000).toFixed(1)} s`, JSON.stringify(e));
-}
-/** One compact row of the activity list: a world event, or what the person did on the page. */
-export function activity(icon: string, text: string, when: string, title: string): void {
-  const r = { icon, text };
-  const list = $<HTMLOListElement>("calls");
-  $("calls-hint").hidden = true;
-  // the same thing again (a stall that begins and ends against a wall): one row with a count, not a column of them
-  const top = list.firstElementChild as HTMLLIElement | null;
-  if (top?.classList.contains("ev") && top.dataset.what === `${r.icon}${r.text}`) {
-    const n = Number(top.dataset.n ?? "1") + 1;
-    top.dataset.n = String(n);
-    top.querySelector(".what")!.textContent = `${r.text} ×${n}`;
-    top.querySelector(".ms")!.textContent = when;
-    top.title = `${top.title}\n${title}`.slice(-2000);
-    return;
-  }
-  const li = document.createElement("li");
-  li.className = "ev";
-  li.dataset.what = `${r.icon}${r.text}`;
-  li.innerHTML = `<span class="ico" aria-hidden="true"></span><span class="what"></span><span class="ms"></span>`;
-  li.querySelector(".ico")!.textContent = r.icon;
-  li.querySelector(".what")!.textContent = r.text;
-  li.querySelector(".ms")!.textContent = when;
-  li.title = title;
-  const reading = list.scrollTop > 4;
-  const before = list.scrollHeight;
-  list.prepend(li);
-  if (reading) {
-    unseen++;
-    list.scrollTop += list.scrollHeight - before;
-  }
-  while (list.children.length > MAX_CALLS) {
-    const last = list.lastElementChild as HTMLLIElement;
-    for (const [k, v] of rows) if (v.li === last) rows.delete(k);
-    last.remove();
-  }
-  showUnseen();
+  return added;
 }
 
 const REASON: Record<string, string> = {
@@ -264,25 +236,50 @@ const REASON: Record<string, string> = {
 
 function showUnseen(): void {
   const b = $<HTMLButtonElement>("calls-new");
-  b.hidden = unseen === 0;
-  b.textContent = `↑ ${unseen} ${unseen === 1 ? "nueva" : "nuevas"}`;
+  const n = scroll().follow.unseen;
+  b.hidden = n === 0;
+  b.textContent = `↑ ${n} ${n === 1 ? "nueva" : "nuevas"}`;
 }
-/** Wires the list: back at the top, every row has been seen. */
+/**
+ * Wires the list: a scroll the page did not make is the person's and starts reading, or keeps it while they scroll
+ * or drag on it; back at the top it follows again. Folding the panel ends reading; it opens on the newest call.
+ */
 export function callsInit(): void {
   const list = $<HTMLOListElement>("calls");
+  const s = scroll();
+  const on = (el: EventTarget, evs: string[], f: () => void) => {
+    for (const ev of evs) el.addEventListener(ev, f, { passive: true });
+  };
+  on(list, ["wheel", "pointerdown", "touchstart", "keydown"], () => s.input("start"));
+  // a pointer or a finger held on the list and moving: the person is still at it, however long the drag
+  on(list, ["pointermove", "touchmove"], () => s.input("move"));
+  on(globalThis, ["pointerup", "pointercancel", "touchend", "touchcancel"], () => s.input("end"));
   list.addEventListener("scroll", () => {
-    if (list.scrollTop <= 4 && unseen) {
-      unseen = 0;
-      showUnseen();
-    }
+    s.scrolled();
+    showUnseen();
   });
   $("calls-new").addEventListener("click", () => {
-    list.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    const top = s.toNewest();
+    showUnseen();
+    const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    list.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
   });
+  // the fold, however it comes (a click, a key, the page's start): seen before the next paint, so the list never
+  // shows its old place on opening (a hidden list keeps no scroll the page sets)
+  const panel = $("callpanel");
+  let folded = panel.classList.contains("folded");
+  new MutationObserver(() => {
+    if (panel.classList.contains("folded") === folded) return;
+    folded = !folded;
+    s.folded(folded);
+    showUnseen();
+  }).observe(panel, { attributes: true, attributeFilter: ["class"] });
 }
 
-/** Ten times a second: the time the running calls have taken so far, and the call in the top bar. */
+/** Ten times a second: the time the running calls have taken so far, the call in the top bar, and the return to
+ * the newest call once the person has left the list alone. */
 export function callsTick(): void {
+  if (scroll().tick()) showUnseen();
   let newest: { tool: string; ms: number } | null = null;
   for (const [, r] of rows)
     if (r.running) {
@@ -298,7 +295,7 @@ export function callsTick(): void {
 
 export function callsReset(): void {
   rows.clear();
-  unseen = 0;
+  scroll().reset();
   $("calls").innerHTML = "";
   $("calls-hint").hidden = false;
   showUnseen();

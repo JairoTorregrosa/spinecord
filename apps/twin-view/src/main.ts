@@ -14,6 +14,7 @@ import { draftLines } from "./draft";
 import { LOST_GRACE_MS, hideNo3d, showNo3d } from "./no3d";
 import { SensorRayView } from "./rays";
 import { Stillness } from "./still";
+import { statusChips } from "./status";
 import { Link, type LinkState } from "./link";
 import { driveLimits } from "./trail";
 import { TrailView } from "./trail-view";
@@ -164,15 +165,13 @@ function linkChanged(s: LinkState): void {
     if (offlineClock) clearInterval(offlineClock);
     offlineTimer = offlineClock = null;
     $("offline").hidden = true;
-    hud.chip("chip-ws", ["Conectado", "ok"]);
+    showStatus(true, null);
     // back after a loss: the robot may be anywhere now
     if (cams.mode === "follow") cams.frame("ease");
     return;
   }
-  // at once: nothing the chips said is known any more; they come back with the first state after the return
-  hud.chip("chip-ws", ["Sin conexión · reintentando", "bad"]);
-  hud.chip("chip-link", ["—", ""]);
-  hud.chip("chip-activity", ["—", ""]);
+  // at once: what the chips said of the robot is not known any more; only the lost connection shows until the return
+  showStatus(false, null);
   // a blink of the socket is not worth a curtain; a real loss is, with how long it has lasted
   offlineTimer ??= setTimeout(() => {
     $("offline").hidden = false;
@@ -196,7 +195,6 @@ function receive(m: ServerMessage): void {
       sel.value = keepId ?? "";
       hud.callsReset();
       for (const c of m.calls) hud.call(c);
-      for (const e of m.events.find((x) => x.id === keepId)?.events ?? []) hud.worldEvent(e);
       chat.hello(m.chat);
       for (const c of m.calls) chat.call(c);
       setFocus(keepId ?? null);
@@ -234,9 +232,6 @@ function receive(m: ServerMessage): void {
         say(`🗣 ${m.text}`, Math.max(2600, m.text.length * 75));
         missedSound();
       }
-      break;
-    case "events":
-      if (m.id === focus?.id) for (const e of m.events) hud.worldEvent(e);
       break;
     case "call_start":
     case "call_end":
@@ -415,6 +410,13 @@ function glide(now: number): Shown | null {
 }
 
 // ---------------------------------------------------------------- the panels, ten times a second
+/** The chips of the top bar: none while all is well, one per problem (src/status.ts). */
+function showStatus(open: boolean, st: RobotState | null): void {
+  const c = statusChips(open, st);
+  hud.chip("chip-ws", c.ws);
+  hud.chip("chip-link", c.link);
+  hud.chip("chip-activity", c.activity);
+}
 let stateForHud: RobotState | null = null;
 /** When the robot was last seen pushing against something: the chip stays a moment after. */
 let pushedAt = -Infinity;
@@ -422,8 +424,7 @@ setInterval(() => {
   const st = stateForHud;
   if (!st) return;
   stateForHud = null;
-  hud.chip("chip-link", hud.LINK[st.link] ?? [st.link, ""]);
-  hud.chip("chip-activity", hud.ACTIVITY[st.activity] ?? [st.activity, ""]);
+  showStatus(link.state === "open", st);
   if (st.motors.some((m) => m.blocked) || (st.stalled && st.activity !== "idle")) pushedAt = performance.now();
   $("chip-stall").hidden = performance.now() - pushedAt > 3000;
   $("pose").textContent =
@@ -570,7 +571,6 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#pad button")) {
     b.classList.toggle("down", d); // lit at once; the next state says what the brick holds
     void link.request({ t: "button", id: focus.id, button: btn, down: d }).then((r) => {
       if (!r.ok && d) hud.toast(`Botón: ${hud.REFUSAL[r.code]}`);
-      else if (d) hud.activity("🖐", `botón ${b.textContent!.trim() || "●"}`, $("clock").textContent ?? "", b.title);
     });
   };
   b.addEventListener("pointerdown", (e) => {
