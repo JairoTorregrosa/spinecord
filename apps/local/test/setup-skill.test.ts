@@ -398,26 +398,77 @@ test("(c) a new terminal that cannot be read is a fail with its reason, never th
 });
 
 const posixOnly = process.platform === "win32" ? test.skip : test;
-posixOnly("the deadline holds when a shell profile leaves a job that keeps the terminal's output open", async () => {
+/** The process ended within 2 s. */
+async function gone(pid: number): Promise<boolean> {
+  for (let i = 0; i < 40; i++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await Bun.sleep(50);
+  }
+  return false;
+}
+const pids = (file: string) => readFileSync(file, "utf8").trim().split(/\s+/).map(Number);
+
+posixOnly("the deadline holds, and no job that a shell profile starts outlives the probe", async () => {
   const dir = mkdtempSync(join(tmpdir(), "spinecord-shell-"));
   try {
     // a shell whose profile starts a background job, then runs the command: $4 after -l -i -c
     const bg = join(dir, "bg-sh");
-    writeFileSync(bg, '#!/bin/sh\nsleep 30 &\nexec /bin/sh -c "$4"\n', { mode: 0o755 });
+    writeFileSync(bg, `#!/bin/sh\nsleep 30 &\necho $! > '${join(dir, "bg.pid")}'\nexec /bin/sh -c "$4"\n`, {
+      mode: 0o755,
+    });
     let t0 = Date.now();
-    const ok = await probeTerminal("linux", {}, execDetached, { ...user, shell: bg }, 3000);
+    const ok = await probeTerminal("linux", {}, execDetached, { ...user, shell: bg }, { ms: 3000 });
     expect("env" in ok && ok.env.HOME).toBe("/home/p");
     expect(Date.now() - t0).toBeLessThan(2500);
-    // a shell that never ends: a fail at the deadline
+    for (const pid of pids(join(dir, "bg.pid"))) expect(await gone(pid)).toBe(true);
+    // a shell that hangs in its profile: a fail at the deadline, and its jobs end with it
     const hang = join(dir, "hang-sh");
-    writeFileSync(hang, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+    writeFileSync(hang, `#!/bin/sh\nsleep 30 &\nsleep 31 &\necho $(jobs -p) > '${join(dir, "hang.pid")}'\nwait\n`, {
+      mode: 0o755,
+    });
     t0 = Date.now();
-    const late = await probeTerminal("linux", {}, execDetached, { ...user, shell: hang }, 500);
+    const late = await probeTerminal("linux", {}, execDetached, { ...user, shell: hang }, { ms: 500 });
     expect(Date.now() - t0).toBeLessThan(2500);
     expect("error" in late && late.error).toContain("no answer in 0.5 s");
+    const hung = pids(join(dir, "hang.pid"));
+    expect(hung.length).toBe(2);
+    for (const pid of hung) expect(await gone(pid)).toBe(true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+posixOnly("a temporary folder that cannot be made is a fail line, not a crash", async () => {
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = join(import.meta.dir, "setup-skill.test.ts", "no");
+  try {
+    const p = await probeTerminal("linux", {}, writes(""), user);
+    expect("error" in p && p.error).toContain("no temporary folder in");
+  } finally {
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+  }
+});
+
+test("a key that only the login session gives (launchctl setenv, environment.d) is a new terminal's", async () => {
+  const asked: string[][] = [];
+  const p = await probeTerminal("darwin", HOST, writes(dump(NEW_TERMINAL)), user, {
+    session: async (names) => (asked.push(names), { ANTHROPIC_API_KEY: "sk-session" }),
+  });
+  expect(asked[0]).toContain("ANTHROPIC_API_KEY");
+  expect(asked[0]).toContain("CLAUDE_CODE_USE_BEDROCK");
+  expect(paysPlan(p, HOST, "credits", "darwin")).toMatchObject({
+    lines: [{ status: "fail", what: "pays", why: expect.stringContaining("ANTHROPIC_API_KEY") }],
+  });
+  // the shell's own value wins over the session's
+  const shell = await probeTerminal("darwin", HOST, writes(dump({ ...NEW_TERMINAL, X: "1" })), user, {
+    session: async () => ({ X: "session" }),
+  });
+  expect("env" in shell && shell.env.X).toBe("1");
 });
 
 test("a new Windows terminal: computed values, then Machine, volatile, User; Path is Machine's then User's", () => {
@@ -450,4 +501,8 @@ test("the Windows probe reads the JSON that PowerShell writes, with or without a
   expect(p).toEqual({ env: { SystemRoot: "C:\\W", Path: "C:\\W", ANTHROPIC_API_KEY: "k" } });
   // the key at User level is a new terminal's: a named fail
   expect(paysPlan(p, {}, "credits", "win32")).toMatchObject({ lines: [{ status: "fail", what: "pays" }] });
+  // Windows names have no case
+  expect(paysPlan({ env: { Anthropic_Api_Key: "k" } }, {}, "credits", "win32")).toMatchObject({
+    lines: [{ status: "fail", what: "pays", why: expect.stringContaining("ANTHROPIC_API_KEY") }],
+  });
 });

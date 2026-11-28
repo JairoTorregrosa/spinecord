@@ -9,7 +9,7 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { parseRobotName } from "../apps/local/src/config";
 import { MOVES } from "../apps/local/src/twin-build";
-import { paysBeforeProfile, type Env } from "../examples/assistant/setup";
+import { PAYS_AHEAD, paysBeforeProfile, type Env } from "../examples/assistant/setup";
 
 const REPO = join(import.meta.dir, "..");
 const MAIN = join(REPO, "apps", "local", "main.ts");
@@ -269,8 +269,9 @@ export async function probeTerminal(
   inherited: Env,
   run: Exec,
   user: { homedir: string; username: string; shell: string | null },
-  ms: number = PROBE_MS,
+  o: { ms?: number; session?: Session } = {},
 ): Promise<Probe> {
+  const ms = o.ms ?? PROBE_MS;
   const failed = (code: number | null) => (code === null ? `no answer in ${ms / 1000} s` : `exit ${code}`);
   if (platform !== "win32") {
     if (!user.shell) return { error: "this user has no login shell in the user database" };
@@ -280,7 +281,12 @@ export async function probeTerminal(
         row: "The login shell is csh or tcsh",
       };
   }
-  const dir = mkdtempSync(join(tmpdir(), "spinecord-env-"));
+  let dir: string;
+  try {
+    dir = mkdtempSync(join(tmpdir(), "spinecord-env-"));
+  } catch (e) {
+    return { error: `no temporary folder in ${tmpdir()}: ${(e as NodeJS.ErrnoException).code ?? "error"}` };
+  }
   const file = join(dir, "env");
   const dump = () => (existsSync(file) ? readFileSync(file, "utf8").replace(/^\uFEFF/, "") : "");
   try {
@@ -316,7 +322,9 @@ export async function probeTerminal(
       return {
         error: `${shell} -l -i, started with an empty environment: ${code === 0 ? "it wrote no environment" : failed(code)}; to see what it prints, the person runs \`${shell} -l -i -c true\` in a new terminal`,
       };
-    return { env };
+    // the login session gives these to every terminal too (launchctl setenv, ~/.config/environment.d)
+    const session = o.session ? await o.session(PAYS_AHEAD.filter((n) => !env[n])) : {};
+    return { env: { ...session, ...env } };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -372,7 +380,12 @@ export function paysPlan(
   platform: string,
 ): { env: Env; notes: Line[] } | { lines: Line[] } {
   if ("error" in probe) return { lines: [terminalFail(probe)] };
-  const first = paysBeforeProfile(probe.env);
+  // Windows names have no case: a User variable may be stored as Anthropic_Api_Key
+  const first = paysBeforeProfile(
+    platform === "win32"
+      ? Object.fromEntries(Object.entries(probe.env).map(([k, v]) => [k.toUpperCase(), v]))
+      : probe.env,
+  );
   if (first !== null)
     return {
       lines: [
@@ -454,30 +467,70 @@ async function run(cmd: string[], o: { ms?: number; cwd?: string; env?: Env; inh
 }
 /** One command with its own environment and no pipes: its exit code, or null when `ms` passed first. */
 export type Exec = (cmd: string[], env: Env, ms: number) => Promise<number | null>;
+/**
+ * The shell runs in a process group of its own (a process tree on Windows), and the whole group ends with it: a
+ * job that a shell profile starts, or the command it hangs in, does not outlive the probe.
+ */
 export const execDetached: Exec = async (cmd, env, ms) => {
   if (Bun.which(cmd[0]!) === null) return 127;
+  const win = process.platform === "win32";
   const child = Bun.spawn(cmd, {
     cwd: homedir(),
     env: env as Record<string, string>,
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",
-    timeout: ms,
+    detached: !win,
     windowsHide: true,
   });
-  // the deadline holds even if the kill of `timeout` does not end the child
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<"late">((done) => (timer = setTimeout(() => done("late"), ms + 1000)));
+  const late = new Promise<"late">((done) => (timer = setTimeout(() => done("late"), ms)));
   const end = await Promise.race([child.exited, late]);
   clearTimeout(timer);
-  if (end === "late") child.kill("SIGKILL");
-  return end === "late" || child.signalCode ? null : end;
+  if (win) {
+    if (end === "late")
+      Bun.spawnSync(["taskkill", "/T", "/F", "/PID", String(child.pid)], { stdout: "ignore", stderr: "ignore" });
+  } else
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // ESRCH: nothing of the group is left
+    }
+  if (end === "late") {
+    child.kill("SIGKILL");
+    return null;
+  }
+  return child.signalCode ? null : end;
+};
+
+/** The values that the login session gives every terminal, for these names (no shell profile sets them). */
+export type Session = (names: string[]) => Promise<Env>;
+/** macOS: `launchctl getenv`. Linux: the environment of the systemd user manager, where it runs. */
+const loginSession: Session = async (names) => {
+  const out: Env = {};
+  if (process.platform === "darwin")
+    for (const n of names) {
+      const r = await run(["launchctl", "getenv", n], { ms: 5000, cwd: homedir() });
+      if (r.code === 0 && r.out.trim()) out[n] = r.out.trim();
+    }
+  else if (process.platform === "linux" && Bun.which("systemctl") !== null) {
+    const r = await run(["systemctl", "--user", "show-environment"], { ms: 5000, cwd: homedir() });
+    if (r.code === 0) {
+      const all = Object.fromEntries(
+        r.out
+          .split("\n")
+          .flatMap((l) => (l.indexOf("=") > 0 ? [[l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]] : [])),
+      );
+      for (const n of names) if (all[n]) out[n] = all[n];
+    }
+  }
+  return out;
 };
 
 let probed: Promise<Probe> | undefined;
 /** The environment of a new terminal of the person, read once per run of this script. */
 const terminal = (): Promise<Probe> =>
-  (probed ??= probeTerminal(process.platform, process.env, execDetached, userInfo()));
+  (probed ??= probeTerminal(process.platform, process.env, execDetached, userInfo(), { session: loginSession }));
 
 /** The environment of the launch line with this profile, or the fail line when the new terminal cannot be read. */
 async function launchEnvOf(profile: string): Promise<{ env: Env } | { line: Line }> {
