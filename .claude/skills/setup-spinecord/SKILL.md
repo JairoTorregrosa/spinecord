@@ -23,7 +23,7 @@ Before the clone exists, read them at `https://raw.githubusercontent.com/JairoTo
 
 `setup <step>` in this file means this command, in any shell, from either copy: `cd ~/spinecord; bun scripts/setup.ts <step>`.
 If this session installed a tool, put the `PATH` line of install.md for this OS first in the same command.
-Each `setup` line is `ok`, `todo` or `fail`, the reason, and after `->` the next action. The last line is `setup <step>: ok` or `setup <step>: not done`.
+Each `setup` line is `ok`, `warn`, `todo` or `fail`, the reason, and after `->` the next action. The last line is `setup <step>: ok` or `setup <step>: not done`.
 `setup status` changes nothing. Its last line `next <STATE>` names the state to do.
 
 ## Rules
@@ -63,7 +63,7 @@ Do the first state that is not done. To resume once the clone exists, run `setup
 | 1 | TOOLS | `git --version`, `bun --version` (1.3.14 or later), `ant --version`, `claude --version` each print a version |
 | 2 | CLONE | `setup status` prints its lines, and its last line starts with `next` |
 | 3 | LOGIN | `setup status` shows `LOGIN` `ok` |
-| 4 | PAYS | `setup status` shows `PAYS` `ok` |
+| 4 | PAYS | `setup status` shows `PAYS` `ok`, or `warn` after the person answered its question |
 | 5 | WORKSHOP | `setup workshop` ends with `setup workshop: ok`, after the line `doctor: ok` |
 | 6 | SMOKE | `setup status` shows `SMOKE` `ok` |
 | 7 | SEE IT | `setup status` shows `SEE IT` `ok` |
@@ -89,7 +89,7 @@ Exit check: `setup login: ok`. Else use fixes.md.
 
 ### 4 PAYS (PERSON answers one question)
 
-Run `setup status`. Read the line `PAYS`. It uses the environment of a new terminal, not of this session. Its `host` part is only a note.
+Run `setup status`. Read the line `PAYS`. It uses the environment of a new terminal, not of this session. Its `host` part is only a note. For a `warn`, ask the question after its `->`.
 If it says `todo` with an organization name, ask the person: "Claude will use the credits of "<name>". Is that the organization with your credits?"
 If yes, run `setup confirm org`. If no, use the row "Wrong Console organization" of fixes.md.
 If it says `todo` with only an organization id, ask the person to compare it with the id at platform.claude.com, Settings, Organization. If it is the organization with the credits, run `setup confirm org`. If it is another one, or the person cannot find the id, use the row "Wrong Console organization" of fixes.md.

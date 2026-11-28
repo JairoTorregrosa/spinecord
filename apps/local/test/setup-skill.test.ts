@@ -11,6 +11,7 @@ import {
   ev3DraftWarn,
   hostOnly,
   launchEnv,
+  systemctlWarn,
   paysPlan,
   execDetached,
   type Exec,
@@ -457,7 +458,7 @@ posixOnly("a temporary folder that cannot be made is a fail line, not a crash", 
 test("a key that only the login session gives (launchctl setenv, environment.d) is a new terminal's", async () => {
   const asked: string[][] = [];
   const p = await probeTerminal("darwin", HOST, writes(dump(NEW_TERMINAL)), user, {
-    session: async (names) => (asked.push(names), { ANTHROPIC_API_KEY: "sk-session" }),
+    session: async (names) => (asked.push(names), { env: { ANTHROPIC_API_KEY: "sk-session" } }),
   });
   expect(asked[0]).toContain("ANTHROPIC_API_KEY");
   expect(asked[0]).toContain("CLAUDE_CODE_USE_BEDROCK");
@@ -466,9 +467,25 @@ test("a key that only the login session gives (launchctl setenv, environment.d) 
   });
   // the shell's own value wins over the session's
   const shell = await probeTerminal("darwin", HOST, writes(dump({ ...NEW_TERMINAL, X: "1" })), user, {
-    session: async () => ({ X: "session" }),
+    session: async () => ({ env: { X: "session" } }),
   });
   expect("env" in shell && shell.env.X).toBe("1");
+});
+
+test("a login session that exists but cannot be read is a warn line that names it, and PAYS goes on", async () => {
+  const p = await probeTerminal("linux", HOST, writes(dump(NEW_TERMINAL)), user, {
+    session: async () => ({ env: {}, warn: systemctlWarn(1) }),
+  });
+  const plan = paysPlan(p, NEW_TERMINAL, "credits", "linux");
+  if (!("env" in plan)) throw new Error(`no env: ${JSON.stringify(plan)}`);
+  expect(plan.notes).toMatchObject([
+    {
+      status: "warn",
+      what: "session",
+      why: "systemctl --user show-environment exit 1: a key that ~/.config/environment.d gives the person's desktop terminals is not seen",
+    },
+  ]);
+  expect(plan.notes[0]!.next).toContain(`row "Another credential pays"`);
 });
 
 test("a new Windows terminal: computed values, then Machine, volatile, User; Path is Machine's then User's", () => {

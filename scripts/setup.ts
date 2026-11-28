@@ -166,9 +166,10 @@ export function ev3DraftWarn(file: string, unconfirmed: readonly string[] | unde
 
 /**
  * What the probe gives: the environment of a new terminal, or why it could not be read, never what the shell
- * printed. `row`: the fixes.md row, when it is not "The environment of a new terminal could not be read".
+ * printed. `row`: the fixes.md row, when it is not "The environment of a new terminal could not be read". `warn`:
+ * the login session could not be read, so a key set only there is not seen.
  */
-export type Probe = { env: Env } | { error: string; row?: string };
+export type Probe = { env: Env; warn?: string } | { error: string; row?: string };
 
 export const PROBE_MS = 20_000;
 /** The PATH a login shell starts from; /etc/zprofile (path_helper) and /etc/profile add the rest. */
@@ -302,8 +303,8 @@ export async function probeTerminal(
         };
       try {
         return { env: windowsEnv(dump(), inherited) };
-      } catch (e) {
-        return { error: `PowerShell gave no environment as JSON: ${(e as Error).message.slice(0, 200)}` };
+      } catch {
+        return { error: `PowerShell wrote a file that is not valid JSON (${dump().length} characters)` };
       }
     }
     const shell = user.shell!;
@@ -323,8 +324,8 @@ export async function probeTerminal(
         error: `${shell} -l -i, started with an empty environment: ${code === 0 ? "it wrote no environment" : failed(code)}; to see what it prints, the person runs \`${shell} -l -i -c true\` in a new terminal`,
       };
     // the login session gives these to every terminal too (launchctl setenv, ~/.config/environment.d)
-    const session = o.session ? await o.session(PAYS_AHEAD.filter((n) => !env[n])) : {};
-    return { env: { ...session, ...env } };
+    const session = o.session ? await o.session(PAYS_AHEAD.filter((n) => !env[n])) : { env: {} };
+    return session.warn ? { env: { ...session.env, ...env }, warn: session.warn } : { env: { ...session.env, ...env } };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -350,6 +351,10 @@ export function launchEnv(terminalEnv: Env, inherited: Env, profile: string, pla
   setVar(env, "ANTHROPIC_PROFILE", profile, platform);
   return env;
 }
+
+/** `systemctl --user show-environment` failed: the agent may run with no user bus (SSH, a sandbox). */
+export const systemctlWarn = (code: number | null) =>
+  `systemctl --user show-environment ${code === null ? "gave no answer" : `exit ${code}`}: a key that ~/.config/environment.d gives the person's desktop terminals is not seen`;
 
 export const terminalFail = (p: { error: string; row?: string }): Line => ({
   status: "fail",
@@ -408,6 +413,13 @@ export function paysPlan(
         },
       ]
     : [];
+  if (probe.warn)
+    notes.push({
+      status: "warn",
+      what: "session",
+      why: probe.warn,
+      next: `ask the person if ~/.config/environment.d sets ANTHROPIC_API_KEY or another key; if yes: fixes.md, row "Another credential pays"`,
+    });
   return { env: launchEnv(probe.env, inherited, profile, platform), notes };
 }
 
@@ -468,8 +480,9 @@ async function run(cmd: string[], o: { ms?: number; cwd?: string; env?: Env; inh
 /** One command with its own environment and no pipes: its exit code, or null when `ms` passed first. */
 export type Exec = (cmd: string[], env: Env, ms: number) => Promise<number | null>;
 /**
- * The shell runs in a process group of its own (a process tree on Windows), and the whole group ends with it: a
- * job that a shell profile starts, or the command it hangs in, does not outlive the probe.
+ * The shell runs in a process group of its own, and the whole group ends with it: a job that a shell profile
+ * starts, or the command it hangs in, does not outlive the probe. On Windows the PowerShell probe reads no profile
+ * (`-NoProfile`); its process tree is killed only at the deadline, since after an exit taskkill no longer finds it.
  */
 export const execDetached: Exec = async (cmd, env, ms) => {
   if (Bun.which(cmd[0]!) === null) return 127;
@@ -503,9 +516,15 @@ export const execDetached: Exec = async (cmd, env, ms) => {
   return child.signalCode ? null : end;
 };
 
-/** The values that the login session gives every terminal, for these names (no shell profile sets them). */
-export type Session = (names: string[]) => Promise<Env>;
-/** macOS: `launchctl getenv`. Linux: the environment of the systemd user manager, where it runs. */
+/**
+ * The values that the login session gives every terminal, for these names (no shell profile sets them). `warn`:
+ * the session exists but could not be read; it names the command and its exit, never its output.
+ */
+export type Session = (names: string[]) => Promise<{ env: Env; warn?: string }>;
+/**
+ * macOS: `launchctl getenv`. Linux: the environment of the systemd user manager; without `systemctl` there is no
+ * such session to read.
+ */
 const loginSession: Session = async (names) => {
   const out: Env = {};
   if (process.platform === "darwin")
@@ -522,9 +541,9 @@ const loginSession: Session = async (names) => {
           .flatMap((l) => (l.indexOf("=") > 0 ? [[l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]] : [])),
       );
       for (const n of names) if (all[n]) out[n] = all[n];
-    }
+    } else return { env: out, warn: systemctlWarn(r.code) };
   }
-  return out;
+  return { env: out };
 };
 
 let probed: Promise<Probe> | undefined;
@@ -752,14 +771,22 @@ async function status(s: State): Promise<Line[]> {
   per.push(["SMOKE", [checkSmoke(s)]]);
   per.push(["SEE IT", [checkMoved(s)]]);
   per.push(["EV3", [checkEv3(s)]]);
-  const next = per.find(([, ls]) => ls.some((l) => l.status !== "ok"))?.[0] ?? "REPORT";
+  // a warn line is done: it names what the person must know
+  const isOpen = (l: Line) => l.status !== "ok" && l.status !== "warn";
+  const next = per.find(([, ls]) => ls.some(isOpen))?.[0] ?? "REPORT";
   const lines = per.map(([name, ls]): Line => {
-    const open = ls.find((l) => l.status !== "ok");
+    const open = ls.find(isOpen);
     return {
-      status: open ? (ls.some((l) => l.status === "fail") ? "fail" : "todo") : "ok",
+      status: open
+        ? ls.some((l) => l.status === "fail")
+          ? "fail"
+          : "todo"
+        : ls.some((l) => l.status === "warn")
+          ? "warn"
+          : "ok",
       what: name,
       why: ls.map((l) => `${l.what}: ${l.why}`).join("; "),
-      next: open?.next,
+      next: (open ?? ls.find((l) => l.status === "warn"))?.next,
     };
   });
   return [...lines, { status: "ok", what: "next", why: next }];
