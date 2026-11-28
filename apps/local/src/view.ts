@@ -20,7 +20,6 @@ import type { SimWorldProvider } from "../../../packages/sim-world/world-provide
 import type {
   Box,
   CallEnd,
-  Obstacle,
   CallStart,
   RefusalCode,
   RobotMeta,
@@ -36,8 +35,11 @@ import type { ViewChat } from "./chat";
 import { cacheFile, respond, type CachedFile } from "./http-cache";
 import type { CallWatcher } from "./mcp";
 import type { LocalRobot } from "./robot";
+import type { RobotActivity } from "../../../packages/protocol/types";
 
 export const VIEW_RATE_HZ = 30;
+/** What a robot is doing that a restore of its room ends with a stop. */
+const MOVING = new Set<RobotActivity>(["acting", "running_program", "looping"]);
 /** Calls a page that opens late still sees. */
 const CALL_HISTORY = 40;
 /** World events of each twin a page that opens late still sees. */
@@ -243,8 +245,6 @@ export function serveView(
   const seen = new Map<string, { world: World; rev: number; tones: number; events: number }>();
   /** The last world events of each twin, for a page that opens late. */
   const happened = new Map<string, WorldEventMsg[]>(twins.map((t) => [t.id, []]));
-  /** The obstacles each world came with, for `restore`. */
-  const original = new WeakMap<World, Obstacle[]>();
   const calls: (CallStart | CallEnd)[] = [];
 
   let stopped = false;
@@ -268,15 +268,7 @@ export function serveView(
       }
     }
   };
-  const remember = (w: World) => {
-    if (!original.has(w))
-      original.set(
-        w,
-        w.cfg.boxes.map((b) => ({ ...b })),
-      );
-  };
   for (const t of twins) {
-    remember(t.brick.world);
     seen.set(t.id, {
       world: t.brick.world,
       rev: t.brick.world.obstacles_rev,
@@ -284,11 +276,7 @@ export function serveView(
       events: t.brick.world.eventsSince(0).next,
     });
   }
-  const unsubscribe = [
-    ...twins.map((t) => t.sim.onSpoken((text) => broadcast({ t: "speak", id: t.id, text }))),
-    // the obstacles a world came with are taken when it arrives, before any page can act on it
-    ...twins.map((t) => t.sim.onDevicesChanged(() => remember(t.brick.world))),
-  ];
+  const unsubscribe = [...twins.map((t) => t.sim.onSpoken((text) => broadcast({ t: "speak", id: t.id, text })))];
 
   const tick = () => {
     if (sockets.size === 0) return;
@@ -304,7 +292,6 @@ export function serveView(
       }
       const w = t.brick.world;
       if (w !== last.world) {
-        remember(w);
         last.world = w;
         last.rev = w.obstacles_rev;
         last.events = 0; // a new world keeps its own log
@@ -382,10 +369,10 @@ export function serveView(
         break;
       }
       case "restore": {
-        const own = original.get(w);
-        if (!own) throw new Error(`the view never saw world "${w.cfg.name}" arrive: it cannot know its own boxes`);
-        // free: the World checked its own boxes against its start when it was made
-        w.setObstacles(own, { ...w.cfg.start });
+        // the room the twin started in, whole (sim.world restore): a robot still moving is stopped as by the tools'
+        // stop, so no call in flight drives on in the fresh room
+        if (MOVING.has(t.robot.view().activity)) void t.robot.stop().catch(() => {});
+        t.sim.restore();
         break;
       }
       case "button": {

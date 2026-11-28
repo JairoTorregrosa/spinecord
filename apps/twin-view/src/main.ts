@@ -16,6 +16,7 @@ import { SensorRayView } from "./rays";
 import { Stillness } from "./still";
 import { Link, type LinkState } from "./link";
 import { lookOf } from "./look";
+import { restoredText } from "./restore";
 import type { RobotMeta, RobotState, ServerMessage } from "./messages";
 import { buildRobot, type RobotModel } from "./model";
 
@@ -536,7 +537,8 @@ $("restore").addEventListener("click", () => {
   void link.request({ t: "restore", id }).then((r) => {
     if (!r.ok) return hud.toast(`${hud.REFUSAL[r.code]}${r.code === "internal" ? `: ${r.error}` : ""}`);
     if (focus?.id === id) trailReset();
-    hud.toast("Mundo restaurado: sus cajas de origen y el robot en la salida (giroscopio y odometría a cero)", "info");
+    const robot = robots.find((x) => x.id === id);
+    if (robot) hud.toast(restoredText(robot), "info");
   });
 });
 $("trail-clear").addEventListener("click", () => trailReset());

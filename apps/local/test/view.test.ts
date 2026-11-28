@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { IR_RAYS, NO_NOISE, ULTRASONIC_RAYS, World } from "../../../packages/sim-world/world";
+import { IR_RAYS, NO_NOISE, ULTRASONIC_RAYS, World, parseWorld } from "../../../packages/sim-world/world";
 import { loadWorldFile } from "../../../packages/sim-world/world-file";
 import { fit } from "../../twin-view/src/fit";
 import type { ServerMessage } from "../../twin-view/src/messages";
@@ -230,7 +230,7 @@ describe("the view listener", () => {
     expect(await p.act({ t: "restore", id: "r1-sim" })).toMatchObject({ ok: true });
     const s = await p.state();
     expect(s.pose).toEqual({ x: 60, y: 60, heading_deg: 0 });
-    await p.next((m) => m.t === "boxes" && m.boxes.length === 0, before);
+    await p.next((m) => m.t === "robot" && m.robot.world.boxes.length === 0, before);
     expect(await p.act({ t: "fly", id: "r1-sim" })).toMatchObject({
       ok: false,
       code: "invalid",
@@ -372,23 +372,48 @@ describe("the view listener", () => {
     expect(far.ultrasonic!.echo === null).toBe(w.ultrasonicCm() === 255);
   });
 
-  test("restore right after load_world, before any frame, brings that world's own boxes back", async () => {
+  test("restore goes back to the world file the twin started in: a world load_world took, its points and boxes, are gone", async () => {
     const { connect, tool, fleet } = await rig(0.05); // one frame in 20 s: none falls inside this test
     const p = await connect();
-    const world = JSON.parse(await Bun.file(join(import.meta.dir, "..", "examples", "room.json")).text());
-    world.name = "room-with-box";
-    world.obstacles = [{ x: 10, y: 10, w: 12, h: 12 }];
+    const file = JSON.parse(await Bun.file(join(import.meta.dir, "..", "examples", "room.json")).text());
+    const fresh = new World(parseWorld((loadConfig(["--twin"]).robots[0] as { world: unknown }).world));
+    const world = { ...file, name: "marks", obstacles: [{ x: 10, y: 10, w: 12, h: 12 }] };
+    world.points = Array.from({ length: 27 }, (_, i) => ({ label: `p${i + 1}`, x: 20 + i * 3, y: 20, radius_cm: 2 }));
+    world.start = { x: 30, y: 70, heading_deg: 90 };
     const loaded = await tool("command_device", {
       device: "sim.world",
       command: "load_world",
       args: { world: JSON.stringify(world) },
     });
     expect(loaded.ok).toBe(true);
-    const w = fleet.bricks.get("r1-sim")!.world;
-    expect(w.cfg.name).toBe("room-with-box");
-    w.setObstacles([]); // what a page's "take it away" leaves
+    const brick = fleet.bricks.get("r1-sim")!;
+    expect(brick.world.cfg.points).toHaveLength(27);
+    brick.world.setObstacles([]); // what a page's "take it away" leaves
     expect(await p.act({ t: "restore", id: "r1-sim" })).toMatchObject({ ok: true });
-    expect(w.cfg.boxes).toEqual([{ id: "box1", x: 10, y: 10, w: 12, h: 12 }]);
+    expect(brick.world.cfg.name).toBe(file.name);
+    expect(brick.world.cfg).toEqual(fresh.cfg);
+    expect(brick.world.pose).toEqual(fresh.pose);
+    // the model's own restore is the same operation
+    await tool("command_device", {
+      device: "sim.world",
+      command: "load_world",
+      args: { world: JSON.stringify(world) },
+    });
+    const r = await tool("command_device", { device: "sim.world", command: "restore", args: {} });
+    expect(r.ok).toBe(true);
+    expect(brick.world.cfg).toEqual(fresh.cfg);
+  });
+
+  test("restore while the robot drives stops it: the call ends and the robot is idle in the fresh room", async () => {
+    const { connect, tool, fleet } = await rig();
+    const p = await connect();
+    const robot = fleet.robots[0]!;
+    const drive = tool("drive", { distance_cm: 60, speed_pct: 30 });
+    await until("the drive to start", () => robot.view().activity === "acting");
+    expect(await p.act({ t: "restore", id: "r1-sim" })).toMatchObject({ ok: true });
+    await drive;
+    await until("the robot to be idle", () => robot.view().activity === "idle");
+    expect(fleet.bricks.get("r1-sim")!.world.pose).toEqual({ x: 60, y: 60, th: 0 });
   });
 
   test("a button held on the page is pressed for the tools until the page lets go or goes away", async () => {
