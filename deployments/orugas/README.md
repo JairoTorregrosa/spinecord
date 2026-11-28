@@ -11,6 +11,11 @@ Un EV3 de orugas con un teléfono de pie al frente (su pantalla es la cara) y el
 | `worlds/slalom.json` | Un pasillo largo de 330 × 120 cm con cinco conos de 25 cm en fila por el centro, cada 45 cm. Sale de la zona azul `salida`; el reto es pasar en zigzag entre los conos, uno por cada lado, sin tocarlos, y cruzar la línea negra hasta la zona verde `meta`. |
 | `worlds/reparto.json` | Un cuarto de 220 × 220 cm con tres paquetes de cartón livianos (200 g, 12 cm de alto: el robot los empuja) en el centro, un estante fijo, la zona azul `base` abajo, la zona verde `entrega` a lo largo del fondo, y un parqueo amarillo (`parqueo`) entre dos postes. El reto: empujar los tres paquetes hasta `entrega` y terminar estacionado en `parqueo`. |
 | `worlds/bodega.json` | Una bodega grande de 400 × 300 cm para explorar: tres estanterías altas, un sofá sobre una alfombra café, una columna, un archivador, una caja baja (10 cm: el infrarrojo la ve de lejos y mira por encima de cerca) y una caja vacía que se puede empujar. El robot sale de la zona azul `base` a la izquierda; el reto es encontrar las tres marcas de color del piso, `roja`, `amarilla` y `verde`, detrás de los muebles, y decir dónde está cada una. Sin sensor de color, `orugas` las busca con la cámara frontal (`sim.camera`) y el infrarrojo para no chocar; la foto desde arriba (`sim.world` `frame`) las muestra todas, así que el reto es llegar a cada una. |
+| `worlds/rampa.json` | Terreno: subir una rampa de 13°, cruzar una plataforma de 12 cm de alto y bajar por la otra rampa hasta la `meta`, sin caerse por los bordes de la plataforma. |
+| `worlds/puente.json` | Terreno: un puente de 26 cm de ancho (el robot mide 18) y 12 cm de alto entre dos orillas; hay que cruzarlo derecho, corrigiendo el rumbo (`entrada`, `salida`), sin caerse. |
+| `worlds/escalones.json` | Terreno: un escalón de 1 cm se sube; el siguiente sube 2,5 cm más, demasiado para las orugas (suben hasta 1,75 cm, el radio de la rueda dentada): hay que rodearlo por el `pasillo` (punto `rodeo`). |
+| `worlds/colina.json` | Terreno: una ladera de 28,5° hasta la `cima` (21,7 cm); de frente las orugas patinan (sostienen hasta 26,6°), así que hay que subir en diagonal sin inclinarse de lado más de 30°. |
+| `worlds/circuito.json` | Terreno: rampa de subida, una curva de 90° a la izquierda sobre la `meseta` (10 cm) y una rampa de bajada hasta la `meta`; si no gira en la curva, se cae de la meseta. |
 
 Arrancar el gemelo con la vista 3D:
 
@@ -18,10 +23,12 @@ Arrancar el gemelo con la vista 3D:
 bun apps/local/main.ts --twin deployments/orugas/robots/orugas.json --world deployments/orugas/worlds/sala.json --view
 ```
 
+Con terreno, cambia `sala.json` por `rampa.json`, `puente.json`, `escalones.json`, `colina.json` o `circuito.json`. El robot se inclina con el terreno (`sim.world` `tilt`), se atasca ante un escalón muy alto, patina en una pendiente muy empinada (`blocked_by`) y se cae de un borde (`fallen`): "Restaurar mundo" o la mano lo ponen de pie otra vez.
+
 y abrir `http://127.0.0.1:8769/`.
 
 ## Cambiar de mapa
 
-Todos los mapas de `worlds/` están cargados en el gemelo desde que arranca, sin reiniciar nada. La persona le dice a Claude, por ejemplo, "usa el mapa laberinto" o "cámbiame al slalom", y Claude llama `sim.world use_map` con el nombre del archivo sin `.json`: `sala`, `laberinto`, `pista`, `slalom`, `reparto` o `bodega`. Cada mapa dice en `description` qué hay que hacer en él, y Claude lo lee al cambiar. El robot aparece en la salida de ese mapa, la vista 3D lo dibuja al instante y Desde ese momento "Restaurar mundo" devuelve ese mapa entero, tal como está en su archivo, con el robot en su salida. Un nombre que no existe se rechaza con la lista de los que hay. Un archivo nuevo en `worlds/` con `"schema": "spinecord/world@1"` es un mapa más en el próximo arranque.
+Todos los mapas de `worlds/` están cargados en el gemelo desde que arranca, sin reiniciar nada. La persona le dice a Claude, por ejemplo, "usa el mapa laberinto" o "cámbiame al slalom", y Claude llama `sim.world use_map` con el nombre del archivo sin `.json`: `sala`, `laberinto`, `pista`, `slalom`, `reparto`, `bodega`, `rampa`, `puente`, `escalones`, `colina` o `circuito`. Cada mapa dice en `description` qué hay que hacer en él, y Claude lo lee al cambiar. El robot aparece en la salida de ese mapa, la vista 3D lo dibuja al instante y Desde ese momento "Restaurar mundo" devuelve ese mapa entero, tal como está en su archivo, con el robot en su salida. Un nombre que no existe se rechaza con la lista de los que hay. Un archivo nuevo en `worlds/` con `"schema": "spinecord/world@1"` es un mapa más en el próximo arranque.
 
 `apps/local/test/worlds.test.ts` comprueba cada mapa con cada robot con `twin` de este despliegue: que el archivo se llame como el mundo de adentro, que el robot quepa en la salida, dentro de una zona con nombre, y que desde ahí llegue a todas las demás zonas y puntos girando sobre sí mismo en cualquier parte del camino (sin empujar nada).

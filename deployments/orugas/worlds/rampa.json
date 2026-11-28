@@ -1,0 +1,84 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "rampa",
+  "description": "Sube la rampa de 13°, cruza la plataforma de 12 cm de alto sin caerte por sus bordes y baja por la otra rampa hasta la zona verde meta.",
+  "arena": {
+    "width_cm": 240,
+    "height_cm": 120
+  },
+  "terrain": [
+    {
+      "id": "subida",
+      "kind": "ramp",
+      "x": 50,
+      "y": 35,
+      "w": 50,
+      "h": 50,
+      "rises": "east",
+      "low_cm": 0,
+      "high_cm": 12
+    },
+    {
+      "id": "plataforma",
+      "kind": "platform",
+      "x": 100,
+      "y": 35,
+      "w": 40,
+      "h": 50,
+      "height_cm": 12
+    },
+    {
+      "id": "bajada",
+      "kind": "ramp",
+      "x": 140,
+      "y": 35,
+      "w": 50,
+      "h": 50,
+      "rises": "west",
+      "low_cm": 0,
+      "high_cm": 12
+    }
+  ],
+  "zones": [
+    {
+      "x": 5,
+      "y": 40,
+      "w": 40,
+      "h": 40,
+      "color": "blue",
+      "label": "base"
+    },
+    {
+      "x": 200,
+      "y": 40,
+      "w": 35,
+      "h": 40,
+      "color": "green",
+      "label": "meta"
+    }
+  ],
+  "points": [
+    {
+      "label": "inicio",
+      "x": 25,
+      "y": 60,
+      "radius_cm": 8
+    },
+    {
+      "label": "meta",
+      "x": 217,
+      "y": 60,
+      "radius_cm": 12
+    }
+  ],
+  "start": {
+    "x": 25,
+    "y": 60,
+    "heading_deg": 0
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.04,
+    "wheel_bias": 0.006
+  }
+}

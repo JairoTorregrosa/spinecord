@@ -1,0 +1,90 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "circuito",
+  "description": "Sube la rampa, gira 90° a la izquierda sobre la meseta de 10 cm (punto curva) sin pasarte del borde y baja por la otra rampa hasta la meta.",
+  "arena": {
+    "width_cm": 200,
+    "height_cm": 180
+  },
+  "terrain": [
+    {
+      "id": "subida",
+      "kind": "ramp",
+      "x": 40,
+      "y": 20,
+      "w": 45,
+      "h": 55,
+      "rises": "east",
+      "low_cm": 0,
+      "high_cm": 10
+    },
+    {
+      "id": "meseta",
+      "kind": "platform",
+      "x": 85,
+      "y": 20,
+      "w": 55,
+      "h": 55,
+      "height_cm": 10
+    },
+    {
+      "id": "bajada",
+      "kind": "ramp",
+      "x": 85,
+      "y": 75,
+      "w": 55,
+      "h": 50,
+      "rises": "south",
+      "low_cm": 0,
+      "high_cm": 10
+    }
+  ],
+  "zones": [
+    {
+      "x": 3,
+      "y": 27,
+      "w": 34,
+      "h": 40,
+      "color": "blue",
+      "label": "base"
+    },
+    {
+      "x": 92,
+      "y": 135,
+      "w": 40,
+      "h": 40,
+      "color": "green",
+      "label": "meta"
+    }
+  ],
+  "points": [
+    {
+      "label": "inicio",
+      "x": 20,
+      "y": 47,
+      "radius_cm": 8
+    },
+    {
+      "label": "curva",
+      "x": 112,
+      "y": 47,
+      "radius_cm": 8
+    },
+    {
+      "label": "meta",
+      "x": 112,
+      "y": 155,
+      "radius_cm": 12
+    }
+  ],
+  "start": {
+    "x": 20,
+    "y": 47,
+    "heading_deg": 0
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.04,
+    "wheel_bias": 0.006
+  }
+}

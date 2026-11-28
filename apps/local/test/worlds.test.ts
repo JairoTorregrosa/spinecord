@@ -24,6 +24,7 @@ import { MAX_SIBLING_WORLD_BYTES, REPO, loadConfig, mapNameMismatches } from "..
 import { LocalRobot } from "../src/robot";
 import { twinRuntime } from "../src/sources";
 import { callTool } from "../src/tools";
+import { ROUTES } from "./terrain-routes";
 
 const DEPLOYMENTS = join(REPO, "deployments");
 const jsonIn = (dir: string): string[] =>
@@ -142,6 +143,12 @@ for (const d of deployments)
             const spin = Math.hypot(Math.max(b.front_cm, b.back_cm), b.half_width_cm);
             const { free, seen } = reachable(cfg, spin);
             expect(free(cfg.start.x, cfg.start.y), "the robot can turn on the spot at the start").toBe(true);
+            if (cfg.terrain) {
+              // The search below sees the floor plan only: on terrain it is a necessary condition, not a proof (an
+              // edge too high, a slope too steep or a fall are not walls to it, and a bridge narrower than a spin is
+              // a wall to it). A terrain world is proven by driving it: terrain-worlds.test.ts drives its route here.
+              expect(Object.keys(ROUTES), `${cfg.name} has a scripted route`).toContain(cfg.name);
+            }
             const unreached = [
               ...cfg.zones
                 .filter((z) => z.label && !base.includes(z))
