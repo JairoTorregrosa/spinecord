@@ -1,0 +1,95 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "escalones",
+  "description": "El primer escalón (1 cm) se sube; el segundo es demasiado alto para las orugas y las atasca: rodéalo por el pasillo del fondo, al norte (punto rodeo), y llega a la meta.",
+  "arena": {
+    "width_cm": 220,
+    "height_cm": 140
+  },
+  "terrain": [
+    {
+      "id": "escalon_bajo",
+      "kind": "platform",
+      "x": 60,
+      "y": 0,
+      "w": 50,
+      "h": 140,
+      "height_cm": 1
+    },
+    {
+      "id": "escalon_alto",
+      "kind": "platform",
+      "x": 110,
+      "y": 0,
+      "w": 30,
+      "h": 95,
+      "height_cm": 3.5
+    },
+    {
+      "id": "pasillo",
+      "kind": "platform",
+      "x": 110,
+      "y": 95,
+      "w": 30,
+      "h": 45,
+      "height_cm": 1
+    },
+    {
+      "id": "llegada",
+      "kind": "platform",
+      "x": 140,
+      "y": 0,
+      "w": 80,
+      "h": 140,
+      "height_cm": 1
+    }
+  ],
+  "zones": [
+    {
+      "x": 5,
+      "y": 30,
+      "w": 40,
+      "h": 40,
+      "color": "blue",
+      "label": "base"
+    },
+    {
+      "x": 160,
+      "y": 30,
+      "w": 45,
+      "h": 40,
+      "color": "green",
+      "label": "meta"
+    }
+  ],
+  "points": [
+    {
+      "label": "inicio",
+      "x": 25,
+      "y": 50,
+      "radius_cm": 8
+    },
+    {
+      "label": "rodeo",
+      "x": 125,
+      "y": 117,
+      "radius_cm": 8
+    },
+    {
+      "label": "meta",
+      "x": 182,
+      "y": 50,
+      "radius_cm": 12
+    }
+  ],
+  "start": {
+    "x": 25,
+    "y": 50,
+    "heading_deg": 0
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.04,
+    "wheel_bias": 0.006
+  }
+}

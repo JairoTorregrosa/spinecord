@@ -1,0 +1,73 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "colina",
+  "description": "Llega a la meta en la cima de una ladera de 28,5°: de frente las orugas patinan, así que hay que subir en diagonal sin inclinarse de lado más de 30°.",
+  "arena": {
+    "width_cm": 170,
+    "height_cm": 130
+  },
+  "terrain": [
+    {
+      "id": "ladera",
+      "kind": "ramp",
+      "x": 15,
+      "y": 40,
+      "w": 140,
+      "h": 40,
+      "rises": "north",
+      "low_cm": 0,
+      "high_cm": 21.7
+    },
+    {
+      "id": "cima",
+      "kind": "platform",
+      "x": 15,
+      "y": 80,
+      "w": 140,
+      "h": 50,
+      "height_cm": 21.7
+    }
+  ],
+  "zones": [
+    {
+      "x": 10,
+      "y": 3,
+      "w": 40,
+      "h": 34,
+      "color": "blue",
+      "label": "base"
+    },
+    {
+      "x": 95,
+      "y": 92,
+      "w": 40,
+      "h": 34,
+      "color": "green",
+      "label": "meta"
+    }
+  ],
+  "points": [
+    {
+      "label": "inicio",
+      "x": 30,
+      "y": 20,
+      "radius_cm": 8
+    },
+    {
+      "label": "meta",
+      "x": 115,
+      "y": 108,
+      "radius_cm": 12
+    }
+  ],
+  "start": {
+    "x": 30,
+    "y": 20,
+    "heading_deg": 35
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.04,
+    "wheel_bias": 0.006
+  }
+}

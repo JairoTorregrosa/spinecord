@@ -1,0 +1,114 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "puente",
+  "description": "Cruza un puente angosto de 26 cm de ancho y 12 cm de alto entre dos orillas, corrigiendo el rumbo en los puntos entrada y salida para no caerte, y baja hasta la meta.",
+  "arena": {
+    "width_cm": 300,
+    "height_cm": 120
+  },
+  "terrain": [
+    {
+      "id": "subida",
+      "kind": "ramp",
+      "x": 40,
+      "y": 30,
+      "w": 50,
+      "h": 60,
+      "rises": "east",
+      "low_cm": 0,
+      "high_cm": 12
+    },
+    {
+      "id": "orilla_a",
+      "kind": "platform",
+      "x": 90,
+      "y": 30,
+      "w": 30,
+      "h": 60,
+      "height_cm": 12
+    },
+    {
+      "id": "puente",
+      "kind": "platform",
+      "x": 120,
+      "y": 47,
+      "w": 70,
+      "h": 26,
+      "height_cm": 12
+    },
+    {
+      "id": "orilla_b",
+      "kind": "platform",
+      "x": 190,
+      "y": 30,
+      "w": 30,
+      "h": 60,
+      "height_cm": 12
+    },
+    {
+      "id": "bajada",
+      "kind": "ramp",
+      "x": 220,
+      "y": 30,
+      "w": 50,
+      "h": 60,
+      "rises": "west",
+      "low_cm": 0,
+      "high_cm": 12
+    }
+  ],
+  "zones": [
+    {
+      "x": 3,
+      "y": 40,
+      "w": 35,
+      "h": 40,
+      "color": "blue",
+      "label": "base"
+    },
+    {
+      "x": 272,
+      "y": 40,
+      "w": 26,
+      "h": 40,
+      "color": "green",
+      "label": "meta"
+    }
+  ],
+  "points": [
+    {
+      "label": "inicio",
+      "x": 20,
+      "y": 60,
+      "radius_cm": 8
+    },
+    {
+      "label": "entrada",
+      "x": 112,
+      "y": 60,
+      "radius_cm": 6
+    },
+    {
+      "label": "salida",
+      "x": 205,
+      "y": 60,
+      "radius_cm": 6
+    },
+    {
+      "label": "meta",
+      "x": 285,
+      "y": 60,
+      "radius_cm": 12
+    }
+  ],
+  "start": {
+    "x": 20,
+    "y": 60,
+    "heading_deg": 0
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.04,
+    "wheel_bias": 0.006
+  }
+}
