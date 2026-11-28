@@ -42,6 +42,8 @@ body {
   touch-action: none;
 }
 #scene[data-hover="robot"],
+#scene[data-mode="look"][data-hover="box"],
+#scene[data-mode="carry"][data-hover="box"],
 #scene[data-mode="box"][data-hover="box"] {
   cursor: grab;
 }

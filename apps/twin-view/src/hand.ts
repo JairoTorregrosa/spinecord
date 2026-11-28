@@ -1,6 +1,7 @@
 // The hand of the person at the page: what one does to a robot on the floor, plus a tape measure. Modes:
-//   look     drag the robot to carry it (turn it on the way with Q / E or the wheel), drag elsewhere to orbit
-//   carry    press where the robot goes, drag towards where it must face
+//   look     drag the robot to carry it (turn it on the way with Q / E or the wheel), drag a box to move it,
+//            drag the floor to orbit
+//   carry    press where the robot goes, drag towards where it must face; drag a box to move it
 //   box      drag a rectangle to set a box down (a click: 20 × 20 cm), then back to look unless Shift is held;
 //            drag a box to move it
 //   remove   click a box to take it away
@@ -46,11 +47,11 @@ const DEG = Math.PI / 180;
 const CLICK_BOX = 20;
 const STEP_DEG = 15;
 const HINTS: Record<Mode, string> = {
-  look: "Arrastra el robot: levantarlo · el suelo: girar la vista",
-  carry: "Pulsa donde va y arrastra hacia donde mira",
-  box: "Arrastra: caja nueva (Mayús: otra más) · arrastra una caja: moverla",
+  look: "Arrastra el robot: levantarlo · una caja: moverla · el suelo: girar la vista",
+  carry: "Pulsa donde va el robot y arrastra hacia donde mira · arrastra una caja: moverla",
+  box: "Arrastra en el suelo: caja nueva (Mayús: otra más) · arrastra una caja: moverla",
   remove: "Clic en una caja: quitarla",
-  measure: "Arrastra, o clic y clic, para medir",
+  measure: "Arrastra, o clic y clic, para medir (las cajas no se mueven)",
 };
 const FIT_WORDS: Record<Exclude<Fit, "free">, string> = {
   wall: "No cabe: se saldría de la pista",
@@ -270,6 +271,17 @@ export class Hand {
       pose = this.c.pose();
     if (!f || !pose || this.c.cams.mode === "eye") return;
     const m = this.mode;
+    // in look and carry a press on a box (and not on the robot in front of it) takes the box
+    const held = (m === "look" || m === "carry") && !this.onRobot(e) ? this.boxUnder(e) : null;
+    if (held !== null) {
+      const b = f.world.boxes.find((o) => o.id === held);
+      const p = this.floorAt(e);
+      if (!b || !p) return;
+      this.drag = { kind: "move", id: b.id, dx: b.x - p.x, dy: b.y - p.y, box: { x: b.x, y: b.y, w: b.w, h: b.h } };
+      this.take(e);
+      this.show();
+      return;
+    }
     if (m === "remove") {
       const box = this.boxUnder(e);
       if (box === null) return;
@@ -362,12 +374,10 @@ export class Hand {
       const hover =
         this.c.cams.mode === "eye"
           ? ""
-          : this.mode === "remove" || this.mode === "box"
-            ? this.boxUnder(e) !== null
+          : this.mode === "look" && this.onRobot(e)
+            ? "robot"
+            : this.mode !== "measure" && this.boxUnder(e) !== null
               ? "box"
-              : ""
-            : this.mode === "look" && this.onRobot(e)
-              ? "robot"
               : "";
       this.c.arena()?.highlight(this.mode === "remove" && hover === "box" ? this.boxUnder(e) : null);
       this.c.canvas.dataset.hover = hover;
