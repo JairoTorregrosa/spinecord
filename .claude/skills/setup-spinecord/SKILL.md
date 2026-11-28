@@ -37,7 +37,7 @@ Each `setup` line is `ok`, `warn`, `todo` or `fail`, the reason, and after `->` 
 - Give every command a timeout of 10 minutes. Every step is safe to run again.
 - If the same step fails 2 times, stop. Show the error line and the row of fixes.md, in the person's language.
 - On Windows, use PowerShell for all commands.
-- Only one robot session runs spinecord. Before you start one, check: `list_robots` answers in this session, or `setup view` says `already running`. Never drive the robot with `claude -p`. Each request starts and stops a server, and the 3D page loses its link.
+- Only one robot session runs spinecord. Before you start one, check: `list_robots` answers in this session, or the line `SEE IT` of `setup status` names a server. Never drive the robot with `claude -p`. Each request starts and stops a server, and the 3D page loses its link.
 
 ## Start: three questions and one approval
 
@@ -68,7 +68,7 @@ Do the first state that is not done. To resume once the clone exists, run `setup
 | 5 | PAYS | Credits only: `setup status` shows `PAYS` `ok` or `warn` |
 | 6 | WORKSHOP | `setup workshop` ends with `setup workshop: ok`, after the line `doctor: ok` |
 | 7 | SMOKE | `setup status` shows `SMOKE` `ok` |
-| 8 | SEE IT | `setup status` shows `SEE IT` `ok` |
+| 8 | SEE IT | `setup status` shows `SEE IT` `ok`. Only `setup confirm moved` records it; the move itself is not recorded |
 | 9 | EV3 | `setup status` shows `EV3` `ok` |
 | 10 | REPORT | The person has the report |
 

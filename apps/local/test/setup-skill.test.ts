@@ -18,6 +18,8 @@ import {
   VIEW_URL,
   waitView,
   windowScript,
+  serverLine,
+  checkProfile,
   windowCommand,
   withRestart,
   hostOnly,
@@ -691,8 +693,19 @@ test("setup choose records the payer; status of the app path shows no LOGIN and 
     expect(setup("login").out).toContain("not needed");
     // a window is a step of the credits path only
     expect(setup("window")).toMatchObject({ code: 1 });
+    // a path's smoke test and "it moved" do not carry over to another path, there and back
+    setup("confirm", "moved");
+    expect(state().moved).toBe(true);
     expect(setup("choose", "credits").code).toBe(0);
-    expect(state().pays).toBe("credits");
+    expect(state()).toEqual({ profile: "credits", pays: "credits" });
+    setup("confirm", "moved");
+    expect(setup("choose", "app").code).toBe(0);
+    expect(state()).toEqual({ profile: "credits", pays: "app" });
+    // choosing the same path again keeps what it recorded
+    setup("confirm", "moved");
+    setup("choose", "app");
+    expect(state().moved).toBe(true);
+    expect(setup("login", "--profile", "a b").out).toContain("fail");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -769,4 +782,36 @@ test("a registration change while the robot's session runs ends with one restart
   const credits = withRestart([ok], true, "win32", "credits", "credits");
   expect(credits.at(-1)!.next).toEndWith(launchLine("win32", "credits"));
   expect(withRestart(credits, true, "win32", "credits", "credits")).toEqual(credits);
+});
+
+test("the Windows window script keeps a non-ASCII path: a BOM, and Set-Location stops on a missing folder", () => {
+  const w = windowScript(
+    "win32",
+    "C:\\Users\\Astrid López\\mi-robot",
+    "credits",
+    "C:\\Users\\Astrid López\\.local\\bin\\claude.exe",
+  );
+  expect(w.text.charCodeAt(0)).toBe(0xfeff);
+  const bytes = Buffer.from(w.text, "utf8");
+  expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+  expect(w.text).toContain("Set-Location -LiteralPath 'C:\\Users\\Astrid López\\mi-robot' -ErrorAction Stop");
+  expect(Buffer.from(w.text, "utf8").toString("utf8")).toContain("López");
+  expect(windowScript("darwin", "/Users/López/mi-robot", "credits", "/c").text.charCodeAt(0)).toBe("#".charCodeAt(0));
+});
+
+test("a profile name with a space or a quote never reaches a command line; status names a running server at once", () => {
+  expect(checkProfile("credits-2_b")).toBe("credits-2_b");
+  for (const bad of ["a b", "x'; rm", "$HOME", ""]) {
+    expect(() => checkProfile(bad)).toThrow();
+    expect(() => panelLine("win32", bad)).toThrow();
+    expect(() => windowScript("darwin", "/w", bad, "/c")).toThrow();
+  }
+  expect(serverLine(true)).toMatchObject({
+    status: "ok",
+    what: "server",
+    why: expect.stringContaining("start no other"),
+  });
+  expect(serverLine(false).status).toBe("ok");
+  // the server line never decides SEE IT: only the person's confirm moved does
+  expect(summarize("SEE IT", [{ status: "todo", what: "moved", why: "m" }, serverLine(true)]).status).toBe("todo");
 });

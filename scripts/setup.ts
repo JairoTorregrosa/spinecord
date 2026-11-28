@@ -5,6 +5,7 @@
 // test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|warn|todo|fail  <what>  <why>  ->  <next>`, the
 // last line `setup <step>: ok` (exit 0) or `setup <step>: not done` (exit 1). Nothing here prints a secret.
 import {
+  chmodSync,
   copyFileSync,
   cpSync,
   existsSync,
@@ -75,7 +76,7 @@ export interface State {
   forward?: boolean;
 }
 /** The states of `setup status`, in order. Each path lists only the states it needs. */
-export const STATES = ["CHOOSE", "TOOLS", "LOGIN", "PAYS", "WORKSHOP", "SMOKE", "SEE IT", "EV3"] as const;
+export const STATES = ["TOOLS", "CHOOSE", "LOGIN", "PAYS", "WORKSHOP", "SMOKE", "SEE IT", "EV3"] as const;
 export type StateName = (typeof STATES)[number];
 export function statesFor(pays: Pays | undefined): StateName[] {
   return pays === "app" ? STATES.filter((n) => n !== "LOGIN" && n !== "PAYS") : [...STATES];
@@ -177,7 +178,14 @@ export function launchLine(platform: string, profile: string): string {
  * workshop folder (`cwd`) and refuses a PowerShell line that reads a variable (`$HOME`): no `cd`, single quotes.
  * `check`: the line that shows who pays, before the launch.
  */
+/** A profile name goes into command lines and scripts unquoted: letters, digits, `_` and `-` only. */
+export function checkProfile(profile: string): string {
+  if (!/^[\w-]+$/.test(profile)) throw new Error(`profile name "${profile}": use only letters, digits, _ and -`);
+  return profile;
+}
+
 export function panelLine(platform: string, profile: string, check = false): string {
+  checkProfile(profile);
   const cmd = check ? "claude auth status --text" : "claude --model sonnet";
   return platform === "win32" ? `$env:ANTHROPIC_PROFILE = '${profile}'; ${cmd}` : `ANTHROPIC_PROFILE=${profile} ${cmd}`;
 }
@@ -197,11 +205,13 @@ export function windowScript(
   profile: string,
   claude: string,
 ): { name: string; text: string } {
+  checkProfile(profile);
   if (platform === "win32") {
     const ps = (x: string) => `'${x.replaceAll("'", "''")}'`;
     return {
       name: "spinecord-robot.ps1",
-      text: `Set-Location -LiteralPath ${ps(workshop)}\r\n$env:ANTHROPIC_PROFILE = '${profile}'\r\n& ${ps(claude)} --model sonnet\r\n`,
+      // Windows PowerShell 5.1 reads a .ps1 without a BOM as ANSI: a BOM keeps a path such as C:\Users\Astrid López
+      text: `\uFEFFSet-Location -LiteralPath ${ps(workshop)} -ErrorAction Stop\r\n$env:ANTHROPIC_PROFILE = '${profile}'\r\n& ${ps(claude)} --model sonnet\r\n`,
     };
   }
   const sh = (x: string) => `'${x.replaceAll("'", `'\\''`)}'`;
@@ -962,6 +972,19 @@ const checkMoved = (s: State): Line =>
         next: "see-it.md, then bun scripts/setup.ts confirm moved",
       };
 
+/**
+ * Whether a robot session runs now, at once and without waiting: a spinecord server answers on the view port. It
+ * never opens or closes SEE IT, which only the person's `confirm moved` closes: the move itself is not recorded.
+ */
+export const serverLine = (up: boolean): Line =>
+  up
+    ? {
+        status: "ok",
+        what: "server",
+        why: `a spinecord server answers on ${VIEW_URL}: a robot session runs; start no other`,
+      }
+    : { status: "ok", what: "server", why: `nothing answers on ${VIEW_URL}: no robot session runs now` };
+
 const checkEv3 = (s: State): Line =>
   s.ev3 === undefined
     ? { status: "todo", what: "ev3", why: "not asked yet (WORKSHOP asks)" }
@@ -1021,8 +1044,8 @@ export function checkChoice(s: Pick<State, "pays">): Line {
 
 async function status(s: State): Promise<Line[]> {
   const per: [string, Line[]][] = [
-    ["CHOOSE", [checkChoice(s)]],
     ["TOOLS", await checkTools(s)],
+    ["CHOOSE", [checkChoice(s)]],
   ];
   if (statesFor(s.pays).includes("LOGIN")) {
     const login = await checkLogin(s);
@@ -1034,7 +1057,7 @@ async function status(s: State): Promise<Line[]> {
   }
   per.push(["WORKSHOP", await checkWorkshop(s)]);
   per.push(["SMOKE", [checkSmoke(s)]]);
-  per.push(["SEE IT", [checkMoved(s)]]);
+  per.push(["SEE IT", [checkMoved(s), serverLine(await viewUp())]]);
   per.push(["EV3", [checkEv3(s)]]);
   return [...per.map(([name, ls]) => summarize(name, ls)), { status: "ok", what: "next", why: nextState(per) }];
 }
@@ -1265,7 +1288,8 @@ async function openWindow(s: State): Promise<Line[]> {
     ];
   const f = windowScript(process.platform, WORKSHOP, s.profile, claude);
   const file = join(WORKSHOP, f.name);
-  writeFileSync(file, f.text, { mode: 0o755 });
+  writeFileSync(file, f.text);
+  chmodSync(file, 0o755);
   const cmd = windowCommand(process.platform, file);
   const r = await run(cmd, { ms: 15_000, cwd: WORKSHOP, env: e.env });
   return [
@@ -1438,11 +1462,13 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "login": {
+      const p = opt("--profile");
+      if (p !== undefined && !/^[\w-]+$/.test(p))
+        return print(step, [{ status: "fail", what: "profile", why: `"${p}": use only letters, digits, _ and -` }]);
       if (s.pays === "app")
         return print(step, [
           { status: "ok", what: "login", why: "not needed: the app's login pays (setup choose app)" },
         ]);
-      const p = opt("--profile");
       if (p !== undefined && p !== s.profile) {
         s.profile = p;
         s.org = undefined;
@@ -1484,7 +1510,10 @@ export async function main(argv: string[]): Promise<number> {
       const p = rest[0] as Pays | undefined;
       if (p === undefined || !PAYS.includes(p)) break;
       if (s.pays !== p) {
+        // another path starts the robot's session another way: its smoke test and its "it moved" are not this path's
         s.pays = p;
+        s.smoke = undefined;
+        s.moved = undefined;
         saveState(s);
       }
       return print(step, [checkChoice(s)]);
