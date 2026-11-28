@@ -6,8 +6,11 @@
 // carries how the robot got there: forward, in reverse, or turning in place. The ribbon lies across the robot's
 // heading, so a turn in place sweeps it round its centre.
 //
+// The path is fed the robot's states as the process sends them (about 30 a second, whether the page draws frames or
+// not: a hidden tab still records the path it could not show), each step between two states cut into points.
 // The path breaks where the robot could not have driven: a jump farther or a turn faster than its motors allow (a
-// person carried it, the world was restored); the next point starts a new piece, with nothing drawn across the gap.
+// person carried it, the world was restored), or a step too long to know what lay between (states the page missed);
+// the next point starts a new piece, with nothing drawn across the gap.
 //
 // Memory is bounded: at most `max` points; when full, the oldest half goes. Each point is two vertices (its left and
 // right edge) and one quad back to the point before it, unless it starts a piece. Quads are stored newest first in
@@ -20,9 +23,15 @@ export const STEP_CM = 1;
 export const TURN_STEP = (5 * Math.PI) / 180;
 /** Large motor at 100 % speed, deg/s (packages/sim-ev3 LARGE_DEG_S; the page imports only three.js). */
 export const LARGE_DEG_S = 1020;
-/** What a carry may move without being noticed: noise of the pose, cm and rad. */
+/** What a carry may move or turn without being noticed: noise of the pose, cm and rad. */
 const SLACK_CM = 2,
-  SLACK_RAD = 0.2;
+  SLACK_RAD = 0.05;
+/** Above the drive's top speed a step must be to count as a carry: twice for a move, a quarter more for a turn (a
+ *  turn by hand in place is short; the drive's own turn rate is well known). */
+const MOVE_OVER = 2,
+  TURN_OVER = 1.25;
+/** Longest step between two states drawn as a straight band, cm: past it what lay between is not known. */
+export const JOIN_CM = 10;
 
 /** How the robot reached a point: driving forward, in reverse, or turning where it stands. */
 export const KIND = { forward: 1, reverse: -1, pivot: 0 } as const;
@@ -53,12 +62,78 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
  * Whether the robot went from `a` to `b` in a way its motors could not have done (twice their top speed, plus the
  * pose's noise): a person carried it, or the world put it back. Time running backwards is a new world.
  */
-export function teleported(a: TimedPose, b: TimedPose, lim: { cm_s: number; rad_s: number }): boolean {
-  const dt = (b.t_ms - a.t_ms) / 1000;
-  const moved = Math.hypot(b.x - a.x, b.y - a.y),
-    turned = Math.abs(wrap(b.th - a.th));
+export function teleported(a: TimedPose, b: TimedPose, lim: Limits): boolean {
+  return jumped(a.x, a.y, a.th, a.t_ms, b.x, b.y, b.th, b.t_ms, lim);
+}
+type Limits = { cm_s: number; rad_s: number };
+function jumped(
+  ax: number,
+  ay: number,
+  ath: number,
+  at: number,
+  bx: number,
+  by: number,
+  bth: number,
+  bt: number,
+  lim: Limits,
+): boolean {
+  const dt = (bt - at) / 1000;
   if (dt < 0) return true;
-  return moved > SLACK_CM + 2 * lim.cm_s * dt || turned > SLACK_RAD + 2 * lim.rad_s * dt;
+  const moved = Math.hypot(bx - ax, by - ay),
+    turned = Math.abs(wrap(bth - ath));
+  return moved > SLACK_CM + MOVE_OVER * lim.cm_s * dt || turned > SLACK_RAD + TURN_OVER * lim.rad_s * dt;
+}
+
+/** What one state did to the trail: the first of a robot, a step drawn, or a break (a carry, or a step too long). */
+export type Fed = "first" | "drawn" | "carried" | "gap";
+
+/**
+ * Turns the robot's states into the trail's points: each step between two states is cut into pieces of at most half
+ * STEP_CM and TURN_STEP (an arc stays an arc, a pivot a round wedge, however far apart the states), and a step no
+ * drive could make, or one longer than JOIN_CM, breaks the path instead.
+ */
+export class TrailFeed {
+  private has = false;
+  private x = 0;
+  private y = 0;
+  private th = 0;
+  private t = 0;
+  private lim: Limits = { cm_s: 0, rad_s: 0 };
+
+  constructor(readonly path: TrailPath) {}
+
+  /** Another robot (or none): forget the last state, and drive at most as fast as this one can. */
+  reset(lim: Limits): void {
+    this.has = false;
+    this.lim = lim;
+  }
+
+  /** The robot is at (x, y) cm, heading `th` rad, at world time `t_ms`. */
+  state(x: number, y: number, th: number, t_ms: number): Fed {
+    const p = this.path;
+    let fed: Fed;
+    if (!this.has) fed = "first";
+    else if (jumped(this.x, this.y, this.th, this.t, x, y, th, t_ms, this.lim)) fed = "carried";
+    else if (Math.hypot(x - this.x, y - this.y) > JOIN_CM) fed = "gap";
+    else fed = "drawn";
+    if (fed === "drawn") {
+      const dx = x - this.x,
+        dy = y - this.y,
+        dth = wrap(th - this.th);
+      // half steps: the path takes a point once a whole one is reached, so points stay 1 to 1.5 steps apart
+      const n = Math.max(1, Math.ceil((2 * Math.hypot(dx, dy)) / STEP_CM), Math.ceil((2 * Math.abs(dth)) / TURN_STEP));
+      for (let i = 1; i <= n; i++) p.add(this.x + (dx * i) / n, this.y + (dy * i) / n, this.th + (dth * i) / n);
+    } else {
+      p.break();
+      p.add(x, y, th);
+    }
+    this.has = true;
+    this.x = x;
+    this.y = y;
+    this.th = th;
+    this.t = t_ms;
+    return fed;
+  }
 }
 
 /** Floats per vertex in `aux`: side (+1 left edge, -1 right), distance driven (cm), kind, progress (cm). */

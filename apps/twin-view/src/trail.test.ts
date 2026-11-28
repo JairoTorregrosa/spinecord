@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AUX, KIND, STEP_CM, TURN_STEP, TrailPath, driveLimits, teleported } from "./trail";
+import { AUX, JOIN_CM, KIND, STEP_CM, TURN_STEP, TrailFeed, TrailPath, driveLimits, teleported } from "./trail";
 
 const DEG = Math.PI / 180;
 const kindAt = (p: TrailPath, k: number) => p.aux[AUX * 2 * k + 2];
@@ -157,5 +157,98 @@ describe("bounded memory", () => {
     p.add(4, 0, 0);
     expect(p.takeDirty()).toBe(true);
     expect([p.dirtyLo, p.dirtyHi]).toEqual([2, 3]);
+  });
+});
+
+describe("fed from the robot's states", () => {
+  // the orugas' drive: 5.6 cm wheels on a 12 cm track
+  const lim = driveLimits({ wheel_diameter_cm: 5.6, axle_track_cm: 12 });
+  const feed = () => {
+    const p = new TrailPath(2000, 0.15, 1.4);
+    const f = new TrailFeed(p);
+    f.reset(lim);
+    return { p, f };
+  };
+  const centre = (p: TrailPath, k: number) => [p.pos[3 * 2 * k]!, -p.pos[3 * 2 * k + 2]!];
+
+  test("states alone, with no frame drawn between them, make an arc that stays on its circle", () => {
+    const { p, f } = feed();
+    // a 180° arc of 20 cm radius round (50, 50) at 20 cm/s, one state every 33 ms
+    const r = 20,
+      w = 20 / r;
+    let fed = "";
+    for (let t = 0; t * w <= Math.PI * 1000; t += 33) {
+      const a = (t * w) / 1000;
+      fed = f.state(50 + r * Math.sin(a), 50 - r * Math.cos(a), a, t);
+    }
+    expect(fed).toBe("drawn");
+    expect(p.count).toBeGreaterThan((Math.PI * r) / 1.5); // a point every 1 to 1.5 cm of the 63 cm arc
+    for (let k = 0; k < p.count; k++) {
+      const [x, y] = centre(p, k);
+      expect(Math.hypot(x! - 50, y! - 50)).toBeCloseTo(r, 0);
+    }
+    for (let k = 1; k < p.count; k++) expect(isGap(p, k)).toBe(false);
+  });
+
+  test("states far apart in time are cut into points: no straight band across the arc", () => {
+    const { p, f } = feed();
+    // the same arc, the page told only every 300 ms (each step under JOIN_CM)
+    const r = 20;
+    for (let t = 0; t <= 3000; t += 300) {
+      const a = t / 1000;
+      f.state(50 + r * Math.sin(a), 50 - r * Math.cos(a), a, t);
+    }
+    // each 6 cm chord is cut, but along the chord: points stay within the chord's sagitta of the circle
+    for (let k = 0; k < p.count; k++) {
+      const [x, y] = centre(p, k);
+      expect(Math.hypot(x! - 50, y! - 50)).toBeGreaterThan(r - 0.25);
+    }
+  });
+
+  test("a pivot at the drive's full turn rate leaves a round wedge, points at most 7.5° apart", () => {
+    const { p, f } = feed();
+    let th = 0;
+    for (let t = 0; t <= 400; t += 33) {
+      th = (lim.rad_s * t) / 1000;
+      expect(f.state(30, 30, th, t)).not.toBe("carried");
+    }
+    expect(p.count).toBeGreaterThan(th / (7.5 * DEG));
+    for (let k = 1; k < p.count; k++) expect(kindAt(p, k)).toBe(KIND.pivot);
+  });
+
+  test("a carry breaks the path: a gap, then a new piece at the new place", () => {
+    const { p, f } = feed();
+    f.state(10, 10, 0, 0);
+    f.state(11, 10, 0, 33);
+    f.state(12, 10, 0, 66);
+    const before = p.count;
+    expect(f.state(90, 60, 0, 99)).toBe("carried");
+    expect(isGap(p, before)).toBe(true);
+    expect(centre(p, before)).toEqual([90, 60]);
+    expect(f.state(91, 60, 0, 132)).toBe("drawn");
+    expect(isGap(p, before + 1)).toBe(false);
+  });
+
+  test("a turn by hand in place (30° within one state) is a carry, not a pivot", () => {
+    const { p, f } = feed();
+    f.state(10, 10, 0, 0);
+    expect(f.state(10, 10, 30 * DEG, 33)).toBe("carried");
+    expect(isGap(p, 1)).toBe(true);
+  });
+
+  test("a step the drive could make but longer than JOIN_CM (states the page missed) breaks instead of joining", () => {
+    const { p, f } = feed();
+    f.state(10, 10, 0, 0);
+    // 2 s later, 30 cm on: possible at full speed, but what lay between is not known
+    expect(f.state(10 + JOIN_CM * 3, 10, 0, 2000)).toBe("gap");
+    expect(p.count).toBe(2);
+    expect(isGap(p, 1)).toBe(true);
+  });
+
+  test("a new robot forgets the last state", () => {
+    const { f } = feed();
+    f.state(10, 10, 0, 0);
+    f.reset(lim);
+    expect(f.state(150, 100, 1, 50)).toBe("first");
   });
 });

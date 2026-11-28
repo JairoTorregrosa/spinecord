@@ -15,7 +15,7 @@ import { LOST_GRACE_MS, hideNo3d, showNo3d } from "./no3d";
 import { SensorRayView } from "./rays";
 import { Stillness } from "./still";
 import { Link, type LinkState } from "./link";
-import { driveLimits, teleported, type TimedPose } from "./trail";
+import { driveLimits } from "./trail";
 import { TrailView } from "./trail-view";
 import { lookOf } from "./look";
 import type { RobotMeta, RobotState, ServerMessage } from "./messages";
@@ -147,9 +147,6 @@ robotRoot.add(coneGroup);
 // ---------------------------------------------------------------- trail
 const trail = new TrailView(HELPERS);
 scene.add(trail.mesh);
-/** The last pose the process sent, to tell a drive from a carry; and how fast this robot can drive. */
-let lastPose: TimedPose | null = null;
-let limits = driveLimits(null);
 const trailReset = () => trail.clear();
 
 coneGroup.traverse((c) => c.layers.set(HELPERS));
@@ -312,8 +309,7 @@ function setFocus(id: string | null): void {
   }
   cur = null;
   from = shown = null;
-  lastPose = null;
-  limits = driveLimits(focus?.drivetrain ?? null);
+  trail.feed.reset(driveLimits(focus?.drivetrain ?? null));
   trailReset();
   hand.reset(focus);
   showConeOption();
@@ -385,11 +381,9 @@ function onState(st: RobotState): void {
   const tachos: Record<string, number> = {};
   for (const mo of st.motors) tachos[mo.port] = mo.tacho_deg;
   const next: Shown = { x: st.pose.x, y: st.pose.y, th: st.pose.heading_deg * DEG, tachos };
-  // a move no drive could make (picked up, restored) is shown at once, not glided over, and breaks the trail there
-  const pose = { x: next.x, y: next.y, th: next.th, t_ms: st.t_ms };
-  const carried = lastPose !== null && teleported(lastPose, pose, limits);
-  lastPose = pose;
-  if (carried) trail.break();
+  // the trail takes every state, drawn or not (a hidden tab still records the path); a move no drive could make
+  // (picked up, restored) breaks it, and is shown at once, not glided over
+  const carried = trail.feed.state(next.x, next.y, next.th, st.t_ms) === "carried";
   const jump =
     carried || !shown || Math.hypot(shown.x - next.x, shown.y - next.y) > 15 || Math.abs(shown.th - next.th) > 0.8;
   from = jump ? next : { ...shown!, tachos: { ...shown!.tachos } };
@@ -695,7 +689,6 @@ function frame(now: number): void {
     robotRoot.visible = true;
     model.update(cur, s.tachos, t);
     updateCone(cur);
-    trail.add(s.x, s.y, s.th);
     hud.led(cur.led, t);
   } else robotRoot.visible = false;
 
@@ -754,7 +747,12 @@ function frame(now: number): void {
   camera.updateMatrixWorld();
   if (pipOn) eyeCam.updateMatrixWorld();
   // nothing to draw that the canvas does not show already: the frame costs a look at the scene, not a render
-  const extra = [canvas.width, canvas.height, renderer.shadowMap.needsUpdate ? 1 : 0, trail.head];
+  const extra = [
+    canvas.width,
+    canvas.height,
+    renderer.shadowMap.needsUpdate ? 1 : 0,
+    trail.mesh.visible ? trail.head : -1,
+  ];
   if (pr && cr) extra.push(pr.left - cr.left, cr.bottom - pr.bottom, pr.width, pr.height);
   if (!still.changed(scene, pipOn ? [camera, eyeCam] : [camera], extra)) return frameStats(renderer, now);
   renderer.setScissorTest(false);
