@@ -428,6 +428,10 @@ describe("the distance sensor's pose: its eye off the centre line and its headin
     expect(a.o[1]).toBeCloseTo(100, 9);
     expect(w.rayDistance()).toBeCloseTo(90, 6); // to the wall at x 0
     expect(w.coneDistance()).toBeCloseTo(90, 6);
+    // past the front of the body neither
+    expect(() => room({ front_cm: 8, distance_sensor_x_cm: 9 })).toThrow(
+      "body.distance_sensor_x_cm is 9: the distance sensor's eye would be 9 cm ahead of the axle, past the front of the body (front_cm 8)",
+    );
     // past the back of the body is no place for it: refused in plain words
     expect(() => room({ back_cm: 12, distance_sensor_x_cm: -13 })).toThrow(
       "body.distance_sensor_x_cm is -13: the distance sensor's eye would be 13 cm behind the axle, past the back of the body (back_cm 12)",

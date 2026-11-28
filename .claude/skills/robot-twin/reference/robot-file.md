@@ -83,7 +83,7 @@ Every length is in cm from the centre of the drive axle, on the floor: `x` ahead
 | `twin.ev3.sensors.<1-4>` | `"touch"`, `"color"`, `"ultrasonic"`, `"gyro"`, `"ir"` | nothing plugged | |
 | `twin.body.front_cm`, `back_cm`, `half_width_cm` | number >= 0 | 8, 10, 6 | the footprint: a rectangle around the axle, used for collisions and the touch sensor |
 | `twin.body.color_sensor_x_cm`, `color_spot_radius_cm` | number >= 0 | 7, 1 | where the colour sensor reads the floor, on the centre line |
-| `twin.body.distance_sensor_x_cm` | number >= -`back_cm` | 8 | how far ahead of the axle the ultrasonic's or infrared's eye is, negative behind it (the person's measurement, row 11) |
+| `twin.body.distance_sensor_x_cm` | number from -`back_cm` to `front_cm` | 8 | how far ahead of the axle the ultrasonic's or infrared's eye is, negative behind it (the person's measurement, row 11) |
 | `twin.body.distance_sensor_y_cm`, `distance_sensor_z_cm`, `distance_sensor_yaw_deg` | number (y may be negative; yaw -180..180) | from `twin.view.sensors.<n>`, else 0, 6, 0 | the eye's side (left positive), height and heading (counter-clockwise from ahead). Leave them out when the sensor has a place in `twin.view.sensors`: the server takes them from where that place puts the eye, so the twin reads from the sensor it draws. A side or heading written in both that differs is refused |
 | `twin.view` | the fields in the header of `<clone>/apps/twin-view/src/look.ts`, nothing else | the default look | the 3D look only; a bad field draws its default, so check by eye in state 4. `twin.view.unconfirmed` is refused: the page gets the list from `twin.unconfirmed` |
 
@@ -108,6 +108,6 @@ For each row the robot hits: write the note, tell the person the line in their l
 | Steering (one motor steers, one drives), legs, a walker | no `pair` and no drivetrain; the motors as roles; a note | "The twin cannot steer or walk: its motors turn, the body stays put." |
 | Two wheels and no caster: it balances | `differential`; `view.caster` `"none"`; a note "balances on two wheels; do not drive it without its balance program" | "The twin does not fall over; the real robot does without its balance program." |
 | A motor turned by hand as a dial | role `dial`; a note | "In the twin nobody turns the dial; it reads what the program turns." |
-| A distance sensor that faces sideways or behind, or sits off the centre line | its `x` in `twin.body`; its real place and `facing` in `twin.view.sensors` | none: the twin reads from where the sensor is drawn, along where it faces |
+| A distance sensor that faces sideways or behind, or sits off the centre line | its `x` in `twin.body`; its place without `x_cm` (`y_cm`, `z_cm`) and its `facing` in `twin.view.sensors` | none: the twin reads from where the sensor is drawn, along where it faces |
 | A colour sensor off the centre line, or a sensor that faces up | the closest `x` in `twin.body`; its real place in `twin.view.sensors`; a note | "The 3D twin draws the <sensor> where it is, but it reads <the floor on the centre line / straight ahead, level>." |
 | Terrain (stairs, ramps, rough ground) | a note | "The twin's floor is flat." |

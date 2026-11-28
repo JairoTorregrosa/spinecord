@@ -11,7 +11,7 @@ import { ChatPanel } from "./chat";
 import { Hand, MODES, heading, type Mode } from "./hand";
 import * as hud from "./hud";
 import { draftLines } from "./draft";
-import { LOST_GRACE_MS, hideNo3d, showNo3d } from "./no3d";
+import { LOST_GRACE_MS, no3d } from "./no3d";
 import { SensorRayView } from "./rays";
 import { Stillness } from "./still";
 import { statusChips } from "./status";
@@ -42,7 +42,7 @@ try {
   // a stencil buffer lets the trail draw each pixel once (src/trail-view.ts)
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, stencil: true, powerPreference: "high-performance" });
 } catch (e) {
-  showNo3d("no_context", (e as Error).message);
+  no3d({ t: "no_context", detail: (e as Error).message });
 }
 if (renderer) {
   // 1.5 device pixels per CSS pixel: past that an integrated GPU pays in fill rate for detail nobody sees
@@ -62,13 +62,16 @@ const still = new Stillness();
 let lostTimer: ReturnType<typeof setTimeout> | null = null;
 canvas.addEventListener("webglcontextlost", (e) => {
   e.preventDefault(); // ask for it back
-  lostTimer ??= setTimeout(() => showNo3d("lost", "webglcontextlost without webglcontextrestored"), LOST_GRACE_MS);
+  lostTimer ??= setTimeout(
+    () => no3d({ t: "lost", detail: "webglcontextlost without webglcontextrestored" }),
+    LOST_GRACE_MS,
+  );
 });
 canvas.addEventListener("webglcontextrestored", () => {
   still.reset();
   if (lostTimer) clearTimeout(lostTimer);
   lostTimer = null;
-  hideNo3d();
+  no3d({ t: "restored" });
 });
 const scene = new THREE.Scene();
 // a bright room around the arena, the fog melting the far floor into it
@@ -310,14 +313,15 @@ function setFocus(id: string | null): void {
   hand.reset(focus);
   showConeOption();
   showTitle(focus);
-  if (!focus) return;
+  if (!focus) return no3d({ t: "built" }); // no robot: nothing of a build stands in the way
   const look = lookOf(focus);
   try {
     model = buildRobot(focus, look);
   } catch (e) {
-    // a build the page cannot draw as the twin reads it: said in place of the scene, never a silent empty arena
-    return showNo3d("build", (e as Error).message);
+    // a robot the page cannot draw as the twin reads it: said in place of the scene, never a silent empty arena
+    return no3d({ t: "build_failed", detail: (e as Error).message });
   }
+  no3d({ t: "built" });
   robotRoot.add(model.group);
   arena = buildArena(focus.world, model.height, renderer?.capabilities.getMaxAnisotropy() ?? 1);
   scene.add(arena.group);

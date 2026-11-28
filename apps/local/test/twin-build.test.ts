@@ -572,14 +572,35 @@ describe("the distance sensor's pose: the reading, the rays and the drawn sensor
     );
   });
 
-  test("doctor: a place whose eye is ahead of or above the body's numbers is named, both values", () => {
-    const world = (r: unknown) => twinOf(r).world;
-    expect(
-      sensorPoseClash(world(offCentre({ x_cm: 3.62, y_cm: 4.6, z_cm: 19.6 }, { distance_sensor_z_cm: 20 })), true),
-    ).toBeNull();
-    expect(sensorPoseClash(world(offCentre({ x_cm: 5, y_cm: 4.6, z_cm: 19.6 })), true)).toBe(
-      "twin.view.sensors.4 puts the distance sensor's eye 7.38 cm ahead of the axle where twin.body.distance_sensor_x_cm says 6: the twin reads from and draws it at the body's numbers. Change the one that is wrong, or leave the place's x and z out",
+  test("a place past the front of the body is refused, naming the place; the doctor line says the centre line plainly", () => {
+    const robot = offCentre({ x_cm: 9, z_cm: 10 });
+    delete (robot.twin.body as Record<string, unknown>).distance_sensor_x_cm;
+    expect(fails(robot)).toThrow(
+      "twin.view.sensors.4 puts the distance sensor's eye 11.38 cm ahead of the axle, past the front of the body (twin.body.front_cm 8.5)",
     );
+    const t = twinOf(offCentre({ z_cm: 10 }));
+    expect(describeTwin(t.robot, t.world, true, t.build?.drive)).toContain(
+      `distance sensor's eye 6 cm ahead, on the centre line, ${Math.round((10 + eye[2]) * 100) / 100} up, looking straight ahead`,
+    );
+  });
+
+  test("doctor: a place near the body's numbers, or copying them, says nothing; one grossly elsewhere is named", () => {
+    const clash = (place: object, body: object = {}) =>
+      sensorPoseClash(twinOf(offCentre(place, { distance_sensor_z_cm: 20, ...body })).world, true);
+    // copied.json: the eye's numbers copied into the place
+    expect(clash({ x_cm: 6, y_cm: 4.6, z_cm: 20 })).toBeNull();
+    // photo.json: the box's centre estimated from a photo, its eye 2.4 cm ahead of it
+    expect(clash({ x_cm: 5, y_cm: 4.6, z_cm: 19.6 })).toBeNull();
+    // modules.json: the same place on the half-module grid
+    expect(clash({ x: 7.5, y: 6, z: 24.5 })).toBeNull();
+    // grossly elsewhere: behind the axle facing back, and low
+    expect(clash({ x_cm: -12, y_cm: 0, z_cm: 8, facing: "back" })).toEqual({
+      reason:
+        "twin.view.sensors.4 puts the distance sensor's eye 14.4 cm behind the axle, where twin.body.distance_sensor_x_cm says 6 cm ahead of the axle, and 8.4 cm above the floor, where twin.body.distance_sensor_z_cm says 20: the twin reads from and draws it at the body's numbers",
+      next: "if the sensor really sits where the look puts it, write its eye's x and z in twin.body; if the body is right, take x_cm and z_cm out of twin.view.sensors.4",
+    });
+    // 3 cm ahead of where the body says, same side: named too
+    expect(clash({ x_cm: 9, y_cm: 4.6, z_cm: 19.6 })?.reason).toContain("11.4 cm ahead of the axle");
   });
 
   test("refused when the body and the look put the eye on different sides or looking different ways", () => {

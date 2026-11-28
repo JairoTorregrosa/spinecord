@@ -406,13 +406,7 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
             next: "a measured value wins; else a recognised build's axle track wins over a footprint read from the photo unless the wheels are visibly further apart (then axle_track_cm = its width minus one wheel or track width), and a default footprint loses (half_width_cm = half of axle track plus one wheel or track width)",
           });
         const pose = sensorPoseClash(r.world, r.ownBuild === true);
-        if (pose)
-          add({
-            status: "warn",
-            check: `distance sensor ${r.id}`,
-            reason: pose,
-            next: "measure on the robot how far ahead of the axle and how high the sensor's eye (its front face) is, and keep that number",
-          });
+        if (pose) add({ status: "warn", check: `distance sensor ${r.id}`, ...pose });
         if (r.unconfirmed?.length)
           add({
             status: "warn",

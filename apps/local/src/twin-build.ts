@@ -12,7 +12,6 @@ import {
   distancePort,
   eyeOfPlace,
   POSE_FIELDS,
-  POSE_TOLERANCE,
   poseOfBody,
   resolveDistancePose,
 } from "../../twin-view/src/sensor-pose";
@@ -272,6 +271,11 @@ export function withSensorPose(
     throw new Error(
       `${placeAt} puts the distance sensor's eye ${-added.distance_sensor_x_cm} cm behind the axle, past the back of the body (${pre}body.back_cm ${back}${body.back_cm === undefined ? ", the default" : ""}): move the sensor forward in the look, or write how far the body reaches behind the axle in ${pre}body.back_cm`,
     );
+  const front = body.front_cm ?? DEFAULT_BODY.front_cm;
+  if (added.distance_sensor_x_cm !== undefined && added.distance_sensor_x_cm > front)
+    throw new Error(
+      `${placeAt} puts the distance sensor's eye ${added.distance_sensor_x_cm} cm ahead of the axle, past the front of the body (${pre}body.front_cm ${front}${body.front_cm === undefined ? ", the default" : ""}): move the sensor back in the look, or write how far the body reaches ahead of the axle in ${pre}body.front_cm`,
+    );
   return Object.keys(added).length ? { ...world, body: { ...body, ...added } } : world;
 }
 
@@ -279,28 +283,39 @@ export function withSensorPose(
 function lookEye(
   world: Record<string, unknown>,
   ports: BrickPorts,
-): { port: string; eye: ReturnType<typeof eyeOfPlace> | null; body: Record<string, number> } | null {
+): {
+  port: string;
+  eye: ReturnType<typeof eyeOfPlace> | null;
+  centre: { x: number | null; z: number | null } | null;
+  body: Record<string, number>;
+} | null {
   const d = distancePort(ports.sensors);
   if (!d) return null;
   const ext = isObj(world.extensions) ? world.extensions : {};
   const view = isObj(ext.view) ? ext.view : {};
   const raw = isObj(view.sensors) ? view.sensors[d.port] : undefined;
   const body = (isObj(world.body) ? world.body : {}) as Record<string, number>;
-  if (!isObj(raw)) return { port: d.port, eye: null, body };
+  if (!isObj(raw)) return { port: d.port, eye: null, centre: null, body };
   const p = place(raw);
   return {
     port: d.port,
     eye: eyeOfPlace(d.kind, p, { facing: p.facing !== null, yaw: typeof raw.yaw_deg === "number" }),
+    centre: { x: p.x, z: p.z },
     body,
   };
 }
 
+/** How far (cm) a look's place may put the distance sensor from the body's x or z before `--doctor` says so: past a
+ *  photo's estimate on the half-module grid and the few cm between a part's centre and its eye. */
+export const POSE_CLASH_CM = 2;
+
 /**
- * For `--doctor`: where the look's place puts the distance sensor's eye ahead or up and the body states another
- * number (by more than POSE_TOLERANCE). The body's number wins (a measurement), so the twin reads from it and draws
- * the sensor there, not at the place; null when they agree or only one of them says.
+ * For `--doctor`: a look's place for the distance sensor grossly elsewhere than the body's x or z says (more than
+ * POSE_CLASH_CM from both the place's number and the eye it puts there, or the eye on the other side of the axle).
+ * The body's numbers win, in the reading and the drawing, so a place near them, or one that copies them, says
+ * nothing; null then, and when only one of them gives the number.
  */
-export function sensorPoseClash(world: unknown, ownBuild: boolean): string | null {
+export function sensorPoseClash(world: unknown, ownBuild: boolean): { reason: string; next: string } | null {
   const w = (isObj(world) ? world : {}) as Record<string, unknown>;
   const ev3 = isObj(w.extensions) ? w.extensions.ev3 : undefined;
   let ports: BrickPorts;
@@ -310,21 +325,33 @@ export function sensorPoseClash(world: unknown, ownBuild: boolean): string | nul
     return null; // the world was refused already, naming the field
   }
   const look = lookEye(w, ports);
-  if (!look?.eye) return null;
+  if (!look?.eye || !look.centre) return null;
   const pre = ownBuild ? "twin." : "";
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  const ahead = (v: number) => (v < 0 ? `${r1(-v)} cm behind the axle` : `${r1(v)} cm ahead of the axle`);
   const out: string[] = [];
-  for (const [k, word] of [
-    ["x", "ahead of the axle"],
-    ["z", "above the floor"],
-  ] as const) {
+  const fields: string[] = [];
+  for (const k of ["x", "z"] as const) {
     const v = look.eye[k],
+      c = look.centre[k],
       b = look.body[POSE_FIELDS[k]];
-    if (v !== null && b !== undefined && Math.abs(v - b) > POSE_TOLERANCE.cm)
-      out.push(`${Math.round(v * 100) / 100} cm ${word} where ${pre}body.${POSE_FIELDS[k]} says ${b}`);
+    if (v === null || c === null || b === undefined) continue;
+    const far = Math.min(Math.abs(v - b), Math.abs(c - b)) > POSE_CLASH_CM;
+    const across = k === "x" && Math.sign(v) !== Math.sign(b) && Math.min(Math.abs(v), Math.abs(b)) >= 1;
+    if (!far && !across) continue;
+    fields.push(k);
+    out.push(
+      k === "x"
+        ? `${ahead(v)}, where ${pre}body.${POSE_FIELDS.x} says ${ahead(b)}`
+        : `${r1(v)} cm above the floor, where ${pre}body.${POSE_FIELDS.z} says ${b}`,
+    );
   }
-  return out.length
-    ? `${pre}${ownBuild ? "view" : "extensions.view"}.sensors.${look.port} puts the distance sensor's eye ${out.join(", and ")}: the twin reads from and draws it at the body's numbers. Change the one that is wrong, or leave the place's x and z out`
-    : null;
+  if (!out.length) return null;
+  const at = `${pre}${ownBuild ? "view" : "extensions.view"}.sensors.${look.port}`;
+  return {
+    reason: `${at} puts the distance sensor's eye ${out.join(", and ")}: the twin reads from and draws it at the body's numbers`,
+    next: `if the sensor really sits where the look puts it, write its eye's ${fields.join(" and ")} in ${pre}body; if the body is right, take ${fields.map((f) => `${f}_cm`).join(" and ")} out of ${at}`,
+  };
 }
 
 /** Roles, heading and pair against the ports the twin has. */
@@ -448,7 +475,7 @@ export function describeTwin(
       ...(kinds.includes("color") ? [`color sensor ${b.color_sensor_x_cm} cm ahead`] : []),
       ...(kinds.includes("ultrasonic") || kinds.includes("ir")
         ? [
-            `distance sensor's eye ${b.distance_sensor_x_cm < 0 ? `${-b.distance_sensor_x_cm} cm behind` : `${b.distance_sensor_x_cm} cm ahead`}, ${b.distance_sensor_y_cm < 0 ? `${-b.distance_sensor_y_cm} right` : `${b.distance_sensor_y_cm} left`}, ${b.distance_sensor_z_cm} up, looking ${b.distance_sensor_yaw_deg}° from ahead`,
+            `distance sensor's eye ${b.distance_sensor_x_cm === 0 ? "over the axle" : b.distance_sensor_x_cm < 0 ? `${-b.distance_sensor_x_cm} cm behind` : `${b.distance_sensor_x_cm} cm ahead`}, ${b.distance_sensor_y_cm === 0 ? "on the centre line" : b.distance_sensor_y_cm < 0 ? `${-b.distance_sensor_y_cm} right` : `${b.distance_sensor_y_cm} left`}, ${b.distance_sensor_z_cm} up, looking ${b.distance_sensor_yaw_deg === 0 ? "straight ahead" : `${b.distance_sensor_yaw_deg}° from ahead`}`,
           ]
         : []),
     ].join(", "),
