@@ -38,8 +38,8 @@ import type { LocalRobot } from "./robot";
 import type { RobotActivity } from "../../../packages/protocol/types";
 
 export const VIEW_RATE_HZ = 30;
-/** What a robot is doing that a restore of its room ends with a stop. */
-const MOVING = new Set<RobotActivity>(["acting", "running_program", "looping"]);
+/** What a robot may be doing that a restore of its room waits out with a stop (one already stopping is joined). */
+const MOVING = new Set<RobotActivity>(["acting", "running_program", "looping", "stopping"]);
 /** Calls a page that opens late still sees. */
 const CALL_HISTORY = 40;
 /** World events of each twin a page that opens late still sees. */
@@ -325,7 +325,7 @@ export function serveView(
 
   /**
    * The room the twin started in, whole (sim.world restore). A robot still moving is stopped first, as by the tools'
-   * stop, and the restore waits for that stop: the preempted call ends, and measures, in the room it ran in. A
+   * stop (a stop already running, Claude's or an earlier restore's, is joined), and the restore waits for that stop: the preempted call ends, and measures, in the room it ran in. A
    * robot in fault stays in fault (a hand does not clear it, reset_fault does): the answer carries the activity the
    * robot is left in, so the page can say so.
    */

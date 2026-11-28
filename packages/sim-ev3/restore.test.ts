@@ -129,6 +129,13 @@ test("startRoom: the room a person picks is entered fresh and becomes what resto
   expect(t.brick.world.pose).toEqual(picked.pose);
   // a room this robot cannot live in changes nothing: neither the room nor the origin
   expect(() => t.sim.startRoom({ ...EXAMPLES.lineOval, name: "bare", extensions: {} })).toThrow(/extensions\.ev3/);
+  let refused: unknown = null;
+  try {
+    t.sim.startRoom({ nothing: true });
+  } catch (e) {
+    refused = e;
+  }
+  expect(refused).toMatchObject({ code: "invalid_argument" });
   expect(t.brick.world.cfg.name).toBe("walls-maze");
   t.sim.restore();
   expect(t.brick.world.cfg).toEqual(picked.cfg);

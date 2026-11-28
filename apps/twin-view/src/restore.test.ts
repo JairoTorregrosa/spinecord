@@ -16,7 +16,7 @@ test("the restore toast names the gyro only on a robot that has one, in plain wo
 test("a robot left in fault: the toast says the room is back but the fault stays, and how it ends", () => {
   const meta = { ports: { motors: {}, sensors: { "2": "gyro" as const } } };
   expect(restoredText(meta, "fault")).toBe(
-    "La sala quedó como al principio, pero el robot sigue en falla: pídele a Claude que la reinicie (reset_fault).",
+    "La sala quedó como al principio, pero el robot sigue en falla: pídele a Claude que le quite la falla (reset_fault).",
   );
   expect(restoredText(meta, "idle")).toBe(restoredText(meta));
 });

@@ -439,12 +439,22 @@ export class SimWorldProvider implements Provider {
   /**
    * A person picks the room the twin is in from now on (a map switch): `world` (a world file, parsed JSON) goes
    * through `prepare` like a world `load_world` takes, the twin enters it fresh, and it becomes the origin `restore`
-   * goes back to. Throws, changing nothing (neither the room nor the origin), for a world this robot cannot live in.
+   * goes back to. Throws RuntimeError invalid_argument, changing nothing (neither the room nor the origin), for a
+   * world that is not valid or that this robot cannot live in. Like load_world it re-plugs the brick (motors stop,
+   * tachos reset): the caller stops the robot first, as the runtime does for load_world (a moving command).
    */
   startRoom(world: unknown): void {
-    const cfg = parseWorld(this.prepare(world));
-    const origin = { cfg: structuredClone(cfg), seed: this.seed };
-    this.enter(new World(cfg, this.seed));
+    let next: World;
+    let origin: { cfg: WorldConfig; seed: number };
+    try {
+      const cfg = parseWorld(this.prepare(world));
+      origin = { cfg: structuredClone(cfg), seed: this.seed };
+      next = new World(cfg, this.seed);
+      this.enter(next);
+    } catch (e) {
+      if (e instanceof RuntimeError) throw e;
+      throw new RuntimeError("invalid_argument", (e as Error).message);
+    }
     this.origin = origin;
   }
 

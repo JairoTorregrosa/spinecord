@@ -531,10 +531,17 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#modes button"))
 for (const b of document.querySelectorAll<HTMLButtonElement>("#cams button"))
   b.addEventListener("click", () => setCam(b.dataset.cam as Cam));
 $("cam-reset").addEventListener("click", () => cams.reset());
+const restoreButton = $<HTMLButtonElement>("restore");
+const restoreLabel = restoreButton.textContent!.trim();
 $("restore").addEventListener("click", () => {
-  if (!focus) return;
+  if (!focus || restoreButton.disabled) return;
   const id = focus.id;
+  // one restore at a time: it may wait for the robot to stop, and clicks meanwhile would queue more
+  restoreButton.disabled = true;
+  restoreButton.textContent = "Restaurando…";
   void link.request({ t: "restore", id }).then((r) => {
+    restoreButton.disabled = false;
+    restoreButton.textContent = restoreLabel;
     if (!r.ok) return hud.toast(`${hud.REFUSAL[r.code]}${r.code === "internal" ? `: ${r.error}` : ""}`);
     if (focus?.id === id) trailReset();
     const robot = robots.find((x) => x.id === id);

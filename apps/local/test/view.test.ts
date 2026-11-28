@@ -422,6 +422,32 @@ describe("the view listener", () => {
     expect(fleet.bricks.get("r1-sim")!.world.pose).toEqual({ x: 60, y: 60, th: 0 });
   });
 
+  test("restore while a stop is braking joins that stop: the call measures what it did, the robot idle at the start", async () => {
+    const { connect, tool, fleet } = await rig();
+    const p = await connect();
+    const robot = fleet.robots[0]!;
+    // a stop that takes 150 ms to reach the brick, as a busy link does
+    const rt = robot.runtime()!;
+    const stopNow = rt.stop.bind(rt);
+    rt.stop = (async () => {
+      await Bun.sleep(150);
+      return stopNow();
+    }) as typeof rt.stop;
+    const drive = tool("drive", { distance_cm: 60, speed_pct: 30 });
+    await until("the drive to start", () => robot.view().activity === "acting");
+    await Bun.sleep(300);
+    const stop = tool("stop");
+    await until("the stop to begin", () => robot.view().activity === "stopping");
+    const reply = await p.act({ t: "restore", id: "r1-sim" });
+    expect(reply).toMatchObject({ ok: true, activity: "idle" });
+    const ended = (await drive) as any;
+    const went = ended.ok ? ended.data.measured.distance_cm : ended.error.measured.distance_cm;
+    expect(went).toBeGreaterThan(1);
+    expect(went).toBeLessThan(60);
+    expect((await stop).ok).toBe(true);
+    expect(fleet.bricks.get("r1-sim")!.world.pose).toEqual({ x: 60, y: 60, th: 0 });
+  });
+
   test("restore in fault: the page's restores the room and says the fault stays; the model's is refused with fault", async () => {
     const { connect, tool, fleet } = await rig();
     const p = await connect();
