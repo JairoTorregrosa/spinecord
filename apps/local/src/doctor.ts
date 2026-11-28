@@ -11,7 +11,7 @@ import { paysBeforeProfile, type Env } from "../../../examples/assistant/setup";
 import { loadConfig, REPO, type LocalConfig } from "./config";
 import { CHAT_SDK_INSTALL, chatSdkMissing } from "./chat-sdk";
 import { chooseInterface, defaultRouteAddress } from "./lan";
-import { describeTwin, describeUnconfirmed, footprintClash } from "./twin-build";
+import { describeTwin, describeUnconfirmed, footprintClash, sensorPoseClash } from "./twin-build";
 
 export type Status = "ok" | "warn" | "fail";
 export interface Line {
@@ -404,6 +404,14 @@ export async function doctor(o: DoctorOptions, p: Probes): Promise<{ lines: Line
             check: `footprint ${r.id}`,
             reason: clash,
             next: "a measured value wins; else a recognised build's axle track wins over a footprint read from the photo unless the wheels are visibly further apart (then axle_track_cm = its width minus one wheel or track width), and a default footprint loses (half_width_cm = half of axle track plus one wheel or track width)",
+          });
+        const pose = sensorPoseClash(r.world, r.ownBuild === true);
+        if (pose)
+          add({
+            status: "warn",
+            check: `distance sensor ${r.id}`,
+            reason: pose,
+            next: "measure on the robot how far ahead of the axle and how high the sensor's eye (its front face) is, and keep that number",
           });
         if (r.unconfirmed?.length)
           add({

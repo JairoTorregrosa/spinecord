@@ -1,14 +1,17 @@
 // When the browser cannot draw in 3D (WebGL off: hardware acceleration disabled, a blocked GPU, a context the
 // browser took back and did not return), the page says so where the scene would be, with the fix, and keeps the
-// rest working: the connection, the brick panel, the widgets and the calls need no WebGL.
+// rest working: the connection, the brick panel, the widgets and the calls need no WebGL. A robot the page cannot
+// draw as the twin reads it (its build contradicts itself) is said the same way, in place of a scene that lies.
 
-export type No3dWhy = "no_context" | "lost";
+export type No3dWhy = "no_context" | "lost" | "build";
 
 /** How long a lost context may take to come back before the page says the 3D view is gone (ms). */
 export const LOST_GRACE_MS = 3000;
 
 /** The person's words for why there is no 3D view, and what to do. */
-export function no3dText(why: No3dWhy): string {
+export function no3dText(why: No3dWhy, detail = ""): string {
+  if (why === "build")
+    return `El robot no se pudo dibujar como lo lee el gemelo: ${detail}. Corrige su archivo de robot y vuelve a abrir la página.`;
   const fix =
     "Abre la página en Chrome o Edge y activa la aceleración por hardware (chrome://settings/system), luego recarga.";
   return why === "lost"
@@ -23,7 +26,7 @@ export function showNo3d(why: No3dWhy, detail: string): void {
   const chip = document.getElementById("chip-3d");
   if (box) {
     box.hidden = false;
-    box.querySelector("p")!.textContent = no3dText(why);
+    box.querySelector("p")!.textContent = no3dText(why, detail);
     box.title = detail;
   }
   if (chip) chip.hidden = false;

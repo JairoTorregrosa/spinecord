@@ -183,6 +183,10 @@
         "minimum": 0
       },
       "properties": {
+        "distance_sensor_x_cm": {
+          "type": "number",
+          "description": "How far ahead of the axle the distance sensor's eye is, cm (negative: behind it, at most back_cm). Default 8."
+        },
         "distance_sensor_y_cm": {
           "type": "number",
           "description": "How far to the left of the centre line the distance sensor's eye is, cm (negative: to the right). Default 0."

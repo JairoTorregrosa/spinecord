@@ -117,7 +117,9 @@ export interface BodyShape {
   /**
    * Distance sensor (ultrasonic or infrared): where its eye is and where it looks. Every ray of its beam starts at
    * that point and is aimed from that heading; the 3D view draws the sensor there (apps/twin-view/src/sensor-pose.ts).
-   * `x` cm ahead of the axle, `y` cm to the left of the centre line (negative: to the right).
+   * `x` cm ahead of the axle (negative: behind it, down to -back_cm), `y` cm to the left of the centre line
+   * (negative: to the right). The rays see walls and boxes only, never the robot's own body: a sensor at the front
+   * looking back reads through the robot to what is behind it.
    */
   distance_sensor_x_cm: number;
   distance_sensor_y_cm: number;
@@ -419,6 +421,7 @@ export function parseWorld(json: unknown): WorldConfig {
   };
   // the fields that may be negative: a side of the centre line, a direction
   const SIGNED: Record<string, [number, number]> = {
+    distance_sensor_x_cm: [-Infinity, Infinity], // behind the axle: checked against back_cm below
     distance_sensor_y_cm: [-Infinity, Infinity],
     distance_sensor_yaw_deg: [-180, 180],
   };
@@ -435,6 +438,12 @@ export function parseWorld(json: unknown): WorldConfig {
     return out as T;
   };
   const root = obj(json, "root");
+  const body = partial(root.body, "body", DEFAULT_BODY);
+  if (body.distance_sensor_x_cm < -body.back_cm)
+    fail(
+      "body.distance_sensor_x_cm",
+      `is ${body.distance_sensor_x_cm}: the distance sensor's eye would be ${-body.distance_sensor_x_cm} cm behind the axle, past the back of the body (back_cm ${body.back_cm}); a sensor at the back is at most back_cm behind the axle`,
+    );
   const KNOWN = [
     "schema",
     "name",
@@ -537,7 +546,7 @@ export function parseWorld(json: unknown): WorldConfig {
         radius: num(o.radius_cm, `points[${i}].radius_cm`, 0.1),
       };
     }),
-    body: partial(root.body, "body", DEFAULT_BODY),
+    body,
     noise: partial(root.noise, "noise", DEFAULT_NOISE),
     start: {
       x: num(start.x, "start.x"),

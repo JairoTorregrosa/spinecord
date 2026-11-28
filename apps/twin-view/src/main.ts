@@ -312,7 +312,12 @@ function setFocus(id: string | null): void {
   showTitle(focus);
   if (!focus) return;
   const look = lookOf(focus);
-  model = buildRobot(focus, look);
+  try {
+    model = buildRobot(focus, look);
+  } catch (e) {
+    // a build the page cannot draw as the twin reads it: said in place of the scene, never a silent empty arena
+    return showNo3d("build", (e as Error).message);
+  }
   robotRoot.add(model.group);
   arena = buildArena(focus.world, model.height, renderer?.capabilities.getMaxAnisotropy() ?? 1);
   scene.add(arena.group);

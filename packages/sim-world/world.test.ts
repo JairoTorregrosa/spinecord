@@ -421,9 +421,21 @@ describe("the distance sensor's pose: its eye off the centre line and its headin
     // the infrared's light comes back mostly along the ray that meets it
     expect(side.irProximity()).toBeLessThan(room({}, box).irProximity());
   });
+  test("a sensor at the back looking back reads what is behind the robot, from its own eye", () => {
+    const w = room({ back_cm: 12, distance_sensor_x_cm: -10, distance_sensor_yaw_deg: 180 });
+    const a = w.distanceSensorAxis();
+    expect(a.o[0]).toBeCloseTo(90, 9);
+    expect(a.o[1]).toBeCloseTo(100, 9);
+    expect(w.rayDistance()).toBeCloseTo(90, 6); // to the wall at x 0
+    expect(w.coneDistance()).toBeCloseTo(90, 6);
+    // past the back of the body is no place for it: refused in plain words
+    expect(() => room({ back_cm: 12, distance_sensor_x_cm: -13 })).toThrow(
+      "body.distance_sensor_x_cm is -13: the distance sensor's eye would be 13 cm behind the axle, past the back of the body (back_cm 12)",
+    );
+  });
   test("the side may be negative, the heading only within -180..180", () => {
     expect(room({ distance_sensor_y_cm: -3 }).cfg.body.distance_sensor_y_cm).toBe(-3);
     expect(() => room({ distance_sensor_yaw_deg: 270 })).toThrow(/distance_sensor_yaw_deg/);
-    expect(() => room({ distance_sensor_x_cm: -1 })).toThrow(/distance_sensor_x_cm/);
+    expect(() => room({ distance_sensor_x_cm: -11 })).toThrow(/distance_sensor_x_cm/); // back_cm 10 by default
   });
 });

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DEFAULT_BODY } from "../../../packages/sim-world/world";
 import { EXAMPLE, REPO, loadConfig, type RobotSource } from "../src/config";
 import { buildFleet } from "../src/sources";
-import { describeTwin, describeUnconfirmed, MOVES } from "../src/twin-build";
+import { describeTwin, describeUnconfirmed, MOVES, sensorPoseClash } from "../src/twin-build";
 import { toolsOf } from "./arm";
 import { eyeOffset, poseOfBody, rayEnd } from "../../twin-view/src/sensor-pose";
 import { sensorRays } from "../src/view";
@@ -530,6 +530,56 @@ describe("the distance sensor's pose: the reading, the rays and the drawn sensor
     const b = (twinOf(orugas).world as { body: Record<string, number> }).body;
     expect([b.distance_sensor_x_cm, b.distance_sensor_y_cm, b.distance_sensor_z_cm]).toEqual([6, 4.6, 20]);
     expect(b.distance_sensor_yaw_deg).toBeUndefined(); // looking ahead, the default
+  });
+
+  test("a sensor at the back facing back: drawn, cast and read from its own eye behind the axle", async () => {
+    const REAR = { x_cm: -12, y_cm: 0, z_cm: 10, facing: "back" };
+    const robot = offCentre(REAR, { back_cm: 16 });
+    delete (robot.twin.body as Record<string, unknown>).distance_sensor_x_cm;
+    const b = (twinOf(robot).world as { body: Record<string, number> }).body;
+    expect(b.distance_sensor_x_cm).toBeCloseTo(-12 - eye[0], 2);
+    expect(b.distance_sensor_yaw_deg).toBe(180);
+    const SALA = join(REPO, "deployments", "orugas", "worlds", "sala.json");
+    const fleet = await buildFleet(loadConfig(["--twin", file("rear.json", robot), "--world", SALA]), {
+      log: () => {},
+    });
+    try {
+      const w = fleet.bricks.get("orugas-sim")!.world;
+      w.setPose({ x: 100, y: 40, th: Math.PI }); // facing the BASE end: its back looks toward the far wall
+      const { o, th } = w.distanceSensorAxis();
+      expect(o[0]).toBeCloseTo(100 + 12 + eye[0], 2); // behind the axle, on the side the robot backs toward
+      expect(Math.cos(th)).toBeCloseTo(1, 9);
+      w.addObstacle({ x: o[0] + 25, y: 30, w: 10, h: 20 });
+      const rays = sensorRays(w, ["ir"]);
+      const mid = rays.ir!.rays[(rays.ir!.rays.length - 1) / 2]!;
+      expect(mid.cm).toBeCloseTo(25, 1);
+      const end = rayEnd(rays.from, mid.deg, mid.cm); // robot frame: behind it
+      expect(end[0]).toBeCloseTo(-12 - eye[0] - 25, 1);
+      expect(w.irProximity()).toBeLessThan(100);
+    } finally {
+      await fleet.shutdown();
+    }
+  }, 30_000);
+
+  test("a rear sensor past the back of the body is refused, naming what the person wrote", () => {
+    const robot = offCentre({ x_cm: -12, z_cm: 10, facing: "back" });
+    delete (robot.twin.body as Record<string, unknown>).distance_sensor_x_cm;
+    expect(fails(robot)).toThrow(
+      "twin.view.sensors.4 puts the distance sensor's eye 14.38 cm behind the axle, past the back of the body (twin.body.back_cm 13.5)",
+    );
+    expect(fails(offCentre(PLACE, { distance_sensor_x_cm: -20 }))).toThrow(
+      "twin.body.distance_sensor_x_cm is -20: the distance sensor's eye would be 20 cm behind the axle, past the back of the body (back_cm 13.5)",
+    );
+  });
+
+  test("doctor: a place whose eye is ahead of or above the body's numbers is named, both values", () => {
+    const world = (r: unknown) => twinOf(r).world;
+    expect(
+      sensorPoseClash(world(offCentre({ x_cm: 3.62, y_cm: 4.6, z_cm: 19.6 }, { distance_sensor_z_cm: 20 })), true),
+    ).toBeNull();
+    expect(sensorPoseClash(world(offCentre({ x_cm: 5, y_cm: 4.6, z_cm: 19.6 })), true)).toBe(
+      "twin.view.sensors.4 puts the distance sensor's eye 7.38 cm ahead of the axle where twin.body.distance_sensor_x_cm says 6: the twin reads from and draws it at the body's numbers. Change the one that is wrong, or leave the place's x and z out",
+    );
   });
 
   test("refused when the body and the look put the eye on different sides or looking different ways", () => {
