@@ -8,21 +8,21 @@ Habla con un robot LEGO EV3 a través de Claude. ¿No tienes robot? Tienes su ge
 
 ## Empezar
 
-1. Abre un agente de código (Claude Code, Codex u otro) en macOS, Windows o Linux.
+1. Abre un agente de código en macOS, Windows o Linux: la pestaña Code de la app de escritorio de Claude, Claude Code, Codex u otro.
 2. Pega esto:
 
    ```text
    Read https://raw.githubusercontent.com/JairoTorregrosa/spinecord/main/.claude/skills/setup-spinecord/SKILL.md and follow it.
    ```
 
-3. El agente instala todo. Tú haces cinco cosas:
+3. El agente instala todo. Tú haces pocas cosas:
 
 | Cuándo | Tú |
 |---|---|
-| Te pregunta | Dices si tienes un EV3, le pones nombre al robot si quieres y dices que sí al plan |
-| Se abre una página del navegador | Entras a platform.claude.com, eliges la organización que tiene tus créditos y haces clic en Authorize |
-| Te dice quién paga | Dices que sí |
-| Te da una línea | La pegas en una terminal nueva y confías en la carpeta |
+| Te pregunta | Dices quién paga (tu plan de Claude o los créditos de API del taller), si tienes un EV3, un nombre para el robot si quieres, y sí al plan |
+| Solo créditos: se abre una página del navegador | Entras a platform.claude.com, eliges la organización que tiene tus créditos y haces clic en Authorize |
+| Solo créditos: te dice quién paga | Dices que sí |
+| Arranca el Claude Code del robot | Permites la carpeta. En una terminal: flecha abajo hasta *Yes, I trust this folder* y Enter |
 | Se abre la página 3D | Escribes lo que te dice y ves moverse al robot |
 
 Nadie crea ni copia una API key.

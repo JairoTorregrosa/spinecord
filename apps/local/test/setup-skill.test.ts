@@ -8,7 +8,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CONFIRM,
+  checkChoice,
   ev3DraftWarn,
+  inDesktopApp,
+  isSpinecordView,
+  smokeSkip,
+  STATES,
+  statesFor,
+  toolsFor,
+  VIEW_URL,
+  waitView,
+  windowScript,
+  serverLine,
+  checkProfile,
+  windowCommand,
+  withRestart,
   hostOnly,
   launchEnv,
   nextState,
@@ -233,9 +247,10 @@ test("setup.ts name ends with the restart the person must do, and runs no doctor
     status: "ok",
     what: "restart",
     why: "Claude Code reads the new registration when it starts again",
-    next: "the person types /exit in Claude Code, then starts it again with: cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude --model sonnet",
+    next: "the person types /exit in the robot's Claude Code; then run bun scripts/setup.ts window (a new window runs cd ~/mi-robot && ANTHROPIC_PROFILE=credits claude --model sonnet)",
   });
-  expect(restartLine("win32", "p").next).toEndWith(launchLine("win32", "p"));
+  // the window execs claude: after /exit no shell is left, so the agent opens a new window, the person types nothing
+  expect(restartLine("win32", "p").next).toContain("bun scripts/setup.ts window");
   const src = readFileSync(join(DIR, "..", "..", "..", "scripts", "setup.ts"), "utf8");
   const nameStep = src.slice(src.indexOf("async function name("), src.indexOf("async function report("));
   expect(nameStep).toContain("register(s)");
@@ -274,9 +289,9 @@ test("setup.ts keeps the robot's name across runs, and a new name changes only t
     expect(setup("name", "Doña", "Tuerca").stdout.toString()).toContain('ok    name  "Doña Tuerca"');
     expect(state().name).toBe("Doña Tuerca");
     // another step that writes the state keeps the name; the same name again changes nothing
-    setup("confirm", "moved");
+    setup("confirm", "forward");
     const before = state();
-    expect(before).toEqual({ profile: "credits", name: "Doña Tuerca", moved: true });
+    expect(before).toEqual({ profile: "credits", name: "Doña Tuerca", forward: true });
     setup("name", "Doña Tuerca");
     expect(state()).toEqual(before);
     setup("name", "Rayo");
@@ -628,4 +643,205 @@ test("the Windows probe reads the JSON that PowerShell writes, with or without a
   expect(paysPlan({ env: { Anthropic_Api_Key: "k" } }, {}, "credits", "win32")).toMatchObject({
     lines: [{ status: "fail", what: "pays", why: expect.stringContaining("ANTHROPIC_API_KEY") }],
   });
+});
+
+// ---- who pays: the path the person chose, and the states that path needs ----
+
+test("the choice is explicit: no choice holds CHOOSE, each path lists only its states and tools", () => {
+  expect(checkChoice({})).toMatchObject({ status: "todo", what: "choice" });
+  expect(checkChoice({ pays: "app" }).status).toBe("ok");
+  expect(checkChoice({ pays: "credits" }).status).toBe("ok");
+  expect(statesFor(undefined)).toEqual([...STATES]);
+  expect(statesFor("credits")).toEqual([...STATES]);
+  expect(statesFor("app")).toEqual(STATES.filter((n) => n !== "LOGIN" && n !== "PAYS"));
+  expect(statesFor("app")).toHaveLength(STATES.length - 2);
+  expect(toolsFor("app")).not.toContain("ant");
+  expect(toolsFor("credits")).toContain("ant");
+  expect(toolsFor(undefined)).toContain("ant");
+  const done: Line = { status: "ok", what: "x", why: "y" };
+  const open: Line = { status: "todo", what: "x", why: "y" };
+  // next per path: CHOOSE first, then the first open state of that path only
+  const per = (pays: "app" | "credits" | undefined, openAt: string[]): [string, Line[]][] =>
+    statesFor(pays).map((n) => [n, [n === "CHOOSE" ? checkChoice({ pays }) : openAt.includes(n) ? open : done]]);
+  expect(nextState(per(undefined, ["LOGIN"]))).toBe("CHOOSE");
+  expect(nextState(per("credits", ["LOGIN", "SMOKE"]))).toBe("LOGIN");
+  // on the app path an open LOGIN cannot even be listed, so SMOKE is next
+  expect(nextState(per("app", ["LOGIN", "SMOKE"]))).toBe("SMOKE");
+  expect(nextState(per("app", []))).toBe("REPORT");
+});
+
+test("setup choose records the payer; status of the app path shows no LOGIN and no PAYS", () => {
+  const home = mkdtempSync(join(tmpdir(), "spinecord-setup-home-"));
+  try {
+    const setup = (...args: string[]) => {
+      const r = Bun.spawnSync([process.execPath, join(DIR, "..", "..", "..", "scripts", "setup.ts"), ...args], {
+        env: { HOME: home, USERPROFILE: home, PATH: join(home, "no-tools") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return { code: r.exitCode, out: r.stdout.toString() };
+    };
+    const state = () => JSON.parse(readFileSync(join(home, "mi-robot", ".spinecord-setup.json"), "utf8"));
+    expect(setup("choose", "nobody").code).toBe(2);
+    expect(existsSync(join(home, "mi-robot", ".spinecord-setup.json"))).toBe(false);
+    expect(setup("choose", "app")).toMatchObject({ code: 0 });
+    expect(state()).toEqual({ profile: "credits", pays: "app" });
+    const st = setup("status").out;
+    expect(st).toMatch(/^ok\s+CHOOSE\b/m);
+    expect(st).not.toMatch(/^\w+\s+(LOGIN|PAYS)\b/m);
+    expect(st).not.toContain("ant:");
+    // no git and no claude on PATH here: the tools are the next state
+    expect(st.trim().split("\n").at(-1)).toBe("next TOOLS");
+    expect(setup("login").out).toContain("not needed");
+    // a window is a step of the credits path only
+    expect(setup("window")).toMatchObject({ code: 1 });
+    // "it moved" needs the folder and the smoke test first
+    const moved = setup("confirm", "moved");
+    expect(moved.code).toBe(1);
+    expect(moved.out).toContain("come first");
+    expect(state().moved).toBeUndefined();
+    // a path's smoke test and "it moved" do not carry over to another path, there and back
+    const file = join(home, "mi-robot", ".spinecord-setup.json");
+    const done = { smoke: { args: "a", answer: "b", cost_usd: 0 }, moved: true };
+    writeFileSync(file, JSON.stringify({ ...state(), ...done }));
+    expect(setup("choose", "credits").code).toBe(0);
+    expect(state()).toEqual({ profile: "credits", pays: "credits" });
+    writeFileSync(file, JSON.stringify({ ...state(), ...done }));
+    expect(setup("choose", "app").code).toBe(0);
+    expect(state()).toEqual({ profile: "credits", pays: "app" });
+    // choosing the same path again keeps what it recorded
+    writeFileSync(file, JSON.stringify({ ...state(), ...done }));
+    setup("choose", "app");
+    expect(state()).toEqual({ profile: "credits", pays: "app", ...done });
+    expect(setup("login", "--profile", "a b").out).toContain("fail");
+    // a profile in the state file that would reach a command line unquoted: a fail line, not a stack trace
+    writeFileSync(file, JSON.stringify({ ...state(), profile: "x; rm" }));
+    const bad = setup("report");
+    expect(bad.code).toBe(1);
+    expect(bad.out).toMatch(/^fail\s+profile\s/m);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 30_000);
+
+/** A fake clock: sleep moves it, `up` answers from the time. */
+function clock(upAt: number | null) {
+  let t = 0;
+  const said: string[] = [];
+  return {
+    said,
+    w: {
+      up: async () => upAt !== null && t >= upAt,
+      now: () => t,
+      sleep: async (ms: number) => void (t += ms),
+      say: (l: string) => void said.push(l),
+    },
+  };
+}
+
+test("setup view waits for the robot's session with progress lines, and a running server is already running", async () => {
+  const already = clock(0);
+  expect(await waitView(already.w, 90_000)).toEqual({ state: "already", waited: 0 });
+  expect(already.said).toEqual([]);
+  const later = clock(25_000);
+  expect(await waitView(later.w, 90_000)).toEqual({ state: "started", waited: 25_000 });
+  expect(later.said).toHaveLength(2);
+  expect(later.said[0]).toContain(`nothing on ${VIEW_URL} yet (10 s of 90 s)`);
+  const never = clock(null);
+  const r = await waitView(never.w, 90_000);
+  expect(r.state).toBe("timeout");
+  expect(r.waited).toBeGreaterThanOrEqual(90_000);
+  expect(r.waited).toBeLessThan(100_000);
+  expect(never.said).toHaveLength(9);
+});
+
+test("the desktop app: its entrypoint, and a window that runs the launch line", () => {
+  expect(inDesktopApp({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop" })).toBe(true);
+  expect(inDesktopApp({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop-3p" })).toBe(true);
+  expect(inDesktopApp({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe(false);
+  expect(inDesktopApp({})).toBe(false);
+  const mac = windowScript("darwin", "/Users/o'k/mi-robot", "credits", "/Users/o'k/.local/bin/claude");
+  expect(mac.name).toEndWith(".command");
+  expect(mac.text).toBe(
+    "#!/bin/sh\ncd '/Users/o'\\''k/mi-robot' || exit 1\nANTHROPIC_PROFILE=credits exec '/Users/o'\\''k/.local/bin/claude' --model sonnet\n",
+  );
+  const ps = windowScript("win32", "C:\\Users\\o'k\\mi-robot", "credits", "C:\\Users\\o'k\\.local\\bin\\claude.exe");
+  expect(ps.name).toEndWith(".ps1");
+  expect(ps.text).toContain("Set-Location -LiteralPath 'C:\\Users\\o''k\\mi-robot'");
+  expect(ps.text).toContain("$env:ANTHROPIC_PROFILE = 'credits'");
+  expect(ps.text).toContain("& 'C:\\Users\\o''k\\.local\\bin\\claude.exe' --model sonnet");
+  // no `cmd /c start`: its first quoted argument would be the title
+  const winCmd = windowCommand("win32", "C:\\a b\\x.ps1");
+  expect(winCmd.slice(0, 3)).toEqual(["powershell.exe", "-NoProfile", "-Command"]);
+  expect(winCmd[3]).toBe(
+    "Start-Process powershell.exe -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-File','\"C:\\a b\\x.ps1\"'",
+  );
+  expect(windowCommand("darwin", "/w/x.command")).toEqual(["open", "-a", "Terminal", "/w/x.command"]);
+  expect(restartLine("darwin", "credits", "app").next).toContain("new session in the folder");
+  expect(restartLine("darwin", "credits", "app").next).not.toContain("ANTHROPIC_PROFILE");
+});
+
+test("a registration change while the robot's session runs ends with one restart line, per path", () => {
+  const ok: Line = { status: "ok", what: "doctor", why: "doctor: ok" };
+  expect(withRestart([ok], false, "darwin", "credits", "app")).toEqual([ok]);
+  const app = withRestart([ok], true, "darwin", "credits", "app");
+  expect(app.at(-1)).toMatchObject({ what: "restart", next: expect.stringContaining("new session in the folder") });
+  const credits = withRestart([ok], true, "win32", "credits", "credits");
+  expect(credits.at(-1)!.next).toContain("bun scripts/setup.ts window");
+  expect(withRestart(credits, true, "win32", "credits", "credits")).toEqual(credits);
+});
+
+test("the Windows window script keeps a non-ASCII path: a BOM, and Set-Location stops on a missing folder", () => {
+  const w = windowScript(
+    "win32",
+    "C:\\Users\\Astrid López\\mi-robot",
+    "credits",
+    "C:\\Users\\Astrid López\\.local\\bin\\claude.exe",
+  );
+  expect(w.text.charCodeAt(0)).toBe(0xfeff);
+  const bytes = Buffer.from(w.text, "utf8");
+  expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+  expect(w.text).toContain("Set-Location -LiteralPath 'C:\\Users\\Astrid López\\mi-robot' -ErrorAction Stop");
+  expect(Buffer.from(w.text, "utf8").toString("utf8")).toContain("López");
+  expect(windowScript("darwin", "/Users/López/mi-robot", "credits", "/c").text.charCodeAt(0)).toBe("#".charCodeAt(0));
+});
+
+test("a profile name with a space or a quote never reaches a command line; status names a running server at once", () => {
+  expect(checkProfile("credits-2_b")).toBe("credits-2_b");
+  for (const bad of ["a b", "x'; rm", "$HOME", ""]) {
+    expect(() => checkProfile(bad)).toThrow();
+    expect(() => windowScript("darwin", "/w", bad, "/c")).toThrow();
+  }
+  expect(serverLine(true)).toMatchObject({
+    status: "ok",
+    what: "server",
+    why: expect.stringContaining("start no other"),
+  });
+  expect(serverLine(false).status).toBe("ok");
+  // the server line never decides SEE IT: only the person's confirm moved does
+  expect(summarize("SEE IT", [{ status: "todo", what: "moved", why: "m" }, serverLine(true)]).status).toBe("todo");
+});
+
+test("only spinecord's own page counts as a running robot session, and a skip is saved only once the folder is done", () => {
+  const title = readFileSync(join(DIR, "..", "..", "..", "apps", "twin-view", "view.html"), "utf8").match(
+    /<title>([^<]*)<\/title>/,
+  )![1]!;
+  expect(isSpinecordView(200, `<html><head><title>${title}</title></head></html>`, title)).toBe(true);
+  expect(isSpinecordView(200, "hello", title)).toBe(false);
+  expect(isSpinecordView(404, `<title>${title}</title>`, title)).toBe(false);
+  expect(smokeSkip(true)).toMatchObject({ save: true, line: { status: "ok", what: "smoke" } });
+  expect(smokeSkip(false)).toMatchObject({ save: false, line: { status: "todo", what: "smoke" } });
+});
+
+test("a plain server on the view port is not spinecord: status says none, and smoke saves no skip", async () => {
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("hello") });
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${server.port}/`)).text();
+    const title = readFileSync(join(DIR, "..", "..", "..", "apps", "twin-view", "view.html"), "utf8").match(
+      /<title>([^<]*)<\/title>/,
+    )![1]!;
+    expect(isSpinecordView(200, body, title)).toBe(false);
+  } finally {
+    server.stop(true);
+  }
 });
