@@ -265,7 +265,10 @@ export class Hand {
   /** The floor point under the pointer (cm), kept inside the arena when `clamp`. */
   private floorAt(e: PointerEvent, clamp = true): { x: number; y: number } | null {
     this.aim(e);
-    const p = this.ray.ray.intersectPlane(this.floor, new THREE.Vector3());
+    // the top of a ramp or a platform under the pointer, else the floor
+    const p =
+      this.ray.intersectObjects(this.c.arena()?.terrain ?? [], false)[0]?.point ??
+      this.ray.ray.intersectPlane(this.floor, new THREE.Vector3());
     const f = this.c.focus();
     if (!p || !f) return null;
     const { width, height } = f.world;

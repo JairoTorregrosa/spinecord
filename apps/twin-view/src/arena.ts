@@ -8,6 +8,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { Obstacle, WorldShape } from "./messages";
+import { buildTerrain } from "./terrain";
 
 /** Floor colours of the colour ids of contract §2.2, as sim-world draws them. */
 export const COLOR_RGB = ["#282828", "#141414", "#3478dc", "#3caa5a", "#f5cd3c", "#dc463c", "#f5f3ec", "#8c5f3c"];
@@ -21,6 +22,8 @@ export interface Arena {
   group: THREE.Group;
   /** The obstacle meshes; each one's `userData.id` is its box's id. */
   boxes: THREE.Mesh[];
+  /** The solids of the terrain (platforms and ramps): the hand sets the robot down on their tops. */
+  terrain: THREE.Mesh[];
   setBoxes(boxes: Obstacle[]): void;
   /** Highlights obstacle `i` (or none) as the one a click would take away. */
   /** Lights the box with this id (null: none). */
@@ -336,10 +339,16 @@ export function buildArena(w: WorldShape, tallest: number, maxAnisotropy = 8): A
     }
   };
   setBoxes(w.boxes);
+  const terrain = w.terrain && w.terrain.length > 0 ? buildTerrain(w.terrain) : null;
+  if (terrain) {
+    group.add(terrain.group);
+    owned.push(terrain);
+  }
 
   return {
     group,
     boxes: meshes,
+    terrain: terrain?.solids ?? [],
     setBoxes,
     highlight(id) {
       for (const m of meshes) m.material = m.userData.id === id ? hot : (m.userData.own as THREE.Material);
