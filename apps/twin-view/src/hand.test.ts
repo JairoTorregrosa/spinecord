@@ -24,8 +24,22 @@ g.document = {
   querySelectorAll: () => [],
 };
 g.innerWidth ??= 1000;
-g.addEventListener ??= () => {};
-g.removeEventListener ??= () => {};
+/** The window's listeners: a pointer let go off the canvas reaches only these. */
+const onWindow = new Map<string, ((e: unknown) => void)[]>();
+g.addEventListener = (t: string, f: (e: unknown) => void) => onWindow.set(t, [...(onWindow.get(t) ?? []), f]);
+g.removeEventListener = (t: string, f: (e: unknown) => void) =>
+  onWindow.set(
+    t,
+    (onWindow.get(t) ?? []).filter((x) => x !== f),
+  );
+g.PointerEvent = class {
+  constructor(
+    readonly type: string,
+    init: Record<string, unknown>,
+  ) {
+    Object.assign(this, init, { synthetic: true });
+  }
+};
 g.matchMedia ??= () => ({ matches: false, addEventListener() {} });
 const { Hand } = await import("./hand");
 
@@ -43,10 +57,26 @@ class Canvas {
   setPointerCapture() {}
   hasPointerCapture = () => false;
   releasePointerCapture() {}
-  fire(type: string, at: Px, id = 1, pointerType = "mouse"): Ev {
+  /** The events the page itself dispatched on the canvas. */
+  readonly dispatched: Record<string, unknown>[] = [];
+  dispatchEvent(e: Record<string, unknown>) {
+    this.dispatched.push(e);
+    for (const f of this.on.get(e.type as string) ?? []) f(e);
+    return true;
+  }
+  /** A pointer event; `buttons` as a browser sets it: held during a press, none after a release. */
+  fire(
+    type: string,
+    at: Px,
+    id = 1,
+    pointerType = "mouse",
+    buttons = type === "pointerup" ? 0 : 1,
+    where = "canvas",
+  ): Ev {
     const e = {
       type,
       button: 0,
+      buttons,
       pointerId: id,
       pointerType,
       clientX: at.cx,
@@ -58,7 +88,9 @@ class Canvas {
       },
       preventDefault() {},
     };
-    for (const f of this.on.get(type) ?? []) f(e);
+    // a release reaches the window first (capture), and the canvas only when it happens over it
+    for (const f of onWindow.get(type) ?? []) f(e);
+    if (where === "canvas") for (const f of this.on.get(type) ?? []) f(e);
     return e;
   }
 }
@@ -157,7 +189,7 @@ function setup(mode: Mode, o: { answer?: Reply; boxes?: Obstacle[]; camera?: THR
     return down;
   };
   const hover = (a: Px) => {
-    canvas.fire("pointermove", a);
+    canvas.fire("pointermove", a, 1, "mouse", 0);
     return canvas.dataset.hover;
   };
   return { sent, drag, hover, canvas, screen };
@@ -170,6 +202,7 @@ const toast = () => els.get("toast")!;
 
 beforeEach(() => {
   els.clear();
+  onWindow.clear();
 });
 
 describe("a press on a box moves that box, in every mode that moves things", () => {
@@ -280,5 +313,50 @@ describe("the modes that do not move boxes, and a second finger", () => {
     expect(sent).toEqual([]);
     // both fingers up: the next press on the box is the hand's again
     expect(canvas.fire("pointerdown", top(130, 130), 3, "touch").stopped).toBe(true);
+  });
+
+  test("a pinch whose first finger lands on a box is the camera's: the box stays and is not sent", async () => {
+    const { sent, canvas } = setup("look");
+    expect(canvas.fire("pointerdown", top(130, 130), 1, "touch").stopped).toBe(true); // the hand takes the box
+    const second = canvas.fire("pointerdown", top(80, 160), 2, "touch");
+    expect(second.stopped).toBe(false); // the camera gets the second finger
+    // and the first finger's press again, so it sees two fingers
+    expect(canvas.dispatched).toEqual([expect.objectContaining({ type: "pointerdown", pointerId: 1, clientX: 130 })]);
+    canvas.fire("pointermove", top(140, 120), 1, "touch");
+    canvas.fire("pointermove", top(70, 170), 2, "touch");
+    canvas.fire("pointerup", top(140, 120), 1, "touch");
+    canvas.fire("pointerup", top(70, 170), 2, "touch");
+    await settle();
+    expect(sent).toEqual([]);
+  });
+  test("a second finger after the first moved the box turns it instead", async () => {
+    const { sent, canvas } = setup("look");
+    canvas.fire("pointerdown", top(130, 130), 1, "touch");
+    canvas.fire("pointermove", top(150, 130), 1, "touch");
+    expect(canvas.fire("pointerdown", top(80, 160), 2, "touch").stopped).toBe(true); // the twist
+    canvas.fire("pointerup", top(80, 160), 2, "touch");
+    canvas.fire("pointerup", top(150, 130), 1, "touch");
+    await settle();
+    expect(canvas.dispatched).toEqual([]);
+    expect(sent).toEqual([expect.objectContaining({ t: "box_move", box: "b1" })]);
+  });
+  test("a pointer let go off the canvas does not leave the next press to the camera", async () => {
+    const { sent, canvas } = setup("look");
+    // a touch that orbits and is lifted outside the canvas: only the window hears it
+    canvas.fire("pointerdown", top(80, 160), 5, "touch");
+    canvas.fire("pointerup", top(80, 160), 5, "touch", 0, "window");
+    expect(canvas.fire("pointerdown", top(130, 130), 6, "touch").stopped).toBe(true);
+    canvas.fire("pointerup", top(130, 130), 6, "touch");
+    // a mouse release nobody heard: the next press with no other button held is the hand's anyway
+    canvas.fire("pointerdown", top(80, 160), 1, "mouse");
+    expect(canvas.fire("pointerdown", top(130, 130), 1, "mouse").stopped).toBe(true);
+    await settle();
+    expect(sent).toEqual([expect.objectContaining({ t: "box_move", box: "b1", x: 120, y: 120 })]); // the touch's click
+  });
+  test("orbiting or panning across a box shows no hover", () => {
+    const { canvas } = setup("look");
+    canvas.fire("pointerdown", top(80, 160), 1, "mouse");
+    canvas.fire("pointermove", top(130, 130), 1, "mouse", 1);
+    expect(canvas.dataset.hover ?? "").toBe("");
   });
 });

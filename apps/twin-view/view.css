@@ -57,8 +57,9 @@ body {
 #scene.holding {
   cursor: grabbing !important;
 }
+/* the robot's camera: the hand does not reach, whatever the mode */
 #scene[data-cam="eye"] {
-  cursor: default;
+  cursor: default !important;
 }
 .panel {
   position: fixed;

@@ -46,6 +46,11 @@ export interface HandContext {
 const DEG = Math.PI / 180;
 const CLICK_BOX = 20;
 const STEP_DEG = 15;
+/** A second finger this soon after the first, with the first still within HANDOVER_PX, makes a camera gesture. */
+const HANDOVER_MS = 150;
+const HANDOVER_PX = 6;
+/** `PointerEvent.buttons` bit of each `PointerEvent.button`. */
+const BUTTON_BIT: readonly number[] = [1, 4, 2, 8, 16];
 const HINTS: Record<Mode, string> = {
   look: "Arrastra el robot: levantarlo · una caja: moverla · el suelo: girar la vista",
   carry: "Pulsa donde va el robot y arrastra hacia donde mira · arrastra una caja: moverla",
@@ -97,7 +102,7 @@ export class Hand {
   /** The finished measure stays on the floor until the next one or Esc. */
   private measured: { x0: number; y0: number; x: number; y: number } | null = null;
   /** The pointer that holds the drag, and where it last was on screen (for a second finger's twist). */
-  private holder: { id: number; x: number; y: number } | null = null;
+  private holder: { id: number; x: number; y: number; x0: number; y0: number; t0: number; type: string } | null = null;
   /**
    * A second finger on a touch screen while the first holds the robot or a box: turning the two fingers turns the
    * robot; a box (its sides stay along x and y) turns a quarter turn once the twist passes 45°.
@@ -132,23 +137,28 @@ export class Hand {
     cv.addEventListener(
       "pointerdown",
       (e) => {
+        // a mouse or pen press with no other button held: no other pointer of it is down, whatever was missed
+        if (e.pointerType !== "touch" && (e.buttons & ~(BUTTON_BIT[e.button] ?? 0)) === 0) this.downs.clear();
         const alone = this.downs.size === 0;
         this.downs.add(e.pointerId);
+        if (this.handOver(e)) return;
         if (!this.twistDown(e) && alone) this.down(e);
       },
       { capture: true },
     );
     cv.addEventListener("pointermove", (e) => (this.twistMove(e) ? undefined : this.move(e)));
     cv.addEventListener("pointerup", (e) => {
-      this.downs.delete(e.pointerId);
       if (this.twist?.id === e.pointerId) this.twist = null;
       else if (!this.holder || this.holder.id === e.pointerId) this.up(e);
     });
     cv.addEventListener("pointercancel", (e) => {
-      this.downs.delete(e.pointerId);
       if (this.twist?.id === e.pointerId) this.twist = null;
       else this.cancel();
     });
+    // a pointer let go anywhere (off the canvas too, where nothing captured it) is no longer down
+    const lifted = (e: PointerEvent) => this.downs.delete(e.pointerId);
+    addEventListener("pointerup", lifted, true);
+    addEventListener("pointercancel", lifted, true);
     cv.addEventListener("pointerleave", () => (this.pointer = null));
     cv.addEventListener(
       "wheel",
@@ -324,6 +334,35 @@ export class Hand {
     this.show();
   }
 
+  /**
+   * A second finger right after a first that took a box and has not moved: the two make a pinch or a two-finger
+   * pan, which is the camera's. The hand lets go of the box without moving it, gives the first finger's press to
+   * the camera, and lets the second through.
+   */
+  private handOver(e: PointerEvent): boolean {
+    const d = this.drag,
+      h = this.holder;
+    if (d?.kind !== "move" || !h || h.type !== "touch" || e.pointerType !== "touch" || e.pointerId === h.id)
+      return false;
+    if (performance.now() - h.t0 > HANDOVER_MS || Math.hypot(h.x - h.x0, h.y - h.y0) > HANDOVER_PX) return false;
+    this.cancel();
+    const cv = this.c.canvas;
+    if (cv.hasPointerCapture(h.id)) cv.releasePointerCapture(h.id);
+    cv.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: h.id,
+        pointerType: "touch",
+        isPrimary: true,
+        clientX: h.x,
+        clientY: h.y,
+        button: 0,
+        buttons: 1,
+        bubbles: true,
+      }),
+    );
+    return true;
+  }
+
   /** A second touch while the hand holds something: it twists what is held, and the camera does not see it. */
   private twistDown(e: PointerEvent): boolean {
     const d = this.drag,
@@ -359,7 +398,8 @@ export class Hand {
 
   /** The hand has this press: the camera must not move with it. */
   private take(e: PointerEvent): void {
-    this.holder = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    const [x, y] = [e.clientX, e.clientY];
+    this.holder = { id: e.pointerId, x, y, x0: x, y0: y, t0: performance.now(), type: e.pointerType };
     e.stopImmediatePropagation();
     this.c.cams.handBusy(true);
     try {
@@ -379,6 +419,7 @@ export class Hand {
       this.show();
     }
     if (!d || !f) {
+      if (e.buttons !== 0) return; // the camera's orbit or pan: what is under it is no hover
       // the same rule as a press: what the hover shows is what a press there takes
       const grip = this.c.cams.mode === "eye" ? null : this.grip(e);
       this.c.arena()?.highlight(this.mode === "remove" && grip !== null && grip !== "robot" ? grip.box : null);
