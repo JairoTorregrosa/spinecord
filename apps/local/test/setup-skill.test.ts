@@ -3,7 +3,7 @@
 // code blocks are not prose and are skipped. Inline code and a link's text count as one word each. Its SKILL.md
 // stays short, every file it names exists, and every `setup <step>` it names is a step of scripts/setup.ts.
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,8 +12,9 @@ import {
   hostOnly,
   launchEnv,
   paysPlan,
+  execDetached,
+  type Exec,
   probeTerminal,
-  TERMINAL_MARK,
   windowsEnv,
   isRegistered,
   launchLine,
@@ -305,25 +306,36 @@ const HOST: Record<string, string> = {
   ANTHROPIC_BASE_URL: "https://host.invalid",
 };
 const dump = (env: Record<string, string>) =>
-  `motd of the shell profile\n${TERMINAL_MARK}\n${Object.entries(env)
+  `${Object.entries(env)
     .map(([k, v]) => `${k}=${v}`)
     .join("\0")}\0`;
 const user = { homedir: "/home/p", username: "p", shell: "/bin/zsh" };
+/** The file that the probe's command writes its environment to. */
+const outFile = (cmd: string[]) => cmd.at(-1)!.match(/'([^']*spinecord-env-[^']*)'/)![1]!;
+/** A probe command that writes `text` to its file and exits with `code`. */
+const writes =
+  (text: string, code: number | null = 0): Exec =>
+  async (cmd) => {
+    writeFileSync(outFile(cmd), text);
+    return code;
+  };
 
-test("the probe starts the login shell with an empty environment, not the agent's", async () => {
+test("the probe starts the login shell with an empty environment, not the agent's, and reads its file", async () => {
   const calls: { cmd: string[]; env: Record<string, string | undefined> }[] = [];
   const p = await probeTerminal(
     "darwin",
     HOST,
-    async (cmd, env) => {
+    async (cmd, env, ms) => {
       calls.push({ cmd, env });
-      return { code: 0, out: dump({ ...NEW_TERMINAL, X: "a=b" }), err: "" };
+      return writes(dump({ ...NEW_TERMINAL, X: "a=b" }))(cmd, env, ms);
     },
     user,
   );
   expect(calls[0]!.cmd.slice(0, 4)).toEqual(["/bin/zsh", "-l", "-i", "-c"]);
   expect(Object.keys(calls[0]!.env).sort()).toEqual(["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"]);
   expect(p).toEqual({ env: { ...NEW_TERMINAL, X: "a=b" } });
+  // the file is gone after the read
+  expect(existsSync(outFile(calls[0]!.cmd))).toBe(false);
 });
 
 test("(a) a host login in the agent's environment does not reach PAYS: the checks use a new terminal's", () => {
@@ -341,6 +353,12 @@ test("(a) a host login in the agent's environment does not reach PAYS: the check
   expect("env" in same && same.notes).toEqual([]);
 });
 
+test("the desktop session's variables reach the launch environment; a new terminal's own value wins", () => {
+  const session = { ...HOST, DISPLAY: ":0", XDG_RUNTIME_DIR: "/run/user/1000", DBUS_SESSION_BUS_ADDRESS: "unix:x" };
+  const env = launchEnv({ ...NEW_TERMINAL, DISPLAY: ":1" }, session, "credits", "linux");
+  expect([env.DISPLAY, env.XDG_RUNTIME_DIR, env.DBUS_SESSION_BUS_ADDRESS]).toEqual([":1", "/run/user/1000", "unix:x"]);
+});
+
 test("(b) a key that a new terminal has pays ahead of the profile: a fail that names it, never its value", () => {
   const plan = paysPlan({ env: { ...NEW_TERMINAL, ANTHROPIC_API_KEY: "sk-secret" } }, HOST, "credits", "darwin");
   expect("lines" in plan).toBe(true);
@@ -352,14 +370,12 @@ test("(b) a key that a new terminal has pays ahead of the profile: a fail that n
 });
 
 test("(c) a new terminal that cannot be read is a fail with its reason, never the agent's environment", async () => {
-  const timeout = await probeTerminal("linux", HOST, async () => ({ code: null, out: "", err: "" }), user);
-  const noMark = await probeTerminal("linux", HOST, async () => ({ code: 0, out: "A=1\0", err: "" }), user);
-  const noShell = await probeTerminal("linux", HOST, async () => ({ code: 0, out: "", err: "" }), {
-    ...user,
-    shell: null,
-  });
-  const ps = await probeTerminal("win32", HOST, async () => ({ code: 1, out: "", err: "blocked" }), user);
-  for (const p of [timeout, noMark, noShell, ps]) {
+  const timeout = await probeTerminal("linux", HOST, async () => null, user);
+  const empty = await probeTerminal("linux", HOST, writes(""), user);
+  const exit = await probeTerminal("linux", HOST, writes(dump(NEW_TERMINAL), 1), user);
+  const noShell = await probeTerminal("linux", HOST, async () => 0, { ...user, shell: null });
+  const ps = await probeTerminal("win32", HOST, async () => 1, user);
+  for (const p of [timeout, empty, exit, noShell, ps]) {
     expect("error" in p).toBe(true);
     const plan = paysPlan(p, HOST, "credits", "linux");
     expect("lines" in plan && plan.lines.map((l) => [l.status, l.what])).toEqual([["fail", "terminal"]]);
@@ -368,7 +384,40 @@ test("(c) a new terminal that cannot be read is a fail with its reason, never th
     );
   }
   expect("error" in timeout && timeout.error).toContain("no answer in 20 s");
-  expect("error" in ps && ps.error).toContain("exit 1: blocked");
+  expect("error" in exit && exit.error).toContain(
+    "exit 1; to see what it prints, the person runs `/bin/zsh -l -i -c true`",
+  );
+  expect("error" in ps && ps.error).toContain("exit 1");
+  // csh and tcsh take -l only alone: their own row, and no command runs
+  let ran = false;
+  const csh = await probeTerminal("linux", HOST, async () => ((ran = true), 0), { ...user, shell: "/bin/tcsh" });
+  expect(ran).toBe(false);
+  expect(paysPlan(csh, HOST, "credits", "linux")).toMatchObject({
+    lines: [{ status: "fail", what: "terminal", next: `fixes.md, row "The login shell is csh or tcsh"` }],
+  });
+});
+
+const posixOnly = process.platform === "win32" ? test.skip : test;
+posixOnly("the deadline holds when a shell profile leaves a job that keeps the terminal's output open", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "spinecord-shell-"));
+  try {
+    // a shell whose profile starts a background job, then runs the command: $4 after -l -i -c
+    const bg = join(dir, "bg-sh");
+    writeFileSync(bg, '#!/bin/sh\nsleep 30 &\nexec /bin/sh -c "$4"\n', { mode: 0o755 });
+    let t0 = Date.now();
+    const ok = await probeTerminal("linux", {}, execDetached, { ...user, shell: bg }, 3000);
+    expect("env" in ok && ok.env.HOME).toBe("/home/p");
+    expect(Date.now() - t0).toBeLessThan(2500);
+    // a shell that never ends: a fail at the deadline
+    const hang = join(dir, "hang-sh");
+    writeFileSync(hang, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+    t0 = Date.now();
+    const late = await probeTerminal("linux", {}, execDetached, { ...user, shell: hang }, 500);
+    expect(Date.now() - t0).toBeLessThan(2500);
+    expect("error" in late && late.error).toContain("no answer in 0.5 s");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a new Windows terminal: computed values, then Machine, volatile, User; Path is Machine's then User's", () => {
@@ -393,4 +442,12 @@ test("a new Windows terminal: computed values, then Machine, volatile, User; Pat
   expect(launch.Path).toBe("C:\\Windows;C:\\Users\\p\\.bun\\bin;C:\\host");
   expect(launch.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   expect(hostOnly(env, inherited, "win32")).toEqual(["CLAUDE_CODE_OAUTH_TOKEN"]);
+});
+
+test("the Windows probe reads the JSON that PowerShell writes, with or without a BOM", async () => {
+  const json = JSON.stringify({ machine: { Path: "C:\\W" }, volatile: null, user: { ANTHROPIC_API_KEY: "k" } });
+  const p = await probeTerminal("win32", { SystemRoot: "C:\\W" }, writes(`\uFEFF${json}`), user);
+  expect(p).toEqual({ env: { SystemRoot: "C:\\W", Path: "C:\\W", ANTHROPIC_API_KEY: "k" } });
+  // the key at User level is a new terminal's: a named fail
+  expect(paysPlan(p, {}, "credits", "win32")).toMatchObject({ lines: [{ status: "fail", what: "pays" }] });
 });

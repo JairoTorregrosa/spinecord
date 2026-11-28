@@ -4,8 +4,8 @@
 // The robots come from the skill's robots.json; what no command can detect (the person's answers, the smoke
 // test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|warn|todo|fail  <what>  <why>  ->  <next>`, the
 // last line `setup <step>: ok` (exit 0) or `setup <step>: not done` (exit 1). Nothing here prints a secret.
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { parseRobotName } from "../apps/local/src/config";
 import { MOVES } from "../apps/local/src/twin-build";
@@ -164,12 +164,13 @@ export function ev3DraftWarn(file: string, unconfirmed: readonly string[] | unde
 // login shell of the person started from an empty environment (macOS, Linux), or the Machine, volatile and User
 // environment of the registry (Windows). It does not depend on the names of the host's variables.
 
-/** What the probe gives: the environment of a new terminal, or why it could not be read (never its output). */
-export type Probe = { env: Env } | { error: string };
+/**
+ * What the probe gives: the environment of a new terminal, or why it could not be read, never what the shell
+ * printed. `row`: the fixes.md row, when it is not "The environment of a new terminal could not be read".
+ */
+export type Probe = { env: Env } | { error: string; row?: string };
 
-/** Printed before `env -0`, so that what the shell profile prints does not count as the environment. */
-export const TERMINAL_MARK = "__SPINECORD_TERMINAL_ENV__";
-const PROBE_MS = 20_000;
+export const PROBE_MS = 20_000;
 /** The PATH a login shell starts from; /etc/zprofile (path_helper) and /etc/profile add the rest. */
 const POSIX_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 /** Values that Windows computes for every new process and that the registry does not hold. */
@@ -192,14 +193,31 @@ const WINDOWS_COMPUTED = [
  * `Profile:` line on Windows" sets it in this session and in the launch line. TMPDIR: macOS gives every login one.
  */
 const CARRIED = ["ANTHROPIC_CONFIG_DIR", "TMPDIR"];
+/**
+ * The desktop session gives these to every terminal, not a shell profile; the browser of `ant auth login` needs
+ * them on Linux. Carried from this session when a new terminal lacks them. None of them is a login.
+ */
+const SESSION = [
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "XDG_SESSION_TYPE",
+  "XDG_CURRENT_DESKTOP",
+];
+/** Shells that take `-l` only alone, so `-l -i -c` cannot start them. */
+const NO_LOGIN_COMMAND = ["csh", "tcsh"];
 
-const WINDOWS_SCRIPT = [
-  "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
-  "$v = @{}",
-  "$k = Get-Item -LiteralPath 'HKCU:\\Volatile Environment' -ErrorAction SilentlyContinue",
-  "if ($k) { foreach ($n in $k.GetValueNames()) { $v[$n] = [string]$k.GetValue($n) } }",
-  "@{ machine = [Environment]::GetEnvironmentVariables('Machine'); volatile = $v; user = [Environment]::GetEnvironmentVariables('User') } | ConvertTo-Json -Compress",
-].join("; ");
+/** Writes the Machine, volatile and User environment as JSON (UTF-8, no BOM) to `file`. */
+const windowsScript = (file: string) =>
+  [
+    "$v = @{}",
+    "$k = Get-Item -LiteralPath 'HKCU:\\Volatile Environment' -ErrorAction SilentlyContinue",
+    "if ($k) { foreach ($n in $k.GetValueNames()) { $v[$n] = [string]$k.GetValue($n) } }",
+    "$j = @{ machine = [Environment]::GetEnvironmentVariables('Machine'); volatile = $v; user = [Environment]::GetEnvironmentVariables('User') } | ConvertTo-Json -Compress",
+    `[IO.File]::WriteAllText('${file.replaceAll("'", "''")}', $j)`,
+  ].join("; ");
 
 /** A variable by name, without case on Windows, where `Path` and `PATH` are one variable. */
 function keyOf(env: Env, name: string, platform: string): string {
@@ -209,13 +227,14 @@ function keyOf(env: Env, name: string, platform: string): string {
 function setVar(env: Env, name: string, v: string, platform: string): void {
   env[keyOf(env, name, platform)] = v;
 }
+export function deleteVar(env: Env, name: string, platform: string): void {
+  delete env[keyOf(env, name, platform)];
+}
 
-/** The output of `env -0` after TERMINAL_MARK, or null when the mark is not there. */
-export function parseEnvDump(out: string): Env | null {
-  const at = out.indexOf(`${TERMINAL_MARK}\n`);
-  if (at === -1) return null;
+/** The output of `env -0`: NAME=value entries, each ended by a NUL. */
+export function parseEnvDump(out: string): Env {
   const env: Env = {};
-  for (const entry of out.slice(at + TERMINAL_MARK.length + 1).split("\0")) {
+  for (const entry of out.split("\0")) {
     const eq = entry.indexOf("=");
     if (eq > 0) env[entry.slice(0, eq)] = entry.slice(eq + 1);
   }
@@ -240,50 +259,67 @@ export function windowsEnv(json: string, inherited: Env): Env {
   return env;
 }
 
-/** Reads the environment of a new terminal of the person. A failure names the exit or the timeout, and stderr. */
+/**
+ * Reads the environment of a new terminal of the person. The shell writes it to a file of its own and the probe
+ * reads no pipe, so a job that a shell profile leaves running cannot hold the deadline open. A failure names the
+ * exit or the timeout, never what the shell printed: with `set -x`, that holds the values.
+ */
 export async function probeTerminal(
   platform: string,
   inherited: Env,
   run: Exec,
   user: { homedir: string; username: string; shell: string | null },
+  ms: number = PROBE_MS,
 ): Promise<Probe> {
-  const failed = (r: Ran) =>
-    r.code === null
-      ? `no answer in ${PROBE_MS / 1000} s${r.err.trim() ? `: ${r.err.trim().slice(-200)}` : ""}`
-      : `exit ${r.code}${r.err.trim() ? `: ${r.err.trim().slice(-200)}` : ""}`;
-  if (platform === "win32") {
-    const r = await run(
-      ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_SCRIPT],
-      inherited,
-      PROBE_MS,
-    );
-    if (r.code !== 0) return { error: `PowerShell, reading the User and Machine environment: ${failed(r)}` };
-    try {
-      return { env: windowsEnv(r.out.trim(), inherited) };
-    } catch (e) {
-      return { error: `PowerShell gave no environment as JSON: ${(e as Error).message.slice(0, 200)}` };
-    }
+  const failed = (code: number | null) => (code === null ? `no answer in ${ms / 1000} s` : `exit ${code}`);
+  if (platform !== "win32") {
+    if (!user.shell) return { error: "this user has no login shell in the user database" };
+    if (NO_LOGIN_COMMAND.includes(basename(user.shell)))
+      return {
+        error: `the login shell is ${user.shell}, which cannot run a command as a login shell`,
+        row: "The login shell is csh or tcsh",
+      };
   }
-  if (!user.shell) return { error: "this user has no login shell in the user database" };
-  const clean: Env = {
-    HOME: user.homedir,
-    USER: user.username,
-    LOGNAME: user.username,
-    SHELL: user.shell,
-    TERM: "xterm-256color",
-    PATH: POSIX_PATH,
-  };
-  const r = await run(
-    [user.shell, "-l", "-i", "-c", `printf '\\n${TERMINAL_MARK}\\n'; exec /usr/bin/env -0`],
-    clean,
-    PROBE_MS,
-  );
-  const env = r.code === 0 ? parseEnvDump(r.out) : null;
-  if (env === null)
-    return {
-      error: `${user.shell} -l -i, started with an empty environment: ${r.code === 0 ? "no environment after the mark" : failed(r)}`,
+  const dir = mkdtempSync(join(tmpdir(), "spinecord-env-"));
+  const file = join(dir, "env");
+  const dump = () => (existsSync(file) ? readFileSync(file, "utf8").replace(/^\uFEFF/, "") : "");
+  try {
+    if (platform === "win32") {
+      const code = await run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", windowsScript(file)],
+        inherited,
+        ms,
+      );
+      if (code !== 0 || dump() === "")
+        return {
+          error: `PowerShell, reading the User and Machine environment: ${code === 0 ? "no output" : failed(code)}`,
+        };
+      try {
+        return { env: windowsEnv(dump(), inherited) };
+      } catch (e) {
+        return { error: `PowerShell gave no environment as JSON: ${(e as Error).message.slice(0, 200)}` };
+      }
+    }
+    const shell = user.shell!;
+    if (file.includes("'")) return { error: `the temporary folder ${dir} has a ' in its path` };
+    const clean: Env = {
+      HOME: user.homedir,
+      USER: user.username,
+      LOGNAME: user.username,
+      SHELL: shell,
+      TERM: "xterm-256color",
+      PATH: POSIX_PATH,
     };
-  return { env };
+    const code = await run([shell, "-l", "-i", "-c", `exec /usr/bin/env -0 > '${file}'`], clean, ms);
+    const env = code === 0 ? parseEnvDump(dump()) : {};
+    if (Object.keys(env).length === 0)
+      return {
+        error: `${shell} -l -i, started with an empty environment: ${code === 0 ? "it wrote no environment" : failed(code)}; to see what it prints, the person runs \`${shell} -l -i -c true\` in a new terminal`,
+      };
+    return { env };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -296,6 +332,10 @@ export function launchEnv(terminalEnv: Env, inherited: Env, profile: string, pla
     const v = inherited[keyOf(inherited, n, platform)];
     if (v) setVar(env, n, v, platform);
   }
+  for (const n of SESSION) {
+    const v = inherited[keyOf(inherited, n, platform)];
+    if (v && !env[keyOf(env, n, platform)]) setVar(env, n, v, platform);
+  }
   const delim = platform === "win32" ? win32.delimiter : posix.delimiter;
   const path = [env[keyOf(env, "PATH", platform)], inherited[keyOf(inherited, "PATH", platform)]].filter(Boolean);
   setVar(env, "PATH", path.join(delim), platform);
@@ -303,11 +343,11 @@ export function launchEnv(terminalEnv: Env, inherited: Env, profile: string, pla
   return env;
 }
 
-export const terminalFail = (error: string): Line => ({
+export const terminalFail = (p: { error: string; row?: string }): Line => ({
   status: "fail",
   what: "terminal",
-  why: `the environment of a new terminal could not be read (${error})`,
-  next: `fixes.md, row "The environment of a new terminal could not be read"`,
+  why: `the environment of a new terminal could not be read (${p.error})`,
+  next: `fixes.md, row "${p.row ?? "The environment of a new terminal could not be read"}"`,
 });
 
 /**
@@ -331,7 +371,7 @@ export function paysPlan(
   profile: string,
   platform: string,
 ): { env: Env; notes: Line[] } | { lines: Line[] } {
-  if ("error" in probe) return { lines: [terminalFail(probe.error)] };
+  if ("error" in probe) return { lines: [terminalFail(probe)] };
   const first = paysBeforeProfile(probe.env);
   if (first !== null)
     return {
@@ -412,26 +452,44 @@ async function run(cmd: string[], o: { ms?: number; cwd?: string; env?: Env; inh
   ]);
   return { code: child.signalCode ? null : code, out, err };
 }
-/** One command with its own environment, stopped at `ms`. The probe of a new terminal runs through it. */
-export type Exec = (cmd: string[], env: Env, ms: number) => Promise<Ran>;
-const exec: Exec = (cmd, env, ms) => run(cmd, { ms, cwd: homedir(), env });
+/** One command with its own environment and no pipes: its exit code, or null when `ms` passed first. */
+export type Exec = (cmd: string[], env: Env, ms: number) => Promise<number | null>;
+export const execDetached: Exec = async (cmd, env, ms) => {
+  if (Bun.which(cmd[0]!) === null) return 127;
+  const child = Bun.spawn(cmd, {
+    cwd: homedir(),
+    env: env as Record<string, string>,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    timeout: ms,
+    windowsHide: true,
+  });
+  // the deadline holds even if the kill of `timeout` does not end the child
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((done) => (timer = setTimeout(() => done("late"), ms + 1000)));
+  const end = await Promise.race([child.exited, late]);
+  clearTimeout(timer);
+  if (end === "late") child.kill("SIGKILL");
+  return end === "late" || child.signalCode ? null : end;
+};
 
 let probed: Promise<Probe> | undefined;
 /** The environment of a new terminal of the person, read once per run of this script. */
-const terminal = (): Promise<Probe> => (probed ??= probeTerminal(process.platform, process.env, exec, userInfo()));
+const terminal = (): Promise<Probe> =>
+  (probed ??= probeTerminal(process.platform, process.env, execDetached, userInfo()));
 
 /** The environment of the launch line with this profile, or the fail line when the new terminal cannot be read. */
 async function launchEnvOf(profile: string): Promise<{ env: Env } | { line: Line }> {
   const p = await terminal();
-  return "error" in p
-    ? { line: terminalFail(p.error) }
-    : { env: launchEnv(p.env, process.env, profile, process.platform) };
+  return "error" in p ? { line: terminalFail(p) } : { env: launchEnv(p.env, process.env, profile, process.platform) };
 }
 /** The same environment for `ant`, which takes the profile as `--profile` and must not see a key or a token. */
 async function antEnvOf(profile: string): Promise<{ env: Env } | { line: Line }> {
   const r = await launchEnvOf(profile);
   if ("line" in r) return r;
-  for (const n of ["ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]) delete r.env[n];
+  for (const n of ["ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"])
+    deleteVar(r.env, n, process.platform);
   return r;
 }
 const cwd = () => (existsSync(WORKSHOP) ? WORKSHOP : REPO);
