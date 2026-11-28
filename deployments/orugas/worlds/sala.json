@@ -1,6 +1,7 @@
 {
   "schema": "spinecord/world@1",
   "name": "sala",
+  "description": "Una sala con un mueble, una pila de libros bajos y una caja de cartón que se puede empujar: sal de la zona azul BASE y llega a la zona verde META sin chocar.",
   "arena": {
     "width_cm": 200,
     "height_cm": 150

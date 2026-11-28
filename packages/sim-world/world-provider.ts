@@ -45,7 +45,7 @@ export interface SimWorldProviderOptions {
 }
 
 const DEVICE_IDS = "sim.world, sim.camera, sim.speaker";
-const WORLD_COMMANDS = ["load_world", "reset", "restore", "events"];
+const WORLD_COMMANDS = ["load_world", "use_map", "reset", "restore", "events"];
 const EVENTS_DESCRIPTION = `What happened in the world after event number "since" (default 0: every event still kept, at most ${EVENT_LOG_MAX}), oldest first. Changes nothing and spends no sensor noise. measured.events holds one JSON object per event, as a string: {n, t_ms (simulated time), kind, ...}. kind is contact_began or contact_ended {with: a box id, or the wall it touches: wall_west (x 0), wall_east, wall_south (y 0), wall_north}; push_began {box} and push_ended {box, moved_cm}: the robot slid a box; stall_began and stall_ended: a drive wheel held by what the body is against, its encoder stopped; slip_began and slip_ended: the drive wheels turn while the body is held; echo_lost {why: slant (a surface in range met too far off square to echo) or range (nothing within 250 cm)} and echo_back {cm}, only with an ultrasonic sensor plugged in; placed {how: reset or carried (a person moved the robot)}; obstacle_changed {box, change: added, moved or removed} (by a person). measured.next is the number to pass as since next time, measured.dropped how many events after since are no longer kept, measured.t_ms the world's time now. Contacts are timed to a fraction of a ms; the other events to the end of the physics step (at most 20 ms) they happen in.`;
 /** speak limits of the simulated speaker: the same shape a real text-to-speech speaker declares (CONTRACT §2.3). */
 export const SIM_SPEAK = { max_chars: 200, max_ms: 15000, rate_wpm: { min: 80, max: 300, default: 140 } } as const;
@@ -126,7 +126,7 @@ export class SimWorldProvider implements Provider {
         provider: this.id,
         kind: "sim_world",
         roles: [],
-        description: `Simulation only: the 2D world the twin lives in (now "${c.name}", ${c.width} x ${c.height} cm, origin bottom-left, x right, y up). Named points: ${c.points.map((p) => `${p.label} (${p.x}, ${p.y})`).join(", ") || "none"}.`,
+        description: `Simulation only: the 2D world the twin lives in (now "${c.name}", ${c.width} x ${c.height} cm, origin bottom-left, x right, y up). Named points: ${c.points.map((p) => `${p.label} (${p.x}, ${p.y})`).join(", ") || "none"}.${c.description ? ` What the person does here: ${c.description}` : ""}`,
         channels: [
           ...worldChannelSpecs(this.world),
           {
@@ -150,6 +150,18 @@ export class SimWorldProvider implements Provider {
             },
           },
           {
+            name: "use_map",
+            moves: true,
+            bound: { kind: "instant", max: 0 },
+            description: `A person's choice of map: replaces the world with the named map, fresh, and makes it the room restore goes back to (load_world never does). Motors stop, tachos and sensors reset, sim.speaker forgets what it said; measured.description is what the person does there. "map" is one of: ${this.mapList()}. Use it when the person asks to play, use or switch to a map or room by name; use load_world for a world of your own (JSON) or a trial in another room.`,
+            params: {
+              type: "object",
+              properties: { map: { type: "string" } },
+              required: ["map"],
+              additionalProperties: false,
+            },
+          },
+          {
             name: "reset",
             moves: true,
             bound: { kind: "instant", max: 0 },
@@ -165,7 +177,7 @@ export class SimWorldProvider implements Provider {
             name: "restore",
             moves: true,
             bound: { kind: "instant", max: 0 },
-            description: `Puts the whole room back as this twin started in it (world "${this.origin.cfg.name}"): its boxes, zones, floor lines and named points exactly as its file has them, and the robot at that world's start pose; motors stop, tachos and sensors reset, and sim.speaker forgets what it said. A world taken with load_world is dropped. The same as the 3D view's restore button. Takes no arguments.`,
+            description: `Puts the whole room back as this twin started in it, or as the map a person last chose with use_map (world "${this.origin.cfg.name}"): its boxes, zones, floor lines and named points exactly as its file has them, and the robot at that world's start pose; motors stop, tachos and sensors reset, and sim.speaker forgets what it said. A world taken with load_world is dropped. The same as the 3D view's restore button. Takes no arguments.`,
             params: { type: "object", properties: {}, additionalProperties: false },
           },
           {
@@ -349,7 +361,11 @@ export class SimWorldProvider implements Provider {
       );
     const result = (reason: CommandResult["reason"]): CommandResult => ({
       requested: { ...args },
-      measured: { world: this.world.cfg.name, pose: this.pose() },
+      measured: {
+        world: this.world.cfg.name,
+        pose: this.pose(),
+        ...(this.world.cfg.description ? { description: this.world.cfg.description } : {}),
+      },
       clamped: false,
       reason,
       ms: 0,
@@ -362,6 +378,16 @@ export class SimWorldProvider implements Provider {
       this.restore();
       return result("completed");
     }
+    if (command === "use_map") {
+      const extra = Object.keys(args).filter((k) => k !== "map");
+      if (extra.length)
+        throw new RuntimeError("invalid_argument", `use_map takes only "map"; unknown: ${extra.join(", ")}`);
+      const m = args.map;
+      if (typeof m !== "string" || m === "")
+        throw new RuntimeError("invalid_argument", `use_map needs "map": one of ${this.mapNames()}`);
+      this.useMap(m);
+      return result("completed");
+    }
     if (command === "load_world") {
       const extra = Object.keys(args).filter((k) => k !== "world");
       if (extra.length)
@@ -370,7 +396,7 @@ export class SimWorldProvider implements Provider {
       if (typeof w !== "string" || w === "")
         throw new RuntimeError(
           "invalid_argument",
-          `load_world needs "world": a name (${Object.keys(this.worlds).join(", ") || "none registered"}) or a world file as a JSON string`,
+          `load_world needs "world": a name (${this.mapNames()}) or a world file as a JSON string`,
         );
       let json: unknown;
       if (w.trimStart().startsWith("{")) {
@@ -379,12 +405,7 @@ export class SimWorldProvider implements Provider {
         } catch (e) {
           throw new RuntimeError("invalid_argument", `world is not valid JSON: ${(e as Error).message}`);
         }
-      } else if (Object.hasOwn(this.worlds, w)) json = this.worlds[w];
-      else
-        throw new RuntimeError(
-          "invalid_argument",
-          `unknown world "${w}"; worlds: ${Object.keys(this.worlds).join(", ") || "none registered"}`,
-        );
+      } else json = this.named(w);
       let next: World;
       try {
         next = new World(parseWorld(this.prepare(json)), this.seed);
@@ -456,6 +477,35 @@ export class SimWorldProvider implements Provider {
       throw new RuntimeError("invalid_argument", (e as Error).message);
     }
     this.origin = origin;
+  }
+
+  /**
+   * A person's choice of map, by name (sim.world use_map, or a viewer's map control): `startRoom` with the world
+   * registered as `name`, so it becomes the room and the origin restore goes back to. Throws invalid_argument,
+   * changing nothing, for an unknown name (listing the names) or a map this robot does not fit in.
+   */
+  useMap(name: string): void {
+    this.startRoom(this.named(name));
+  }
+
+  /** The names, each with what the person does there when its file says so: "a (its description), b". */
+  private mapList(): string {
+    const names = Object.entries(this.worlds).map(([n, w]) => {
+      const d = (w as { description?: unknown } | null)?.description;
+      return typeof d === "string" && d !== "" ? `${n} (${d})` : n;
+    });
+    return names.join(", ") || "(no named worlds registered)";
+  }
+
+  private mapNames(): string {
+    return Object.keys(this.worlds).join(", ") || "none registered";
+  }
+
+  /** The world file registered as `name`; invalid_argument listing the names when there is none. */
+  private named(name: string): unknown {
+    if (!Object.hasOwn(this.worlds, name))
+      throw new RuntimeError("invalid_argument", `unknown world "${name}"; worlds: ${this.mapNames()}`);
+    return this.worlds[name];
   }
 
   /** Hands `next` to the host (which throws, changing nothing, when it cannot live there), then starts the scene over. */

@@ -1,0 +1,104 @@
+{
+  "schema": "spinecord/world@1",
+  "name": "laberinto",
+  "description": "Un laberinto de muros altos con un solo camino y dos callejones sin salida: sal de la zona azul BASE y llega a la zona verde META, arriba a la derecha, sin chocar.",
+  "arena": {
+    "width_cm": 275,
+    "height_cm": 220
+  },
+  "obstacles": [
+    {
+      "id": "muro_h1",
+      "x": 0,
+      "y": 53.0,
+      "w": 57.0,
+      "h": 4
+    },
+    {
+      "id": "muro_h2",
+      "x": 53.0,
+      "y": 108.0,
+      "w": 59.0,
+      "h": 4
+    },
+    {
+      "id": "muro_h3",
+      "x": 167.0,
+      "y": 108.0,
+      "w": 55.0,
+      "h": 4
+    },
+    {
+      "id": "muro_h4",
+      "x": 0,
+      "y": 163.0,
+      "w": 167.0,
+      "h": 4
+    },
+    {
+      "id": "muro_h5",
+      "x": 218.0,
+      "y": 163.0,
+      "w": 57.0,
+      "h": 4
+    },
+    {
+      "id": "muro_v1",
+      "x": 108.0,
+      "y": 0,
+      "w": 4,
+      "h": 108.0
+    },
+    {
+      "id": "muro_v2",
+      "x": 163.0,
+      "y": 53.0,
+      "w": 4,
+      "h": 110.0
+    },
+    {
+      "id": "muro_v3",
+      "x": 218.0,
+      "y": 0,
+      "w": 4,
+      "h": 57.0
+    }
+  ],
+  "zones": [
+    {
+      "x": 5,
+      "y": 5,
+      "w": 46,
+      "h": 44,
+      "color": "blue",
+      "label": "base"
+    },
+    {
+      "x": 224,
+      "y": 171,
+      "w": 46,
+      "h": 44,
+      "color": "green",
+      "label": "meta"
+    }
+  ],
+  "points": [
+    {
+      "label": "meta",
+      "x": 247,
+      "y": 190,
+      "radius_cm": 10
+    }
+  ],
+  "start": {
+    "x": 28,
+    "y": 24,
+    "heading_deg": 0
+  },
+  "noise": {
+    "motor": 0.02,
+    "slip": 0.04,
+    "wheel_bias": 0.006,
+    "ultrasonic_cm": 0.5
+  }
+}

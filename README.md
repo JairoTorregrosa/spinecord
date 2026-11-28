@@ -45,6 +45,7 @@ In the 3D page you can pick the robot up, put boxes in its way, press the button
 | The twin to be the robot you built | "This is my robot, make the twin match it", with a photo |
 | Another name | "Call the robot Rayo" |
 | The real EV3 | Plug it in with the USB cable and say "I have an EV3 now" |
+| Another map | "Use the laberinto map" (or pista, slalom, reparto, bodega, sala) |
 
 Claude asks only what the photo does not show: which port, which side, which wheels.
 

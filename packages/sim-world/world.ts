@@ -167,6 +167,8 @@ export interface NoiseConfig {
 
 export interface WorldConfig {
   name: string;
+  /** What a person does in this world, in one or two sentences of their language (absent: nothing said). */
+  description?: string;
   /** Sections of the file that belong to other packages (e.g. what is plugged into a brick). Not interpreted here. */
   extensions: Record<string, unknown>;
   width: number;
@@ -420,6 +422,7 @@ export function parseWorld(json: unknown): WorldConfig {
   const KNOWN = [
     "schema",
     "name",
+    "description",
     "arena",
     "obstacles",
     "zones",
@@ -451,6 +454,7 @@ export function parseWorld(json: unknown): WorldConfig {
   const labels = new Set<string>();
   return {
     name: str(root.name, "name"),
+    ...(root.description === undefined ? {} : { description: str(root.description, "description") }),
     extensions: root.extensions === undefined ? {} : { ...obj(root.extensions, "extensions") },
     width: num(arena.width_cm, "arena.width_cm", 1),
     height: num(arena.height_cm, "arena.height_cm", 1),
