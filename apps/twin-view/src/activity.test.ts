@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { Follow, RESUME_MS, ScrollOwner, isClaudeCall, keptScrollTop } from "./activity";
+import {
+  CallsScroller,
+  Follow,
+  GLIDE_MS,
+  HOLD_CALLS,
+  MAX_CALLS,
+  RESUME_MS,
+  ScrollOwner,
+  isClaudeCall,
+  type ListPort,
+} from "./activity";
 import type { ServerMessage } from "./messages";
 
 test("the panel lists Claude's tool calls only: not the hand, not the world's events", () => {
@@ -69,87 +79,198 @@ test("the person touching the list again restarts the wait", () => {
   expect(f.tick(2 * RESUME_MS - 1)).toBe(true);
 });
 
-/** What hud.ts does with each scroll of the list: the page's own changes nothing, any other is the person's. */
-function scroll(f: Follow, o: ScrollOwner, top: number, now: number): void {
-  if (o.byPage(top)) f.scrolled(top <= 4);
-  else f.touched(top <= 4, now);
+/**
+ * A list like the page's: rows of fractional heights, newest first, a viewport of 200 px, and a scroll position the
+ * setter rounds to whole pixels and clamps, as Chrome does. Each change of `top` queues a scroll event; `flush`
+ * delivers them as the browser does after the task.
+ */
+class FakeList implements ListPort<{ n: number; h: number }> {
+  list: { n: number; h: number }[] = [];
+  private _top = 0;
+  pending = false;
+  readonly view = 200;
+  get top(): number {
+    return this._top;
+  }
+  set top(v: number) {
+    const next = Math.max(0, Math.min(Math.round(v), Math.round(Math.max(0, this.full() - this.view))));
+    if (next !== this._top) this.pending = true;
+    this._top = next;
+  }
+  full(): number {
+    return this.list.reduce((a, r) => a + r.h, 0);
+  }
+  rows() {
+    return this.list;
+  }
+  offset(r: { n: number; h: number }): number {
+    let y = 0;
+    for (const x of this.list) {
+      if (x === r) return y;
+      y += x.h;
+    }
+    throw new Error("no such row");
+  }
+  relTop(r: { n: number; h: number }): number {
+    return this.offset(r) - this._top;
+  }
+  height(r: { n: number; h: number }): number {
+    return r.h;
+  }
+  drop(r: { n: number; h: number }): void {
+    this.list = this.list.filter((x) => x !== r);
+  }
+  /** The person scrolls the list to `v`. */
+  personTo(v: number): void {
+    this.top = v;
+  }
 }
 
-test("a finger held still on the list before it drags: the drag is the person's, and the next call keeps the place", () => {
-  const f = new Follow(),
-    o = new ScrollOwner();
-  o.set(0); // the page showed the top: no scroll, the list was already there
-  o.personActs(); // pointerdown at the top: nothing to read yet
-  scroll(f, o, 300, 700); // 700 ms later the finger drags
-  expect(f.following).toBe(false);
-  expect(f.added()).toBe(false);
-  o.set(330); // the page keeps the place under the new row
-  scroll(f, o, 330, 800);
-  expect(f.following).toBe(false);
-  expect(f.unseen).toBe(1);
-});
-
-test("a long drag keeps reading however long it lasts, with calls coming; the wait starts when it ends", () => {
-  const f = new Follow(),
-    o = new ScrollOwner();
-  let top = 100;
-  for (let t = 0; t <= 15_000; t += 500) {
-    scroll(f, o, (top += 10), t); // the person's drag
-    expect(f.tick(t)).toBe(false);
-    f.added();
-    o.set((top += 30)); // the page holds their row still under the new call
-    scroll(f, o, top, t + 1);
-    expect(f.following).toBe(false);
-  }
-  expect(f.tick(15_000 + RESUME_MS - 1)).toBe(false);
-  expect(f.tick(15_000 + RESUME_MS)).toBe(true);
-});
-
-test("a smooth return to the top the page starts is the page's, until the person takes over", () => {
-  const f = new Follow(),
-    o = new ScrollOwner();
-  scroll(f, o, 500, 0);
-  f.reset();
-  o.glide(0);
-  scroll(f, o, 300, 10);
-  expect(f.following).toBe(true);
-  o.personActs();
-  scroll(f, o, 400, 20);
-  expect(f.following).toBe(false);
-});
-
-test("folding the panel ends reading: it opens on the newest call", () => {
-  const f = new Follow();
-  f.touched(false, 0);
-  f.added();
-  expect(f.folded()).toBe(true);
-  expect(f.following).toBe(true);
-  expect(f.unseen).toBe(0);
-  expect(f.folded()).toBe(false);
-});
-
-test("at the cap of rows, a new call on top and the oldest trimmed: the row the person reads stays put", () => {
-  // a list of 80 rows of mixed heights; the person reads at scrollTop 600
-  const CAP = 80;
-  let rows = Array.from({ length: CAP }, (_, i) => ({ id: i, h: 30 + (i % 3) * 12 }));
-  const top = (id: number) => {
-    let y = 0;
-    for (const r of rows) {
-      if (r.id === id) return y;
-      y += r.h;
-    }
-    throw new Error("gone");
+function rig() {
+  let now = 0;
+  const list = new FakeList();
+  const s = new CallsScroller(list, () => now);
+  let n = 0;
+  /** One new call on top, then the scroll events the browser delivers. */
+  const call = () => {
+    s.change(() => {
+      list.list.unshift({ n: n, h: 26.546875 + (n % 3) * 0.3 });
+      n++;
+      return true;
+    });
+    flush();
   };
-  let scrollTop = 600;
-  for (let n = CAP; n < CAP + 50; n++) {
-    // the anchor: the first row whose bottom is below the top edge
-    const a = rows.find((r) => top(r.id) + r.h > scrollTop)!;
-    const before = top(a.id) - scrollTop;
-    const onScreen = before;
-    rows = [{ id: n, h: 30 + (n % 3) * 12 }, ...rows].slice(0, CAP);
-    scrollTop = keptScrollTop(scrollTop, before, top(a.id) - scrollTop);
-    expect(top(a.id) - scrollTop).toBe(onScreen);
+  const flush = () => {
+    if (list.pending) {
+      list.pending = false;
+      s.scrolled();
+    }
+  };
+  return {
+    s,
+    list,
+    call,
+    flush,
+    at: (t: number) => (now = t),
+  };
+}
+
+test("wiring: from the first call on the list shows the newest, its own scrolls never start reading", () => {
+  const r = rig();
+  for (let i = 0; i < 150; i++) r.call();
+  expect(r.list.top).toBe(0);
+  expect(r.s.follow.following).toBe(true);
+  expect(r.list.list.length).toBe(MAX_CALLS);
+});
+
+test("a finger held still before it drags: the drag is the person's, and the next calls keep the place", () => {
+  const r = rig();
+  for (let i = 0; i < 40; i++) r.call();
+  r.s.input("start"); // pressed at the top
+  r.at(700);
+  r.s.input("move");
+  r.list.personTo(300); // 700 ms later the drag
+  r.flush();
+  expect(r.s.follow.following).toBe(false);
+  r.call();
+  expect(r.s.follow.following).toBe(false);
+  expect(r.s.follow.unseen).toBe(1);
+  expect(r.list.top).toBeGreaterThan(300);
+});
+
+test("a long drag keeps reading however long it lasts; the wait starts when the person lets go", () => {
+  const r = rig();
+  for (let i = 0; i < 40; i++) r.call();
+  r.s.input("start");
+  r.list.personTo(200);
+  r.flush();
+  for (let t = 0; t <= 15_000; t += 500) {
+    r.at(t);
+    r.s.input("move");
+    expect(r.s.tick()).toBe(false);
+    r.call();
   }
-  // at the cap the list's height stays level, yet the place moves down with every row that comes on top
-  expect(scrollTop).toBeGreaterThan(600);
+  r.s.input("end");
+  r.at(15_000 + RESUME_MS - 1);
+  expect(r.s.tick()).toBe(false);
+  r.at(15_000 + RESUME_MS);
+  expect(r.s.tick()).toBe(true);
+  r.flush();
+  expect(r.list.top).toBe(0);
+  expect(r.s.follow.following).toBe(true);
+});
+
+test("rows of fractional heights, a scroll the browser rounds: the row read stays within 1 px over 100 calls", () => {
+  const r = rig();
+  for (let i = 0; i < 60; i++) r.call();
+  r.list.personTo(600);
+  r.flush();
+  r.s.change(() => false); // the anchor is taken
+  const row = r.list.list.find((x) => r.list.relTop(x) + x.h > 0)!;
+  const left = r.list.relTop(row);
+  for (let i = 0; i < 100; i++) {
+    r.at(i * 100);
+    r.call();
+    expect(Math.abs(r.list.relTop(row) - left)).toBeLessThanOrEqual(1);
+  }
+  expect(r.s.follow.following).toBe(false);
+});
+
+test("at the cap, the rows the person reads are not trimmed under them; following again trims back", () => {
+  const r = rig();
+  for (let i = 0; i < MAX_CALLS; i++) r.call();
+  // reading the oldest rows, at the bottom of the list
+  r.list.personTo(r.list.full());
+  r.flush();
+  const oldest = r.list.list.at(-1)!;
+  for (let i = 0; i < 60; i++) {
+    r.at(i * 100);
+    r.call();
+  }
+  expect(r.list.list.includes(oldest)).toBe(true);
+  expect(r.list.list.length).toBe(MAX_CALLS + 60);
+  for (let i = 0; i < HOLD_CALLS; i++) r.call();
+  expect(r.list.list.length).toBe(HOLD_CALLS);
+  r.list.personTo(0);
+  r.flush();
+  expect(r.s.follow.following).toBe(true);
+  expect(r.list.list.length).toBe(MAX_CALLS);
+});
+
+test("folding ends reading; opening shows the newest call", () => {
+  const r = rig();
+  for (let i = 0; i < 40; i++) r.call();
+  r.list.personTo(300);
+  r.flush();
+  r.call();
+  r.s.folded(true);
+  expect(r.s.follow.following).toBe(true);
+  expect(r.s.follow.unseen).toBe(0);
+  r.s.folded(false);
+  expect(r.list.top).toBe(0);
+});
+
+test('the smooth return of "↑ N nuevas" is the page\'s, for GLIDE_MS at most', () => {
+  const r = rig();
+  for (let i = 0; i < 40; i++) r.call();
+  r.list.personTo(500);
+  r.flush();
+  r.at(1000);
+  r.s.toNewest();
+  r.list.top = 300; // midway, the page's own glide
+  r.flush();
+  expect(r.s.follow.following).toBe(true);
+  // the glide was cut by something that is no input: past GLIDE_MS a scroll is the person's again
+  r.at(1000 + GLIDE_MS + 1);
+  r.list.personTo(400);
+  r.flush();
+  expect(r.s.follow.following).toBe(false);
+});
+
+test("the person's wheel interrupts the page's glide at once", () => {
+  const o = new ScrollOwner();
+  o.glide(0, 0);
+  expect(o.byPage(300, 10)).toBe(true);
+  o.personActs();
+  expect(o.byPage(250, 20)).toBe(false);
 });
