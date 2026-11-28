@@ -55,8 +55,8 @@ export interface Robots {
  *   the workshop folder (the Claude desktop app's change_directory tool), or a new session the person starts there.
  *   No `ant`, no LOGIN, no PAYS.
  * - `credits`: the Console credits of an `ant` profile. The Claude desktop app reads no profile (only the CLI does),
- *   so the robot's session is the CLI in a terminal with ANTHROPIC_PROFILE set: the app's Terminal panel, or a new
- *   terminal window that `setup window` opens.
+ *   so the robot's session is the CLI in a new terminal window with ANTHROPIC_PROFILE set, which `setup window`
+ *   opens. The app's own Terminal panel carries the app's login, which pays ahead of a profile, so it is never used.
  */
 export type Pays = "app" | "credits";
 export const PAYS: readonly Pays[] = ["app", "credits"];
@@ -173,21 +173,10 @@ export function launchLine(platform: string, profile: string): string {
     : `cd ~/mi-robot && ANTHROPIC_PROFILE=${profile} claude --model sonnet`;
 }
 
-/**
- * The launch line for the Claude desktop app's Terminal panel (its run_in_terminal tool), which starts the tab in the
- * workshop folder (`cwd`) and refuses a PowerShell line that reads a variable (`$HOME`): no `cd`, single quotes.
- * `check`: the line that shows who pays, before the launch.
- */
 /** A profile name goes into command lines and scripts unquoted: letters, digits, `_` and `-` only. */
 export function checkProfile(profile: string): string {
   if (!/^[\w-]+$/.test(profile)) throw new Error(`profile name "${profile}": use only letters, digits, _ and -`);
   return profile;
-}
-
-export function panelLine(platform: string, profile: string, check = false): string {
-  checkProfile(profile);
-  const cmd = check ? "claude auth status --text" : "claude --model sonnet";
-  return platform === "win32" ? `$env:ANTHROPIC_PROFILE = '${profile}'; ${cmd}` : `ANTHROPIC_PROFILE=${profile} ${cmd}`;
 }
 
 /** `CLAUDE_CODE_ENTRYPOINT` of a Code tab session of the Claude desktop app (`claude-desktop-3p`: a 3P provider). */
@@ -270,6 +259,9 @@ export async function waitView(
   return { state: "timeout", waited: w.now() - t0 };
 }
 export const VIEW_URL = "http://127.0.0.1:8769/";
+/** An answer on the view port is spinecord's 3D page only with status 200 and the page's own title. */
+export const isSpinecordView = (status: number, body: string, title: string): boolean =>
+  status === 200 && body.includes(`<title>${title}</title>`);
 
 /**
  * The person's own robot file is the EV3's too: what nobody confirmed in it that changes how the robot moves (a
@@ -981,9 +973,9 @@ export const serverLine = (up: boolean): Line =>
     ? {
         status: "ok",
         what: "server",
-        why: `a spinecord server answers on ${VIEW_URL}: a robot session runs; start no other`,
+        why: `running: spinecord's page answers on ${VIEW_URL}; start no other session`,
       }
-    : { status: "ok", what: "server", why: `nothing answers on ${VIEW_URL}: no robot session runs now` };
+    : { status: "ok", what: "server", why: `none: no spinecord page on ${VIEW_URL}` };
 
 const checkEv3 = (s: State): Line =>
   s.ev3 === undefined
@@ -1140,22 +1132,44 @@ async function registerAndCheck(s: State): Promise<Line[]> {
   return lines;
 }
 
+/**
+ * SMOKE while a spinecord server already runs: a second server would fail on its ports. The robot's session is the
+ * check then, and the skip is recorded only once WORKSHOP is done; before that the server is not this setup's.
+ */
+export function smokeSkip(workshopDone: boolean): { save: boolean; line: Line } {
+  return workshopDone
+    ? {
+        save: true,
+        line: {
+          status: "ok",
+          what: "smoke",
+          why: `skipped: a spinecord server already answers on ${VIEW_URL}, so a Claude Code session in ${WORKSHOP} runs it; no second server`,
+          next: "bun scripts/setup.ts view",
+        },
+      }
+    : {
+        save: false,
+        line: {
+          status: "todo",
+          what: "smoke",
+          why: `a spinecord server already answers on ${VIEW_URL}, but WORKSHOP is not done`,
+          next: "the person closes the other Claude Code (/exit); then bun scripts/setup.ts workshop",
+        },
+      };
+}
+
 async function smoke(s: State): Promise<Line[]> {
   // no id in the prompt: only a running spinecord can name the twin, so an answer without one proves nothing
   const prompt = "List the robots. Then drive the simulated one forward 5 cm. Answer in one line that names its id.";
   if (s.pays === undefined) return [checkChoice(s)];
   // a running server holds the ports: a second one would fail, and the person's session already drives the robot
   if (await viewUp()) {
-    s.smoke = { args: twinKey(), answer: `skipped: a spinecord server already answers on ${VIEW_URL}`, cost_usd: 0 };
-    saveState(s);
-    return [
-      {
-        status: "ok",
-        what: "smoke",
-        why: `skipped: a spinecord server already answers on ${VIEW_URL}, so a Claude Code session in ${WORKSHOP} runs it; no second server`,
-        next: "bun scripts/setup.ts view",
-      },
-    ];
+    const skip = smokeSkip((await checkWorkshop(s)).every((l) => !isOpen(l)));
+    if (skip.save) {
+      s.smoke = { args: twinKey(), answer: `skipped: a spinecord server already answers on ${VIEW_URL}`, cost_usd: 0 };
+      saveState(s);
+    }
+    return [skip.line];
   }
   // the app path pays with the login of this agent's host, which its own environment carries
   let env: Env = process.env;
@@ -1191,9 +1205,14 @@ async function smoke(s: State): Promise<Line[]> {
   return [checkSmoke(s)];
 }
 
+/** The title of spinecord's 3D page, from this clone: another program on the port is not a robot session. */
+const VIEW_TITLE = readFileSync(join(REPO, "apps", "twin-view", "view.html"), "utf8").match(
+  /<title>([^<]*)<\/title>/,
+)?.[1];
+if (!VIEW_TITLE) throw new Error("apps/twin-view/view.html has no <title>: setup cannot tell spinecord's 3D page");
 const viewUp = (): Promise<boolean> =>
   fetch(VIEW_URL, { signal: AbortSignal.timeout(2000) }).then(
-    (r) => r.ok,
+    async (r) => isSpinecordView(r.status, await r.text(), VIEW_TITLE),
     () => false,
   );
 /** `setup view` waits this long for the robot's session, within an agent's 2-minute command limit. */
@@ -1258,7 +1277,7 @@ async function view(s: State): Promise<Line[]> {
 }
 
 /**
- * The credits path without the app's Terminal panel: a new terminal window runs the launch line, so no person types
+ * The credits path: a new terminal window runs the launch line, so no person types
  * it. The window gets the environment of a new terminal, never this agent's (the agent host's login would pay).
  */
 async function openWindow(s: State): Promise<Line[]> {
@@ -1291,6 +1310,34 @@ async function openWindow(s: State): Promise<Line[]> {
   writeFileSync(file, f.text);
   chmodSync(file, 0o755);
   const cmd = windowCommand(process.platform, file);
+  // Linux: a terminal emulator may stay in the foreground for the life of its window; start it and never wait
+  if (process.platform === "linux") {
+    if (Bun.which(cmd[0]!, { PATH: e.env.PATH ?? "" }) === null)
+      return [
+        {
+          status: "fail",
+          what: "window",
+          why: `${cmd[0]} is not on PATH`,
+          next: `the person opens a new terminal and pastes: ${launchLine(process.platform, s.profile)}`,
+        },
+      ];
+    Bun.spawn(cmd, {
+      cwd: WORKSHOP,
+      env: e.env as Record<string, string>,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+      detached: true,
+    }).unref();
+    return [
+      {
+        status: "ok",
+        what: "window",
+        why: `a new terminal window runs ${file}`,
+        next: "tell the person what the window shows (see-it.md, part Credits); then bun scripts/setup.ts view",
+      },
+    ];
+  }
   const r = await run(cmd, { ms: 15_000, cwd: WORKSHOP, env: e.env });
   return [
     r.code === 0
@@ -1341,7 +1388,8 @@ export function restartLine(platform: string, profile: string, pays: Pays | unde
     next:
       pays === "app"
         ? `the person starts a new session in the folder ${WORKSHOP} (Claude desktop app: Code tab, the folder control), and talks to the robot there`
-        : `the person types /exit in Claude Code, then starts it again with: ${launchLine(platform, profile)}`,
+        : // the window runs claude in place of its shell: after /exit no shell is left to type in
+          `the person types /exit in the robot's Claude Code; then run bun scripts/setup.ts window (a new window runs ${launchLine(platform, profile)})`,
   };
 }
 
@@ -1401,10 +1449,7 @@ async function report(s: State): Promise<string> {
       ? [
           `Start Claude Code with: a session in the folder ${WORKSHOP} (Claude desktop app: Code tab, the folder control)`,
         ]
-      : [
-          `Terminal panel of the Claude app: in the folder ${WORKSHOP}, run: ${panelLine(process.platform, s.profile)}`,
-          `Start Claude Code with: ${launchLine(process.platform, s.profile)}`,
-        ]),
+      : [`Start Claude Code with: ${launchLine(process.platform, s.profile)}`]),
   ].join("\n");
 }
 
@@ -1450,6 +1495,16 @@ const USAGE = `usage: bun scripts/setup.ts <step>
 export async function main(argv: string[]): Promise<number> {
   const [step, ...rest] = argv;
   const s = loadState();
+  // the state file is the person's: a profile that would reach a command line unquoted is a fail, not a throw
+  if (step !== "login" && !/^[\w-]+$/.test(s.profile))
+    return print(step ?? "status", [
+      {
+        status: "fail",
+        what: "profile",
+        why: `${STATE_FILE}: profile "${s.profile}" may hold only letters, digits, _ and -`,
+        next: "bun scripts/setup.ts login --profile credits",
+      },
+    ]);
   const opt = (name: string) => {
     const i = rest.indexOf(name);
     return i === -1 ? undefined : rest[i + 1];
@@ -1530,8 +1585,21 @@ export async function main(argv: string[]): Promise<number> {
         const org = a.profile === s.profile ? await orgOf(s.profile, a.org) : undefined;
         if (!org) return print(step, await checkPays(s));
         s.org = org;
-      } else if (what === "moved") s.moved = true;
-      else if (what === "forward") s.forward = true;
+      } else if (what === "moved") {
+        // the person saw the robot of this setup move: its folder and its smoke test come first
+        const before = [...(await checkWorkshop(s)), checkSmoke(s)].filter(isOpen);
+        if (before.length)
+          return print(step, [
+            ...before,
+            {
+              status: "fail",
+              what: "moved",
+              why: "WORKSHOP and SMOKE come first",
+              next: "bun scripts/setup.ts status",
+            },
+          ]);
+        s.moved = true;
+      } else if (what === "forward") s.forward = true;
       else break;
       saveState(s);
       return print(step, [{ status: "ok", what, why: "recorded" }]);

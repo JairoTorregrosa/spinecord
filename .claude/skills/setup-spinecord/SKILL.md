@@ -37,7 +37,7 @@ Each `setup` line is `ok`, `warn`, `todo` or `fail`, the reason, and after `->` 
 - Give every command a timeout of 10 minutes. Every step is safe to run again.
 - If the same step fails 2 times, stop. Show the error line and the row of fixes.md, in the person's language.
 - On Windows, use PowerShell for all commands.
-- Only one robot session runs spinecord. Before you start one, check: `list_robots` answers in this session, or the line `SEE IT` of `setup status` names a server. Never drive the robot with `claude -p`. Each request starts and stops a server, and the 3D page loses its link.
+- Only one robot session runs spinecord. Before you start one, check: `list_robots` answers in this session, or the line `SEE IT` of `setup status` says `server: running`. Never drive the robot with `claude -p`. Each request starts and stops a server, and the 3D page loses its link.
 
 ## Start: three questions and one approval
 
@@ -130,7 +130,7 @@ Skip this state if the person has no EV3. The person keeps the robot's Claude Co
 2. Ask: "Does the answer say the EV3 is online? Did the robot move forward or backward?"
 3. Not online: use the row "EV3 not `online`" of fixes.md.
 4. Forward: run `setup confirm forward`.
-5. Backward: run `setup flip`. Start the robot's Claude Code again, as its `restart` line says. Do steps 1 and 2 again.
+5. Backward: run `setup flip`. Do what its `restart` line says. The person types nothing but `/exit`. Do steps 1 and 2 again.
 
 ### 10 REPORT
 
