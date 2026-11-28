@@ -11,6 +11,7 @@ import type { RobotMeta, RobotState } from "./messages";
 import { MOTOR, SENSOR, type PartDims } from "./dims";
 import { largeMotor, largeMotorBox, mediumMotor, type MotorPart } from "./motors";
 import { facingDir, P, pointOf, type Kit, type RealPart } from "./parts";
+import { centreForPose, distancePort, poseOfBody } from "./sensor-pose";
 
 /** The brick as the cables see it: where each port is, the way out of it, and the brick's box. */
 export interface BrickMount {
@@ -96,6 +97,15 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
     cz = (bb.min.z + bb.max.z) / 2;
   let height = 0;
   let rayOrigin: THREE.Vector3 | null = null;
+  /** The drawn eye, checked against the pose the physics reads from: a layout that moved it fails loud. */
+  const eyeAt = (e: THREE.Vector3): THREE.Vector3 => {
+    const p = poseOfBody(body);
+    if (Math.hypot(e.x - p.x_cm, e.y - p.y_cm, e.z - p.z_cm) > 0.01)
+      throw new Error(
+        `the distance sensor is drawn with its eye at (${e.x.toFixed(2)}, ${e.y.toFixed(2)}, ${e.z.toFixed(2)}) cm, and the twin reads from (${p.x_cm}, ${p.y_cm}, ${p.z_cm})`,
+      );
+    return e;
+  };
 
   // ---------------------------------------------------------------- motors that drive something else
   const motors: MotorPart[] = [];
@@ -149,7 +159,17 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
   const touchPlungers: { port: string; obj: THREE.Object3D }[] = [];
   const colorLights: { port: string; lens: THREE.MeshStandardMaterial; spotMat: THREE.MeshBasicMaterial | null }[] = [];
   const usEyes: { port: string; mat: THREE.MeshStandardMaterial }[] = [];
-  for (const s of [...look.sensors].sort(byGiven)) {
+  // the distance sensor the physics reads (the lowest port with one) sits where its eye is the body's pose, facing
+  // its heading: the one pose its reading, its rays and its drawing share (sensor-pose.ts); apps/local resolved the
+  // look's place for it into that pose
+  const pose = poseOfBody(body);
+  const pinned = distancePort(meta.ports.sensors);
+  const sensors = look.sensors.map((s): SensorPlace => {
+    if (s.port !== pinned?.port) return s;
+    const c = centreForPose(pinned.kind, pose);
+    return { ...s, x: c.x, y: c.y, z: c.z, facing: "forward", yaw: pose.yaw_deg };
+  });
+  for (const s of sensors.sort(byGiven)) {
     const dx = body.distance_sensor_x_cm - 1.4;
     const mounts: Record<SensorPlace["kind"], Mount[]> = {
       // its lens about 6 mm over the floor; side by side they sit a module apart
@@ -253,12 +273,12 @@ export function buildDevices(kit: Kit, meta: RobotMeta, look: Look, m: BrickMoun
           kit.axleCyl(r * 0.78, 0.34, 0, 0, 0, mats.black, eye, 24);
           kit.axleCyl(r * 0.5, 0.36, 0, 0, 0, i === 0 ? glow : mats.anthracite, eye, 20);
         }
-        rayOrigin ??= at(...f("beam_centre"));
+        if (s.port === pinned?.port) rayOrigin = eyeAt(at(...f("beam_centre")));
       } else {
         // the infrared's two dark red windows, glossy
         const win = keep(new THREE.MeshStandardMaterial({ color: 0x3c0508, roughness: 0.06, metalness: 0.1 }));
         for (const y of [W / 4, -W / 4]) kit.box(0.2, W / 2 - 0.5, H - 0.8, x1 - 0.05, y, zc, win, 0.4, o);
-        rayOrigin ??= at(...f("front_face"));
+        if (s.port === pinned?.port) rayOrigin = eyeAt(at(...f("front_face")));
       }
     } else if (s.kind === "color") {
       shell(x1 - 0.3, W);

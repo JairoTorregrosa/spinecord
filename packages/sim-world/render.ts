@@ -126,7 +126,10 @@ export function renderWorld(world: World, opts: RenderOptions = {}): Image {
         put(px, py, u > g.front_cm - 2.5 ? NOSE : BODY);
     }
   if (opts.rays ?? true) {
-    const [ox, oy] = world.pointAhead(g.distance_sensor_x_cm);
+    const {
+      o: [ox, oy],
+      th,
+    } = world.distanceSensorAxis(p);
     // Every ray of the ultrasonic cone, each up to what it hits: dark where that surface echoes, pale where it is
     // met too far off square to send the sound back (world.ts, ULTRASONIC_ECHO_DEG).
     const echo = Math.cos((ULTRASONIC_ECHO_DEG * Math.PI) / 180);
@@ -134,13 +137,7 @@ export function renderWorld(world: World, opts: RenderOptions = {}): Image {
       const off = (((2 * i) / (ULTRASONIC_RAYS - 1) - 1) * CONE_HALF_DEG * Math.PI) / 180,
         h = world.rayHit(p, off),
         d = Math.min(h.d, ULTRASONIC_MAX_CM);
-      line(
-        ox,
-        oy,
-        ox + d * Math.cos(p.th + off),
-        oy + d * Math.sin(p.th + off),
-        h.cos >= echo - 1e-12 ? RAY : SILENT_RAY,
-      );
+      line(ox, oy, ox + d * Math.cos(th + off), oy + d * Math.sin(th + off), h.cos >= echo - 1e-12 ? RAY : SILENT_RAY);
     }
     const [sx, sy] = world.pointAhead(g.color_sensor_x_cm);
     disc(sx, sy, g.color_spot_radius_cm, SPOT);

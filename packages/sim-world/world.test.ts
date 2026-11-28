@@ -16,6 +16,8 @@ describe("world files", () => {
         color_sensor_x_cm: 7,
         color_spot_radius_cm: 1,
         distance_sensor_x_cm: 8,
+        distance_sensor_y_cm: 0,
+        distance_sensor_yaw_deg: 0,
         distance_sensor_z_cm: 6,
         touch_z_cm: 0,
       });
@@ -379,5 +381,49 @@ describe("sensors", () => {
     const w = quietWorld();
     expect(w.point("A")).toEqual({ label: "A", x: 15, y: 75, radius: 9 });
     expect(() => w.point("kitchen")).toThrow(/unknown point "kitchen".*A, B, C, D/);
+  });
+});
+
+describe("the distance sensor's pose: its eye off the centre line and its heading turned", () => {
+  const room = (body: object, boxes: object[] = []) =>
+    new World(
+      parseWorld({
+        schema: WORLD_SCHEMA,
+        name: "pose",
+        arena: { width_cm: 200, height_cm: 200 },
+        start: { x: 100, y: 100, heading_deg: 0 },
+        obstacles: boxes,
+        noise: { ...NO_NOISE },
+        body: { distance_sensor_x_cm: 6, ...body },
+      }),
+      1,
+      DRIVE,
+    );
+  test("every ray starts at the eye and leaves along its heading; the reading is that ray's", () => {
+    // eye 6 ahead, 5 to the right, looking 90 degrees right of ahead: straight at the wall at y 0
+    const w = room({ distance_sensor_y_cm: -5, distance_sensor_yaw_deg: -90 });
+    const a = w.distanceSensorAxis();
+    expect(a.o[0]).toBeCloseTo(106, 9);
+    expect(a.o[1]).toBeCloseTo(95, 9);
+    expect(a.th).toBeCloseTo(-Math.PI / 2, 9);
+    expect(w.rayDistance()).toBeCloseTo(95, 6);
+    expect(w.coneDistance()).toBeCloseTo(95, 6);
+    // the robot turned: the sensor turns with it
+    w.setPose({ x: 100, y: 100, th: Math.PI / 2 });
+    expect(w.distanceSensorAxis().o[0]).toBeCloseTo(105, 9);
+    expect(w.rayDistance()).toBeCloseTo(95, 6); // now looking along +x, from x 105
+  });
+  test("a box beside the centre line is seen by an eye on that side, looking ahead, and missed from the centre", () => {
+    const box = [{ x: 140, y: 108, w: 10, h: 6 }];
+    const side = room({ distance_sensor_y_cm: 11 }, box);
+    expect(side.rayDistance()).toBeCloseTo(140 - 106, 6);
+    expect(room({}, box).rayDistance()).toBeCloseTo(200 - 106, 6);
+    // the infrared's light comes back mostly along the ray that meets it
+    expect(side.irProximity()).toBeLessThan(room({}, box).irProximity());
+  });
+  test("the side may be negative, the heading only within -180..180", () => {
+    expect(room({ distance_sensor_y_cm: -3 }).cfg.body.distance_sensor_y_cm).toBe(-3);
+    expect(() => room({ distance_sensor_yaw_deg: 270 })).toThrow(/distance_sensor_yaw_deg/);
+    expect(() => room({ distance_sensor_x_cm: -1 })).toThrow(/distance_sensor_x_cm/);
   });
 });

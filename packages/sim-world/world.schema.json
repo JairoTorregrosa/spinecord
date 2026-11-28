@@ -181,6 +181,18 @@
       "additionalProperties": {
         "type": "number",
         "minimum": 0
+      },
+      "properties": {
+        "distance_sensor_y_cm": {
+          "type": "number",
+          "description": "How far to the left of the centre line the distance sensor's eye is, cm (negative: to the right). Default 0."
+        },
+        "distance_sensor_yaw_deg": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180,
+          "description": "Where the distance sensor looks: degrees counter-clockwise from straight ahead, seen from above. Default 0."
+        }
       }
     }
   },

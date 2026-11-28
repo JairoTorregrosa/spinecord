@@ -8,6 +8,8 @@ import { EXAMPLE, REPO, loadConfig, type RobotSource } from "../src/config";
 import { buildFleet } from "../src/sources";
 import { describeTwin, describeUnconfirmed, MOVES } from "../src/twin-build";
 import { toolsOf } from "./arm";
+import { eyeOffset, poseOfBody, rayEnd } from "../../twin-view/src/sensor-pose";
+import { sensorRays } from "../src/view";
 
 const tmp = mkdtempSync(join(tmpdir(), "spinecord-build-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -466,5 +468,77 @@ describe("twin.drive: the drivetrain as it physically is, apart from what the pr
     expect(describeTwin(t.robot, t.world, true, t.build?.drive)).toContain(
       "wheel 3.5 cm, axle track 16 cm (really 13.5 cm), turns scrub 0.2,",
     );
+  });
+});
+
+describe("the distance sensor's pose: the reading, the rays and the drawn sensor from one point", () => {
+  const ORUGAS = join(REPO, "deployments", "orugas", "robots", "orugas.json");
+  const orugas = JSON.parse(readFileSync(ORUGAS, "utf8"));
+  /** A build as the robot-twin skill writes it: body x only, the sensor's real place (off-centre, turned, low) in the look. */
+  const offCentre = (sensor: object, body: object = {}) => ({
+    ...orugas,
+    twin: {
+      ...orugas.twin,
+      body: { front_cm: 8.5, back_cm: 13.5, half_width_cm: 9, distance_sensor_x_cm: 6, ...body },
+      view: { ...orugas.twin.view, sensors: { "4": sensor } },
+    },
+  });
+  const PLACE = { x_cm: 4, y_cm: -5, z_cm: 12, facing: "forward", yaw_deg: 20 };
+  const eye = eyeOffset("ir");
+  const rad = (20 * Math.PI) / 180;
+
+  test("a place in the look sets the side, the height and the heading the physics reads with", () => {
+    const b = (twinOf(offCentre(PLACE)).world as { body: Record<string, number> }).body;
+    expect(b.distance_sensor_x_cm).toBe(6); // the body's measured number wins
+    expect(b.distance_sensor_y_cm).toBeCloseTo(-5 + eye[0] * Math.sin(rad), 2);
+    expect(b.distance_sensor_z_cm).toBeCloseTo(12 + eye[2], 2);
+    expect(b.distance_sensor_yaw_deg).toBe(20);
+  });
+
+  test("the running twin reads along the drawn sensor's axis: a box on it is where its rays end", async () => {
+    const SALA = join(REPO, "deployments", "orugas", "worlds", "sala.json");
+    const fleet = await buildFleet(loadConfig(["--twin", file("offc.json", offCentre(PLACE)), "--world", SALA]), {
+      log: () => {},
+    });
+    try {
+      const w = fleet.bricks.get("orugas-sim")!.world;
+      const pose = poseOfBody(w.cfg.body);
+      w.setPose({ x: 40, y: 75, th: 0 });
+      const { o } = w.distanceSensorAxis();
+      // a tall box whose face is 30 cm from the eye along its heading: the middle ray ends there
+      const ahead = 30;
+      const hit: [number, number] = [o[0] + ahead * Math.cos(rad), o[1] + ahead * Math.sin(rad)];
+      w.addObstacle({ x: hit[0], y: hit[1] - 4, w: 6, h: 8 });
+      const rays = sensorRays(w, ["ir"]);
+      expect(rays.from).toEqual(pose);
+      const mid = rays.ir!.rays[(rays.ir!.rays.length - 1) / 2]!;
+      expect(mid.deg).toBe(0);
+      expect(mid.cm).toBeCloseTo(ahead, 1);
+      // the drawn end of that ray, robot frame, is on the box's face
+      const end = rayEnd(rays.from, mid.deg, mid.cm);
+      expect(end[0]).toBeCloseTo(hit[0] - 40, 0);
+      expect(-end[2]).toBeCloseTo(hit[1] - 75, 0);
+      expect(end[1]).toBeCloseTo(pose.z_cm, 9);
+      // the reading comes from the eye, not from the centre line: it sees the box
+      expect(w.irProximity()).toBeLessThan(100);
+    } finally {
+      await fleet.shutdown();
+    }
+  }, 30_000);
+
+  test("orugas: its eye on top of the phone, 4.6 cm left of the centre line, as the body states it", () => {
+    const b = (twinOf(orugas).world as { body: Record<string, number> }).body;
+    expect([b.distance_sensor_x_cm, b.distance_sensor_y_cm, b.distance_sensor_z_cm]).toEqual([6, 4.6, 20]);
+    expect(b.distance_sensor_yaw_deg).toBeUndefined(); // looking ahead, the default
+  });
+
+  test("refused when the body and the look put the eye on different sides or looking different ways", () => {
+    expect(fails(offCentre(PLACE, { distance_sensor_y_cm: 5 }))).toThrow(
+      "twin.view.sensors.4 puts the distance sensor's eye at distance_sensor_y_cm",
+    );
+    expect(fails(offCentre(PLACE, { distance_sensor_yaw_deg: -20 }))).toThrow("distance_sensor_yaw_deg 20");
+    // the same pose written in both is one pose
+    const y = -5 + eye[0] * Math.sin(rad);
+    expect(() => twinOf(offCentre(PLACE, { distance_sensor_y_cm: y, distance_sensor_yaw_deg: 20 }))).not.toThrow();
   });
 });

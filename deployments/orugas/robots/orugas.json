@@ -1,5 +1,5 @@
 {
-  "description": "EV3 de orugas con un teléfono de pie al frente (su pantalla es la cara) y el sensor infrarrojo encima, mirando adelante. Motores grandes en B (oruga izquierda) y C (oruga derecha), infrarrojo en el puerto 4, sin giroscopio: el rumbo sale de los encoders. Las medidas son aproximadas: mide en el robot real y ajusta wheel_diameter_cm (avanza 50 cm y compara) y axle_track_cm (gira 360° y compara). `twin` es cómo está armado, para su gemelo: `body` la huella (8.5 cm por delante del eje, 13.5 por detrás con el parachoques, 9 a cada lado) y dónde mira el infrarrojo (6 cm por delante del eje, a 19.6 cm del suelo: mira por encima de una caja baja cercana), `ev3` qué hay en cada puerto, `drive` la tracción como es de verdad (una estimación: el gemelo gira un 20 % menos de lo que dicen los encoders, como las orugas que patinan; para medirlo, gira 360° en el robot real, mide cuánto giró de verdad y pon turn_scrub = 1 - real/360; calibrar `profile` lo corrige) y `view` cómo se ve en 3D (orugas, el ladrillo con la pantalla hacia delante, el teléfono, el infrarrojo sobre el teléfono, el parachoques y la etiqueta). El gemelo orugas-sim se construye con este mismo archivo, en cualquier mundo.",
+  "description": "EV3 de orugas con un teléfono de pie al frente (su pantalla es la cara) y el sensor infrarrojo encima, mirando adelante. Motores grandes en B (oruga izquierda) y C (oruga derecha), infrarrojo en el puerto 4, sin giroscopio: el rumbo sale de los encoders. Las medidas son aproximadas: mide en el robot real y ajusta wheel_diameter_cm (avanza 50 cm y compara) y axle_track_cm (gira 360° y compara). `twin` es cómo está armado, para su gemelo: `body` la huella (8.5 cm por delante del eje, 13.5 por detrás con el parachoques, 9 a cada lado) y dónde está el ojo del infrarrojo y hacia dónde mira (6 cm por delante del eje, 4.6 cm a la izquierda del centro, a 20 cm del suelo, mirando adelante: mira por encima de una caja baja cercana; el 3D dibuja el sensor ahí mismo), `ev3` qué hay en cada puerto, `drive` la tracción como es de verdad (una estimación: el gemelo gira un 20 % menos de lo que dicen los encoders, como las orugas que patinan; para medirlo, gira 360° en el robot real, mide cuánto giró de verdad y pon turn_scrub = 1 - real/360; calibrar `profile` lo corrige) y `view` cómo se ve en 3D (orugas, el ladrillo con la pantalla hacia delante, el teléfono, el parachoques y la etiqueta). El gemelo orugas-sim se construye con este mismo archivo, en cualquier mundo.",
   "pair": {
     "left": "B",
     "right": "C"
@@ -35,7 +35,7 @@
     "notes": [
       "Tracked base (skid steer): wheel_diameter_cm is the effective diameter of the drive sprockets with the tread; turns slip more than on wheels.",
       "No gyro: the heading of a move comes from the wheel encoders.",
-      "The infrared sensor on S4 sits on top of the phone, about 20 cm above the floor and 6 cm ahead of the axle, looking forward: the front of the tracks is about 2.5 cm ahead of it. It reads proximity_pct (0 touching, 100 far), not centimetres.",
+      "The infrared sensor on S4 sits on top of the phone, its eye about 20 cm above the floor, 6 cm ahead of the axle and 4.6 cm left of the centre line, looking forward: the front of the tracks is about 2.5 cm ahead of it. It reads proximity_pct (0 touching, 100 far), not centimetres.",
       "A phone stands at the front with its screen facing forward; it can join as a page and lend its camera, screen and speaker."
     ]
   },
@@ -47,7 +47,8 @@
       "color_sensor_x_cm": 7,
       "color_spot_radius_cm": 1,
       "distance_sensor_x_cm": 6,
-      "distance_sensor_z_cm": 19.6
+      "distance_sensor_y_cm": 4.6,
+      "distance_sensor_z_cm": 20
     },
     "drive": {
       "wheel_diameter_cm": 3.5,
@@ -73,13 +74,6 @@
         "x_cm": 5.2,
         "bottom_cm": 10.8,
         "screen": "front"
-      },
-      "sensors": {
-        "4": {
-          "x_cm": 5,
-          "y_cm": 4.6,
-          "z_cm": 19.6
-        }
       },
       "bumper": {
         "x_cm": -10.5

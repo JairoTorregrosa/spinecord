@@ -6,7 +6,15 @@
 import type { RobotFile } from "../../../packages/driver-ev3/robot-file";
 import { TREAD_GRIP, type PhysicalDrive, type Tread } from "../../../packages/sim-ev3/brick";
 import { parseBrickPorts, type BrickPorts } from "../../../packages/sim-ev3/ports";
-import { parseWorld, type BodyShape } from "../../../packages/sim-world/world";
+import { DEFAULT_BODY, parseWorld, type BodyShape } from "../../../packages/sim-world/world";
+import { place } from "../../twin-view/src/look";
+import {
+  distancePort,
+  eyeOfPlace,
+  POSE_FIELDS,
+  poseOfBody,
+  resolveDistancePose,
+} from "../../twin-view/src/sensor-pose";
 import rolling from "../../../packages/lego-parts/data/rolling.json";
 
 /** The top-level keys of a robot file; anything else is a typo that would otherwise go unnoticed. */
@@ -231,7 +239,41 @@ export function withBuild(
     throw new Error(`${names.world}: ${(e as Error).message}`, { cause: e });
   }
   checkPorts(robot, ports, { build: !!build, from, robot: names.robot, world: names.world });
-  return out;
+  return withSensorPose(out, ports, build ? { file: names.robot, at: "twin" } : { file: names.world, at: "" });
+}
+
+/**
+ * The world with its distance sensor's pose in `body`: what the body states, and what the look's place for that
+ * sensor says of its eye (distance_sensor_x_cm, _y_cm, _z_cm, _yaw_deg) written in where the body is silent (apps/twin-view/src/sensor-pose.ts). The physics reads from that pose and the page draws the sensor there,
+ * so the two cannot part. Throws when the body and the place disagree on a side or a direction.
+ */
+export function withSensorPose(
+  world: Record<string, unknown>,
+  ports: BrickPorts,
+  where: { file: string; at: "twin" | "" },
+): Record<string, unknown> {
+  const d = distancePort(ports.sensors);
+  if (!d) return world;
+  const ext = isObj(world.extensions) ? world.extensions : {};
+  const view = isObj(ext.view) ? ext.view : {};
+  const raw = isObj(view.sensors) ? view.sensors[d.port] : undefined;
+  const body = (isObj(world.body) ? world.body : {}) as Record<string, number>;
+  let eye = null;
+  if (isObj(raw)) {
+    const p = place(raw);
+    eye = eyeOfPlace(d.kind, p, { facing: p.facing !== null, yaw: typeof raw.yaw_deg === "number" });
+  }
+  const pre = where.at ? "twin." : "";
+  const pose = resolveDistancePose(body, eye, poseOfBody(DEFAULT_BODY), {
+    body: `${where.file}: ${pre}body`,
+    place: `${where.file}: ${pre}${where.at ? "view" : "extensions.view"}.sensors.${d.port}`,
+  });
+  // only what the place settles is written in: a body that states it all, or a look that places nothing, stays as it is
+  const value = { x: pose.x_cm, y: pose.y_cm, z: pose.z_cm, yaw: pose.yaw_deg };
+  const added: Record<string, number> = {};
+  for (const [k, field] of Object.entries(POSE_FIELDS) as [keyof typeof POSE_FIELDS, string][])
+    if (body[field] === undefined && eye?.[k] != null) added[field] = value[k];
+  return Object.keys(added).length ? { ...world, body: { ...body, ...added } } : world;
 }
 
 /** Roles, heading and pair against the ports the twin has. */
@@ -354,7 +396,9 @@ export function describeTwin(
       `footprint ${b.front_cm} cm ahead of the axle, ${b.back_cm} behind, ${2 * b.half_width_cm} wide`,
       ...(kinds.includes("color") ? [`color sensor ${b.color_sensor_x_cm} cm ahead`] : []),
       ...(kinds.includes("ultrasonic") || kinds.includes("ir")
-        ? [`distance sensor ${b.distance_sensor_x_cm} cm ahead`]
+        ? [
+            `distance sensor's eye ${b.distance_sensor_x_cm} cm ahead, ${b.distance_sensor_y_cm} left, ${b.distance_sensor_z_cm} up, looking ${b.distance_sensor_yaw_deg}° from ahead`,
+          ]
         : []),
     ].join(", "),
     `look ${

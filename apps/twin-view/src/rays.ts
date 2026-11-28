@@ -1,19 +1,14 @@
 // The rays of the simulated sensors, drawn as the physics casts them (state.rays, src/messages.ts SensorRays):
-// quiet lines from the distance sensor's real place and height, one clear mark where each reading comes from (the
+// quiet lines from the distance sensor's eye (the one pose it reads from and is drawn at, src/sensor-pose.ts), one clear mark where each reading comes from (the
 // ultrasonic's echo, the infrared ray that sends back the most light), and the colour sensor's spot on the mat.
 // Everything here is in the robot's frame: x ahead, y up, z to its right (three.js), cm.
 import * as THREE from "three";
 import type { SensorRays } from "./messages";
+import { rayEnd, rayStart } from "./sensor-pose";
 
-const DEG = Math.PI / 180;
 const US_COLOUR = 0x3ccf7a;
 const IR_COLOUR = 0xff5a7a;
 const SPOT_COLOUR = 0x2f7bff;
-
-/** The end of a ray of `cm` along bearing `deg` (left positive) from (ahead, z), in the robot's frame. */
-export function rayEnd(from: { ahead_cm: number; z_cm: number }, deg: number, cm: number): [number, number, number] {
-  return [from.ahead_cm + Math.cos(deg * DEG) * cm, from.z_cm, -Math.sin(deg * DEG) * cm];
-}
 
 /** The ray whose light the infrared reading mostly comes from (the largest share); null for no rays. */
 export function irMark(ir: SensorRays["ir"]): { deg: number; cm: number } | null {
@@ -78,7 +73,7 @@ export class SensorRayView {
     if (key === this.drawn) return;
     this.drawn = key;
     const f = r.from;
-    const o: [number, number, number] = [f.ahead_cm, f.z_cm, 0];
+    const o = rayStart(f);
     // ultrasonic: every even ray, the fan through their ends, the echo the reading comes from
     const u = r.ultrasonic;
     this.us.visible = this.usFan.visible = u !== null;

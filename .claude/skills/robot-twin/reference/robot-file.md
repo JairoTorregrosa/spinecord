@@ -51,7 +51,7 @@ Add each one the robot has, on its confirmed port. A port nobody confirmed: the 
 | The brick (always) | none | none | `twin.view.brick`: `"pose"` `"flat"` or `"standing"`, `"screen"` `"front"` or `"back"` (flat: where ports A-D point; standing: where the screen faces), as the photo shows. A leaning brick: the closer pose and a note "the brick leans <n>° toward <the front / the back>" |
 | Phone | none | none | `twin.view.phone`; a note "A phone stands at the front with its screen facing forward; it joins as a page and lends its camera, screen and speaker." (`<clone>/docs/manual.md` "Peripheral pages on a phone") |
 
-`twin.view.sensors.<n>` (`x_cm`, `y_cm`, `z_cm`) places a sensor in the 3D look only. Leave out the body fields of a sensor the robot does not have.
+`twin.view.sensors.<n>` (`x_cm`, `y_cm`, `z_cm`, `facing`, `yaw_deg`) places a sensor in the 3D look; for the distance sensor it also sets where the twin reads from (its side, height and heading, where `twin.body` leaves them out). Leave out the body fields of a sensor the robot does not have.
 
 A part whose kind is a guess: write the likelier kind on its port, keep the port's token, add a note "<port>: <kind a> or <kind b>, not confirmed", and ask the question naming both (SKILL.md state 1). Something plugged into a port whose kind you cannot even guess: a motor is `"large"` if it drives, else `"medium"`; a sensor gets no entry in `twin.ev3.sensors` and no role (the file has no "sensor of unknown kind"), the port's token, and a note "S<n>: a sensor is plugged in here, kind unknown". A part of an official model that the photo does not show is written like a seen one, with its token and a note "<part> on <port>: from the <model>'s build, not seen in the photo".
 
@@ -83,7 +83,8 @@ Every length is in cm from the centre of the drive axle, on the floor: `x` ahead
 | `twin.ev3.sensors.<1-4>` | `"touch"`, `"color"`, `"ultrasonic"`, `"gyro"`, `"ir"` | nothing plugged | |
 | `twin.body.front_cm`, `back_cm`, `half_width_cm` | number >= 0 | 8, 10, 6 | the footprint: a rectangle around the axle, used for collisions and the touch sensor |
 | `twin.body.color_sensor_x_cm`, `color_spot_radius_cm` | number >= 0 | 7, 1 | where the colour sensor reads the floor, on the centre line |
-| `twin.body.distance_sensor_x_cm` | number >= 0 | 8 | where the ultrasonic or infrared looks out, straight ahead on the centre line |
+| `twin.body.distance_sensor_x_cm` | number >= 0 | 8 | how far ahead of the axle the ultrasonic's or infrared's eye is (the person's measurement, row 11) |
+| `twin.body.distance_sensor_y_cm`, `distance_sensor_z_cm`, `distance_sensor_yaw_deg` | number (y may be negative; yaw -180..180) | from `twin.view.sensors.<n>`, else 0, 6, 0 | the eye's side (left positive), height and heading (counter-clockwise from ahead). Leave them out when the sensor has a place in `twin.view.sensors`: the server takes them from where that place puts the eye, so the twin reads from the sensor it draws. A side or heading written in both that differs is refused |
 | `twin.view` | the fields in the header of `<clone>/apps/twin-view/src/look.ts`, nothing else | the default look | the 3D look only; a bad field draws its default, so check by eye in state 4. `twin.view.unconfirmed` is refused: the page gets the list from `twin.unconfirmed` |
 
 ## What a twin cannot have
@@ -107,5 +108,6 @@ For each row the robot hits: write the note, tell the person the line in their l
 | Steering (one motor steers, one drives), legs, a walker | no `pair` and no drivetrain; the motors as roles; a note | "The twin cannot steer or walk: its motors turn, the body stays put." |
 | Two wheels and no caster: it balances | `differential`; `view.caster` `"none"`; a note "balances on two wheels; do not drive it without its balance program" | "The twin does not fall over; the real robot does without its balance program." |
 | A motor turned by hand as a dial | role `dial`; a note | "In the twin nobody turns the dial; it reads what the program turns." |
-| A sensor that faces sideways, up, behind, or sits off the centre line | the closest `x` in `twin.body`; its real place in `twin.view.sensors`; a note | "The 3D twin draws the <sensor> where it is, but it reads straight ahead (the floor) on the centre line." |
+| A distance sensor that faces sideways or behind, or sits off the centre line | its `x` in `twin.body`; its real place and `facing` in `twin.view.sensors` | none: the twin reads from where the sensor is drawn, along where it faces |
+| A colour sensor off the centre line, or a sensor that faces up | the closest `x` in `twin.body`; its real place in `twin.view.sensors`; a note | "The 3D twin draws the <sensor> where it is, but it reads <the floor on the centre line / straight ahead, level>." |
 | Terrain (stairs, ramps, rough ground) | a note | "The twin's floor is flat." |
