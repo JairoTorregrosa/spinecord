@@ -9,6 +9,12 @@ import { join } from "node:path";
 import {
   CONFIRM,
   ev3DraftWarn,
+  hostOnly,
+  launchEnv,
+  paysPlan,
+  probeTerminal,
+  TERMINAL_MARK,
+  windowsEnv,
   isRegistered,
   launchLine,
   parseAntOrg,
@@ -279,3 +285,112 @@ test("setup.ts keeps the robot's name across runs, and a new name changes only t
   }
   // seven processes that each load the server's config code: slow on a busy computer
 }, 30_000);
+
+// ---- the environment of a new terminal: the checks of who pays never use the agent host's login ----
+
+const NEW_TERMINAL: Record<string, string> = {
+  HOME: "/home/p",
+  USER: "p",
+  SHELL: "/bin/zsh",
+  PATH: "/opt/homebrew/bin:/usr/bin:/bin",
+};
+/** What a host such as the Claude desktop app passes to the commands of its agent. */
+const HOST: Record<string, string> = {
+  ...NEW_TERMINAL,
+  PATH: "/host/bin:/usr/bin",
+  CLAUDECODE: "1",
+  CLAUDE_CODE_ENTRYPOINT: "claude-desktop",
+  CLAUDE_CODE_OAUTH_TOKEN: "host-token-value",
+  CLAUDE_CODE_SESSION_ACCESS_TOKEN: "host-session-value",
+  ANTHROPIC_BASE_URL: "https://host.invalid",
+};
+const dump = (env: Record<string, string>) =>
+  `motd of the shell profile\n${TERMINAL_MARK}\n${Object.entries(env)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\0")}\0`;
+const user = { homedir: "/home/p", username: "p", shell: "/bin/zsh" };
+
+test("the probe starts the login shell with an empty environment, not the agent's", async () => {
+  const calls: { cmd: string[]; env: Record<string, string | undefined> }[] = [];
+  const p = await probeTerminal(
+    "darwin",
+    HOST,
+    async (cmd, env) => {
+      calls.push({ cmd, env });
+      return { code: 0, out: dump({ ...NEW_TERMINAL, X: "a=b" }), err: "" };
+    },
+    user,
+  );
+  expect(calls[0]!.cmd.slice(0, 4)).toEqual(["/bin/zsh", "-l", "-i", "-c"]);
+  expect(Object.keys(calls[0]!.env).sort()).toEqual(["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"]);
+  expect(p).toEqual({ env: { ...NEW_TERMINAL, X: "a=b" } });
+});
+
+test("(a) a host login in the agent's environment does not reach PAYS: the checks use a new terminal's", () => {
+  const plan = paysPlan({ env: NEW_TERMINAL }, HOST, "credits", "darwin");
+  if (!("env" in plan)) throw new Error(`no env: ${JSON.stringify(plan)}`);
+  for (const n of ["CLAUDECODE", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_SESSION_ACCESS_TOKEN", "ANTHROPIC_BASE_URL"])
+    expect(plan.env[n]).toBeUndefined();
+  expect(plan.env.ANTHROPIC_PROFILE).toBe("credits");
+  expect(plan.env.PATH).toBe("/opt/homebrew/bin:/usr/bin:/bin:/host/bin:/usr/bin");
+  expect(plan.notes.map((l) => l.status)).toEqual(["ok"]);
+  expect(plan.notes[0]!.why).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+  expect(plan.notes[0]!.why).not.toContain("host-token-value");
+  // nothing from the host: no note
+  const same = paysPlan({ env: NEW_TERMINAL }, NEW_TERMINAL, "credits", "darwin");
+  expect("env" in same && same.notes).toEqual([]);
+});
+
+test("(b) a key that a new terminal has pays ahead of the profile: a fail that names it, never its value", () => {
+  const plan = paysPlan({ env: { ...NEW_TERMINAL, ANTHROPIC_API_KEY: "sk-secret" } }, HOST, "credits", "darwin");
+  expect("lines" in plan).toBe(true);
+  const [line] = "lines" in plan ? plan.lines : [];
+  expect(line!.status).toBe("fail");
+  expect(line!.why).toContain("ANTHROPIC_API_KEY is set in a new terminal");
+  expect(line!.next).toContain(`row "Another credential pays"`);
+  expect(JSON.stringify(plan)).not.toContain("sk-secret");
+});
+
+test("(c) a new terminal that cannot be read is a fail with its reason, never the agent's environment", async () => {
+  const timeout = await probeTerminal("linux", HOST, async () => ({ code: null, out: "", err: "" }), user);
+  const noMark = await probeTerminal("linux", HOST, async () => ({ code: 0, out: "A=1\0", err: "" }), user);
+  const noShell = await probeTerminal("linux", HOST, async () => ({ code: 0, out: "", err: "" }), {
+    ...user,
+    shell: null,
+  });
+  const ps = await probeTerminal("win32", HOST, async () => ({ code: 1, out: "", err: "blocked" }), user);
+  for (const p of [timeout, noMark, noShell, ps]) {
+    expect("error" in p).toBe(true);
+    const plan = paysPlan(p, HOST, "credits", "linux");
+    expect("lines" in plan && plan.lines.map((l) => [l.status, l.what])).toEqual([["fail", "terminal"]]);
+    expect("lines" in plan && plan.lines[0]!.next).toContain(
+      `row "The environment of a new terminal could not be read"`,
+    );
+  }
+  expect("error" in timeout && timeout.error).toContain("no answer in 20 s");
+  expect("error" in ps && ps.error).toContain("exit 1: blocked");
+});
+
+test("a new Windows terminal: computed values, then Machine, volatile, User; Path is Machine's then User's", () => {
+  const json = JSON.stringify({
+    machine: { Path: "C:\\Windows", ComSpec: "C:\\Windows\\cmd.exe", TEMP: "C:\\Windows\\Temp" },
+    volatile: { APPDATA: "C:\\Users\\p\\AppData\\Roaming", USERPROFILE: "C:\\Users\\p" },
+    user: { Path: "C:\\Users\\p\\.bun\\bin", TEMP: "C:\\Users\\p\\Temp" },
+  });
+  const inherited = { SystemRoot: "C:\\Windows", PATH: "C:\\host", CLAUDE_CODE_OAUTH_TOKEN: "t" };
+  const env = windowsEnv(json, inherited);
+  expect(env).toEqual({
+    SystemRoot: "C:\\Windows",
+    Path: "C:\\Windows;C:\\Users\\p\\.bun\\bin",
+    ComSpec: "C:\\Windows\\cmd.exe",
+    TEMP: "C:\\Users\\p\\Temp",
+    APPDATA: "C:\\Users\\p\\AppData\\Roaming",
+    USERPROFILE: "C:\\Users\\p",
+  });
+  const launch = launchEnv(env, inherited, "credits", "win32");
+  // one Path, without case
+  expect(Object.keys(launch).filter((k) => k.toLowerCase() === "path")).toEqual(["Path"]);
+  expect(launch.Path).toBe("C:\\Windows;C:\\Users\\p\\.bun\\bin;C:\\host");
+  expect(launch.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  expect(hostOnly(env, inherited, "win32")).toEqual(["CLAUDE_CODE_OAUTH_TOKEN"]);
+});

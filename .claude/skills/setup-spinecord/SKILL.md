@@ -89,7 +89,7 @@ Exit check: `setup login: ok`. Else use fixes.md.
 
 ### 4 PAYS (PERSON answers one question)
 
-Run `setup status`. Read the line `PAYS`.
+Run `setup status`. Read the line `PAYS`. It uses the environment of a new terminal, not of this session. Its `host` part is only a note.
 If it says `todo` with an organization name, ask the person: "Claude will use the credits of "<name>". Is that the organization with your credits?"
 If yes, run `setup confirm org`. If no, use the row "Wrong Console organization" of fixes.md.
 If it says `todo` with only an organization id, ask the person to compare it with the id at platform.claude.com, Settings, Organization. If it is the organization with the credits, run `setup confirm org`. If it is another one, or the person cannot find the id, use the row "Wrong Console organization" of fixes.md.

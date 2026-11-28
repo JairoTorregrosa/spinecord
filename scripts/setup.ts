@@ -5,8 +5,8 @@
 // test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|warn|todo|fail  <what>  <why>  ->  <next>`, the
 // last line `setup <step>: ok` (exit 0) or `setup <step>: not done` (exit 1). Nothing here prints a secret.
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { homedir, userInfo } from "node:os";
+import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { parseRobotName } from "../apps/local/src/config";
 import { MOVES } from "../apps/local/src/twin-build";
 import { paysBeforeProfile, type Env } from "../examples/assistant/setup";
@@ -156,6 +156,208 @@ export function ev3DraftWarn(file: string, unconfirmed: readonly string[] | unde
   };
 }
 
+// ---- the environment of a new terminal (pure parts, with the probe injected) ----
+//
+// The agent that runs setup is often a child of a host (the Claude desktop app, an Agent SDK app, Claude Code) that
+// passes its own login in the environment of every command. The person's launch line runs in a new terminal, which
+// has none of that. So every check of who pays runs `claude` and `ant` with the environment of a new terminal: the
+// login shell of the person started from an empty environment (macOS, Linux), or the Machine, volatile and User
+// environment of the registry (Windows). It does not depend on the names of the host's variables.
+
+/** What the probe gives: the environment of a new terminal, or why it could not be read (never its output). */
+export type Probe = { env: Env } | { error: string };
+
+/** Printed before `env -0`, so that what the shell profile prints does not count as the environment. */
+export const TERMINAL_MARK = "__SPINECORD_TERMINAL_ENV__";
+const PROBE_MS = 20_000;
+/** The PATH a login shell starts from; /etc/zprofile (path_helper) and /etc/profile add the rest. */
+const POSIX_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+/** Values that Windows computes for every new process and that the registry does not hold. */
+const WINDOWS_COMPUTED = [
+  "ALLUSERSPROFILE",
+  "CommonProgramFiles",
+  "CommonProgramFiles(x86)",
+  "CommonProgramW6432",
+  "COMPUTERNAME",
+  "ProgramData",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "ProgramW6432",
+  "PUBLIC",
+  "SystemDrive",
+  "SystemRoot",
+];
+/**
+ * Carried from this session to the launch line's environment. ANTHROPIC_CONFIG_DIR: the fixes.md row "No
+ * `Profile:` line on Windows" sets it in this session and in the launch line. TMPDIR: macOS gives every login one.
+ */
+const CARRIED = ["ANTHROPIC_CONFIG_DIR", "TMPDIR"];
+
+const WINDOWS_SCRIPT = [
+  "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
+  "$v = @{}",
+  "$k = Get-Item -LiteralPath 'HKCU:\\Volatile Environment' -ErrorAction SilentlyContinue",
+  "if ($k) { foreach ($n in $k.GetValueNames()) { $v[$n] = [string]$k.GetValue($n) } }",
+  "@{ machine = [Environment]::GetEnvironmentVariables('Machine'); volatile = $v; user = [Environment]::GetEnvironmentVariables('User') } | ConvertTo-Json -Compress",
+].join("; ");
+
+/** A variable by name, without case on Windows, where `Path` and `PATH` are one variable. */
+function keyOf(env: Env, name: string, platform: string): string {
+  if (platform !== "win32") return name;
+  return Object.keys(env).find((k) => k.toLowerCase() === name.toLowerCase()) ?? name;
+}
+function setVar(env: Env, name: string, v: string, platform: string): void {
+  env[keyOf(env, name, platform)] = v;
+}
+
+/** The output of `env -0` after TERMINAL_MARK, or null when the mark is not there. */
+export function parseEnvDump(out: string): Env | null {
+  const at = out.indexOf(`${TERMINAL_MARK}\n`);
+  if (at === -1) return null;
+  const env: Env = {};
+  for (const entry of out.slice(at + TERMINAL_MARK.length + 1).split("\0")) {
+    const eq = entry.indexOf("=");
+    if (eq > 0) env[entry.slice(0, eq)] = entry.slice(eq + 1);
+  }
+  return env;
+}
+
+/**
+ * The environment of a new Windows terminal from the registry: the values Windows computes, then Machine, the
+ * volatile environment (USERPROFILE, APPDATA, LOCALAPPDATA), then User. `Path` is Machine's, then User's.
+ */
+export function windowsEnv(json: string, inherited: Env): Env {
+  const j = JSON.parse(json) as Record<"machine" | "volatile" | "user", Record<string, string> | null>;
+  const env: Env = {};
+  for (const n of WINDOWS_COMPUTED) {
+    const v = inherited[keyOf(inherited, n, "win32")];
+    if (v) setVar(env, n, v, "win32");
+  }
+  for (const part of [j.machine, j.volatile, j.user])
+    for (const [k, v] of Object.entries(part ?? {})) setVar(env, k, String(v), "win32");
+  const path = (part: Record<string, string> | null) => (part ? (part[keyOf(part, "Path", "win32")] ?? "") : "");
+  setVar(env, "Path", [path(j.machine), path(j.user)].filter(Boolean).join(win32.delimiter), "win32");
+  return env;
+}
+
+/** Reads the environment of a new terminal of the person. A failure names the exit or the timeout, and stderr. */
+export async function probeTerminal(
+  platform: string,
+  inherited: Env,
+  run: Exec,
+  user: { homedir: string; username: string; shell: string | null },
+): Promise<Probe> {
+  const failed = (r: Ran) =>
+    r.code === null
+      ? `no answer in ${PROBE_MS / 1000} s${r.err.trim() ? `: ${r.err.trim().slice(-200)}` : ""}`
+      : `exit ${r.code}${r.err.trim() ? `: ${r.err.trim().slice(-200)}` : ""}`;
+  if (platform === "win32") {
+    const r = await run(
+      ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_SCRIPT],
+      inherited,
+      PROBE_MS,
+    );
+    if (r.code !== 0) return { error: `PowerShell, reading the User and Machine environment: ${failed(r)}` };
+    try {
+      return { env: windowsEnv(r.out.trim(), inherited) };
+    } catch (e) {
+      return { error: `PowerShell gave no environment as JSON: ${(e as Error).message.slice(0, 200)}` };
+    }
+  }
+  if (!user.shell) return { error: "this user has no login shell in the user database" };
+  const clean: Env = {
+    HOME: user.homedir,
+    USER: user.username,
+    LOGNAME: user.username,
+    SHELL: user.shell,
+    TERM: "xterm-256color",
+    PATH: POSIX_PATH,
+  };
+  const r = await run(
+    [user.shell, "-l", "-i", "-c", `printf '\\n${TERMINAL_MARK}\\n'; exec /usr/bin/env -0`],
+    clean,
+    PROBE_MS,
+  );
+  const env = r.code === 0 ? parseEnvDump(r.out) : null;
+  if (env === null)
+    return {
+      error: `${user.shell} -l -i, started with an empty environment: ${r.code === 0 ? "no environment after the mark" : failed(r)}`,
+    };
+  return { env };
+}
+
+/**
+ * The environment of the launch line: a new terminal's, then ANTHROPIC_PROFILE. PATH is the new terminal's, then
+ * this session's, so that a tool this session installed is found before the shell profile has its PATH line.
+ */
+export function launchEnv(terminalEnv: Env, inherited: Env, profile: string, platform: string): Env {
+  const env: Env = { ...terminalEnv };
+  for (const n of CARRIED) {
+    const v = inherited[keyOf(inherited, n, platform)];
+    if (v) setVar(env, n, v, platform);
+  }
+  const delim = platform === "win32" ? win32.delimiter : posix.delimiter;
+  const path = [env[keyOf(env, "PATH", platform)], inherited[keyOf(inherited, "PATH", platform)]].filter(Boolean);
+  setVar(env, "PATH", path.join(delim), platform);
+  setVar(env, "ANTHROPIC_PROFILE", profile, platform);
+  return env;
+}
+
+export const terminalFail = (error: string): Line => ({
+  status: "fail",
+  what: "terminal",
+  why: `the environment of a new terminal could not be read (${error})`,
+  next: `fixes.md, row "The environment of a new terminal could not be read"`,
+});
+
+/**
+ * The names (never the values) of the Claude and Anthropic variables this session has and a new terminal does
+ * not: the agent's host passes its own login. The checks leave them out.
+ */
+export function hostOnly(terminalEnv: Env, inherited: Env, platform: string): string[] {
+  return Object.keys(inherited)
+    .filter((n) => /^(ANTHROPIC_|CLAUDE)/i.test(n) && !CARRIED.includes(n) && n !== "ANTHROPIC_PROFILE")
+    .filter((n) => (inherited[n] ?? "") !== "" && !terminalEnv[keyOf(terminalEnv, n, platform)])
+    .sort();
+}
+
+/**
+ * Before PAYS asks Claude Code: the environment of the launch line, with an `ok` line that names the host's own
+ * variables, or a `fail` line: the new terminal cannot be read, or a variable of it pays ahead of the profile.
+ */
+export function paysPlan(
+  probe: Probe,
+  inherited: Env,
+  profile: string,
+  platform: string,
+): { env: Env; notes: Line[] } | { lines: Line[] } {
+  if ("error" in probe) return { lines: [terminalFail(probe.error)] };
+  const first = paysBeforeProfile(probe.env);
+  if (first !== null)
+    return {
+      lines: [
+        {
+          status: "fail",
+          what: "pays",
+          why: `${first} is set in a new terminal of the person and pays ahead of the profile`,
+          next: `fixes.md, row "Another credential pays" (${first})`,
+        },
+      ],
+    };
+  const host = hostOnly(probe.env, inherited, platform);
+  const shown = host.length > 5 ? `${host.slice(0, 5).join(", ")} and ${host.length - 5} more` : host.join(", ");
+  const notes: Line[] = host.length
+    ? [
+        {
+          status: "ok",
+          what: "host",
+          why: `this agent's host sets ${shown}; a new terminal does not, so the checks leave them out`,
+        },
+      ]
+    : [];
+  return { env: launchEnv(probe.env, inherited, profile, platform), notes };
+}
+
 // ---- probes ----
 
 const readJson = <T>(path: string): T => {
@@ -210,12 +412,27 @@ async function run(cmd: string[], o: { ms?: number; cwd?: string; env?: Env; inh
   ]);
   return { code: child.signalCode ? null : code, out, err };
 }
-/** The environment without the credentials that pay ahead of a profile, and with ANTHROPIC_PROFILE set. */
-function profileEnv(profile: string): Env {
-  const env: Env = { ...process.env, ANTHROPIC_PROFILE: profile };
-  // CLAUDECODE: the agent itself may be a Claude Code session, and its child is a session of its own
-  for (const n of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE"]) delete env[n];
-  return env;
+/** One command with its own environment, stopped at `ms`. The probe of a new terminal runs through it. */
+export type Exec = (cmd: string[], env: Env, ms: number) => Promise<Ran>;
+const exec: Exec = (cmd, env, ms) => run(cmd, { ms, cwd: homedir(), env });
+
+let probed: Promise<Probe> | undefined;
+/** The environment of a new terminal of the person, read once per run of this script. */
+const terminal = (): Promise<Probe> => (probed ??= probeTerminal(process.platform, process.env, exec, userInfo()));
+
+/** The environment of the launch line with this profile, or the fail line when the new terminal cannot be read. */
+async function launchEnvOf(profile: string): Promise<{ env: Env } | { line: Line }> {
+  const p = await terminal();
+  return "error" in p
+    ? { line: terminalFail(p.error) }
+    : { env: launchEnv(p.env, process.env, profile, process.platform) };
+}
+/** The same environment for `ant`, which takes the profile as `--profile` and must not see a key or a token. */
+async function antEnvOf(profile: string): Promise<{ env: Env } | { line: Line }> {
+  const r = await launchEnvOf(profile);
+  if ("line" in r) return r;
+  for (const n of ["ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]) delete r.env[n];
+  return r;
 }
 const cwd = () => (existsSync(WORKSHOP) ? WORKSHOP : REPO);
 
@@ -247,12 +464,12 @@ async function checkTools(): Promise<Line[]> {
 
 /** `ant models list` answers only with a login: `ant auth status` exits 0 without one. */
 async function checkLogin(s: State): Promise<Line> {
-  const env = profileEnv(s.profile);
-  delete env.ANTHROPIC_PROFILE;
+  const e = await antEnvOf(s.profile);
+  if ("line" in e) return e.line;
   const r = await run(["ant", "--profile", s.profile, "models", "list", "--limit", "1"], {
     ms: 30_000,
     cwd: cwd(),
-    env,
+    env: e.env,
   });
   return r.code === 0
     ? { status: "ok", what: "login", why: `the ant profile ${s.profile} is logged in` }
@@ -265,21 +482,14 @@ async function checkLogin(s: State): Promise<Line> {
 }
 
 async function checkPays(s: State): Promise<Line[]> {
-  const first = paysBeforeProfile(process.env);
-  if (first !== null)
-    return [
-      {
-        status: "fail",
-        what: "pays",
-        why: `${first} is set in this terminal and pays ahead of the profile`,
-        next: `fixes.md, row "Another credential pays" (${first})`,
-      },
-    ];
-  const r = await run(["claude", "auth", "status", "--text"], { ms: 30_000, cwd: cwd(), env: profileEnv(s.profile) });
+  const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
+  if ("lines" in plan) return plan.lines;
+  const r = await run(["claude", "auth", "status", "--text"], { ms: 30_000, cwd: cwd(), env: plan.env });
   const a = parseAuth(r.out);
   const org = a.profile === s.profile ? await orgOf(s.profile, a.org) : undefined;
   if (a.profile !== s.profile || !org)
     return [
+      ...plan.notes,
       {
         status: "fail",
         what: "pays",
@@ -292,8 +502,8 @@ async function checkPays(s: State): Promise<Line[]> {
         next: `fixes.md, row "Login method with the profile set"`,
       },
     ];
-  if (s.org !== org) return [paysTodo(s.profile, org)];
-  return [{ status: "ok", what: "pays", why: `Claude Code pays with "${org}", profile ${s.profile}` }];
+  if (s.org !== org) return [...plan.notes, paysTodo(s.profile, org)];
+  return [...plan.notes, { status: "ok", what: "pays", why: `Claude Code pays with "${org}", profile ${s.profile}` }];
 }
 
 /** PAYS before the person confirmed: a name or only an id, the person compares it with the credits either way. */
@@ -320,9 +530,9 @@ export function whoPays(org: string | undefined, profile: string): string {
 /** The organization that pays: Claude Code's name for it, else ant's name, else `id <uuid>`, else nothing. */
 async function orgOf(profile: string, fromClaude?: string): Promise<string | undefined> {
   if (fromClaude) return fromClaude;
-  const env = profileEnv(profile);
-  delete env.ANTHROPIC_PROFILE;
-  const r = await run(["ant", "--profile", profile, "auth", "status"], { ms: 30_000, cwd: cwd(), env });
+  const e = await antEnvOf(profile);
+  if ("line" in e) return undefined;
+  const r = await run(["ant", "--profile", profile, "auth", "status"], { ms: 30_000, cwd: cwd(), env: e.env });
   const o = parseAntOrg(r.out + r.err);
   return o.name ?? (o.id ? `id ${o.id}` : undefined);
 }
@@ -447,8 +657,10 @@ async function status(s: State): Promise<Line[]> {
 async function login(s: State): Promise<Line[]> {
   const before = await checkLogin(s);
   if (before.status === "ok") return [before];
-  const env = profileEnv(s.profile);
-  delete env.ANTHROPIC_PROFILE;
+  if (before.status === "fail") return [before];
+  const e = await antEnvOf(s.profile);
+  if ("line" in e) return [e.line];
+  const env = e.env;
   // the browser opens on platform.claude.com; ant waits on a 127.0.0.1 port for its answer
   await run(["ant", "auth", "login", "--profile", s.profile, "--timeout", LOGIN_TIMEOUT], {
     ms: 330_000,
@@ -517,9 +729,11 @@ async function workshop(s: State): Promise<Line[]> {
 async function smoke(s: State): Promise<Line[]> {
   // no id in the prompt: only a running spinecord can name the twin, so an answer without one proves nothing
   const prompt = "List the robots. Then drive the simulated one forward 5 cm. Answer in one line that names its id.";
+  const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
+  if ("lines" in plan) return plan.lines;
   const r = await run(
     ["claude", "-p", prompt, "--allowedTools", RULE, "--max-budget-usd", "0.50", "--output-format", "json"],
-    { env: profileEnv(s.profile) },
+    { env: plan.env },
   );
   let j: { result?: string; is_error?: boolean; total_cost_usd?: number };
   try {
@@ -739,11 +953,9 @@ export async function main(argv: string[]): Promise<number> {
     case "confirm": {
       const what = rest[0];
       if (what === "org") {
-        const r = await run(["claude", "auth", "status", "--text"], {
-          ms: 30_000,
-          cwd: cwd(),
-          env: profileEnv(s.profile),
-        });
+        const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
+        if ("lines" in plan) return print(step, plan.lines);
+        const r = await run(["claude", "auth", "status", "--text"], { ms: 30_000, cwd: cwd(), env: plan.env });
         const a = parseAuth(r.out);
         const org = a.profile === s.profile ? await orgOf(s.profile, a.org) : undefined;
         if (!org) return print(step, await checkPays(s));

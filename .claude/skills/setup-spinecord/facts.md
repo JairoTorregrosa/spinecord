@@ -24,6 +24,9 @@ Read this file only when a step and the computer disagree. Then check the source
 | `ANTHROPIC_PROFILE` in the `env` of `.claude/settings.json` or `.claude/settings.local.json` does not change who pays | Claude Code 2.1.331 on macOS, `/status` | 2026-11-24 |
 | `claude auth status --text` prints `Profile: ... profile <name>` when a profile pays, and `Login method:` for a claude.ai login. It prints `Organization: <name> · <id>` only until the first token refresh of the profile. Then `setup` asks `ant` | Claude Code 2.1.332 on macOS, a profile before and after a refresh | 2026-11-27 |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` and the cloud switches (`CLAUDE_CODE_USE_BEDROCK` and others) pay ahead of a profile | `examples/assistant/setup.ts` (`paysBeforeProfile`), https://code.claude.com/docs/en/authentication | 2026-11-24 |
+| A host app can pass its own login to every command of its agent. In the Claude desktop app on Windows, `claude auth status` showed its Max login with `ANTHROPIC_PROFILE` set. A new terminal paid with the profile | A run of this skill in the Claude desktop app on Windows | 2026-11-27 |
+| Claude Code 2.1.332 reads many login variables: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_SESSION_ACCESS_TOKEN`, `CLAUDE_CODE_HOST_CREDS_FILE`, `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` and others. So `setup` removes no list of names. It runs `claude` and `ant` with the environment of a new terminal | `strings` of the `claude` 2.1.332 binary on macOS | 2026-11-27 |
+| `setup` reads the environment of a new terminal from the login shell of the user database, started with only `HOME`, `USER`, `LOGNAME`, `SHELL`, `TERM` and a system `PATH` (macOS, Linux). On Windows, from the Machine, volatile and User environment of the registry | `probeTerminal` in `scripts/setup.ts`, `setup status` on macOS 27.2 in an Agent SDK session with 13 host variables | 2026-11-27 |
 | `claude -p` ignores the `permissions.allow` of a folder that the person has not trusted. `--allowedTools mcp__spinecord` gives the tools | Claude Code 2.1.331 on macOS (PR #51) | 2026-11-24 |
 | The first start of Claude Code 2.1.332 with `ANTHROPIC_PROFILE` set and no other login asks no login. It shows the color theme, then security notes with "Press Enter to continue", then the trust question. Its first option is "No, exit", or in `~/mi-robot` "No, continue without these permissions" | macOS 27.2, a new home folder, `tmux` | 2026-11-27 |
 | `claude -p` takes `--max-budget-usd <amount>` and `--output-format json` | `claude --help` 2.1.332 | 2026-11-27 |
@@ -43,4 +46,5 @@ Not verified:
 
 - The folder where Claude Code reads `ant` profiles on native Windows. fixes.md has the row "No `Profile:` line on Windows".
 - The winget flags `--accept-source-agreements` and `--accept-package-agreements`, and the `PATH` line for PowerShell, were not run on Windows.
+- The Windows probe of the registry was not run on Windows.
 - `open` on macOS, and on Windows the default browser of `ant auth login` and `rundll32.exe url.dll,FileProtocolHandler` of `setup view`.
