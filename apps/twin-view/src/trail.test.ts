@@ -198,11 +198,48 @@ describe("fed from the robot's states", () => {
       const a = t / 1000;
       f.state(50 + r * Math.sin(a), 50 - r * Math.cos(a), a, t);
     }
-    // each 6 cm chord is cut, but along the chord: points stay within the chord's sagitta of the circle
+    // each 6 cm chord is cut along the chord: points stay within the chord's sagitta of the circle, and close together
     for (let k = 0; k < p.count; k++) {
       const [x, y] = centre(p, k);
       expect(Math.hypot(x! - 50, y! - 50)).toBeGreaterThan(r - 0.25);
+      if (k === 0) continue;
+      const [px, py] = centre(p, k - 1);
+      expect(Math.hypot(x! - px!, y! - py!)).toBeLessThanOrEqual(1.5 * STEP_CM + 1e-4);
     }
+  });
+
+  // one track still: the centre runs round a circle of half the track (6 cm on the orugas) or so
+  for (const r of [5, 6.75, 10])
+    for (const back of [false, true])
+      test(`a tight arc (radius ${r} cm, ${back ? "backward" : "forward"}) is driving, not a pivot: its colour, distance, chevrons`, () => {
+        const { p, f } = feed();
+        // 180° at 10 cm/s, a state every 33 ms; backward: the heading turns the other way for the same path
+        const w = 10 / r;
+        let t = 0;
+        for (; (t * w) / 1000 <= Math.PI; t += 33) {
+          const a = (t * w) / 1000;
+          // forward: heading a, centre ahead along it; backward: heading a + 180°, the same path driven in reverse
+          f.state(50 + r * Math.sin(a), 50 - r * Math.cos(a), a + (back ? Math.PI : 0), t);
+        }
+        const want = back ? KIND.reverse : KIND.forward;
+        for (let k = 0; k < p.count; k++) expect(kindAt(p, k)).toBe(want);
+        // the distance the chevrons are spaced by is the arc's length (chords, a little shorter)
+        const arc = (((t - 33) * w) / 1000) * r;
+        const last = p.aux[AUX * 2 * (p.count - 1) + 1]!;
+        expect(last).toBeGreaterThan(arc * 0.95);
+        expect(last).toBeLessThanOrEqual(arc + 1e-3);
+        for (let k = 1; k < p.count; k++)
+          expect(p.aux[AUX * 2 * k + 1]!).toBeGreaterThan(p.aux[AUX * 2 * (k - 1) + 1]!);
+      });
+
+  test("a turn of more than 90° within one step (states missed mid-pivot) breaks: which way it went is not known", () => {
+    const { p, f } = feed();
+    f.state(30, 30, 0, 0);
+    expect(f.state(30, 30, 100 * DEG, 400)).toBe("gap");
+    expect(isGap(p, p.count - 1)).toBe(true);
+    // under it, the turn is drawn the short way, as a wedge
+    expect(f.state(30, 30, 160 * DEG, 800)).toBe("drawn");
+    expect(isGap(p, p.count - 1)).toBe(false);
   });
 
   test("a pivot at the drive's full turn rate leaves a round wedge, points at most 7.5° apart", () => {

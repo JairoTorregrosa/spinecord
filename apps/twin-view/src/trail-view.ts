@@ -77,8 +77,8 @@ void main() {
   col = mix(col, vec3(1.0), chev * 0.7);
   float alpha = mix(0.95, uOld, smoothstep(0.0, uFade, uHead - vProg));
   gl_FragColor = vec4(col, alpha);
-  #include <fog_fragment>
   #include <colorspace_fragment>
+  #include <fog_fragment>
 }`;
 
 export class TrailView {

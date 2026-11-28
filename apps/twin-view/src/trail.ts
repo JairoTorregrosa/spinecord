@@ -19,6 +19,8 @@
 
 /** Distance between points, cm. Jitter under it is skipped. */
 export const STEP_CM = 1;
+/** A step whose centre moved less than this share of the band's half width is a turn in place. */
+const PIVOT_SHARE = 0.25;
 /** Turn in place that adds a point, rad (5°): a pivot's wedge stays round. */
 export const TURN_STEP = (5 * Math.PI) / 180;
 /** Large motor at 100 % speed, deg/s (packages/sim-ev3 LARGE_DEG_S; the page imports only three.js). */
@@ -30,8 +32,12 @@ const SLACK_CM = 2,
  *  turn by hand in place is short; the drive's own turn rate is well known). */
 const MOVE_OVER = 2,
   TURN_OVER = 1.25;
-/** Longest step between two states drawn as a straight band, cm: past it what lay between is not known. */
+/** Longest step between two states drawn as a straight band, cm: past it what lay between is not known. At full
+ *  speed (about 50 cm/s on 5.6 cm wheels) that is 200 ms of states missed: a link that lags more breaks the trail of
+ *  a fast robot into pieces rather than draw what it did not see. */
 export const JOIN_CM = 10;
+/** Longest turn within one step between two states, rad: past it which way the robot turned is not known. */
+export const JOIN_TURN = Math.PI / 2;
 
 /** How the robot reached a point: driving forward, in reverse, or turning where it stands. */
 export const KIND = { forward: 1, reverse: -1, pivot: 0 } as const;
@@ -89,8 +95,9 @@ export type Fed = "first" | "drawn" | "carried" | "gap";
 
 /**
  * Turns the robot's states into the trail's points: each step between two states is cut into pieces of at most half
- * STEP_CM and TURN_STEP (an arc stays an arc, a pivot a round wedge, however far apart the states), and a step no
- * drive could make, or one longer than JOIN_CM, breaks the path instead.
+ * STEP_CM and TURN_STEP along the chord between them (a step is short, so an arc is drawn as chords of it a cm or so
+ * long, a pivot as a round wedge), and a step no drive could make, or one longer than JOIN_CM or turning more than
+ * JOIN_TURN, breaks the path instead.
  */
 export class TrailFeed {
   private has = false;
@@ -114,7 +121,7 @@ export class TrailFeed {
     let fed: Fed;
     if (!this.has) fed = "first";
     else if (jumped(this.x, this.y, this.th, this.t, x, y, th, t_ms, this.lim)) fed = "carried";
-    else if (Math.hypot(x - this.x, y - this.y) > JOIN_CM) fed = "gap";
+    else if (Math.hypot(x - this.x, y - this.y) > JOIN_CM || Math.abs(wrap(th - this.th)) > JOIN_TURN) fed = "gap";
     else fed = "drawn";
     if (fed === "drawn") {
       const dx = x - this.x,
@@ -208,7 +215,8 @@ export class TrailPath {
 
   /**
    * The robot is at (x, y) cm, heading `th` rad. Returns whether a point was added: the first of a piece, or one
-   * STEP_CM from the last, or TURN_STEP turned from it in place.
+   * STEP_CM from the last, or TURN_STEP turned from it. A step is a turn in place only when the centre barely moved:
+   * a tight arc (one track still) turns TURN_STEP before it moves STEP_CM, and is still driving forward or back.
    */
   add(x: number, y: number, th: number): boolean {
     if (this.broken) {
@@ -220,15 +228,16 @@ export class TrailPath {
       dy = y - this.ly;
     const moved = Math.hypot(dx, dy),
       turned = Math.abs(wrap(th - this.lth));
+    if (moved < STEP_CM && turned < TURN_STEP) return false;
     let kind: Kind;
-    if (moved >= STEP_CM) {
-      kind = dx * Math.cos(th) + dy * Math.sin(th) >= 0 ? KIND.forward : KIND.reverse;
-      this.dist += moved;
-      this.prog += moved;
-    } else if (turned >= TURN_STEP) {
+    if (moved < PIVOT_SHARE * this.half) {
       kind = KIND.pivot;
       this.prog += turned * this.half;
-    } else return false;
+    } else {
+      kind = dx * Math.cos(th) + dy * Math.sin(th) >= 0 ? KIND.forward : KIND.reverse;
+      this.dist += moved;
+      this.prog += Math.max(moved, turned * this.half);
+    }
     // a piece's first point takes the kind of the move that leaves it, so its first quad is one colour
     if (this.starts[this.n - 1]) this.setKind(this.n - 1, kind);
     this.put(x, y, th, kind, false);
