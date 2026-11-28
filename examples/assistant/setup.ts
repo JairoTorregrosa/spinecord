@@ -255,6 +255,9 @@ const PROVIDERS: Record<string, string> = {
   gateway: "an enterprise gateway",
 };
 
+/** Every variable that can pay ahead of an ant profile. */
+export const PAYS_AHEAD: readonly string[] = [...CLOUD_SWITCHES, ...ABOVE_PROFILE];
+
 /** The first variable set that pays ahead of an ant profile (a cloud switch, a key or a token), or null. */
 export const paysBeforeProfile = (env: Env): string | null =>
   CLOUD_SWITCHES.find((name) => isOn(env, name)) ?? ABOVE_PROFILE.find((name) => isSet(env, name)) ?? null;

@@ -4,12 +4,22 @@
 // The robots come from the skill's robots.json; what no command can detect (the person's answers, the smoke
 // test) is kept in <workshop>/.spinecord-setup.json. Each line is `ok|warn|todo|fail  <what>  <why>  ->  <next>`, the
 // last line `setup <step>: ok` (exit 0) or `setup <step>: not done` (exit 1). Nothing here prints a secret.
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir, userInfo } from "node:os";
+import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { parseRobotName } from "../apps/local/src/config";
 import { MOVES } from "../apps/local/src/twin-build";
-import { paysBeforeProfile, type Env } from "../examples/assistant/setup";
+import { PAYS_AHEAD, paysBeforeProfile, type Env } from "../examples/assistant/setup";
 
 const REPO = join(import.meta.dir, "..");
 const MAIN = join(REPO, "apps", "local", "main.ts");
@@ -156,6 +166,352 @@ export function ev3DraftWarn(file: string, unconfirmed: readonly string[] | unde
   };
 }
 
+// ---- the environment of a new terminal (pure parts, with the probe injected) ----
+//
+// The agent that runs setup is often a child of a host (the Claude desktop app, an Agent SDK app, Claude Code) that
+// passes its own login in the environment of every command. The person's launch line runs in a new terminal, which
+// has none of that. So every check of who pays runs `claude` and `ant` with the environment of a new terminal: the
+// login shell of the person started from an empty environment (macOS, Linux), or the Machine, volatile and User
+// environment of the registry (Windows). It does not depend on the names of the host's variables.
+
+/**
+ * What the probe gives: the environment of a new terminal, or why it could not be read, never what the shell
+ * printed. `row`: the fixes.md row, when it is not "The environment of a new terminal could not be read". `warn`:
+ * the login session could not be read, so a key set only there is not seen.
+ */
+export type Probe = { env: Env; warn?: string } | { error: string; row?: string };
+
+export const PROBE_MS = 20_000;
+/** The PATH a login shell starts from; /etc/zprofile (path_helper) and /etc/profile add the rest. */
+const POSIX_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+/** Values that Windows computes for every new process and that the registry does not hold. */
+const WINDOWS_COMPUTED = [
+  "ALLUSERSPROFILE",
+  "CommonProgramFiles",
+  "CommonProgramFiles(x86)",
+  "CommonProgramW6432",
+  "COMPUTERNAME",
+  "ProgramData",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "ProgramW6432",
+  "PUBLIC",
+  "SystemDrive",
+  "SystemRoot",
+];
+/**
+ * Carried from this session to the launch line's environment. ANTHROPIC_CONFIG_DIR: the fixes.md row "No
+ * `Profile:` line on Windows" sets it in this session and in the launch line. TMPDIR: macOS gives every login one.
+ */
+const CARRIED = ["ANTHROPIC_CONFIG_DIR", "TMPDIR"];
+/**
+ * The desktop session gives these to every terminal, not a shell profile; the browser of `ant auth login` needs
+ * them on Linux. Carried from this session when a new terminal lacks them. None of them is a login.
+ */
+const SESSION = [
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "XDG_SESSION_TYPE",
+  "XDG_CURRENT_DESKTOP",
+];
+/** Shells that take `-l` only alone, so `-l -i -c` cannot start them. */
+const NO_LOGIN_COMMAND = ["csh", "tcsh"];
+
+/** Writes the Machine, volatile and User environment as JSON (UTF-8, no BOM) to `file`. */
+const windowsScript = (file: string) =>
+  [
+    "$v = @{}",
+    "$k = Get-Item -LiteralPath 'HKCU:\\Volatile Environment' -ErrorAction SilentlyContinue",
+    "if ($k) { foreach ($n in $k.GetValueNames()) { $v[$n] = [string]$k.GetValue($n) } }",
+    "$j = @{ machine = [Environment]::GetEnvironmentVariables('Machine'); volatile = $v; user = [Environment]::GetEnvironmentVariables('User') } | ConvertTo-Json -Compress",
+    `[IO.File]::WriteAllText('${file.replaceAll("'", "''")}', $j)`,
+  ].join("; ");
+
+/** A variable by name, without case on Windows, where `Path` and `PATH` are one variable. */
+function keyOf(env: Env, name: string, platform: string): string {
+  if (platform !== "win32") return name;
+  return Object.keys(env).find((k) => k.toLowerCase() === name.toLowerCase()) ?? name;
+}
+function setVar(env: Env, name: string, v: string, platform: string): void {
+  env[keyOf(env, name, platform)] = v;
+}
+export function deleteVar(env: Env, name: string, platform: string): void {
+  delete env[keyOf(env, name, platform)];
+}
+
+/** The output of `env -0`: NAME=value entries, each ended by a NUL. */
+export function parseEnvDump(out: string): Env {
+  const env: Env = {};
+  for (const entry of out.split("\0")) {
+    const eq = entry.indexOf("=");
+    if (eq > 0) env[entry.slice(0, eq)] = entry.slice(eq + 1);
+  }
+  return env;
+}
+
+/**
+ * The environment of a new Windows terminal from the registry: the values Windows computes, then Machine, the
+ * volatile environment (USERPROFILE, APPDATA, LOCALAPPDATA), then User. `Path` is Machine's, then User's.
+ */
+export function windowsEnv(json: string, inherited: Env): Env {
+  const j = JSON.parse(json) as Record<"machine" | "volatile" | "user", Record<string, string> | null>;
+  const env: Env = {};
+  for (const n of WINDOWS_COMPUTED) {
+    const v = inherited[keyOf(inherited, n, "win32")];
+    if (v) setVar(env, n, v, "win32");
+  }
+  for (const part of [j.machine, j.volatile, j.user])
+    for (const [k, v] of Object.entries(part ?? {})) setVar(env, k, String(v), "win32");
+  const path = (part: Record<string, string> | null) => (part ? (part[keyOf(part, "Path", "win32")] ?? "") : "");
+  setVar(env, "Path", [path(j.machine), path(j.user)].filter(Boolean).join(win32.delimiter), "win32");
+  return env;
+}
+
+/**
+ * Reads the environment of a new terminal of the person. The shell writes it to a file of its own and the probe
+ * reads no pipe, so a job that a shell profile leaves running cannot hold the deadline open. A failure names the
+ * exit or the timeout, never what the shell printed: with `set -x`, that holds the values.
+ */
+export async function probeTerminal(
+  platform: string,
+  inherited: Env,
+  run: Exec,
+  user: { homedir: string; username: string; shell: string | null },
+  o: { ms?: number; session?: Session } = {},
+): Promise<Probe> {
+  const ms = o.ms ?? PROBE_MS;
+  const failed = (code: number | null) => (code === null ? `no answer in ${ms / 1000} s` : `exit ${code}`);
+  if (platform !== "win32") {
+    if (!user.shell) return { error: "this user has no login shell in the user database" };
+    if (NO_LOGIN_COMMAND.includes(basename(user.shell)))
+      return {
+        error: `the login shell is ${user.shell}, which cannot run a command as a login shell`,
+        row: "The login shell is csh or tcsh",
+      };
+  }
+  let dir: string;
+  try {
+    dir = mkdtempSync(join(tmpdir(), "spinecord-env-"));
+  } catch (e) {
+    return { error: `no temporary folder in ${tmpdir()}: ${(e as NodeJS.ErrnoException).code ?? "error"}` };
+  }
+  const file = join(dir, "env");
+  const dump = () => (existsSync(file) ? readFileSync(file, "utf8").replace(/^\uFEFF/, "") : "");
+  try {
+    if (platform === "win32") {
+      const code = await run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", windowsScript(file)],
+        inherited,
+        ms,
+      );
+      if (code !== 0 || dump() === "")
+        return {
+          error: `PowerShell, reading the User and Machine environment: ${code === 0 ? "no output" : failed(code)}`,
+        };
+      try {
+        return { env: windowsEnv(dump(), inherited) };
+      } catch {
+        return { error: `PowerShell wrote a file that is not valid JSON (${dump().length} characters)` };
+      }
+    }
+    const shell = user.shell!;
+    if (file.includes("'")) return { error: `the temporary folder ${dir} has a ' in its path` };
+    const clean: Env = {
+      HOME: user.homedir,
+      USER: user.username,
+      LOGNAME: user.username,
+      SHELL: shell,
+      TERM: "xterm-256color",
+      PATH: POSIX_PATH,
+    };
+    const code = await run([shell, "-l", "-i", "-c", `exec /usr/bin/env -0 > '${file}'`], clean, ms);
+    const env = code === 0 ? parseEnvDump(dump()) : {};
+    if (Object.keys(env).length === 0)
+      return {
+        error: `${shell} -l -i, started with an empty environment: ${code === 0 ? "it wrote no environment" : failed(code)}; to see what it prints, the person runs \`${shell} -l -i -c true\` in a new terminal`,
+      };
+    // the login session gives these to every terminal too (launchctl setenv, ~/.config/environment.d)
+    const session = o.session ? await o.session(PAYS_AHEAD.filter((n) => !env[n])) : { env: {} };
+    return session.warn ? { env: { ...session.env, ...env }, warn: session.warn } : { env: { ...session.env, ...env } };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The environment of the launch line: a new terminal's, then ANTHROPIC_PROFILE. PATH is the new terminal's, then
+ * this session's, so that a tool this session installed is found before the shell profile has its PATH line.
+ */
+export function launchEnv(terminalEnv: Env, inherited: Env, profile: string, platform: string): Env {
+  const env: Env = { ...terminalEnv };
+  for (const n of CARRIED) {
+    const v = inherited[keyOf(inherited, n, platform)];
+    if (v) setVar(env, n, v, platform);
+  }
+  for (const n of SESSION) {
+    const v = inherited[keyOf(inherited, n, platform)];
+    if (v && !env[keyOf(env, n, platform)]) setVar(env, n, v, platform);
+  }
+  const delim = platform === "win32" ? win32.delimiter : posix.delimiter;
+  const path = [env[keyOf(env, "PATH", platform)], inherited[keyOf(inherited, "PATH", platform)]].filter(Boolean);
+  setVar(env, "PATH", path.join(delim), platform);
+  setVar(env, "ANTHROPIC_PROFILE", profile, platform);
+  return env;
+}
+
+/**
+ * One environment.d file (systemd 262, environment.d(5)): KEY=VALUE lines; `#` and `;` lines and empty lines are
+ * ignored; a backslash at the end of a line continues it; surrounding quotes are stripped; `$X`, `${X}`,
+ * `${X:-default}` and `${X:+alternate}` expand from what came before, inside single quotes too; `$$` is a dollar
+ * sign. Only whether a name is set matters here, so backslash escapes are kept as they are.
+ */
+export function parseEnvironmentD(text: string, before: Env = {}): Env {
+  const env: Env = { ...before };
+  for (const raw of text.replaceAll(/\\\r?\n/g, "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let v = m[2]!;
+    const quoted = v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.at(-1) === v[0];
+    if (quoted) v = v.slice(1, -1);
+    v = v.replaceAll(
+      /\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([-+])([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+      (all, n, op, alt, bare) => {
+        if (all === "$$") return "$";
+        const cur = env[(n ?? bare) as string] ?? "";
+        return op === "-" ? cur || alt : op === "+" ? (cur ? alt : "") : cur;
+      },
+    );
+    env[m[1]!] = v;
+  }
+  return env;
+}
+
+/**
+ * /etc/environment as pam_env reads it: leading whitespace and `#` lines skipped, an `export ` prefix dropped, the
+ * value cut at its first `#`, surrounding quotes stripped, no expansion.
+ */
+export function parsePamEnvironment(text: string, before: Env = {}): Env {
+  const env: Env = { ...before };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimStart().replace(/^export\s+/, "");
+    if (line === "" || line.startsWith("#")) continue;
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!m) continue;
+    let v = m[2]!.split("#")[0]!.trim();
+    if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.at(-1) === v[0]) v = v.slice(1, -1);
+    env[m[1]!] = v;
+  }
+  return env;
+}
+
+/**
+ * The files that give a Linux login session its environment, in the order they apply: the *.conf files of the
+ * environment.d folders, sorted together by file name, where a file of the user's folder ($XDG_CONFIG_HOME, else
+ * ~/.config) masks one of the system's of the same name, and /etc wins over /run, /usr/local/lib and /usr/lib;
+ * then /etc/environment, with pam_env's rules. `unreadable`: files or folders that exist and could not be read.
+ */
+export function readLoginSession(
+  home: string,
+  system = "/",
+  configHome: string = join(home, ".config"),
+): { env: Env; unreadable: string[] } {
+  const unreadable: string[] = [];
+  const read = (path: string): string | null => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable.push(path);
+      return null;
+    }
+  };
+  const confs = (dir: string): string[] => {
+    try {
+      return readdirSync(dir).filter((f) => f.endsWith(".conf"));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") unreadable.push(dir);
+      return [];
+    }
+  };
+  let env: Env = {};
+  const byName = new Map<string, string>();
+  const dirs = ["usr/lib", "usr/local/lib", "run", "etc"].map((d) => join(system, d, "environment.d"));
+  for (const dir of [...dirs, join(configHome, "environment.d")])
+    for (const f of confs(dir)) byName.set(f, join(dir, f));
+  for (const f of [...byName.keys()].sort()) {
+    const text = read(byName.get(f)!);
+    if (text !== null) env = parseEnvironmentD(text, env);
+  }
+  const etc = read(join(system, "etc", "environment"));
+  if (etc !== null) env = parsePamEnvironment(etc, env);
+  return { env, unreadable };
+}
+
+export const terminalFail = (p: { error: string; row?: string }): Line => ({
+  status: "fail",
+  what: "terminal",
+  why: `the environment of a new terminal could not be read (${p.error})`,
+  next: `fixes.md, row "${p.row ?? "The environment of a new terminal could not be read"}"`,
+});
+
+/**
+ * The names (never the values) of the Claude and Anthropic variables this session has and a new terminal does
+ * not: the agent's host passes its own login. The checks leave them out.
+ */
+export function hostOnly(terminalEnv: Env, inherited: Env, platform: string): string[] {
+  return Object.keys(inherited)
+    .filter((n) => /^(ANTHROPIC_|CLAUDE)/i.test(n) && !CARRIED.includes(n) && n !== "ANTHROPIC_PROFILE")
+    .filter((n) => (inherited[n] ?? "") !== "" && !terminalEnv[keyOf(terminalEnv, n, platform)])
+    .sort();
+}
+
+/**
+ * Before PAYS asks Claude Code: the environment of the launch line, with an `ok` line that names the host's own
+ * variables, or a `fail` line: the new terminal cannot be read, or a variable of it pays ahead of the profile.
+ */
+export function paysPlan(
+  probe: Probe,
+  inherited: Env,
+  profile: string,
+  platform: string,
+): { env: Env; notes: Line[] } | { lines: Line[] } {
+  if ("error" in probe) return { lines: [terminalFail(probe)] };
+  // Windows names have no case: a User variable may be stored as Anthropic_Api_Key
+  const first = paysBeforeProfile(
+    platform === "win32"
+      ? Object.fromEntries(Object.entries(probe.env).map(([k, v]) => [k.toUpperCase(), v]))
+      : probe.env,
+  );
+  if (first !== null)
+    return {
+      lines: [
+        {
+          status: "fail",
+          what: "pays",
+          why: `${first} is set in a new terminal of the person and pays ahead of the profile`,
+          next: `fixes.md, row "Another credential pays" (${first})`,
+        },
+      ],
+    };
+  const host = hostOnly(probe.env, inherited, platform);
+  const shown = host.length > 5 ? `${host.slice(0, 5).join(", ")} and ${host.length - 5} more` : host.join(", ");
+  const notes: Line[] = host.length
+    ? [
+        {
+          status: "ok",
+          what: "host",
+          why: `this agent's host sets ${shown}; a new terminal does not, so the checks leave them out`,
+        },
+      ]
+    : [];
+  if (probe.warn) notes.push({ status: "warn", what: "session", why: probe.warn });
+  return { env: launchEnv(probe.env, inherited, profile, platform), notes };
+}
+
 // ---- probes ----
 
 const readJson = <T>(path: string): T => {
@@ -210,12 +566,88 @@ async function run(cmd: string[], o: { ms?: number; cwd?: string; env?: Env; inh
   ]);
   return { code: child.signalCode ? null : code, out, err };
 }
-/** The environment without the credentials that pay ahead of a profile, and with ANTHROPIC_PROFILE set. */
-function profileEnv(profile: string): Env {
-  const env: Env = { ...process.env, ANTHROPIC_PROFILE: profile };
-  // CLAUDECODE: the agent itself may be a Claude Code session, and its child is a session of its own
-  for (const n of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE"]) delete env[n];
-  return env;
+/** One command with its own environment and no pipes: its exit code, or null when `ms` passed first. */
+export type Exec = (cmd: string[], env: Env, ms: number) => Promise<number | null>;
+/**
+ * The shell runs in a process group of its own, and the whole group ends with it: a job that a shell profile
+ * starts, or the command it hangs in, does not outlive the probe. On Windows the PowerShell probe reads no profile
+ * (`-NoProfile`); its process tree is killed only at the deadline, since after an exit taskkill no longer finds it.
+ */
+export const execDetached: Exec = async (cmd, env, ms) => {
+  if (Bun.which(cmd[0]!) === null) return 127;
+  const win = process.platform === "win32";
+  const child = Bun.spawn(cmd, {
+    cwd: homedir(),
+    env: env as Record<string, string>,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    detached: !win,
+    windowsHide: true,
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((done) => (timer = setTimeout(() => done("late"), ms)));
+  const end = await Promise.race([child.exited, late]);
+  clearTimeout(timer);
+  if (win) {
+    if (end === "late")
+      Bun.spawnSync(["taskkill", "/T", "/F", "/PID", String(child.pid)], { stdout: "ignore", stderr: "ignore" });
+  } else
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // ESRCH: nothing of the group is left
+    }
+  if (end === "late") {
+    child.kill("SIGKILL");
+    return null;
+  }
+  return child.signalCode ? null : end;
+};
+
+/**
+ * The values that the login session gives every terminal, for these names (no shell profile sets them). `warn`:
+ * a file of the session could not be read; it names the file, never a value. It asks nothing of the person.
+ */
+export type Session = (names: string[]) => Promise<{ env: Env; warn?: string }>;
+/** macOS: `launchctl getenv`. Linux: /etc/environment and the environment.d files, read from disk. */
+const loginSession: Session = async (names) => {
+  const out: Env = {};
+  if (process.platform === "darwin")
+    for (const n of names) {
+      const r = await run(["launchctl", "getenv", n], { ms: 5000, cwd: homedir() });
+      if (r.code === 0 && r.out.trim()) out[n] = r.out.trim();
+    }
+  else if (process.platform === "linux") {
+    const home = homedir();
+    const r = readLoginSession(home, "/", process.env.XDG_CONFIG_HOME || join(home, ".config"));
+    for (const n of names) if (r.env[n]) out[n] = r.env[n];
+    if (r.unreadable.length)
+      return {
+        env: out,
+        warn: `${r.unreadable.join(", ")} could not be read: a key that the login session takes from there is not seen`,
+      };
+  }
+  return { env: out };
+};
+
+let probed: Promise<Probe> | undefined;
+/** The environment of a new terminal of the person, read once per run of this script. */
+const terminal = (): Promise<Probe> =>
+  (probed ??= probeTerminal(process.platform, process.env, execDetached, userInfo(), { session: loginSession }));
+
+/** The environment of the launch line with this profile, or the fail line when the new terminal cannot be read. */
+async function launchEnvOf(profile: string): Promise<{ env: Env } | { line: Line }> {
+  const p = await terminal();
+  return "error" in p ? { line: terminalFail(p) } : { env: launchEnv(p.env, process.env, profile, process.platform) };
+}
+/** The same environment for `ant`, which takes the profile as `--profile` and must not see a key or a token. */
+async function antEnvOf(profile: string): Promise<{ env: Env } | { line: Line }> {
+  const r = await launchEnvOf(profile);
+  if ("line" in r) return r;
+  for (const n of ["ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"])
+    deleteVar(r.env, n, process.platform);
+  return r;
 }
 const cwd = () => (existsSync(WORKSHOP) ? WORKSHOP : REPO);
 
@@ -247,12 +679,12 @@ async function checkTools(): Promise<Line[]> {
 
 /** `ant models list` answers only with a login: `ant auth status` exits 0 without one. */
 async function checkLogin(s: State): Promise<Line> {
-  const env = profileEnv(s.profile);
-  delete env.ANTHROPIC_PROFILE;
+  const e = await antEnvOf(s.profile);
+  if ("line" in e) return e.line;
   const r = await run(["ant", "--profile", s.profile, "models", "list", "--limit", "1"], {
     ms: 30_000,
     cwd: cwd(),
-    env,
+    env: e.env,
   });
   return r.code === 0
     ? { status: "ok", what: "login", why: `the ant profile ${s.profile} is logged in` }
@@ -264,22 +696,28 @@ async function checkLogin(s: State): Promise<Line> {
       };
 }
 
+/**
+ * PAYS, its states, from `paysPlan` and then `claude auth status` with the launch line's environment:
+ * - TERMINAL UNREADABLE: the new terminal's environment could not be read -> `fail terminal`.
+ * - PAID AHEAD: a variable of the new terminal or its login session pays ahead of the profile -> `fail pays`, row
+ *   "Another credential pays".
+ * - NOT THE PROFILE: Claude Code does not name the profile -> `fail pays`, row "Login method with the profile set".
+ * - NO ORGANIZATION: the profile pays, and neither Claude Code nor ant names its organization -> `fail pays`.
+ * - UNCONFIRMED: an organization, and the person has not confirmed it (State.org) -> `todo pays`; `confirm org`
+ *   records it and goes to CONFIRMED. A new profile (`login --profile`) clears it and goes back here.
+ * - CONFIRMED: State.org is the organization that pays -> `ok pays`.
+ * The notes `ok host` and `warn session` come with every state after PAID AHEAD. They ask nothing, and they never
+ * open or close a state.
+ */
 async function checkPays(s: State): Promise<Line[]> {
-  const first = paysBeforeProfile(process.env);
-  if (first !== null)
-    return [
-      {
-        status: "fail",
-        what: "pays",
-        why: `${first} is set in this terminal and pays ahead of the profile`,
-        next: `fixes.md, row "Another credential pays" (${first})`,
-      },
-    ];
-  const r = await run(["claude", "auth", "status", "--text"], { ms: 30_000, cwd: cwd(), env: profileEnv(s.profile) });
+  const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
+  if ("lines" in plan) return plan.lines;
+  const r = await run(["claude", "auth", "status", "--text"], { ms: 30_000, cwd: cwd(), env: plan.env });
   const a = parseAuth(r.out);
   const org = a.profile === s.profile ? await orgOf(s.profile, a.org) : undefined;
   if (a.profile !== s.profile || !org)
     return [
+      ...plan.notes,
       {
         status: "fail",
         what: "pays",
@@ -292,8 +730,8 @@ async function checkPays(s: State): Promise<Line[]> {
         next: `fixes.md, row "Login method with the profile set"`,
       },
     ];
-  if (s.org !== org) return [paysTodo(s.profile, org)];
-  return [{ status: "ok", what: "pays", why: `Claude Code pays with "${org}", profile ${s.profile}` }];
+  if (s.org !== org) return [...plan.notes, paysTodo(s.profile, org)];
+  return [...plan.notes, { status: "ok", what: "pays", why: `Claude Code pays with "${org}", profile ${s.profile}` }];
 }
 
 /** PAYS before the person confirmed: a name or only an id, the person compares it with the credits either way. */
@@ -320,9 +758,9 @@ export function whoPays(org: string | undefined, profile: string): string {
 /** The organization that pays: Claude Code's name for it, else ant's name, else `id <uuid>`, else nothing. */
 async function orgOf(profile: string, fromClaude?: string): Promise<string | undefined> {
   if (fromClaude) return fromClaude;
-  const env = profileEnv(profile);
-  delete env.ANTHROPIC_PROFILE;
-  const r = await run(["ant", "--profile", profile, "auth", "status"], { ms: 30_000, cwd: cwd(), env });
+  const e = await antEnvOf(profile);
+  if ("line" in e) return undefined;
+  const r = await run(["ant", "--profile", profile, "auth", "status"], { ms: 30_000, cwd: cwd(), env: e.env });
   const o = parseAntOrg(r.out + r.err);
   return o.name ?? (o.id ? `id ${o.id}` : undefined);
 }
@@ -419,6 +857,30 @@ const checkEv3 = (s: State): Line =>
 
 // ---- the steps ----
 
+/** A warn line is done: it says what the person must know, and asks nothing. */
+const isOpen = (l: Line) => l.status !== "ok" && l.status !== "warn";
+/** The first state with a line that is not done, else REPORT. */
+export const nextState = (per: [string, Line[]][]): string => per.find(([, ls]) => ls.some(isOpen))?.[0] ?? "REPORT";
+/**
+ * One line of `setup status` for a state: fail if a line fails, else todo if one is open, else warn if one warns,
+ * else ok. Its `next` is the first open line's, else the first warn line's.
+ */
+export function summarize(name: string, ls: Line[]): Line {
+  const open = ls.find(isOpen);
+  return {
+    status: open
+      ? ls.some((l) => l.status === "fail")
+        ? "fail"
+        : "todo"
+      : ls.some((l) => l.status === "warn")
+        ? "warn"
+        : "ok",
+    what: name,
+    why: ls.map((l) => `${l.what}: ${l.why}`).join("; "),
+    next: (open ?? ls.find((l) => l.status === "warn"))?.next,
+  };
+}
+
 async function status(s: State): Promise<Line[]> {
   const per: [string, Line[]][] = [["TOOLS", await checkTools()]];
   const login = await checkLogin(s);
@@ -431,24 +893,16 @@ async function status(s: State): Promise<Line[]> {
   per.push(["SMOKE", [checkSmoke(s)]]);
   per.push(["SEE IT", [checkMoved(s)]]);
   per.push(["EV3", [checkEv3(s)]]);
-  const next = per.find(([, ls]) => ls.some((l) => l.status !== "ok"))?.[0] ?? "REPORT";
-  const lines = per.map(([name, ls]): Line => {
-    const open = ls.find((l) => l.status !== "ok");
-    return {
-      status: open ? (ls.some((l) => l.status === "fail") ? "fail" : "todo") : "ok",
-      what: name,
-      why: ls.map((l) => `${l.what}: ${l.why}`).join("; "),
-      next: open?.next,
-    };
-  });
-  return [...lines, { status: "ok", what: "next", why: next }];
+  return [...per.map(([name, ls]) => summarize(name, ls)), { status: "ok", what: "next", why: nextState(per) }];
 }
 
 async function login(s: State): Promise<Line[]> {
   const before = await checkLogin(s);
   if (before.status === "ok") return [before];
-  const env = profileEnv(s.profile);
-  delete env.ANTHROPIC_PROFILE;
+  if (before.status === "fail") return [before];
+  const e = await antEnvOf(s.profile);
+  if ("line" in e) return [e.line];
+  const env = e.env;
   // the browser opens on platform.claude.com; ant waits on a 127.0.0.1 port for its answer
   await run(["ant", "auth", "login", "--profile", s.profile, "--timeout", LOGIN_TIMEOUT], {
     ms: 330_000,
@@ -517,9 +971,11 @@ async function workshop(s: State): Promise<Line[]> {
 async function smoke(s: State): Promise<Line[]> {
   // no id in the prompt: only a running spinecord can name the twin, so an answer without one proves nothing
   const prompt = "List the robots. Then drive the simulated one forward 5 cm. Answer in one line that names its id.";
+  const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
+  if ("lines" in plan) return plan.lines;
   const r = await run(
     ["claude", "-p", prompt, "--allowedTools", RULE, "--max-budget-usd", "0.50", "--output-format", "json"],
-    { env: profileEnv(s.profile) },
+    { env: plan.env },
   );
   let j: { result?: string; is_error?: boolean; total_cost_usd?: number };
   try {
@@ -739,11 +1195,9 @@ export async function main(argv: string[]): Promise<number> {
     case "confirm": {
       const what = rest[0];
       if (what === "org") {
-        const r = await run(["claude", "auth", "status", "--text"], {
-          ms: 30_000,
-          cwd: cwd(),
-          env: profileEnv(s.profile),
-        });
+        const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
+        if ("lines" in plan) return print(step, plan.lines);
+        const r = await run(["claude", "auth", "status", "--text"], { ms: 30_000, cwd: cwd(), env: plan.env });
         const a = parseAuth(r.out);
         const org = a.profile === s.profile ? await orgOf(s.profile, a.org) : undefined;
         if (!org) return print(step, await checkPays(s));
