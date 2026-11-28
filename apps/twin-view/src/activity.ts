@@ -9,8 +9,11 @@
 //   following --(the person scrolls away from the top)--> reading
 //   reading --(the person scrolls back to the top)--> following
 //   reading --(RESUME_MS without the person touching the list)--> following (the list jumps to the newest)
-// Only the person's own input (wheel, pointer, touch, key) starts reading or keeps it; a scroll the page makes
-// itself never does, so a steady stream of calls cannot keep the list off the newest for ever.
+//   reading --(the panel folded)--> following
+// Every scroll is the person's unless the page made it (ScrollOwner): only the person's scrolls, and their pointer
+// or finger moving on the list, start reading or restart its wait; the page's own scrolls (keeping the place, the
+// return to the top) never do, so a steady stream of calls cannot keep the list off the newest for ever. Folding
+// the panel ends reading: nothing of the list is visible, and it opens on the newest call.
 import type { CallEnd, CallStart, ServerMessage } from "./messages";
 
 /** A message the activity panel lists: the start or end of an MCP tool call. */
@@ -54,7 +57,53 @@ export class Follow {
     this.state = { kind: "following" };
     return true;
   }
+  /** The panel is folded: reading ends. True when it did, and the list must show the top. */
+  folded(): boolean {
+    if (this.state.kind !== "reading") return false;
+    this.state = { kind: "following" };
+    return true;
+  }
   reset(): void {
     this.state = { kind: "following" };
   }
+}
+
+/**
+ * Tells the scrolls the page makes apart from the person's. The page notes the place it set (`set`); a scroll that
+ * lands there is the page's, any other is the person's. A place the page set that brought no scroll (the list was
+ * already there) is forgotten by the next scroll, which is then the person's. `glide` covers a smooth scroll the
+ * page starts: every scroll until it reaches its target is the page's.
+ */
+export class ScrollOwner {
+  private expected: number | null = null;
+  private gliding: number | null = null;
+  set(top: number): void {
+    this.expected = top;
+  }
+  glide(target: number): void {
+    this.gliding = target;
+  }
+  /** A scroll happened and the list is at `top`: true when the page made it. */
+  byPage(top: number): boolean {
+    if (this.gliding !== null) {
+      if (Math.abs(top - this.gliding) < 1) this.gliding = null;
+      return true;
+    }
+    const mine = this.expected !== null && Math.abs(top - this.expected) < 1;
+    this.expected = null;
+    return mine;
+  }
+  /** The person took over (wheel, pointer, finger): a glide the page started is theirs to interrupt. */
+  personActs(): void {
+    this.gliding = null;
+  }
+}
+
+/**
+ * Where the list must scroll to keep the person's place after rows came, went or grew: the row they were looking at
+ * (`anchorBefore`, its top relative to the list's top edge before the change) must sit where it sat. `anchorAfter`
+ * is its relative top after the change, measured with the list still at `scrollTop`.
+ */
+export function keptScrollTop(scrollTop: number, anchorBefore: number, anchorAfter: number): number {
+  return scrollTop + (anchorAfter - anchorBefore);
 }

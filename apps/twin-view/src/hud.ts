@@ -1,6 +1,6 @@
 // The panels around the 3D scene: the robot's problem chips, its ports and screen, Claude's MCP calls, and the notes
 // the page gives the person (toasts, hints). All copy is the page's own, in Spanish.
-import { Follow, isClaudeCall } from "./activity";
+import { Follow, ScrollOwner, isClaudeCall, keptScrollTop } from "./activity";
 import type { Chip } from "./status";
 import type { MotorState, RefusalCode, RobotState, ServerMessage } from "./messages";
 import { glance } from "./toolwords";
@@ -140,12 +140,25 @@ export function led(pattern: number, timeS: number): void {
 // ---------------------------------------------------------------- calls
 const MAX_CALLS = 80;
 const rows = new Map<number, { li: HTMLLIElement; at: number; running: boolean }>();
-/** Whether the list shows the newest call (src/activity.ts). */
+/** Whether the list shows the newest call, and which scrolls are the page's own (src/activity.ts). */
 const follow = new Follow();
-/** When the person last used the wheel, a pointer, a finger or a key on the list: a scroll right after is theirs. */
-let inputAt = -Infinity;
+const owner = new ScrollOwner();
+let wasFolded = false;
 const secs = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 const atNewest = (list: HTMLElement) => list.scrollTop <= 4;
+/** The page scrolls the list, and notes the place it set so that scroll is not taken for the person's. */
+function setTop(list: HTMLElement, top: number): void {
+  list.scrollTop = top;
+  owner.set(list.scrollTop);
+}
+/** The first row the person sees, and its top relative to the list's top edge. */
+function visibleRow(list: HTMLElement): HTMLElement | null {
+  const edge = list.getBoundingClientRect().top;
+  for (const li of list.children) if (li.getBoundingClientRect().bottom > edge) return li as HTMLElement;
+  return null;
+}
+const relTop = (li: HTMLElement, list: HTMLElement) =>
+  li.getBoundingClientRect().top - list.getBoundingClientRect().top;
 
 /**
  * One call of Claude's begins or ends; any other message is not the panel's (src/activity.ts). The list follows the
@@ -155,7 +168,9 @@ export function call(m: ServerMessage): void {
   if (!isClaudeCall(m)) return;
   const list = $<HTMLOListElement>("calls");
   $("calls-hint").hidden = true;
-  const before = list.scrollHeight;
+  // the row the person reads, measured before rows come, go (past MAX_CALLS) or grow, to hold it still after
+  const anchor = follow.following ? null : visibleRow(list);
+  const anchorBefore = anchor ? relTop(anchor, list) : 0;
   let row = rows.get(m.n);
   let added = false;
   if (!row) {
@@ -209,8 +224,8 @@ export function call(m: ServerMessage): void {
     sum.textContent = m.summary;
     li.title = `terminó a las ${time} · clic para ver todo`;
   }
-  if (added ? follow.added() : follow.following) list.scrollTop = 0;
-  else list.scrollTop += list.scrollHeight - before;
+  if (added ? follow.added() : follow.following) setTop(list, 0);
+  else if (anchor?.isConnected) setTop(list, keptScrollTop(list.scrollTop, anchorBefore, relTop(anchor, list)));
   showUnseen();
 }
 
@@ -227,33 +242,56 @@ function showUnseen(): void {
   b.hidden = n === 0;
   b.textContent = `↑ ${n} ${n === 1 ? "nueva" : "nuevas"}`;
 }
-/** Wires the list: the person's own scroll starts reading; back at the top, or untouched for a while, it follows. */
+/**
+ * Wires the list: a scroll the page did not make is the person's and starts reading, or keeps it while they scroll
+ * or drag on it; back at the top it follows again.
+ */
 export function callsInit(): void {
   const list = $<HTMLOListElement>("calls");
-  const input = () => {
-    inputAt = performance.now();
-    if (!atNewest(list)) follow.touched(false, inputAt);
+  let down = false;
+  const acts = () => {
+    if (!atNewest(list)) follow.touched(false, performance.now());
   };
   for (const ev of ["wheel", "pointerdown", "touchstart", "keydown"])
-    list.addEventListener(ev, input, { passive: true });
+    list.addEventListener(
+      ev,
+      () => {
+        owner.personActs();
+        if (ev === "pointerdown" || ev === "touchstart") down = true;
+        acts();
+      },
+      { passive: true },
+    );
+  // a pointer or a finger held on the list and moving: the person is still at it, however long the drag
+  for (const ev of ["pointermove", "touchmove"]) list.addEventListener(ev, () => down && acts(), { passive: true });
+  for (const ev of ["pointerup", "pointercancel", "touchend", "touchcancel"])
+    addEventListener(ev, () => (down = false), { passive: true });
   list.addEventListener("scroll", () => {
-    const now = performance.now();
-    if (now - inputAt < 500) follow.touched(atNewest(list), now);
-    else follow.scrolled(atNewest(list));
+    const top = list.scrollTop;
+    if (owner.byPage(top)) follow.scrolled(top <= 4);
+    else follow.touched(top <= 4, performance.now());
     showUnseen();
   });
   $("calls-new").addEventListener("click", () => {
     follow.reset();
     showUnseen();
-    list.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (smooth) owner.glide(0);
+    list.scrollTo({ top: 0, behavior: smooth ? "smooth" : "auto" });
+    if (!smooth) owner.set(list.scrollTop);
   });
 }
 
 /** Ten times a second: the time the running calls have taken so far, the call in the top bar, and the return to
  * the newest call once the person has left the list alone. */
 export function callsTick(): void {
-  if (follow.tick(performance.now())) {
-    $("calls").scrollTop = 0;
+  // folded, nothing of the list is visible: it stops reading, and opens on the newest call (a hidden list keeps no
+  // scroll the page sets, and the browser gives the old one back when it shows again: the top is set on opening)
+  const folded = $("callpanel").classList.contains("folded");
+  const opened = wasFolded && !folded;
+  wasFolded = folded;
+  if ((folded && follow.folded()) || follow.tick(performance.now()) || (opened && follow.following)) {
+    setTop($("calls"), 0);
     showUnseen();
   }
   let newest: { tool: string; ms: number } | null = null;
