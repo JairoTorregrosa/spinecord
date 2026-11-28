@@ -538,7 +538,7 @@ $("restore").addEventListener("click", () => {
     if (!r.ok) return hud.toast(`${hud.REFUSAL[r.code]}${r.code === "internal" ? `: ${r.error}` : ""}`);
     if (focus?.id === id) trailReset();
     const robot = robots.find((x) => x.id === id);
-    if (robot) hud.toast(restoredText(robot), "info");
+    if (robot) hud.toast(restoredText(robot, r.activity), r.activity === "fault" ? undefined : "info");
   });
 });
 $("trail-clear").addEventListener("click", () => trailReset());

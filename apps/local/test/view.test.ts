@@ -410,10 +410,32 @@ describe("the view listener", () => {
     const robot = fleet.robots[0]!;
     const drive = tool("drive", { distance_cm: 60, speed_pct: 30 });
     await until("the drive to start", () => robot.view().activity === "acting");
-    expect(await p.act({ t: "restore", id: "r1-sim" })).toMatchObject({ ok: true });
-    await drive;
-    await until("the robot to be idle", () => robot.view().activity === "idle");
+    await Bun.sleep(300);
+    const reply = await p.act({ t: "restore", id: "r1-sim" });
+    // the restore waited for the stop: the drive already ended, measured in the room it ran in, before the encoders reset
+    const ended = (await drive) as any;
+    expect(reply).toMatchObject({ ok: true, activity: "idle" });
+    expect(robot.view().activity).toBe("idle");
+    const went = ended.ok ? ended.data.measured.distance_cm : ended.error.measured.distance_cm;
+    expect(went).toBeGreaterThan(1);
+    expect(went).toBeLessThan(60);
     expect(fleet.bricks.get("r1-sim")!.world.pose).toEqual({ x: 60, y: 60, th: 0 });
+  });
+
+  test("restore in fault: the page's restores the room and says the fault stays; the model's is refused with fault", async () => {
+    const { connect, tool, fleet } = await rig();
+    const p = await connect();
+    const robot = fleet.robots[0]!;
+    const brick = fleet.bricks.get("r1-sim")!;
+    brick.world.carry({ x: 30, y: 30, th: 1 });
+    (robot as unknown as { fault(why: string): void }).fault("a stop that could not be verified (test)");
+    expect(await p.act({ t: "restore", id: "r1-sim" })).toMatchObject({ ok: true, activity: "fault" });
+    expect(brick.world.pose).toEqual({ x: 60, y: 60, th: 0 });
+    expect(robot.view().activity).toBe("fault");
+    const r = await tool("command_device", { device: "sim.world", command: "restore", args: {} });
+    expect(r).toMatchObject({ ok: false, error: { code: "fault" }, next: ["read_all", "reset_fault"] });
+    expect((await tool("reset_fault")).ok).toBe(true);
+    expect((await tool("command_device", { device: "sim.world", command: "restore", args: {} })).ok).toBe(true);
   });
 
   test("a button held on the page is pressed for the tools until the page lets go or goes away", async () => {

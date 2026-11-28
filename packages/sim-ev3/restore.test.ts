@@ -5,6 +5,7 @@ import { expect, test } from "bun:test";
 import * as E from "../driver-ev3/encode";
 import { SimWorldProvider } from "../sim-world/world-provider";
 import { EXAMPLES, quietWorld } from "../sim-world/testkit";
+import { World, parseWorld } from "../sim-world/world";
 import { rig } from "./testkit";
 
 const BC = E.OUTPUT_MASK.B | E.OUTPUT_MASK.C;
@@ -115,4 +116,20 @@ test("a restore twice in a row gives two fresh worlds that do not share state", 
   t.sim.restore();
   expect(t.brick.world).not.toBe(first);
   expect(t.brick.world.cfg.boxes.map((b) => b.id)).toEqual(["box1"]);
+});
+
+test("startRoom: the room a person picks is entered fresh and becomes what restore goes back to", async () => {
+  const t = twin();
+  t.sim.startRoom(EXAMPLES.wallsMaze);
+  const picked = new World(parseWorld(EXAMPLES.wallsMaze), t.brick.world.seed);
+  await t.sim.command("sim.world", "load_world", { world: markers }, idle);
+  t.brick.world.addObstacle({ x: 100, y: 40, w: 8, h: 8 });
+  t.sim.restore();
+  expect(t.brick.world.cfg).toEqual(picked.cfg);
+  expect(t.brick.world.pose).toEqual(picked.pose);
+  // a room this robot cannot live in changes nothing: neither the room nor the origin
+  expect(() => t.sim.startRoom({ ...EXAMPLES.lineOval, name: "bare", extensions: {} })).toThrow(/extensions\.ev3/);
+  expect(t.brick.world.cfg.name).toBe("walls-maze");
+  t.sim.restore();
+  expect(t.brick.world.cfg).toEqual(picked.cfg);
 });

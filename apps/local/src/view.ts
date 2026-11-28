@@ -323,8 +323,24 @@ export function serveView(
   const timer = setInterval(tick, Math.max(10, Math.round(1000 / hz)));
   timer.unref?.();
 
-  /** One action of the person at the page. Throws Refused, changing nothing, when it cannot be done. */
-  const act = (s: Socket, msg: Record<string, unknown>): void => {
+  /**
+   * The room the twin started in, whole (sim.world restore). A robot still moving is stopped first, as by the tools'
+   * stop, and the restore waits for that stop: the preempted call ends, and measures, in the room it ran in. A
+   * robot in fault stays in fault (a hand does not clear it, reset_fault does): the answer carries the activity the
+   * robot is left in, so the page can say so.
+   */
+  const restore = async (t: ViewTwin): Promise<{ activity: RobotActivity }> => {
+    if (MOVING.has(t.robot.view().activity)) await t.robot.stop().catch(() => {}); // a failed stop leaves it in fault
+    t.sim.restore();
+    o.log("view_action", { robot_id: t.id, action: "restore" });
+    return { activity: t.robot.view().activity };
+  };
+
+  /**
+   * One action of the person at the page. Throws Refused, changing nothing, when it cannot be done. A restore
+   * answers later, with what it leaves.
+   */
+  const act = (s: Socket, msg: Record<string, unknown>): void | Promise<{ activity: RobotActivity }> => {
     const t = typeof msg.id === "string" ? byId.get(msg.id) : undefined;
     if (!t) throw new Refused("invalid", `no twin ${JSON.stringify(msg.id)} here: ${[...byId.keys()].join(", ")}`);
     const { brick } = t;
@@ -368,13 +384,8 @@ export function serveView(
         boxChange(() => w.moveObstacle(id, r)); // refused, the box stays where it was
         break;
       }
-      case "restore": {
-        // the room the twin started in, whole (sim.world restore): a robot still moving is stopped as by the tools'
-        // stop, so no call in flight drives on in the fresh room
-        if (MOVING.has(t.robot.view().activity)) void t.robot.stop().catch(() => {});
-        t.sim.restore();
-        break;
-      }
+      case "restore":
+        return restore(t);
       case "button": {
         const b = num(msg, "button");
         if (!Number.isInteger(b) || b < 1 || b > 6) throw new Refused("invalid", "button must be 1..6");
@@ -469,15 +480,19 @@ export function serveView(
           // --chat: the chat's own messages (src/chat.ts); without it they are unknown actions, as before
           if (o.chat && typeof m.t === "string" && m.t.startsWith("chat_"))
             return o.chat.message(m, (r) => send(ws, r));
-          try {
-            act(ws, m);
-            send(ws, { t: "reply", req, ok: true });
-          } catch (e) {
+          const fail = (e: unknown) => {
             if (e instanceof Refused) return send(ws, { t: "reply", req, ok: false, code: e.code, error: e.message });
             // a fault of the view, not of the person: logged loud, shown as one on the page, the listener goes on
             const error = (e as Error).message;
             o.log("view_error", { robot_id: m.id, action: m.t, error });
             send(ws, { t: "reply", req, ok: false, code: "internal", error });
+          };
+          try {
+            const later = act(ws, m);
+            if (later) later.then((r) => send(ws, { t: "reply", req, ok: true, ...r }), fail);
+            else send(ws, { t: "reply", req, ok: true });
+          } catch (e) {
+            fail(e);
           }
         },
         close(ws) {

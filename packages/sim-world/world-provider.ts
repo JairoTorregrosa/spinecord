@@ -64,9 +64,9 @@ export class SimWorldProvider implements Provider {
   private readonly now: () => number;
   /**
    * The room this twin started in, as the host held it when this provider was made: what `restore` goes back to.
-   * Nothing a model or a page does changes it (a world `load_world` takes is an edit of the room, not a new origin).
+   * Only `startRoom` (a person picking the room) changes it; a world `load_world` takes is an edit of the room.
    */
-  private readonly origin: { cfg: WorldConfig; seed: number };
+  private origin: { cfg: WorldConfig; seed: number };
 
   constructor(opts: SimWorldProviderOptions) {
     if (!opts?.host)
@@ -434,6 +434,18 @@ export class SimWorldProvider implements Provider {
    */
   restore(): void {
     this.enter(new World(structuredClone(this.origin.cfg), this.origin.seed));
+  }
+
+  /**
+   * A person picks the room the twin is in from now on (a map switch): `world` (a world file, parsed JSON) goes
+   * through `prepare` like a world `load_world` takes, the twin enters it fresh, and it becomes the origin `restore`
+   * goes back to. Throws, changing nothing (neither the room nor the origin), for a world this robot cannot live in.
+   */
+  startRoom(world: unknown): void {
+    const cfg = parseWorld(this.prepare(world));
+    const origin = { cfg: structuredClone(cfg), seed: this.seed };
+    this.enter(new World(cfg, this.seed));
+    this.origin = origin;
   }
 
   /** Hands `next` to the host (which throws, changing nothing, when it cannot live there), then starts the scene over. */
