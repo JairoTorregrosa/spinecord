@@ -8,7 +8,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CONFIRM,
+  checkChoice,
   ev3DraftWarn,
+  inDesktopApp,
+  panelLine,
+  STATES,
+  statesFor,
+  toolsFor,
+  VIEW_URL,
+  waitView,
+  windowScript,
+  windowCommand,
+  withRestart,
   hostOnly,
   launchEnv,
   nextState,
@@ -628,4 +639,134 @@ test("the Windows probe reads the JSON that PowerShell writes, with or without a
   expect(paysPlan({ env: { Anthropic_Api_Key: "k" } }, {}, "credits", "win32")).toMatchObject({
     lines: [{ status: "fail", what: "pays", why: expect.stringContaining("ANTHROPIC_API_KEY") }],
   });
+});
+
+// ---- who pays: the path the person chose, and the states that path needs ----
+
+test("the choice is explicit: no choice holds CHOOSE, each path lists only its states and tools", () => {
+  expect(checkChoice({})).toMatchObject({ status: "todo", what: "choice" });
+  expect(checkChoice({ pays: "app" }).status).toBe("ok");
+  expect(checkChoice({ pays: "credits" }).status).toBe("ok");
+  expect(statesFor(undefined)).toEqual([...STATES]);
+  expect(statesFor("credits")).toEqual([...STATES]);
+  expect(statesFor("app")).toEqual(STATES.filter((n) => n !== "LOGIN" && n !== "PAYS"));
+  expect(statesFor("app")).toHaveLength(STATES.length - 2);
+  expect(toolsFor("app")).not.toContain("ant");
+  expect(toolsFor("credits")).toContain("ant");
+  expect(toolsFor(undefined)).toContain("ant");
+  const done: Line = { status: "ok", what: "x", why: "y" };
+  const open: Line = { status: "todo", what: "x", why: "y" };
+  // next per path: CHOOSE first, then the first open state of that path only
+  const per = (pays: "app" | "credits" | undefined, openAt: string[]): [string, Line[]][] =>
+    statesFor(pays).map((n) => [n, [n === "CHOOSE" ? checkChoice({ pays }) : openAt.includes(n) ? open : done]]);
+  expect(nextState(per(undefined, ["LOGIN"]))).toBe("CHOOSE");
+  expect(nextState(per("credits", ["LOGIN", "SMOKE"]))).toBe("LOGIN");
+  // on the app path an open LOGIN cannot even be listed, so SMOKE is next
+  expect(nextState(per("app", ["LOGIN", "SMOKE"]))).toBe("SMOKE");
+  expect(nextState(per("app", []))).toBe("REPORT");
+});
+
+test("setup choose records the payer; status of the app path shows no LOGIN and no PAYS", () => {
+  const home = mkdtempSync(join(tmpdir(), "spinecord-setup-home-"));
+  try {
+    const setup = (...args: string[]) => {
+      const r = Bun.spawnSync([process.execPath, join(DIR, "..", "..", "..", "scripts", "setup.ts"), ...args], {
+        env: { HOME: home, USERPROFILE: home, PATH: join(home, "no-tools") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return { code: r.exitCode, out: r.stdout.toString() };
+    };
+    const state = () => JSON.parse(readFileSync(join(home, "mi-robot", ".spinecord-setup.json"), "utf8"));
+    expect(setup("choose", "nobody").code).toBe(2);
+    expect(existsSync(join(home, "mi-robot", ".spinecord-setup.json"))).toBe(false);
+    expect(setup("choose", "app")).toMatchObject({ code: 0 });
+    expect(state()).toEqual({ profile: "credits", pays: "app" });
+    const st = setup("status").out;
+    expect(st).toMatch(/^ok\s+CHOOSE\b/m);
+    expect(st).not.toMatch(/^\w+\s+(LOGIN|PAYS)\b/m);
+    expect(st).not.toContain("ant:");
+    // no git and no claude on PATH here: the tools are the next state
+    expect(st.trim().split("\n").at(-1)).toBe("next TOOLS");
+    expect(setup("login").out).toContain("not needed");
+    // a window is a step of the credits path only
+    expect(setup("window")).toMatchObject({ code: 1 });
+    expect(setup("choose", "credits").code).toBe(0);
+    expect(state().pays).toBe("credits");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 30_000);
+
+/** A fake clock: sleep moves it, `up` answers from the time. */
+function clock(upAt: number | null) {
+  let t = 0;
+  const said: string[] = [];
+  return {
+    said,
+    w: {
+      up: async () => upAt !== null && t >= upAt,
+      now: () => t,
+      sleep: async (ms: number) => void (t += ms),
+      say: (l: string) => void said.push(l),
+    },
+  };
+}
+
+test("setup view waits for the robot's session with progress lines, and a running server is already running", async () => {
+  const already = clock(0);
+  expect(await waitView(already.w, 90_000)).toEqual({ state: "already", waited: 0 });
+  expect(already.said).toEqual([]);
+  const later = clock(25_000);
+  expect(await waitView(later.w, 90_000)).toEqual({ state: "started", waited: 25_000 });
+  expect(later.said).toHaveLength(2);
+  expect(later.said[0]).toContain(`nothing on ${VIEW_URL} yet (10 s of 90 s)`);
+  const never = clock(null);
+  const r = await waitView(never.w, 90_000);
+  expect(r.state).toBe("timeout");
+  expect(r.waited).toBeGreaterThanOrEqual(90_000);
+  expect(r.waited).toBeLessThan(100_000);
+  expect(never.said).toHaveLength(9);
+});
+
+test("the desktop app: its entrypoint, a panel line its PowerShell parser takes, a window that runs the launch line", () => {
+  expect(inDesktopApp({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop" })).toBe(true);
+  expect(inDesktopApp({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop-3p" })).toBe(true);
+  expect(inDesktopApp({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe(false);
+  expect(inDesktopApp({})).toBe(false);
+  // run_in_terminal refuses variable reads ($HOME) and double-quoted strings: the folder goes in as cwd
+  const win = panelLine("win32", "credits");
+  expect(win).toBe("$env:ANTHROPIC_PROFILE = 'credits'; claude --model sonnet");
+  expect(win).not.toMatch(/\$(?!env:ANTHROPIC_PROFILE = )|"/);
+  expect(panelLine("darwin", "credits")).toBe("ANTHROPIC_PROFILE=credits claude --model sonnet");
+  expect(panelLine("linux", "credits", true)).toBe("ANTHROPIC_PROFILE=credits claude auth status --text");
+  const mac = windowScript("darwin", "/Users/o'k/mi-robot", "credits", "/Users/o'k/.local/bin/claude");
+  expect(mac.name).toEndWith(".command");
+  expect(mac.text).toBe(
+    "#!/bin/sh\ncd '/Users/o'\\''k/mi-robot' || exit 1\nANTHROPIC_PROFILE=credits exec '/Users/o'\\''k/.local/bin/claude' --model sonnet\n",
+  );
+  const ps = windowScript("win32", "C:\\Users\\o'k\\mi-robot", "credits", "C:\\Users\\o'k\\.local\\bin\\claude.exe");
+  expect(ps.name).toEndWith(".ps1");
+  expect(ps.text).toContain("Set-Location -LiteralPath 'C:\\Users\\o''k\\mi-robot'");
+  expect(ps.text).toContain("$env:ANTHROPIC_PROFILE = 'credits'");
+  expect(ps.text).toContain("& 'C:\\Users\\o''k\\.local\\bin\\claude.exe' --model sonnet");
+  // no `cmd /c start`: its first quoted argument would be the title
+  const winCmd = windowCommand("win32", "C:\\a b\\x.ps1");
+  expect(winCmd.slice(0, 3)).toEqual(["powershell.exe", "-NoProfile", "-Command"]);
+  expect(winCmd[3]).toBe(
+    "Start-Process powershell.exe -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-File','\"C:\\a b\\x.ps1\"'",
+  );
+  expect(windowCommand("darwin", "/w/x.command")).toEqual(["open", "-a", "Terminal", "/w/x.command"]);
+  expect(restartLine("darwin", "credits", "app").next).toContain("new session in the folder");
+  expect(restartLine("darwin", "credits", "app").next).not.toContain("ANTHROPIC_PROFILE");
+});
+
+test("a registration change while the robot's session runs ends with one restart line, per path", () => {
+  const ok: Line = { status: "ok", what: "doctor", why: "doctor: ok" };
+  expect(withRestart([ok], false, "darwin", "credits", "app")).toEqual([ok]);
+  const app = withRestart([ok], true, "darwin", "credits", "app");
+  expect(app.at(-1)).toMatchObject({ what: "restart", next: expect.stringContaining("new session in the folder") });
+  const credits = withRestart([ok], true, "win32", "credits", "credits");
+  expect(credits.at(-1)!.next).toEndWith(launchLine("win32", "credits"));
+  expect(withRestart(credits, true, "win32", "credits", "credits")).toEqual(credits);
 });

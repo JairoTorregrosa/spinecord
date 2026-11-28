@@ -48,8 +48,21 @@ export interface Robots {
   /** The robot file of an EV3, from the repository root. */
   ev3: string;
 }
+/**
+ * Who pays for the robot's Claude Code, chosen by the person at the start (`setup choose`):
+ * - `app`: the login of the agent host, a Pro or Max plan. The robot's session is the agent's own session, moved to
+ *   the workshop folder (the Claude desktop app's change_directory tool), or a new session the person starts there.
+ *   No `ant`, no LOGIN, no PAYS.
+ * - `credits`: the Console credits of an `ant` profile. The Claude desktop app reads no profile (only the CLI does),
+ *   so the robot's session is the CLI in a terminal with ANTHROPIC_PROFILE set: the app's Terminal panel, or a new
+ *   terminal window that `setup window` opens.
+ */
+export type Pays = "app" | "credits";
+export const PAYS: readonly Pays[] = ["app", "credits"];
 export interface State {
   profile: string;
+  /** Absent: the person has not chosen yet, and every state waits for CHOOSE. */
+  pays?: Pays;
   ev3?: boolean;
   /** The name the person gave the robot (`--name` of the registration); absent: no name. */
   name?: string;
@@ -61,6 +74,15 @@ export interface State {
   /** The EV3 drove forward when asked to. */
   forward?: boolean;
 }
+/** The states of `setup status`, in order. Each path lists only the states it needs. */
+export const STATES = ["CHOOSE", "TOOLS", "LOGIN", "PAYS", "WORKSHOP", "SMOKE", "SEE IT", "EV3"] as const;
+export type StateName = (typeof STATES)[number];
+export function statesFor(pays: Pays | undefined): StateName[] {
+  return pays === "app" ? STATES.filter((n) => n !== "LOGIN" && n !== "PAYS") : [...STATES];
+}
+/** The `ant` CLI is a tool only of the credits path, and of a person who has not chosen yet. */
+export const toolsFor = (pays: Pays | undefined): string[] =>
+  pays === "app" ? ["git", "claude"] : ["git", "ant", "claude"];
 /** `warn`: done, with something the person must know; the step still ends `ok`. */
 export type Status = "ok" | "warn" | "todo" | "fail";
 
@@ -149,6 +171,95 @@ export function launchLine(platform: string, profile: string): string {
     ? `cd $HOME\\mi-robot; $env:ANTHROPIC_PROFILE = "${profile}"; claude --model sonnet`
     : `cd ~/mi-robot && ANTHROPIC_PROFILE=${profile} claude --model sonnet`;
 }
+
+/**
+ * The launch line for the Claude desktop app's Terminal panel (its run_in_terminal tool), which starts the tab in the
+ * workshop folder (`cwd`) and refuses a PowerShell line that reads a variable (`$HOME`): no `cd`, single quotes.
+ * `check`: the line that shows who pays, before the launch.
+ */
+export function panelLine(platform: string, profile: string, check = false): string {
+  const cmd = check ? "claude auth status --text" : "claude --model sonnet";
+  return platform === "win32" ? `$env:ANTHROPIC_PROFILE = '${profile}'; ${cmd}` : `ANTHROPIC_PROFILE=${profile} ${cmd}`;
+}
+
+/** `CLAUDE_CODE_ENTRYPOINT` of a Code tab session of the Claude desktop app (`claude-desktop-3p`: a 3P provider). */
+export const inDesktopApp = (env: Env): boolean => /^claude-desktop(-3p)?$/.test(env.CLAUDE_CODE_ENTRYPOINT ?? "");
+
+/**
+ * The file that `setup window` opens in a new terminal window: the launch line, with the workshop folder as an
+ * absolute path. macOS: a `.command` file that Terminal runs in a new login shell (launchd starts Terminal, so the
+ * window has none of the agent host's variables). Windows: a `.ps1` file for a new PowerShell window, started with
+ * the environment of a new terminal. Linux: a shell script for the terminal emulator.
+ */
+export function windowScript(
+  platform: string,
+  workshop: string,
+  profile: string,
+  claude: string,
+): { name: string; text: string } {
+  if (platform === "win32") {
+    const ps = (x: string) => `'${x.replaceAll("'", "''")}'`;
+    return {
+      name: "spinecord-robot.ps1",
+      text: `Set-Location -LiteralPath ${ps(workshop)}\r\n$env:ANTHROPIC_PROFILE = '${profile}'\r\n& ${ps(claude)} --model sonnet\r\n`,
+    };
+  }
+  const sh = (x: string) => `'${x.replaceAll("'", `'\\''`)}'`;
+  return {
+    name: platform === "darwin" ? "spinecord-robot.command" : "spinecord-robot.sh",
+    text: `#!/bin/sh\ncd ${sh(workshop)} || exit 1\nANTHROPIC_PROFILE=${profile} exec ${sh(claude)} --model sonnet\n`,
+  };
+}
+
+/**
+ * The command that opens the window. Windows: PowerShell's Start-Process, so that no quoting of `cmd /c start` (its
+ * first quoted argument is the title) decides what runs; the new window inherits this command's environment.
+ */
+export function windowCommand(platform: string, file: string): string[] {
+  if (platform === "darwin") return ["open", "-a", "Terminal", file];
+  if (platform === "win32")
+    return [
+      "powershell.exe",
+      "-NoProfile",
+      "-Command",
+      `Start-Process powershell.exe -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-File','"${file.replaceAll("'", "''")}"'`,
+    ];
+  return ["x-terminal-emulator", "-e", file];
+}
+
+/** How `setup view` waits: injected, so that its deadline and its lines are tested without a server or a clock. */
+export interface Wait {
+  up: () => Promise<boolean>;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  /** One progress line while it waits. */
+  say: (line: string) => void;
+}
+/**
+ * The 3D view: `already` when it answers at once (a session runs spinecord: never start a second one), `started`
+ * when it answers before the deadline, else `timeout`. A progress line every `every` ms.
+ */
+export async function waitView(
+  w: Wait,
+  deadline: number,
+  every = 10_000,
+): Promise<{ state: "already" | "started" | "timeout"; waited: number }> {
+  const t0 = w.now();
+  if (await w.up()) return { state: "already", waited: 0 };
+  let said = t0;
+  while (w.now() - t0 < deadline) {
+    await w.sleep(1000);
+    if (await w.up()) return { state: "started", waited: w.now() - t0 };
+    if (w.now() - said >= every) {
+      said = w.now();
+      w.say(
+        `wait  view  nothing on ${VIEW_URL} yet (${Math.round((said - t0) / 1000)} s of ${Math.round(deadline / 1000)} s): the robot's Claude Code has not started spinecord`,
+      );
+    }
+  }
+  return { state: "timeout", waited: w.now() - t0 };
+}
+export const VIEW_URL = "http://127.0.0.1:8769/";
 
 /**
  * The person's own robot file is the EV3's too: what nobody confirmed in it that changes how the robot moves (a
@@ -658,7 +769,7 @@ async function version(cmd: string): Promise<string | null> {
 
 // ---- the checks ----
 
-async function checkTools(): Promise<Line[]> {
+async function checkTools(s: State): Promise<Line[]> {
   const out: Line[] = [];
   const bunOk = Bun.semver.order(Bun.version, MIN_BUN) >= 0;
   out.push(
@@ -666,7 +777,7 @@ async function checkTools(): Promise<Line[]> {
       ? { status: "ok", what: "bun", why: Bun.version }
       : { status: "fail", what: "bun", why: `${Bun.version} is older than ${MIN_BUN}`, next: "bun upgrade" },
   );
-  for (const cmd of ["git", "ant", "claude"]) {
+  for (const cmd of toolsFor(s.pays)) {
     const v = await version(cmd);
     out.push(
       v
@@ -844,7 +955,12 @@ const checkSmoke = (s: State): Line =>
 const checkMoved = (s: State): Line =>
   s.moved
     ? { status: "ok", what: "moved", why: "the person saw the robot move" }
-    : { status: "todo", what: "moved", why: "the person has not seen it move yet", next: "SKILL.md, state SEE IT" };
+    : {
+        status: "todo",
+        what: "moved",
+        why: "the person has not seen it move yet",
+        next: "see-it.md, then bun scripts/setup.ts confirm moved",
+      };
 
 const checkEv3 = (s: State): Line =>
   s.ev3 === undefined
@@ -881,14 +997,41 @@ export function summarize(name: string, ls: Line[]): Line {
   };
 }
 
+/** CHOOSE: the person said who pays, so the path and its states are known. */
+export function checkChoice(s: Pick<State, "pays">): Line {
+  if (s.pays === "app")
+    return {
+      status: "ok",
+      what: "choice",
+      why: "the agent host's login pays (Pro or Max plan); the robot's Claude Code is this agent's session, moved to the workshop folder",
+    };
+  if (s.pays === "credits")
+    return {
+      status: "ok",
+      what: "choice",
+      why: "the Console credits of the ant profile pay; the robot's Claude Code runs in a terminal with ANTHROPIC_PROFILE",
+    };
+  return {
+    status: "todo",
+    what: "choice",
+    why: "the person has not said who pays",
+    next: "ask the person (SKILL.md, Start); then bun scripts/setup.ts choose app (or credits)",
+  };
+}
+
 async function status(s: State): Promise<Line[]> {
-  const per: [string, Line[]][] = [["TOOLS", await checkTools()]];
-  const login = await checkLogin(s);
-  per.push(["LOGIN", [login]]);
-  per.push([
-    "PAYS",
-    login.status === "ok" ? await checkPays(s) : [{ status: "todo", what: "pays", why: "after LOGIN" }],
-  ]);
+  const per: [string, Line[]][] = [
+    ["CHOOSE", [checkChoice(s)]],
+    ["TOOLS", await checkTools(s)],
+  ];
+  if (statesFor(s.pays).includes("LOGIN")) {
+    const login = await checkLogin(s);
+    per.push(["LOGIN", [login]]);
+    per.push([
+      "PAYS",
+      login.status === "ok" ? await checkPays(s) : [{ status: "todo", what: "pays", why: "after LOGIN" }],
+    ]);
+  }
   per.push(["WORKSHOP", await checkWorkshop(s)]);
   per.push(["SMOKE", [checkSmoke(s)]]);
   per.push(["SEE IT", [checkMoved(s)]]);
@@ -944,6 +1087,12 @@ async function register(s: State): Promise<Line[]> {
 }
 
 async function workshop(s: State): Promise<Line[]> {
+  // a robot session that runs now reads a new registration only when it starts again
+  const running = await viewUp();
+  return withRestart(await registerAndCheck(s), running, process.platform, s.profile, s.pays);
+}
+
+async function registerAndCheck(s: State): Promise<Line[]> {
   const lines = await register(s);
   if (lines.some((l) => l.status !== "ok")) return lines;
   // the doctor reads the registration of the folder it runs in
@@ -971,11 +1120,30 @@ async function workshop(s: State): Promise<Line[]> {
 async function smoke(s: State): Promise<Line[]> {
   // no id in the prompt: only a running spinecord can name the twin, so an answer without one proves nothing
   const prompt = "List the robots. Then drive the simulated one forward 5 cm. Answer in one line that names its id.";
-  const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
-  if ("lines" in plan) return plan.lines;
+  if (s.pays === undefined) return [checkChoice(s)];
+  // a running server holds the ports: a second one would fail, and the person's session already drives the robot
+  if (await viewUp()) {
+    s.smoke = { args: twinKey(), answer: `skipped: a spinecord server already answers on ${VIEW_URL}`, cost_usd: 0 };
+    saveState(s);
+    return [
+      {
+        status: "ok",
+        what: "smoke",
+        why: `skipped: a spinecord server already answers on ${VIEW_URL}, so a Claude Code session in ${WORKSHOP} runs it; no second server`,
+        next: "bun scripts/setup.ts view",
+      },
+    ];
+  }
+  // the app path pays with the login of this agent's host, which its own environment carries
+  let env: Env = process.env;
+  if (s.pays === "credits") {
+    const plan = paysPlan(await terminal(), process.env, s.profile, process.platform);
+    if ("lines" in plan) return plan.lines;
+    env = plan.env;
+  }
   const r = await run(
     ["claude", "-p", prompt, "--allowedTools", RULE, "--max-budget-usd", "0.50", "--output-format", "json"],
-    { env: plan.env },
+    { env },
   );
   let j: { result?: string; is_error?: boolean; total_cost_usd?: number };
   try {
@@ -1000,42 +1168,119 @@ async function smoke(s: State): Promise<Line[]> {
   return [checkSmoke(s)];
 }
 
-/** Waits for the 3D view that the person's Claude Code starts, then opens it in the default browser. */
-async function view(): Promise<Line[]> {
-  const url = "http://127.0.0.1:8769/";
-  const t0 = Date.now();
-  let up = false;
-  while (!up && Date.now() - t0 < STEP_MS - 5000) {
-    up = await fetch(url, { signal: AbortSignal.timeout(2000) }).then(
-      (r) => r.ok,
-      () => false,
-    );
-    if (!up) await Bun.sleep(1000);
-  }
-  if (!up)
+const viewUp = (): Promise<boolean> =>
+  fetch(VIEW_URL, { signal: AbortSignal.timeout(2000) }).then(
+    (r) => r.ok,
+    () => false,
+  );
+/** `setup view` waits this long for the robot's session, within an agent's 2-minute command limit. */
+const VIEW_MS = 90_000;
+
+/**
+ * Waits for the 3D view of the robot's Claude Code, then opens it: inside the Claude desktop app the agent opens it
+ * in the app's Browser pane, elsewhere the default browser opens it. A view that answers at once is a session that
+ * runs spinecord already: `ok`, and nothing new starts. At the deadline it names what setup can see is missing.
+ */
+async function view(s: State): Promise<Line[]> {
+  const w = await waitView({ up: viewUp, now: Date.now, sleep: Bun.sleep, say: (l) => console.log(l) }, VIEW_MS);
+  if (w.state === "timeout") {
+    const missing = (await checkWorkshop(s)).filter((l) => l.status !== "ok" && l.status !== "warn");
     return [
+      ...missing,
       {
         status: "todo",
         what: "view",
-        why: `nothing answers on ${url}: the person's Claude Code has not started spinecord yet`,
-        next: "check that the person ran the launch line and chose Yes at the trust question, then this step again",
+        why: `nothing answers on ${VIEW_URL} after ${Math.round(w.waited / 1000)} s: ${
+          missing.length
+            ? `the workshop folder is not ready (${missing.map((l) => l.what).join(", ")})`
+            : s.pays === "app"
+              ? "this session has no spinecord server: it has not moved to the workshop folder yet"
+              : "the robot's Claude Code has not started spinecord: it did not start, or it waits at a question"
+        }`,
+        next: missing.length
+          ? "bun scripts/setup.ts workshop, then this step again"
+          : s.pays === "app"
+            ? "see-it.md, part App login: the move, then one more message of the person; then this step again"
+            : "see-it.md, part Credits: read the robot's terminal, answer its question; then this step again",
+      },
+    ];
+  }
+  const how = w.state === "already" ? "already running" : `started after ${Math.round(w.waited / 1000)} s`;
+  if (inDesktopApp(process.env))
+    return [
+      {
+        status: "ok",
+        what: "view",
+        why: `${VIEW_URL} answers (${how})`,
+        next: `open ${VIEW_URL} in the Browser pane of the app (see-it.md)`,
       },
     ];
   const opener =
     process.platform === "darwin"
-      ? ["open", url]
+      ? ["open", VIEW_URL]
       : process.platform === "win32"
-        ? ["rundll32.exe", "url.dll,FileProtocolHandler", url]
-        : ["xdg-open", url];
+        ? ["rundll32.exe", "url.dll,FileProtocolHandler", VIEW_URL]
+        : ["xdg-open", VIEW_URL];
   const r = await run(opener, { ms: 10_000, cwd: cwd() });
   return [
     r.code === 0
-      ? { status: "ok", what: "view", why: `${url} answers, and the browser opened it` }
+      ? { status: "ok", what: "view", why: `${VIEW_URL} answers (${how}), and the browser opened it` }
       : {
           status: "ok",
           what: "view",
-          why: `${url} answers; the browser did not open by itself`,
-          next: `the person opens ${url}`,
+          why: `${VIEW_URL} answers (${how}); the browser did not open by itself`,
+          next: `the person opens ${VIEW_URL}`,
+        },
+  ];
+}
+
+/**
+ * The credits path without the app's Terminal panel: a new terminal window runs the launch line, so no person types
+ * it. The window gets the environment of a new terminal, never this agent's (the agent host's login would pay).
+ */
+async function openWindow(s: State): Promise<Line[]> {
+  if (s.pays !== "credits")
+    return [
+      {
+        status: "fail",
+        what: "window",
+        why: "only the credits path starts the robot's Claude Code in a terminal",
+        next: s.pays === undefined ? "bun scripts/setup.ts choose credits" : "see-it.md, part App login",
+      },
+    ];
+  if (await viewUp())
+    return [{ status: "ok", what: "window", why: `already running: ${VIEW_URL} answers; no second session` }];
+  const e = await launchEnvOf(s.profile);
+  if ("line" in e) return [e.line];
+  // the window runs no shell profile of its own choosing: claude by the path a new terminal finds
+  const claude = Bun.which("claude", { PATH: e.env.PATH ?? e.env.Path ?? "" });
+  if (claude === null)
+    return [
+      {
+        status: "fail",
+        what: "window",
+        why: "a new terminal finds no claude on its PATH",
+        next: `install.md, state TOOLS: the "every new terminal" step; then this step again`,
+      },
+    ];
+  const f = windowScript(process.platform, WORKSHOP, s.profile, claude);
+  const file = join(WORKSHOP, f.name);
+  writeFileSync(file, f.text, { mode: 0o755 });
+  const cmd = windowCommand(process.platform, file);
+  const r = await run(cmd, { ms: 15_000, cwd: WORKSHOP, env: e.env });
+  return [
+    r.code === 0
+      ? {
+          status: "ok",
+          what: "window",
+          why: `a new terminal window runs ${file}`,
+          next: "tell the person what the window shows (see-it.md, part Credits); then bun scripts/setup.ts view",
+        }
+      : {
+          status: "fail",
+          what: "window",
+          why: `${cmd[0]} could not open a window: ${(r.out + r.err).trim().slice(0, 200) || `exit ${r.code}`}`,
+          next: `the person opens a new terminal and pastes: ${launchLine(process.platform, s.profile)}`,
         },
   ];
 }
@@ -1056,17 +1301,35 @@ async function flip(s: State): Promise<Line[]> {
   writeFileSync(copy, `${JSON.stringify(robot, null, 2)}\n`);
   s.forward = undefined;
   saveState(s);
-  return [{ status: "ok", what: "flip", why: `${copy}: forward_sign ${d.forward_sign}` }, ...(await workshop(s))];
+  // the EV3 was driven, so its session runs: it reads the flipped file only when it starts again
+  return [
+    { status: "ok", what: "flip", why: `${copy}: forward_sign ${d.forward_sign}` },
+    ...withRestart(await workshop(s), true, process.platform, s.profile, s.pays),
+  ];
 }
 
 /** What the person does after a registration change: Claude Code reads its servers only when it starts. */
-export function restartLine(platform: string, profile: string): Line {
+export function restartLine(platform: string, profile: string, pays: Pays | undefined = "credits"): Line {
   return {
     status: "ok",
     what: "restart",
     why: "Claude Code reads the new registration when it starts again",
-    next: `the person types /exit in Claude Code, then starts it again with: ${launchLine(platform, profile)}`,
+    next:
+      pays === "app"
+        ? `the person starts a new session in the folder ${WORKSHOP} (Claude desktop app: Code tab, the folder control), and talks to the robot there`
+        : `the person types /exit in Claude Code, then starts it again with: ${launchLine(platform, profile)}`,
   };
+}
+
+/** A registration change while a robot session runs: one `restart` line at the end, never two. */
+export function withRestart(
+  lines: Line[],
+  running: boolean,
+  platform: string,
+  profile: string,
+  pays: Pays | undefined,
+): Line[] {
+  return running && !lines.some((l) => l.what === "restart") ? [...lines, restartLine(platform, profile, pays)] : lines;
 }
 
 /**
@@ -1089,7 +1352,7 @@ async function name(s: State, raw: string): Promise<Line[]> {
   if (s.ev3 === undefined) return [said, ...(await checkWorkshop(s))];
   const lines = await register(s);
   return lines.every((l) => l.status === "ok")
-    ? [said, ...lines, restartLine(process.platform, s.profile)]
+    ? [said, ...lines, restartLine(process.platform, s.profile, s.pays)]
     : [said, ...lines];
 }
 
@@ -1102,15 +1365,22 @@ async function report(s: State): Promise<string> {
     await Promise.all(["git", "ant", "claude"].map(async (c) => [c, (await version(c)) ?? "not found"] as const)),
   );
   return [
-    `Installed: git ${v.git}, bun ${Bun.version}, ant ${v.ant}, Claude Code ${v.claude}`,
-    whoPays(s.org, s.profile),
+    `Installed: git ${v.git}, bun ${Bun.version}, ${s.pays === "app" ? "" : `ant ${v.ant}, `}Claude Code ${v.claude}`,
+    s.pays === "app" ? "Who pays: the login of the Claude app (the person's plan)" : whoPays(s.org, s.profile),
     `spinecord: ${REPO}, ${registered}`,
     `Robot name: ${s.name ?? "none"}`,
     `Smoke test: ${s.smoke ? `${s.smoke.answer} (USD ${s.smoke.cost_usd})` : "not run"}`,
     `Seen moving: ${s.moved ? "yes" : "no"}`,
     `EV3: ${s.ev3 === undefined ? "not asked" : !s.ev3 ? "none" : s.forward ? "online and forward" : "not checked"}`,
     `3D view: http://127.0.0.1:8769/ while Claude Code runs`,
-    `Start Claude Code with: ${launchLine(process.platform, s.profile)}`,
+    ...(s.pays === "app"
+      ? [
+          `Start Claude Code with: a session in the folder ${WORKSHOP} (Claude desktop app: Code tab, the folder control)`,
+        ]
+      : [
+          `Terminal panel of the Claude app: in the folder ${WORKSHOP}, run: ${panelLine(process.platform, s.profile)}`,
+          `Start Claude Code with: ${launchLine(process.platform, s.profile)}`,
+        ]),
   ].join("\n");
 }
 
@@ -1123,17 +1393,31 @@ function print(step: string, lines: Line[]): 0 | 1 {
   return done ? 0 : 1;
 }
 
-export const STEPS = ["status", "login", "confirm", "workshop", "name", "smoke", "view", "flip", "report"];
+export const STEPS = [
+  "status",
+  "choose",
+  "login",
+  "confirm",
+  "workshop",
+  "name",
+  "smoke",
+  "view",
+  "window",
+  "flip",
+  "report",
+];
 export const CONFIRM = ["org", "moved", "forward"];
 const USAGE = `usage: bun scripts/setup.ts <step>
-  status                 every state, done or not, and the next one; changes nothing
+  status                 every state of the chosen path, done or not, and the next one; changes nothing
+  choose app|credits     who pays: the app's login (Pro or Max plan) or the Console credits of the ant profile
   login [--profile <p>]  log the ant profile in (the browser opens); skipped when it is logged in
   confirm org            the person said the organization that pays holds the credits
   workshop --ev3 yes|no [--name <name>]
                          ${WORKSHOP}: settings, local registration, doctor; --name: the robot's name
   name <name>|none       give the robot a name, or take it away; registers again, no doctor (restart Claude Code)
   smoke                  one claude -p request drives the twin (at most USD 0.50)
-  view                   wait for the 3D view of the person's Claude Code (under ${STEP_MS / 1000} s), open it
+  view                   wait for the 3D view of the robot's Claude Code (${VIEW_MS / 1000} s at most), open it
+  window                 credits: a new terminal window runs the launch line (no person types it)
   confirm moved          the person saw the robot move
   flip                   the EV3 drove backward: turn forward_sign in a copy of its file, register again
   confirm forward        the EV3 drove forward
@@ -1154,6 +1438,10 @@ export async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "login": {
+      if (s.pays === "app")
+        return print(step, [
+          { status: "ok", what: "login", why: "not needed: the app's login pays (setup choose app)" },
+        ]);
       const p = opt("--profile");
       if (p !== undefined && p !== s.profile) {
         s.profile = p;
@@ -1189,7 +1477,18 @@ export async function main(argv: string[]): Promise<number> {
     case "smoke":
       return print(step, await smoke(s));
     case "view":
-      return print(step, await view());
+      return print(step, await view(s));
+    case "window":
+      return print(step, await openWindow(s));
+    case "choose": {
+      const p = rest[0] as Pays | undefined;
+      if (p === undefined || !PAYS.includes(p)) break;
+      if (s.pays !== p) {
+        s.pays = p;
+        saveState(s);
+      }
+      return print(step, [checkChoice(s)]);
+    }
     case "flip":
       return print(step, await flip(s));
     case "confirm": {

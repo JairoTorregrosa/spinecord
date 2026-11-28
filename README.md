@@ -8,21 +8,21 @@ Talk to a LEGO EV3 robot through Claude. No robot? You get its twin in 3D, in yo
 
 ## Start
 
-1. Open a coding agent (Claude Code, Codex or another one) on macOS, Windows or Linux.
+1. Open a coding agent on macOS, Windows or Linux: the Code tab of the Claude desktop app, Claude Code, Codex or another one.
 2. Paste this:
 
    ```text
    Read https://raw.githubusercontent.com/JairoTorregrosa/spinecord/main/.claude/skills/setup-spinecord/SKILL.md and follow it.
    ```
 
-3. The agent installs everything. You do five things:
+3. The agent installs everything. You do a few things:
 
 | When | You |
 |---|---|
-| It asks | Say if you have an EV3, give the robot a name if you want, and say yes to the plan |
-| A browser page opens | Sign in to platform.claude.com, pick the organization with your credits, click Authorize |
-| It names who pays | Say yes |
-| It gives you a line | Paste it into a new terminal and trust the folder |
+| It asks | Say who pays (your Claude plan, or the workshop's API credits), if you have an EV3, a name for the robot if you want, and yes to the plan |
+| Credits only: a browser page opens | Sign in to platform.claude.com, pick the organization with your credits, click Authorize |
+| Credits only: it names who pays | Say yes |
+| It starts the robot's Claude Code | Allow the folder. In a terminal: press the down arrow to *Yes, I trust this folder*, then Enter |
 | The 3D page opens | Type what it tells you and watch the robot move |
 
 Nobody makes or copies an API key.
